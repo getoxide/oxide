@@ -12,14 +12,14 @@ window size, opening the dock suspends the sidebar; explicitly opening the sideb
 suspends the dock. Fitting preserves preferred sizes for wider windows. Board and
 Settings also suspend tool presentation without using tool switches as cleanup.
 
-The human decisions are recorded in [the layout map (#267)](https://github.com/cavallinilorenzo/oxide/issues/267)
-and [approved spec (#278)](https://github.com/cavallinilorenzo/oxide/issues/278):
-[skeleton B (#271)](https://github.com/cavallinilorenzo/oxide/issues/271),
-[Project-owned terminal tabs (#272)](https://github.com/cavallinilorenzo/oxide/issues/272),
-[Files layout (#273)](https://github.com/cavallinilorenzo/oxide/issues/273),
-[no terminal-agent integration (#274)](https://github.com/cavallinilorenzo/oxide/issues/274),
-[Project Board entry (#276)](https://github.com/cavallinilorenzo/oxide/issues/276),
-and [Thread-owned Git header B (#277)](https://github.com/cavallinilorenzo/oxide/issues/277).
+The human decisions are recorded in [the layout map (#267)](https://github.com/getoxide/oxide/issues/267)
+and [approved spec (#278)](https://github.com/getoxide/oxide/issues/278):
+[skeleton B (#271)](https://github.com/getoxide/oxide/issues/271),
+[Project-owned terminal tabs (#272)](https://github.com/getoxide/oxide/issues/272),
+[Files layout (#273)](https://github.com/getoxide/oxide/issues/273),
+[no terminal-agent integration (#274)](https://github.com/getoxide/oxide/issues/274),
+[Project Board entry (#276)](https://github.com/getoxide/oxide/issues/276),
+and [Thread-owned Git header B (#277)](https://github.com/getoxide/oxide/issues/277).
 Those tickets link the decision prototypes; prototypes are evidence, not
 production implementations.
 

@@ -18,6 +18,7 @@ The selected **Strati** direction represents Oxide's parallel agent workspaces a
 - `png/mark/`: transparent mark exports at 16, 32, 64, 128, 256, 512, and 1024 px.
 - `png/logo/`: transparent horizontal logo exports at 400×96, 800×192, and 1600×384 px.
 - `png/app-icon/`: square app icon exports at 128, 256, 512, and 1024 px.
+- `png/social-preview.png`: 1280×640 GitHub social preview (Settings → General → Social preview), on a dark background with a light top layer.
 - `icon.icns`, `icon.ico`, and `icon.png`: generated platform icon formats in `crates/oxide-app/icons/`.
 
 The SVG files are the editable vector masters. PNG exports use transparent backgrounds except for the square app icon.

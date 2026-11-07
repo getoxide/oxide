@@ -1,31 +1,93 @@
 <p align="center">
-  <img width="160" height="160" alt="Oxide logo" src="assets/brand/oxide/oxide-mark.svg" />
+  <img width="128" height="128" alt="Oxide logo" src="assets/brand/oxide/oxide-mark.svg" />
 </p>
 
 <h1 align="center">Oxide</h1>
 
-Oxide is a desktop app for agentic engineering. You open a Project and drive coding agents from a chat, switching between the agent CLIs already installed on your machine, with Git and GitHub at hand.
+<p align="center">
+  <strong>The open-source desktop app for reviewing and merging what your coding agents write.</strong><br />
+  Drive Claude Code, Codex and Antigravity CLI from one window, see exactly what changed and what was checked, then commit, push and open the pull request.
+</p>
 
-> **Status: pre-release.** Official release builds target **macOS on Apple Silicon** and **Windows x64**. Expect rough edges and breaking changes between versions.
+<p align="center">
+  <a href="https://github.com/getoxide/oxide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/getoxide/oxide/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+  <img alt="Platforms: macOS (Apple Silicon) and Windows x64" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg" />
+  <img alt="Built with Rust and Tauri 2" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-orange.svg" />
+  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-yellow.svg" />
+</p>
 
-## Supported Providers
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="#faq">FAQ</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-Oxide doesn't ship an agent of its own. It drives the agent CLIs you already use, called Providers:
+<p align="center">
+  <img alt="Oxide: a Thread with Claude Code in the centre, the Project's Threads on the left and the Diff Surface on the right" src="assets/screenshots/oxide-thread.png" width="900" />
+</p>
 
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`)
-- [Codex](https://github.com/openai/codex) (`codex`)
-- Antigravity CLI (`agy`)
+## What is Oxide?
 
-Each Provider must be **installed and logged in** before you launch Oxide. Oxide detects which ones are available and only offers those.
+Oxide is a free, open-source **desktop GUI for AI coding agents**, built with Rust and [Tauri](https://tauri.app). It doesn't ship an agent of its own: it drives the agent CLIs you already have installed and logged in (**Claude Code**, **OpenAI Codex** and **Antigravity CLI**) and puts Git, GitHub, a code editor and a terminal around the conversation.
+
+Most agent tools optimize for starting more agents. Oxide optimizes for the other end: the path from a finished agent Turn to a **confident merge**. For every change it shows what the agent touched, which checks actually ran, what stayed unverified, and lets you send line-level feedback or undo the work without leaving the app. It is built for engineers who use coding agents and stay responsible for what lands in `main` ([ADR-0010](docs/adr/0010-prioritize-the-path-to-a-confident-merge.md)).
+
+> [!NOTE]
+> **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon** and **Windows x64**. Expect rough edges and breaking changes between versions.
+
+## Features
+
+### One app, every agent CLI
+
+- **Multiple Providers.** Use [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) and Antigravity CLI (`agy`) side by side. Oxide detects which ones are installed and only offers those.
+- **Threads.** Each Thread is one conversation with one Provider, mapped one-to-one to the Provider's own session, with its own Model and Effort.
+- **Permission modes.** Choose per Thread between *Ask*, *Auto-edit* and *Full access*, and answer Approvals inline. The Attention Center collects every Thread waiting on you, across Projects.
+- **Slash commands, attachments and usage limits.** Each Provider's Slash commands and skills in the composer, files and images attached inside the prompt, and the 5-hour and weekly usage limits your Provider reports.
+- **Worktrees.** Chat Threads can run in their own Git worktree, with an optional per-Project setup command, so parallel work never collides.
+
+### Review before you merge
+
+- **Diff by Turn, Uncommitted or Branch.** See exactly what one agent Turn changed, thanks to Checkpoints taken at the start and end of every Turn.
+- **Verification Dossier.** An account of the change's intent, evidence and risk signals, computed without an LLM: which Verification commands ran and whether they're still fresh, languages no check covers, source changed without a test change, sensitive paths, the pull request's checks and the Approvals granted. Separate signals, never a single score. It can be published in the pull request body.
+- **Line comments.** Comment on any Diff line and send the comments back to the Thread as one prompt, or submit them to GitHub as a pull request review.
+- **Blind review.** Have a second Provider review the change seeing only the diff and the issue, never the original conversation. Its findings become Line comments you keep or dismiss.
+- **Revert and Restore.** Take out one file or hunk, or put a Thread's files back to how they were before any Turn. Both are undoable.
+- **Rule suggestions.** Feedback you keep giving turns into a proposed rule for the Project's `AGENTS.md`.
+
+### A full workspace around the conversation
+
+- **Git and GitHub.** Branches, commit and push, pull requests with checks and inline review threads, and Issues, through `git` and the [GitHub CLI](https://cli.github.com).
+- **Code editor.** Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
+- **Terminal.** Per-Project terminal tabs with Command blocks, kept alive while you switch Threads.
+- **Local dictation.** Speak into the composer or terminal with on-device Whisper models, on CPU or GPU. Audio never leaves your machine.
+- **Keyboard first.** Full keyboard navigation, themes and reduced-motion support.
 
 ## Install
 
-Download the installer for your platform from [GitHub Releases](https://github.com/cavallinilorenzo/oxide/releases):
+Download the installer for your platform from [GitHub Releases](https://github.com/getoxide/oxide/releases):
 
-- **macOS (Apple Silicon):** `Oxide_<version>_aarch64.dmg`. Drag `Oxide.app` into `/Applications`.
-- **Windows (x64):** `Oxide_<version>_x64-setup.exe`.
+| Platform | File | Notes |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `Oxide_<version>_aarch64.dmg` | Drag `Oxide.app` into `/Applications`. |
+| Windows 10/11 (x64) | `Oxide_<version>_x64-setup.exe` | Includes CPU and GPU (Vulkan, CUDA) dictation. |
 
-Pre-release (`-rc`) builds are for testing and never reach the in-app updater.
+Until the first stable release is published, [build from source](#build-from-source). Pre-release (`-rc`) builds are for testing and never reach the in-app updater.
+
+### Requirements
+
+At least one **Provider installed and logged in** before you launch Oxide:
+
+| Provider | Command | Install |
+| --- | --- | --- |
+| Claude Code | `claude` | [docs.claude.com](https://docs.claude.com/en/docs/claude-code) |
+| Codex | `codex` | [github.com/openai/codex](https://github.com/openai/codex) |
+| Antigravity CLI | `agy` | Google Antigravity |
+
+`git` is required. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and enables the pull request and Issues features.
 
 ### Updates
 
@@ -37,7 +99,7 @@ Every release attaches `SHA256SUMS.txt` and a [build-provenance attestation](htt
 
 ```sh
 shasum -a 256 --check --ignore-missing SHA256SUMS.txt   # macOS; use sha256sum on Linux
-gh attestation verify Oxide_<version>_aarch64.dmg --repo cavallinilorenzo/oxide
+gh attestation verify Oxide_<version>_aarch64.dmg --repo getoxide/oxide
 ```
 
 On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with the line in `SHA256SUMS.txt`.
@@ -55,22 +117,48 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 
 **Windows.** The installer is **not Authenticode-signed**, so SmartScreen may warn on first run. Choose **More info → Run anyway** after verifying the download as above.
 
+## Quick start
+
+1. Install and log in to at least one Provider (for example, run `claude` once in a terminal).
+2. Launch Oxide and press **⌘⇧N** (Ctrl+Shift+N on Windows) to open the Project palette: pick a folder, create one with `git init`, or clone a repository.
+3. Start a Thread, choose the Provider, Model and Permission mode, and write your prompt.
+4. When the Turn finishes, open the **Diff** Surface: review the Turn, read the Dossier, leave Line comments or revert what you don't want.
+5. **Commit & Push**, then open the pull request from the **Pull request** Surface.
+
+## How it works
+
+```mermaid
+flowchart LR
+  UI["React webview<br/>(web/)"] -- "typed Tauri commands" --> App["oxide-app<br/>thin Tauri shell"]
+  App --> Core["oxide-core<br/>Projects, Threads, Transcript,<br/>Git, GitHub, terminals, LSP"]
+  Core --> Prov["oxide-provider<br/>Provider contract"]
+  Prov --> Claude["claude"]
+  Prov --> Codex["codex"]
+  Prov --> Agy["agy"]
+  Core --> Tools["git · gh · language servers"]
+```
+
+- **Native Provider adapters.** Each Provider has its own adapter in `oxide-provider` behind one contract, tested against fake Providers, rather than a lowest-common-denominator protocol ([ADR-0001](docs/adr/0001-native-provider-adapters-over-acp.md)).
+- **Oxide owns the Transcript.** Turns, Items and Approvals are stored locally in SQLite, so every Provider looks the same in the UI ([ADR-0002](docs/adr/0002-oxide-owns-the-transcript.md)).
+- **Core owns files and processes.** The webview gets no filesystem or shell permission. Every action goes through a typed Tauri command generated with [tauri-specta](https://github.com/specta-rs/tauri-specta).
+
+The domain language (Project, Thread, Turn, Provider, Surface…) is defined in [GLOSSARY.md](GLOSSARY.md), and every architecture decision is recorded in [docs/adr/](docs/adr/).
+
 ## Build from source
 
-Prerequisites:
+### macOS (Apple Silicon)
 
-- macOS on Apple Silicon, with the Xcode Command Line Tools (`xcode-select --install`)
-- [rustup](https://rustup.rs). The toolchain version is pinned in [`rust-toolchain.toml`](rust-toolchain.toml), and rustup installs it automatically.
+- Xcode Command Line Tools (`xcode-select --install`)
+- [rustup](https://rustup.rs). The toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) and installed automatically.
 - Node.js 22 and pnpm via [Corepack](https://nodejs.org/api/corepack.html) (`corepack enable`). The pnpm version is pinned in `web/package.json`.
-- `git`, and optionally the [GitHub CLI](https://cli.github.com) (`gh`, logged in) for the GitHub features
-- At least one [Provider](#supported-providers), installed and logged in
+- CMake and libclang, for the dictation engine (see [docs/dictation.md](docs/dictation.md)).
 
 ```sh
-git clone https://github.com/cavallinilorenzo/oxide.git
+git clone https://github.com/getoxide/oxide.git
 cd oxide
 pnpm --dir web install
 
-# Run the app in development mode (hot-reloading frontend). Run this from the repo root.
+# Run the app in development mode (hot-reloading frontend), from the repository root.
 web/node_modules/.bin/tauri dev
 
 # Build the app bundle and .dmg into target/release/bundle/
@@ -79,43 +167,37 @@ pnpm --dir web build:app
 
 The Tauri CLI must run from the repository root: that is where it finds `crates/oxide-app/tauri.conf.json`.
 
-### Windows
-
-To build and run Oxide from source on Windows (or to build your own installer), install:
+### Windows (x64)
 
 - Windows 10 (version 1803 or later) or Windows 11. These include the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/); on older or customized installations, install the Evergreen Runtime manually.
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload.
-- [rustup](https://rustup.rs). The pinned toolchain in [`rust-toolchain.toml`](rust-toolchain.toml) is installed automatically.
-- Node.js 22 and pnpm through [Corepack](https://nodejs.org/api/corepack.html). Enable Corepack with `corepack enable`; the pnpm version is pinned in `web/package.json`.
-- `git`, and optionally the [GitHub CLI](https://cli.github.com) (`gh`, logged in) for GitHub features.
-- At least one [Provider](#supported-providers), installed and logged in, and available on `PATH`.
+- [rustup](https://rustup.rs), Node.js 22 and pnpm through Corepack (`corepack enable`), as on macOS.
+- CMake and libclang, for the dictation engine.
 
-In PowerShell, from the directory where you want the repository:
+In PowerShell:
 
 ```powershell
-git clone https://github.com/cavallinilorenzo/oxide.git
+git clone https://github.com/getoxide/oxide.git
 Set-Location oxide
 pnpm --dir web install
 
 # Run the app in development mode (hot-reloading frontend).
 .\web\node_modules\.bin\tauri.cmd dev
 
-# Build a Windows installer (NSIS `.exe`) into target\release\bundle\nsis\.
+# Build a Windows installer (NSIS .exe) into target\release\bundle\nsis\.
 .\web\node_modules\.bin\tauri.cmd build --bundles nsis
 ```
 
-That installer has CPU dictation only. The released installer also contains the Vulkan and CUDA dictation workers; to build it, follow [Packaging and distribution](docs/dictation.md#packaging-and-distribution). Neither needs an SDK on the user's machine; GPU dictation needs only the GPU vendor's driver.
+That installer has CPU dictation only. The released installer also contains the Vulkan and CUDA dictation workers; to build it, follow [Packaging and distribution](docs/dictation.md#packaging-and-distribution). To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again.
 
-Run the Tauri CLI from the repository root so it can find `crates/oxide-app/tauri.conf.json`. To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again.
-
-## Tests
+### Tests and checks
 
 ```sh
-cargo test --workspace     # Rust: Provider contract suite, core, app
-pnpm --dir web test        # Frontend (Vitest)
+node tools/check.mjs        # everything the CI pull request lanes run on this OS
+node tools/check.mjs fast   # rustfmt, ESLint and TypeScript, in seconds
 ```
 
-The live smoke tests drive the real Provider CLIs, so they are opt-in and never run in CI. Run them only with the Provider installed and logged in:
+The Rust tests run with [cargo-nextest](https://nexte.st) (`cargo install --locked cargo-nextest`). The live smoke tests drive the real Provider CLIs, so they are opt-in and never run in CI:
 
 ```sh
 cargo test -p oxide-provider --test claude_live_smoke -- --ignored
@@ -125,15 +207,38 @@ cargo test -p oxide-provider --test agy_live_smoke -- --ignored
 
 [docs/devops.md](docs/devops.md) lists every check CI runs, why it exists and its local equivalent.
 
-## Learn more
+## FAQ
 
-- [GLOSSARY.md](GLOSSARY.md): the domain language (Project, Thread, Turn, Provider…)
+**Is Oxide an AI coding agent?**
+No. Oxide is a desktop client for the coding agents you already use. Claude Code, Codex and Antigravity CLI do the work; Oxide gives you one interface to drive them, review their changes and ship them through Git and GitHub.
+
+**Do I need an API key?**
+No separate key for Oxide. Each Provider uses its own login and its own subscription or API billing, exactly as it does in the terminal.
+
+**Does Oxide send my code or prompts anywhere?**
+Oxide has no telemetry and no server. Your prompts and code go only to the Provider you chose, through its own CLI. The Transcript, Checkpoints and Review ledger stay on your machine, and dictation runs fully on-device.
+
+**How is it different from using Claude Code or Codex in a terminal?**
+You keep the same CLIs, sessions and logins. Oxide adds a per-Turn Diff, the Verification Dossier, Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
+
+**Which platforms are supported?**
+Official builds target macOS on Apple Silicon and Windows x64. Linux isn't packaged yet.
+
+**Is it free?**
+Yes. Oxide is open source under the [MIT License](LICENSE).
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the branch model, local checks and pull request conventions, and look for issues labelled [`good first issue`](https://github.com/getoxide/oxide/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or [`help wanted`](https://github.com/getoxide/oxide/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22).
+
+- [GLOSSARY.md](GLOSSARY.md): the domain language
 - [docs/adr/](docs/adr/): architecture decisions
-- [CONTRIBUTING.md](CONTRIBUTING.md): branch model, local checks
 - [docs/devops.md](docs/devops.md): CI, releases and the release runbook
-- [SECURITY.md](SECURITY.md): how to report a vulnerability
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [AGENTS.md](AGENTS.md): instructions for coding agents working on Oxide
+- [SUPPORT.md](SUPPORT.md): where to ask questions and report bugs
+
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE)
+Oxide is released under the [MIT License](LICENSE). Claude Code, Codex and Antigravity are trademarks of their respective owners; Oxide is an independent project, not affiliated with or endorsed by Anthropic, OpenAI or Google.

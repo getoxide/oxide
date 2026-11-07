@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting! Please search [existing issues](https://github.com/cavallinilorenzo/oxide/issues) first.
-        **Security problems go through [private reporting](https://github.com/cavallinilorenzo/oxide/security/advisories/new), not here.**
+        Thanks for reporting! Please search [existing issues](https://github.com/getoxide/oxide/issues?q=is%3Aissue) first, including closed ones.
+        **Security problems go through [private reporting](https://github.com/getoxide/oxide/security/advisories/new), not here.**
   - type: input
     id: oxide-version
     attributes:
@@ -16,10 +16,11 @@ body:
     validations:
       required: true
   - type: input
-    id: macos-version
+    id: os-version
     attributes:
-      label: macOS version
-      placeholder: macOS 26.1 (Apple Silicon)
+      label: Operating system
+      description: Name, version and architecture.
+      placeholder: macOS 26.1 (Apple Silicon) or Windows 11 24H2 (x64)
     validations:
       required: true
   - type: dropdown

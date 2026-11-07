@@ -6,7 +6,7 @@ This is a hypothesis, not a finding. No users have been interviewed yet. The Ver
 
 ## Consequences
 
-- Work is ordered so that each phase is usable alone: baseline measurement, Line comments, undo, worktrees and GitHub review, the Dossier, a validation gate, Blind review, publishing the Dossier, reliability data. Spec: [#320](https://github.com/cavallinilorenzo/oxide/issues/320).
+- Work is ordered so that each phase is usable alone: baseline measurement, Line comments, undo, worktrees and GitHub review, the Dossier, a validation gate, Blind review, publishing the Dossier, reliability data. Spec: [#320](https://github.com/getoxide/oxide/issues/320).
 - The Verification Dossier holds facts that Oxide computes from the Transcript, Checkpoints, Settings and GitHub, with no LLM and no aggregate risk score. The agent's own closing message is shown only as a labelled claim, apart from those facts. Where a Provider reports nothing, the value is unknown, never invented (ADR-0001).
 - The Dossier is a section of the Diff Surface and Line comments live in Diff scopes. No sixth Surface is added (ADR-0009).
 - Only normalized command data is added to the Transcript. Raw Provider payloads stay unpersisted (ADR-0002).
