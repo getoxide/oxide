@@ -2,5 +2,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/cavallinilorenzo/oxide/security/advisories/new
+    url: https://github.com/getoxide/oxide/security/advisories/new
     about: Please report vulnerabilities privately, as described in SECURITY.md.
+  - name: Ask a question or get help
+    url: https://github.com/getoxide/oxide/blob/main/SUPPORT.md
+    about: Where to look first, and how to ask a question.

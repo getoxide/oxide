@@ -39,7 +39,7 @@ retain their original conditions.
 ## Installed artifact and measurements
 
 The installer is artifact `oxide-windows-x64-ci`, ID `12995664697`, from the
-[completed #234 build](https://github.com/cavallinilorenzo/oxide/actions/runs/41094709855),
+[completed #234 build](https://github.com/getoxide/oxide/actions/runs/41094709855),
 source commit `6d47fad594ed86f72588d29a2c8235fa9b27f881`. It was downloaded using
 `gh run download 41094709855 --name oxide-windows-x64-ci`, then installed silently
 into a fresh scratch folder (`/S /D=INSTALL_DIR`, exit 0). No developer-built worker

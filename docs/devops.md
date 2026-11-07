@@ -213,7 +213,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 - **What:** when a release is published, re-downloads every asset and checks `SHA256SUMS.txt`, runs `gh attestation verify` on each file, and, for a stable release, checks that `releases/latest/download/latest.json` serves this version, every URL in it resolves and every signature is non-empty.
 - **Why:** the updater feed is the one thing that, once broken, affects every installed app. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
-- **Local:** `gh attestation verify <file> --repo cavallinilorenzo/oxide` and `sha256sum --check SHA256SUMS.txt`.
+- **Local:** `gh attestation verify <file> --repo getoxide/oxide` and `sha256sum --check SHA256SUMS.txt`.
 
 ## Scheduled and automatic workflows
 

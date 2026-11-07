@@ -42,6 +42,10 @@ describe("lanesFor", () => {
     assert.deepEqual(lanesFor(["docs/workbench.md", "README.md", "docs/ui-review/main.png", "GLOSSARY.md"], "pull_request"), ALL_OFF);
   });
 
+  test("repository metadata files turn every lane off", () => {
+    assert.deepEqual(lanesFor(["CITATION.cff", "llms.txt"], "pull_request"), ALL_OFF);
+  });
+
   test("a web-only change turns on web only", () => {
     assert.deepEqual(lanesFor(["web/src/App.tsx", "web/src/App.test.tsx"], "pull_request"), { ...ALL_OFF, web: true });
   });

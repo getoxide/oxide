@@ -42,7 +42,7 @@ const PATH_RULES = [
   [/^(\.github|tools)\//, ["automation"]],
   [/^(docs|references|assets|\.agents|\.impeccable)\//, []],
   [/^[^/]+\.md$/, []],
-  [/^(LICENSE|\.gitignore|\.gitmodules)$/, []],
+  [/^(LICENSE|CITATION\.cff|llms\.txt|\.gitignore|\.gitmodules)$/, []],
 ];
 
 function lanesForPath(path) {

@@ -4,7 +4,7 @@ Workflow: see `/ask`. Before verifying or reviewing, read `docs/agents/engineeri
 
 ### Issue tracker
 
-Issues live in GitHub Issues for `cavallinilorenzo/oxide` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues for `getoxide/oxide` (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
