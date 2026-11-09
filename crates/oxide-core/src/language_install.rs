@@ -13,6 +13,9 @@ const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
 fn error(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
 }
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 #[derive(Deserialize)]
 struct Asset {
     name: String,
@@ -233,7 +236,7 @@ fn download(
         }
     }
     if let Some(expected) = expected
-        && format!("{:x}", hash.finalize()) != expected.to_ascii_lowercase()
+        && !hex(&hash.finalize()).eq_ignore_ascii_case(expected)
     {
         return Err(error(
             "The downloaded file failed checksum verification. Try again.",
