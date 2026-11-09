@@ -439,8 +439,7 @@ impl Dictation {
         let mut adapter_id = settings.adapter_id.clone();
         if settings.device == Device::Auto && backend.is_none() {
             let advice = resources::inspect(home, resources::Preference::Balanced);
-            let choice = resources::select_for_model(&advice.recommendation, settings.model)
-                .map(|index| &advice.recommendation.decisions[index]);
+            let choice = resources::select_for_model(&advice.recommendation, settings.model);
             backend = Some(choice.map_or(BackendId::Cpu, |d| d.backend));
             adapter_id = choice.and_then(|d| d.adapter_id.clone());
         }

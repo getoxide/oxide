@@ -129,9 +129,50 @@ fn auto_advice_prefers_an_eligible_gpu_over_an_otherwise_equal_cpu() {
     assert_eq!(selected.backend, BackendId::Vulkan);
     assert!(selected.provisional);
 
-    let index = select_for_model(&advice, ModelId::Base).expect("Base is eligible");
-    assert_eq!(advice.decisions[index].backend, BackendId::Vulkan);
-    assert_eq!(advice.decisions[index].model, ModelId::Base);
+    let choice = select_for_model(&advice, ModelId::Base).expect("Base is eligible");
+    assert_eq!(choice.backend, BackendId::Vulkan);
+    assert_eq!(choice.model, ModelId::Base);
+    let selected = &advice.decisions[advice.selected.expect("a decision is selected")];
+    assert_eq!(choice.model, selected.model);
+    assert_eq!(choice.backend, selected.backend);
+    assert_eq!(choice.adapter_id, selected.adapter_id);
+}
+
+#[test]
+fn auto_selection_uses_the_same_ranking_as_the_recommendation() {
+    // Same model: the shared rank puts a recommended CPU ahead of an otherwise
+    // equal usable-slower GPU, so Auto cannot drift from `recommend`.
+    let recommended_cpu = Decision {
+        model: ModelId::Base,
+        backend: BackendId::Cpu,
+        adapter: Some("CPU".into()),
+        adapter_id: None,
+        status: AdviceStatus::Recommended,
+        confidence: Confidence::Low,
+        provisional: true,
+        safe_to_load: true,
+        reason: String::new(),
+        median_rtf_milli: None,
+        cold_load_ms: None,
+    };
+    let slower_gpu = Decision {
+        backend: BackendId::Vulkan,
+        adapter: Some("AMD RX 5600 XT".into()),
+        adapter_id: Some("pci:1002:731f".into()),
+        status: AdviceStatus::UsableSlower,
+        ..recommended_cpu.clone()
+    };
+    let advice = Recommendation {
+        policy_version: POLICY_VERSION,
+        catalogue_version: oxide_core::dictation::models::catalogue().version,
+        preference: Preference::Balanced,
+        decisions: vec![slower_gpu, recommended_cpu],
+        selected: Some(1),
+    };
+    assert_eq!(
+        select_for_model(&advice, ModelId::Base).map(|decision| decision.backend),
+        Some(BackendId::Cpu)
+    );
 }
 
 #[test]
@@ -142,7 +183,7 @@ fn auto_selection_has_no_choice_without_an_eligible_safe_decision() {
     for decision in &mut advice.decisions {
         decision.safe_to_load = false;
     }
-    assert_eq!(select_for_model(&advice, ModelId::Base), None);
+    assert!(select_for_model(&advice, ModelId::Base).is_none());
 }
 
 #[test]

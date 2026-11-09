@@ -497,7 +497,9 @@ function macosPackageProblems({ files, imports = {}, sections = {}, infoPlist = 
 // STATUS_DLL_NOT_FOUND: Windows refused to start the process because an imported
 // DLL is absent. checkDictationPackage proves every non-driver import ships.
 const DLL_NOT_FOUND = 0xc0000135;
-const WORKER_PROTOCOL = 1;
+// Bump whenever the worker request/response contract changes. v2 requires CUDA
+// transcription to include native dispatch evidence.
+const WORKER_PROTOCOL = 2;
 
 /**
  * Whether an installed GPU worker started and answered a probe, on a machine

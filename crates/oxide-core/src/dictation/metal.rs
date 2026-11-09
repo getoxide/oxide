@@ -103,13 +103,7 @@ pub fn validate_metal_dispatch(
     run: &super::benchmark::DispatchRun,
     adapter: &str,
 ) -> Result<(), BackendError> {
-    if !adapter.is_empty()
-        && run.native_backend == "Metal"
-        && run.adapter == adapter
-        && run.completed_graphs > 0
-        && run.matrix_ops >= run.completed_graphs
-        && run.failures == 0
-    {
+    if run.proves(super::BackendId::Metal, "Metal", adapter) {
         return Ok(());
     }
     Err(BackendError::InferenceFailed(format!(

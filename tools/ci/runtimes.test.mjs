@@ -68,7 +68,7 @@ describe("runtime packages", () => {
   test("the manifest names the backend, version, protocol, worker and every file's hash, sorted", () => {
     const { manifest } = vulkan();
     assert.deepEqual(Object.keys(manifest), ["backend", "version", "protocolVersion", "worker", "files"]);
-    assert.equal(manifest.protocolVersion, 1);
+    assert.equal(manifest.protocolVersion, 2);
     assert.equal(manifest.worker, "oxide-vulkan-worker.exe");
     assert.deepEqual(Object.keys(manifest.files), ["LICENSE-msvc-runtime.txt", "LICENSE-whisper.txt", "oxide-vulkan-worker.exe", "vcruntime140.dll"]);
     assert.throws(() => runtimePackageManifest({ backend: "metal", version: VERSION, hashes: {} }), /backend/);
@@ -106,7 +106,7 @@ describe("runtime packages", () => {
   test("the manifest must match the backend, the protocol and the worker", () => {
     const package_ = vulkan();
     assert.match(checkRuntimePackage("cuda", package_).message, /backend/);
-    assert.match(checkRuntimePackage("vulkan", { ...package_, manifest: { ...package_.manifest, protocolVersion: 2 } }).message, /protocol 2, expected 1/);
+    assert.match(checkRuntimePackage("vulkan", { ...package_, manifest: { ...package_.manifest, protocolVersion: 1 } }).message, /protocol 1, expected 2/);
     assert.match(checkRuntimePackage("vulkan", { ...package_, manifest: { ...package_.manifest, worker: "other.exe" } }).message, /worker/);
     assert.match(checkRuntimePackage("vulkan", { ...package_, manifest: undefined }).message, /manifest\.json is missing or unreadable/);
   });
@@ -143,7 +143,7 @@ describe("runtimeIndex", () => {
     assert.equal(index.version, 1);
     assert.deepEqual(index.runtimes.map(({ backend }) => backend), ["cuda", "vulkan"]);
     assert.deepEqual(index.runtimes[0], {
-      backend: "cuda", version: "0.4.0", protocolVersion: 1, platform: "windows-x86_64",
+      backend: "cuda", version: "0.4.0", protocolVersion: 2, platform: "windows-x86_64",
       url: "https://github.com/cavallinilorenzo/oxide/releases/download/v0.4.0/oxide-runtime-cuda-windows-x64-0.4.0.zip",
       bytes: 20, sha256: "b".repeat(64), requirements: "an NVIDIA driver for CUDA 12.9 and compute capability 5.0 or later",
     });

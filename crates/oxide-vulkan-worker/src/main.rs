@@ -254,7 +254,7 @@ fn main() {
         return;
     }
     let response = WorkerResponse {
-        protocol_version: 1,
+        protocol_version: oxide_core::dictation::runtimes::PROTOCOL_VERSION,
         engine_version: ENGINE_VERSION.into(),
         result: read_frame(std::io::stdin().lock())
             .map_err(initialization)
