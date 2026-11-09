@@ -12,6 +12,26 @@ fn cpu() -> BackendProbe {
     }
 }
 
+fn vulkan() -> BackendCandidate {
+    use oxide_core::dictation::MemoryPool;
+    BackendCandidate {
+        probe: BackendProbe {
+            backend: BackendId::Vulkan,
+            state: CapabilityState::Available,
+            adapter: Some("AMD RX 5600 XT".into()),
+            memory_pool: Some(MemoryPool {
+                unified: false,
+                total_bytes: 6 * GIB,
+                available_bytes: Some(3 * GIB),
+                max_working_set_bytes: None,
+            }),
+        },
+        adapter_id: Some("pci:1002:731f".into()),
+        driver_version: Some("AMD 26.10.1".into()),
+        runtime_version: runtime_version(BackendId::Vulkan),
+    }
+}
+
 fn resources() -> ResourceSnapshot {
     ResourceSnapshot {
         captured_at_secs: 100,
@@ -97,6 +117,32 @@ fn advice_is_conservative_provisional_and_quality_is_explicit() {
         ))
         .unwrap()
     );
+}
+
+#[test]
+fn auto_advice_prefers_an_eligible_gpu_over_an_otherwise_equal_cpu() {
+    let snapshot = resources();
+    let candidates = vec![BackendCandidate::cpu(), vulkan()];
+    let advice = recommend(&snapshot, &candidates, &[], Preference::Balanced, &[], 100);
+
+    let selected = &advice.decisions[advice.selected.unwrap()];
+    assert_eq!(selected.backend, BackendId::Vulkan);
+    assert!(selected.provisional);
+
+    let index = select_for_model(&advice, ModelId::Base).expect("Base is eligible");
+    assert_eq!(advice.decisions[index].backend, BackendId::Vulkan);
+    assert_eq!(advice.decisions[index].model, ModelId::Base);
+}
+
+#[test]
+fn auto_selection_has_no_choice_without_an_eligible_safe_decision() {
+    let snapshot = resources();
+    let candidates = vec![BackendCandidate::cpu()];
+    let mut advice = recommend(&snapshot, &candidates, &[], Preference::Balanced, &[], 100);
+    for decision in &mut advice.decisions {
+        decision.safe_to_load = false;
+    }
+    assert_eq!(select_for_model(&advice, ModelId::Base), None);
 }
 
 #[test]

@@ -93,9 +93,11 @@ Without a valid measurement, eligible Tiny/Base/Small suggestions are Low
 confidence and explicitly Provisional. Balanced prefers Tiny below four usable
 cores and Base otherwise. Quality prefers Small with sufficient resources and
 four usable cores, falling back to Base/Tiny. Unmeasured backends get no assumed
-GPU speed advantage; CPU wins equal provisional choices. Larger fitting models
-need an explicit performance check; fitting alone does not rank them first.
-The UI must not treat a larger model as guaranteed better transcription quality.
+GPU speed advantage, but Auto routes to the best eligible GPU: a safe non-CPU
+backend wins an otherwise equal provisional tie against CPU. Larger fitting
+models need an explicit performance check; fitting alone does not rank them
+first. The UI must not treat a larger model as guaranteed better transcription
+quality.
 
 Example snapshot (bytes; timestamp supplied by the caller):
 
@@ -117,6 +119,7 @@ Example snapshot (bytes; timestamp supplied by the caller):
 | Same, only 4 GiB available RAM | Small refused: needs 5.2 GiB including 3.2 GiB reserve; Base still fits |
 | Same, AMD Vulkan with 6 GiB dedicated VRAM, 2 GiB available | Small/GPU refused: 2.5 GiB needed including device headroom |
 | Same, NVIDIA CUDA with 6 GiB VRAM, 3 GiB available | Small/GPU fits provisionally; no offload or latency proof |
+| Same, eligible Vulkan/CUDA/Metal plus CPU, no measurements | The safe GPU wins the equal provisional tie; Auto routes to it |
 | 16 GiB unified total, 6 GiB host/shared available, 8 GiB working-set cap | Small fits once at 5.2 GiB including RAM reserve |
 | Same unified machine, only 4 GiB shared available | Small refused even if host RAM reports 6 GiB available |
 | GPU memory null, backend omitted, or CPU instructions incompatible | Insufficient data for unknown memory; unavailable/incompatible choices Not recommended |
