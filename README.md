@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="128" height="128" alt="Oxide logo" src="assets/brand/oxide/oxide-mark.svg" />
+  <img width="128" height="128" alt="Oxide logo" src="assets/brand/oxide/oxide-app-icon.svg" />
 </p>
 
 <h1 align="center">Oxide</h1>
