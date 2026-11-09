@@ -125,7 +125,8 @@ impl System for HostSystem {
     }
 
     fn open_url(&self, url: &str) {
-        // Core only passes https URLs it read from `gh`.
+        // Core passes only links it has checked: https GitHub pages and Project Service
+        // loopback URLs.
         #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open").arg(url).spawn();
 

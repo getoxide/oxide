@@ -271,6 +271,11 @@ export const commands = {
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
 	/**  Opens a GitHub link, such as a check's run, in the system browser. */
 	openLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_link", { url })),
+	/**
+	 *  Opens a localhost URL detected in a Project Service's log in the system browser. Only
+	 *  loopback `http` addresses are accepted; the webview never opens pages itself.
+	 */
+	openLocalUrl: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_local_url", { url })),
 	/**  Moves a pull request out of draft (`draft` false), or back into it. */
 	setPullRequestDraft: (projectId: number, number: number, draft: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_pull_request_draft", { projectId, number, draft })),
 	/**  Brings a pull request's branch up to date with its base. */

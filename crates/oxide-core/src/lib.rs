@@ -81,7 +81,7 @@ use oxide_provider::process::ProcessRegistry;
 pub use project_services::{
     EARLY_FAILURE_GRACE, LOG_CAPACITY, ProjectService, ProjectServiceEvent,
     ProjectServiceEventKind, ProjectServiceLogLine, ProjectServiceStatus, ProjectServiceStream,
-    detect_port, port_from_command,
+    checked_local_url, detect_port, port_from_command,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -2677,6 +2677,13 @@ impl Core {
     /// Empties a Project Service's log buffer; new output keeps streaming.
     pub fn clear_project_service_logs(&self, id: u32) -> Result<()> {
         self.project_services.clear_logs(id)
+    }
+
+    /// Opens a localhost URL detected in a Project Service's log in the system browser. Only
+    /// loopback `http` addresses are accepted; see [`checked_local_url`].
+    pub fn open_local_url(&self, url: &str) -> Result<()> {
+        self.activity.open_url(checked_local_url(url)?);
+        Ok(())
     }
 
     fn terminal(&self, id: u32) -> Result<Arc<TerminalSession>> {

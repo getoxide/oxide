@@ -3,8 +3,10 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { Channel } from "@tauri-apps/api/core";
 import { TerminalSurface } from "./TerminalSurface";
-import { closeTab, openTab, selectTab, setRunning, type TerminalCheckout, type TerminalsByProject } from "./terminalTabs";
+import { closeTab, openServiceTab, openTab, selectTab, setRunning, type TerminalCheckout, type TerminalsByProject } from "./terminalTabs";
+import type { ProjectService, ProjectServiceLogLine } from "./bindings";
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -27,17 +29,34 @@ const root = createRoot(container);
 
 const main: TerminalCheckout = { key: "1:main", threadId: null, rootPath: "/repo" };
 const feature: TerminalCheckout = { key: "1:5", threadId: 5, rootPath: "/repo-wt/feature" };
+const service: ProjectService = {
+  id: 9, projectId: 1, threadId: 5, command: "npm run dev", checkout: "/repo-wt/feature",
+  status: "running", pid: 900, port: 5173, url: "http://localhost:5173",
+  startedAt: "2026-01-01T00:00:00Z", exitCode: null,
+};
+const serviceLine = (seq: number, text: string): ProjectServiceLogLine =>
+  ({ seq, stream: "stdout", text, at: "2026-01-01T00:00:00Z" });
 
 let calls: { name: string; args: unknown }[] = [];
 let nextId = 1;
+let serviceChannel: Channel<ProjectServiceLogLine> | undefined;
 beforeEach(() => {
-  calls = []; nextId = 1;
+  calls = []; nextId = 1; serviceChannel = undefined;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
   mockIPC((name, args) => {
     calls.push({ name, args });
-    if (name === "start_block_terminal") return { id: nextId++ };
-    return null;
+    switch (name) {
+      case "start_block_terminal": return { id: nextId++ };
+      case "project_service": return service;
+      case "subscribe_project_service_logs":
+        serviceChannel = (args as { onLine: Channel<ProjectServiceLogLine> }).onLine;
+        return [serviceLine(0, "ready on http://localhost:5173")];
+      case "restart_project_service": return service;
+      case "stop_project_service": case "clear_project_service_logs": case "open_local_url": return null;
+      default: return null;
+    }
   });
 });
 afterEach(async () => { await act(async () => root.render(null)); clearMocks(); localStorage.clear(); vi.unstubAllGlobals(); });
@@ -45,7 +64,7 @@ afterEach(async () => { await act(async () => root.render(null)); clearMocks(); 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 const started = () => calls.filter((call) => call.name === "start_block_terminal");
 const closed = () => calls.filter((call) => call.name === "close_terminal").map((call) => (call.args as { terminalId: number }).terminalId);
-const click = (element: Element | null) => act(async () => { (element as HTMLElement).click(); });
+const click = (element: Element | null | undefined) => act(async () => { (element as HTMLElement).click(); });
 const tabs = () => Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
 
 /** The App's wiring in miniature: tab state lives outside the Surface, as it does in App. */
@@ -125,4 +144,55 @@ it("moves between tabs with the arrow keys", async () => {
   await act(async () => { list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); });
   expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
   expect(tabs().map((tab) => tab.tabIndex)).toEqual([-1, 0]);
+});
+
+it("shows a Project Service's log tab beside shells and switches between them", async () => {
+  const initial = openServiceTab(openTab({}, 1, main), 1, feature, 9);
+  await act(async () => root.render(<Harness initial={initial} checkout={feature} />));
+  await settle();
+  expect(tabs().map((tab) => tab.textContent)).toEqual(["repoother checkout", "npm run dev:5173"]);
+  expect(container.querySelector('[role="log"]')?.textContent).toContain("ready on http://localhost:5173");
+  expect(container.querySelector(".service-log-line")).not.toBeNull();
+
+  await click(tabs()[0]);
+  expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+  await click(tabs()[1]);
+  expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+  // Service-tab keyboard navigation reaches the shell and back.
+  const list = container.querySelector('[role="tablist"]')!;
+  await act(async () => { list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })); });
+  expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+});
+
+it("invokes Restart, Stop, Clear and Open in browser from a service tab", async () => {
+  const initial = openServiceTab({}, 1, feature, 9);
+  await act(async () => root.render(<Harness initial={initial} checkout={feature} />));
+  await settle();
+  const button = (text: string) => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((element) => element.textContent?.includes(text));
+  await click(button("Restart"));
+  await settle();
+  await click(button("Stop"));
+  await settle();
+  await click(button("Clear logs"));
+  await settle();
+  await click(button("Open http://localhost:5173"));
+  await settle();
+  expect(calls).toContainEqual({ name: "restart_project_service", args: { id: 9 } });
+  expect(calls).toContainEqual({ name: "stop_project_service", args: { id: 9 } });
+  expect(calls).toContainEqual({ name: "clear_project_service_logs", args: { id: 9 } });
+  expect(calls).toContainEqual({ name: "open_local_url", args: { url: "http://localhost:5173" } });
+  // Sending a live line keeps rendering after the actions.
+  await act(async () => { serviceChannel?.onmessage(serviceLine(1, "still streaming")); });
+  expect(container.querySelector('[role="log"]')?.textContent).toContain("still streaming");
+});
+
+it("closes a service log tab without stopping the service", async () => {
+  const initial = openServiceTab({}, 1, feature, 9);
+  await act(async () => root.render(<Harness initial={initial} checkout={feature} />));
+  await settle();
+  await click(container.querySelector('[aria-label="Close service npm run dev"]'));
+  await settle();
+  expect(tabs()).toHaveLength(0);
+  expect(calls.some((call) => call.name === "stop_project_service")).toBe(false);
+  expect(closed()).toEqual([]);
 });

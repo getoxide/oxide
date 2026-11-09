@@ -7,11 +7,22 @@ export interface TerminalCheckout {
   rootPath: string;
 }
 
-export interface TerminalTab extends TerminalCheckout {
+/** An interactive shell tab, the only kind that runs commands. */
+export interface ShellTab extends TerminalCheckout {
+  kind: "shell";
   id: number;
   /** The command a Command block is running now, if any. */
   running: string | null;
 }
+
+/** A read-only log view for one Project Service. Closing it never stops the service. */
+export interface ServiceTab extends TerminalCheckout {
+  kind: "service";
+  id: number;
+  serviceId: number;
+}
+
+export type TerminalTab = ShellTab | ServiceTab;
 
 export interface ProjectTerminals {
   tabs: TerminalTab[];
@@ -25,10 +36,29 @@ export const emptyTerminals: ProjectTerminals = { tabs: [], selectedId: null, ne
 
 const projectTerminals = (state: TerminalsByProject, projectId: number) => state[projectId] ?? emptyTerminals;
 
-/** Opens a tab in `checkout` and selects it. Only an explicit user action calls this. */
+const isShell = (tab: TerminalTab): tab is ShellTab => tab.kind === "shell";
+
+/** Opens a shell tab in `checkout` and selects it. Only an explicit user action calls this. */
 export function openTab(state: TerminalsByProject, projectId: number, checkout: TerminalCheckout): TerminalsByProject {
   const project = projectTerminals(state, projectId);
-  const tab: TerminalTab = { ...checkout, id: project.nextId, running: null };
+  const tab: ShellTab = { ...checkout, kind: "shell", id: project.nextId, running: null };
+  return { ...state, [projectId]: { tabs: [...project.tabs, tab], selectedId: tab.id, nextId: project.nextId + 1 } };
+}
+
+/**
+ * Opens the single log tab for a Project Service, or selects the one already open for it. The
+ * service's checkout identifies the tab even if the sidebar is clicked from another Thread.
+ */
+export function openServiceTab(
+  state: TerminalsByProject,
+  projectId: number,
+  checkout: TerminalCheckout,
+  serviceId: number,
+): TerminalsByProject {
+  const project = projectTerminals(state, projectId);
+  const existing = project.tabs.find((tab): tab is ServiceTab => tab.kind === "service" && tab.serviceId === serviceId);
+  if (existing) return selectTab(state, projectId, existing.id);
+  const tab: ServiceTab = { ...checkout, kind: "service", id: project.nextId, serviceId };
   return { ...state, [projectId]: { tabs: [...project.tabs, tab], selectedId: tab.id, nextId: project.nextId + 1 } };
 }
 
@@ -48,10 +78,11 @@ export function closeTab(state: TerminalsByProject, projectId: number, tabId: nu
   return { ...state, [projectId]: { ...project, tabs, selectedId } };
 }
 
+/** Only shells run commands; a service tab keeps its read-only log independent of a shell. */
 export function setRunning(state: TerminalsByProject, projectId: number, tabId: number, running: string | null): TerminalsByProject {
   const project = projectTerminals(state, projectId);
   const tab = project.tabs.find((candidate) => candidate.id === tabId);
-  if (!tab || tab.running === running) return state;
+  if (!tab || !isShell(tab) || tab.running === running) return state;
   return { ...state, [projectId]: { ...project, tabs: project.tabs.map((candidate) => candidate.id === tabId ? { ...candidate, running } : candidate) } };
 }
 
@@ -65,12 +96,12 @@ export function removeThreadTabs(state: TerminalsByProject, projectId: number, t
   return tabsOfThread(state, projectId, threadId).reduce((next, tab) => closeTab(next, projectId, tab.id), state);
 }
 
-/** Selects the Project's tab in `checkout`, opening one only when none exists there. */
+/** Selects the Project's shell tab in `checkout`, opening one only when none exists there. */
 export function focusCheckoutTab(state: TerminalsByProject, projectId: number, checkout: TerminalCheckout): TerminalsByProject {
   const existing = projectTerminals(state, projectId);
   const selected = existing.tabs.find((tab) => tab.id === existing.selectedId);
-  if (selected?.key === checkout.key) return state;
-  const match = existing.tabs.find((tab) => tab.key === checkout.key);
+  if (selected?.kind === "shell" && selected.key === checkout.key) return state;
+  const match = existing.tabs.find((tab) => tab.kind === "shell" && tab.key === checkout.key);
   return match ? selectTab(state, projectId, match.id) : openTab(state, projectId, checkout);
 }
 
@@ -88,7 +119,10 @@ export function isMismatched(tab: TerminalTab, selected: TerminalCheckout | null
   return selected !== null && tab.key !== selected.key;
 }
 
-/** What the delete confirmation says about the shells that deleting a worktree closes. */
+/**
+ * What the delete confirmation says about the shells that deleting a worktree closes. Service
+ * log tabs are views only, so they close without needing to be named as stopped work.
+ */
 export function describeAffectedTabs(tabs: TerminalTab[]): string[] {
-  return tabs.map((tab) => tab.running ? `Running “${tab.running}” in ${tab.rootPath}` : `Idle shell in ${tab.rootPath}`);
+  return tabs.filter(isShell).map((tab) => tab.running ? `Running “${tab.running}” in ${tab.rootPath}` : `Idle shell in ${tab.rootPath}`);
 }
