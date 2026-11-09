@@ -5,7 +5,8 @@ use crate::{
     ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
     CommandRecord, Detection, ItemKind, ModelInfo, PermissionMode, PromptSegment, Provider,
     ProviderCapabilities, ProviderError, ProviderEvent, StartContext, TurnStatus, UsageStatus,
-    UsageWindow, UsageWindowKind, attachment_marker, attachment_path_reference, render_prompt,
+    UsageWindow, UsageWindowKind, attachment_marker, attachment_path_reference,
+    is_background_command, render_prompt,
 };
 use crate::{SlashCommandInfo, SlashRoute};
 use crossbeam_channel::{Receiver, Sender};
@@ -526,6 +527,19 @@ impl ClaudeCodeProvider {
                                                         outcome: CommandOutcome::Unknown,
                                                         exit_code: None,
                                                     };
+                                                    // The full command is known now. If it starts
+                                                    // a server or watcher, tell Core before the CLI
+                                                    // runs it, so it can detach the service.
+                                                    if let Some(command) = record.line.as_deref()
+                                                        && is_background_command(command)
+                                                    {
+                                                        let _ = tx.send(
+                                                            ProviderEvent::CommandRequested {
+                                                                item_index: index,
+                                                                command: command.to_string(),
+                                                            },
+                                                        );
+                                                    }
                                                     let pending = PendingCommand {
                                                         item_index: index,
                                                         kind,

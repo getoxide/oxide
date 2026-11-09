@@ -244,6 +244,42 @@ for line in sys.stdin:
             })
             # Wait for turn/interrupt without sleeping
             send_msg({"method": "interrupt_ready", "params": {"threadId": t_id}})
+        elif "service_test" in prompt_text:
+            send_msg({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {"turn": {"id": "turn-1", "status": "inProgress"}}
+            })
+            send_msg({
+                "method": "turn/started",
+                "params": {
+                    "threadId": t_id,
+                    "turn": {"id": "turn-1", "status": "inProgress"}
+                }
+            })
+            for item in [
+                {"id": "item-cmd-service", "type": "commandExecution",
+                 "command": "npm run dev --port 5173",
+                 "aggregatedOutput": "", "status": "inProgress"},
+                {"id": "item-cmd-echo", "type": "commandExecution",
+                 "command": "echo hi",
+                 "aggregatedOutput": "hi", "status": "completed", "exitCode": 0},
+            ]:
+                send_msg({
+                    "method": "item/started",
+                    "params": {"threadId": t_id, "turnId": "turn-1", "item": item}
+                })
+                send_msg({
+                    "method": "item/completed",
+                    "params": {"threadId": t_id, "turnId": "turn-1", "item": item}
+                })
+            send_msg({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": t_id,
+                    "turn": {"id": "turn-1", "status": "completed"}
+                }
+            })
         elif "commands_contract" in prompt_text:
             send_msg({
                 "jsonrpc": "2.0",

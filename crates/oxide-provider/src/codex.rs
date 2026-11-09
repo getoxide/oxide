@@ -6,7 +6,7 @@ use crate::{
     CommandRecord, Detection, ItemKind, ModelInfo, PermissionMode, PromptSegment, Provider,
     ProviderCapabilities, ProviderError, ProviderEvent, SlashCommandInfo, SlashRoute, StartContext,
     TurnStatus, UsageStatus, UsageWindow, UsageWindowKind, attachment_marker,
-    attachment_path_reference, render_prompt,
+    attachment_path_reference, is_background_command, render_prompt,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -435,6 +435,22 @@ impl CodexAppServer {
                                     category: codex_category(kind),
                                 },
                             );
+
+                            // The command is known before it runs. If it starts a server or
+                            // watcher, Core can detach it instead of waiting for it to exit.
+                            if itype == "commandExecution"
+                                && let Some(command) = item.get("command").and_then(|s| s.as_str())
+                                && is_background_command(command)
+                            {
+                                dispatch_to_thread(
+                                    &threads_clone,
+                                    thread_id.as_deref(),
+                                    ProviderEvent::CommandRequested {
+                                        item_index: idx,
+                                        command: command.to_string(),
+                                    },
+                                );
+                            }
                         }
                         "item/agentMessage/delta"
                         | "item/reasoning/textDelta"
