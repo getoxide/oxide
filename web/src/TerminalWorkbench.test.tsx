@@ -80,7 +80,10 @@ async function openShell() {
 }
 
 /** A shell whose `start_project_service` result the caller controls. */
-async function openServiceShell(service: () => unknown) {
+async function openServiceShell(
+  service: () => unknown,
+  onServiceConflict?: (conflict: unknown) => void,
+) {
   const calls: { name: string; args: unknown }[] = [];
   mockIPC((name, args) => {
     calls.push({ name, args });
@@ -88,7 +91,7 @@ async function openServiceShell(service: () => unknown) {
     if (name === "start_project_service") return service();
     return null;
   });
-  await act(async () => root.render(<TerminalWorkbench projectId={1} threadId={null} rootPath="/test" contextKey="1" visible queuedCommand={null} onCommandConsumed={() => {}} />));
+  await act(async () => root.render(<TerminalWorkbench projectId={1} threadId={null} rootPath="/test" contextKey="1" visible queuedCommand={null} onCommandConsumed={() => {}} onServiceConflict={onServiceConflict} />));
   return {
     calls,
     names: () => calls.map((call) => call.name),
@@ -232,17 +235,20 @@ it("renders only the command and its status: no cwd, Copy, Reuse or Collapse", a
 
 it("detaches a recognised server into a Project Service and frees the prompt", async () => {
   const shell = await openServiceShell(() => ({
-    id: 9,
-    projectId: 1,
-    threadId: null,
-    command: "npm run dev",
-    checkout: "/test",
-    status: "running",
-    pid: 4242,
-    port: 5173,
-    url: "http://localhost:5173",
-    startedAt: "2026-01-01T00:00:00Z",
-    exitCode: null,
+    outcome: "started",
+    payload: {
+      id: 9,
+      projectId: 1,
+      threadId: null,
+      command: "npm run dev",
+      checkout: "/test",
+      status: "running",
+      pid: 4242,
+      port: 5173,
+      url: "http://localhost:5173",
+      startedAt: "2026-01-01T00:00:00Z",
+      exitCode: null,
+    },
   }));
 
   await shell.submit("npm run dev");
@@ -287,19 +293,64 @@ it("keeps an early service failure inline in its command block", async () => {
   ]);
 });
 
+it("shows a port conflict inline and reports it without starting a second process", async () => {
+  const conflicts: unknown[] = [];
+  const shell = await openServiceShell(
+    () => ({
+      outcome: "conflict",
+      payload: {
+        port: 5173,
+        existing: {
+          id: 9,
+          projectId: 1,
+          threadId: null,
+          command: "npm run dev",
+          checkout: "/test",
+          status: "running",
+          pid: 4242,
+          port: 5173,
+          url: "http://localhost:5173",
+          startedAt: "2026-01-01T00:00:00Z",
+          exitCode: null,
+        },
+        message: "Port 5173 is already used by Project Service 'npm run dev' (PID 4242)",
+      },
+    }),
+    (conflict) => conflicts.push(conflict),
+  );
+
+  await shell.submit("npm run dev");
+
+  const output = writes.join("");
+  expect(output).toContain(
+    "Port 5173 is already used by Project Service 'npm run dev' (PID 4242)",
+  );
+  // The conflicting command never reaches the PTY, and Core is asked exactly once (and refused).
+  expect(shell.names()).not.toContain("run_terminal_block");
+  expect(shell.names().filter((name) => name === "start_project_service")).toHaveLength(1);
+  expect(conflicts).toHaveLength(1);
+  expect(conflicts[0]).toMatchObject({ port: 5173, existing: { id: 9 } });
+  const [block] = blocks();
+  expect(block.classList.contains("running")).toBe(false);
+  expect(container.querySelector("textarea")).not.toBeNull();
+});
+
 it("detaches a trailing ampersand command without passing the ampersand to the service", async () => {
   const shell = await openServiceShell(() => ({
-    id: 10,
-    projectId: 1,
-    threadId: null,
-    command: "sleep 300",
-    checkout: "/test",
-    status: "running",
-    pid: 999,
-    port: null,
-    url: null,
-    startedAt: "2026-01-01T00:00:00Z",
-    exitCode: null,
+    outcome: "started",
+    payload: {
+      id: 10,
+      projectId: 1,
+      threadId: null,
+      command: "sleep 300",
+      checkout: "/test",
+      status: "running",
+      pid: 999,
+      port: null,
+      url: null,
+      startedAt: "2026-01-01T00:00:00Z",
+      exitCode: null,
+    },
   }));
 
   await shell.submit("sleep 300 &");
@@ -329,17 +380,20 @@ it("detaches a queued setup command through the same interception", async () => 
     if (name === "start_block_terminal") return { id: 1 };
     if (name === "start_project_service")
       return {
-        id: 11,
-        projectId: 1,
-        threadId: 2,
-        command: "pnpm dev",
-        checkout: "/test",
-        status: "running",
-        pid: 321,
-        port: 3000,
-        url: "http://localhost:3000",
-        startedAt: "2026-01-01T00:00:00Z",
-        exitCode: null,
+        outcome: "started",
+        payload: {
+          id: 11,
+          projectId: 1,
+          threadId: 2,
+          command: "pnpm dev",
+          checkout: "/test",
+          status: "running",
+          pid: 321,
+          port: 3000,
+          url: "http://localhost:3000",
+          startedAt: "2026-01-01T00:00:00Z",
+          exitCode: null,
+        },
       };
     return null;
   });

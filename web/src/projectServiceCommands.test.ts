@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backgroundCommand } from "./projectServiceCommands";
+import { backgroundCommand, portInCommand } from "./projectServiceCommands";
 
 const detached = (command: string) => ({ command, explicit: false });
 
@@ -79,5 +79,32 @@ describe("backgroundCommand", () => {
 
   it("ignores an empty command", () => {
     expect(backgroundCommand("   ")).toBeNull();
+  });
+});
+
+describe("portInCommand", () => {
+  // Keep this table aligned with oxide-provider's service_command tests and Core's
+  // port_from_command: the three paths must agree on which commands can be checked pre-spawn.
+  it.each([
+    ["npm run dev --port 3000", 3000],
+    ["vite --port=5173", 5173],
+    ["serve -p 8080", 8080],
+    ["serve -p=8081", 8081],
+    ["PORT=4000 node server.js", 4000],
+    ["python3 -m http.server 8000", 8000],
+    ["python -m http.server 8000 --bind 127.0.0.1", 8000],
+  ])("reads %s as port %i", (command, port) => {
+    expect(portInCommand(command)).toBe(port);
+  });
+
+  it.each([
+    "npm run dev",
+    "python3 -m http.server",
+    "echo -p",
+    "sleep -p 1.5",
+    "node server.js --port",
+    "node server.js --port=abc",
+  ])("reports no port for %s", (command) => {
+    expect(portInCommand(command)).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ use oxide_provider::process::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read};
+use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -74,6 +75,27 @@ pub struct ProjectServiceLogLine {
     pub stream: ProjectServiceStream,
     pub text: String,
     pub at: String,
+}
+
+/// The result of asking for a Project Service to start.
+///
+/// A port conflict is a normal outcome, not an error: the frontend branches on `outcome` and an
+/// agent Turn can report it and finish, rather than parsing prose out of an error message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "payload", rename_all = "camelCase")]
+pub enum ProjectServiceStartOutcome {
+    Started(ProjectService),
+    Conflict(ProjectServiceConflict),
+}
+
+/// Why a Project Service could not start: its target port was already taken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectServiceConflict {
+    pub port: u16,
+    /// The live Oxide-managed incumbent, when the port belongs to a Project Service.
+    pub existing: Option<ProjectService>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,14 +288,22 @@ impl ProjectServices {
         command: &str,
         checkout: &str,
         registry: Arc<ProcessRegistry>,
-    ) -> Result<ProjectService> {
+    ) -> Result<ProjectServiceStartOutcome> {
         if command.trim().is_empty() {
             return Err(Error::ProjectService(
                 "A Project Service needs a command.".into(),
             ));
         }
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let port = port_from_command(command);
+        // Check before allocating or spawning anything: a conflict must not leave a child, a
+        // registry entry or a service record behind. A port that only the output reveals cannot
+        // be checked here; that detection stays post-spawn.
+        if let Some(port) = port
+            && let Some(conflict) = self.conflict_on_port(port, None)
+        {
+            return Ok(ProjectServiceStartOutcome::Conflict(conflict));
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let service = Arc::new(Service {
             state: Mutex::new(ServiceState {
                 summary: ProjectService {
@@ -313,7 +343,7 @@ impl ProjectServices {
         match wait_for_startup(&service) {
             Ok(()) => {
                 service.emit(ProjectServiceEventKind::Started);
-                Ok(service.summary())
+                Ok(ProjectServiceStartOutcome::Started(service.summary()))
             }
             Err(_) => {
                 let error = startup_error(&service);
@@ -343,6 +373,53 @@ impl ProjectServices {
 
     pub fn service(&self, id: u32) -> Option<ProjectService> {
         self.get(id).map(|service| service.summary())
+    }
+
+    /// A conflict if `port` belongs to a live Project Service in any Project, or to another
+    /// process. `excluding` lets a restart ignore the service it is restarting.
+    fn conflict_on_port(
+        &self,
+        port: u16,
+        excluding: Option<u32>,
+    ) -> Option<ProjectServiceConflict> {
+        if let Some(existing) = self.live_service_on_port(port, excluding) {
+            return Some(ProjectServiceConflict {
+                port,
+                message: format!(
+                    "Port {port} is already used by Project Service '{}' (PID {})",
+                    existing.command, existing.pid
+                ),
+                existing: Some(existing),
+            });
+        }
+        if !port_available(port) {
+            return Some(ProjectServiceConflict {
+                port,
+                existing: None,
+                message: format!("Port {port} is already in use by another process"),
+            });
+        }
+        None
+    }
+
+    /// The live Project Service holding `port` across every Project, not just one.
+    fn live_service_on_port(&self, port: u16, excluding: Option<u32>) -> Option<ProjectService> {
+        let services: Vec<_> = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .services
+            .values()
+            .cloned()
+            .collect();
+        services
+            .into_iter()
+            .map(|service| service.summary())
+            .find(|summary| {
+                Some(summary.id) != excluding
+                    && summary.status == ProjectServiceStatus::Running
+                    && summary.port == Some(port)
+            })
     }
 
     pub fn subscribe_logs(
@@ -396,23 +473,35 @@ impl ProjectServices {
         });
     }
 
-    pub fn restart(&self, id: u32) -> Result<ProjectService> {
+    pub fn restart(&self, id: u32) -> Result<ProjectServiceStartOutcome> {
         let service = self
             .get(id)
             .ok_or_else(|| Error::ProjectService(format!("unknown Project Service {id}")))?;
         service.stop();
-        {
+        let port = {
             let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
             state.logs.clear();
             state.reaped = false;
             state.stop_requested = false;
             state.announced = false;
-            state.summary.status = ProjectServiceStatus::Running;
             state.summary.exit_code = None;
             state.summary.started_at = now_rfc3339();
             let port = port_from_command(&state.summary.command);
             state.summary.port = port;
             state.summary.url = port.map(|port| format!("http://localhost:{port}"));
+            port
+        };
+        // The service is stopped by now, so its own record cannot be the incumbent: exclude it
+        // explicitly anyway, in case the supervisor has not published the stop yet.
+        if let Some(port) = port
+            && let Some(conflict) = self.conflict_on_port(port, Some(id))
+        {
+            // Leave it stopped: the caller can switch to the incumbent or choose another port.
+            return Ok(ProjectServiceStartOutcome::Conflict(conflict));
+        }
+        {
+            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.summary.status = ProjectServiceStatus::Running;
         }
         if let Err(error) = launch(&service) {
             let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -425,7 +514,7 @@ impl ProjectServices {
         match wait_for_startup(&service) {
             Ok(()) => {
                 service.emit(ProjectServiceEventKind::Started);
-                Ok(service.summary())
+                Ok(ProjectServiceStartOutcome::Started(service.summary()))
             }
             Err(_) => Err(startup_error(&service)),
         }
@@ -472,6 +561,17 @@ impl ProjectServices {
             service.emit(ProjectServiceEventKind::Removed);
         }
     }
+}
+
+/// Whether nothing is listening on `port` on loopback or the wildcard address. The probes are
+/// released immediately: a conflicting check only needs the bind to fail.
+fn port_available(port: u16) -> bool {
+    let loopback = TcpListener::bind(("127.0.0.1", port));
+    if loopback.is_err() {
+        return false;
+    }
+    drop(loopback);
+    TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
 
 fn launch(service: &Arc<Service>) -> Result<()> {
@@ -696,38 +796,12 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year + i64::from(month <= 2), month, day)
 }
 
-/// The port a Project Service command line asks for (`--port N`, `--port=N`, `-p N`, `PORT=N`).
-/// Reusable by the terminal and agent interception paths.
+/// The port a Project Service command line asks for (`--port N`, `--port=N`, `-p N`, `-p=N`,
+/// `PORT=N`, or the positional port of `python -m http.server PORT`). Reusable by the terminal
+/// and agent interception paths; the accepted syntax lives in
+/// [`oxide_provider::port_in_command`] so the Rust paths cannot drift.
 pub fn port_from_command(command: &str) -> Option<u16> {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let mut index = 0;
-    while index < tokens.len() {
-        let token = tokens[index].trim_matches(|character: char| {
-            matches!(
-                character,
-                '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ';' | ','
-            )
-        });
-        if let Some(value) = token
-            .strip_prefix("--port=")
-            .or_else(|| token.strip_prefix("-p="))
-        {
-            if let Some(port) = parse_port(value) {
-                return Some(port);
-            }
-        } else if let Some(value) = token.strip_prefix("PORT=") {
-            if let Some(port) = parse_port(value) {
-                return Some(port);
-            }
-        } else if (token == "--port" || token == "-p")
-            && let Some(value) = tokens.get(index + 1)
-            && let Some(port) = parse_port(value)
-        {
-            return Some(port);
-        }
-        index += 1;
-    }
-    None
+    oxide_provider::port_in_command(command)
 }
 
 /// A localhost port mentioned in a service's output (`http://localhost:PORT`,
@@ -769,15 +843,6 @@ pub fn detect_port(text: &str) -> Option<u16> {
 
 fn parse_port_prefix(text: &str) -> Option<u16> {
     let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let value: u32 = digits.parse().ok()?;
-    (1..=65_535).contains(&value).then_some(value as u16)
-}
-
-fn parse_port(raw: &str) -> Option<u16> {
-    let digits = raw.trim_matches(|c: char| !c.is_ascii_digit());
     if digits.is_empty() {
         return None;
     }
@@ -841,6 +906,7 @@ mod tests {
         assert_eq!(port_from_command("vite --port=5173"), Some(5173));
         assert_eq!(port_from_command("serve -p 8080"), Some(8080));
         assert_eq!(port_from_command("PORT=4000 node server.js"), Some(4000));
+        assert_eq!(port_from_command("python3 -m http.server 8000"), Some(8000));
         assert_eq!(port_from_command("npm run dev"), None);
         assert_eq!(port_from_command("echo -p"), None);
     }

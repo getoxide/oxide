@@ -14,7 +14,9 @@ use crate::activity::Activity;
 use crate::checkpoint::{self, Phase};
 use crate::clock::{Clock, PROVIDER_IDLE_TIMEOUT};
 use crate::error::{Error, Result};
-use crate::project_services::ProjectServices;
+use crate::project_services::{
+    ProjectServiceConflict, ProjectServiceStartOutcome, ProjectServices,
+};
 use crate::storage_actor::{NewItem, StorageHandle};
 use crate::thread::{
     DebugSequencedThreadEvent, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
@@ -675,7 +677,7 @@ fn handle_command_requested(
     );
 
     match started {
-        Ok(service) => {
+        Ok(ProjectServiceStartOutcome::Started(service)) => {
             let notice = service_notice(&command, service.pid, service.port);
             state.flush_pending_deltas();
             if let Some(turn_id) = state.current_turn_id() {
@@ -702,6 +704,35 @@ fn handle_command_requested(
             let _ = provider.interrupt();
             finish_turn(state, storage, TurnStatus::Completed, None, None);
         }
+        Ok(ProjectServiceStartOutcome::Conflict(conflict)) => {
+            // A conflict is a normal outcome: the incumbent keeps running and the agent gets a
+            // notice it can act on. Finishing as `Error` would hide the reusable service.
+            let notice = conflict_notice(&conflict);
+            state.flush_pending_deltas();
+            if let Some(turn_id) = state.current_turn_id() {
+                let record = CommandRecord::reported(&command, CommandOutcome::Succeeded, Some(0));
+                let _ = storage.write_item_completed(NewItem {
+                    turn_id,
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice.clone(),
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record.clone()),
+                });
+                state.broadcast(ThreadEvent::ItemCompleted {
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice,
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record),
+                });
+            }
+            // Stop the Provider's own copy too: it would only collide with the incumbent.
+            let _ = provider.interrupt();
+            finish_turn(state, storage, TurnStatus::Completed, None, None);
+        }
         Err(error) => {
             // A crash during startup is a real Turn error, not something to retry in the CLI.
             if let Some(turn) = state.current_turn.as_mut() {
@@ -710,6 +741,27 @@ fn handle_command_requested(
             let _ = provider.interrupt();
             finish_turn(state, storage, TurnStatus::Error, None, None);
         }
+    }
+}
+
+/// The notice an agent reads when its server command lost the port race. It names the incumbent
+/// so the model can reuse or restart it instead of starting a second process.
+fn conflict_notice(conflict: &ProjectServiceConflict) -> String {
+    match &conflict.existing {
+        Some(existing) => {
+            let url = existing
+                .url
+                .clone()
+                .unwrap_or_else(|| format!("http://localhost:{}", conflict.port));
+            format!(
+                "[Oxide] Port {} is already used by Project Service '{}' (PID {}, {url}). Reuse that service or restart it instead of starting another.",
+                conflict.port, existing.command, existing.pid
+            )
+        }
+        None => format!(
+            "[Oxide] Port {} is already in use by another process. Start the server on a different port.",
+            conflict.port
+        ),
     }
 }
 

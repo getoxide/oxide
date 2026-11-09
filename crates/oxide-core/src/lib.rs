@@ -79,9 +79,9 @@ pub use line_comments::{
 use oxide_provider::Provider as ProviderTrait;
 use oxide_provider::process::ProcessRegistry;
 pub use project_services::{
-    EARLY_FAILURE_GRACE, LOG_CAPACITY, ProjectService, ProjectServiceEvent,
-    ProjectServiceEventKind, ProjectServiceLogLine, ProjectServiceStatus, ProjectServiceStream,
-    checked_local_url, detect_port, port_from_command,
+    EARLY_FAILURE_GRACE, LOG_CAPACITY, ProjectService, ProjectServiceConflict, ProjectServiceEvent,
+    ProjectServiceEventKind, ProjectServiceLogLine, ProjectServiceStartOutcome,
+    ProjectServiceStatus, ProjectServiceStream, checked_local_url, detect_port, port_from_command,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -2626,7 +2626,7 @@ impl Core {
         project_id: u32,
         thread_id: Option<u32>,
         command: &str,
-    ) -> Result<ProjectService> {
+    ) -> Result<ProjectServiceStartOutcome> {
         let checkout = self.checkout_path(project_id, thread_id)?;
         self.project_services.start(
             project_id,
@@ -2673,7 +2673,7 @@ impl Core {
 
     /// Stops a Project Service and starts the same command in the same checkout again, reusing
     /// its id so the log tab keeps its identity.
-    pub fn restart_project_service(&self, id: u32) -> Result<ProjectService> {
+    pub fn restart_project_service(&self, id: u32) -> Result<ProjectServiceStartOutcome> {
         self.project_services.restart(id)
     }
 

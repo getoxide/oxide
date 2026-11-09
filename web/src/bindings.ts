@@ -47,7 +47,7 @@ export const commands = {
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
 	/**  Starts `command` as a Project Service in the Project's (or Thread's) checkout. */
-	startProjectService: (projectId: number, threadId: number | null, command: string) => typedError<ProjectService_Serialize, AppError>(__TAURI_INVOKE("start_project_service", { projectId, threadId, command })),
+	startProjectService: (projectId: number, threadId: number | null, command: string) => typedError<ProjectServiceStartOutcome_Serialize, AppError>(__TAURI_INVOKE("start_project_service", { projectId, threadId, command })),
 	/**  The running Project Services of a Project. */
 	listProjectServices: (projectId: number) => typedError<ProjectService_Serialize[], AppError>(__TAURI_INVOKE("list_project_services", { projectId })),
 	/**  One Project Service, including one that has stopped or failed. */
@@ -55,7 +55,7 @@ export const commands = {
 	/**  Stops a Project Service, sending SIGTERM and then SIGKILL. */
 	stopProjectService: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_project_service", { id })),
 	/**  Stops and restarts a Project Service, reusing its id. */
-	restartProjectService: (id: number) => typedError<ProjectService_Serialize, AppError>(__TAURI_INVOKE("restart_project_service", { id })),
+	restartProjectService: (id: number) => typedError<ProjectServiceStartOutcome_Serialize, AppError>(__TAURI_INVOKE("restart_project_service", { id })),
 	/**  Empties a Project Service's log buffer. */
 	clearProjectServiceLogs: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("clear_project_service_logs", { id })),
 	/**  A Project Service's buffered log, then every new line on `on_line`. */
@@ -1469,6 +1469,23 @@ export type Project = {
 /**  A long-running background process owned by a Project. */
 export type ProjectService = ProjectService_Serialize | ProjectService_Deserialize;
 
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict = ProjectServiceConflict_Serialize | ProjectServiceConflict_Deserialize;
+
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict_Deserialize = {
+	port: number,
+	existing?: ProjectService_Deserialize | null,
+	message: string,
+};
+
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict_Serialize = {
+	port: number,
+	existing: ProjectService_Serialize | null,
+	message: string,
+};
+
 /**  One line of a Project Service's output. */
 export type ProjectServiceLogLine = {
 	seq: number,
@@ -1476,6 +1493,15 @@ export type ProjectServiceLogLine = {
 	text: string,
 	at: string,
 };
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome = ProjectServiceStartOutcome_Serialize | ProjectServiceStartOutcome_Deserialize;
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome_Deserialize = { outcome: "started"; payload: ProjectService_Deserialize } | { outcome: "conflict"; payload: ProjectServiceConflict_Deserialize };
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome_Serialize = { outcome: "started"; payload: ProjectService_Serialize } | { outcome: "conflict"; payload: ProjectServiceConflict_Serialize };
 
 export type ProjectServiceStatus = "running" | "stopped" | "failed";
 
