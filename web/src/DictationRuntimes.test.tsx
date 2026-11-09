@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import { listen } from "@tauri-apps/api/event";
 import { commands, type RuntimeCatalogue_Serialize as RuntimeCatalogue } from "./bindings";
 import { DictationRuntimes, isNewer } from "./DictationRuntimes";
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
@@ -47,6 +48,19 @@ it("offers an update only when the index has a newer version, and removes", asyn
   expect(changed).toHaveBeenCalled();
 });
 
+it("updates an installed older version when the update action is clicked", async () => {
+  const installed = { backend: "vulkan", version: "1.0.0", protocolVersion: 1, compatible: true, bytes: 1048576 } as const;
+  await setup({ ...empty, installed: [installed], available: [vulkan] });
+  const install = vi.spyOn(commands, "dictationRuntimeInstall").mockResolvedValue({
+    status: "ok",
+    data: { backend: "vulkan", version: "1.1.0", protocolVersion: 1, compatible: true, bytes: 1 },
+  });
+  await act(async () => button("Update Vulkan runtime")!.click());
+  expect(install).toHaveBeenCalledWith("vulkan");
+  expect(changed).toHaveBeenCalledOnce();
+  expect(host.textContent).toContain("updated");
+});
+
 it("does not offer an update when the installed version is current", async () => {
   await setup({ ...empty, installed: [{ backend: "vulkan", version: "1.1.0", protocolVersion: 1, compatible: true, bytes: 1 }], available: [vulkan] });
   expect(button("Update Vulkan runtime")).toBeUndefined();
@@ -71,13 +85,23 @@ it("shows hash, signature or protocol failures and keeps CPU usable", async () =
   expect(changed).not.toHaveBeenCalled();
 });
 
-it("shows progress, cancels, and reports cancellation as a notice", async () => {
+it("shows progress from the event payload, cancels, and reports cancellation as a notice", async () => {
+  type Progress = { backend: "vulkan" | "cuda"; received: number; total: number };
+  let emit!: (event: { payload: Progress }) => void;
+  vi.mocked(listen).mockImplementation((_event, handler) => {
+    emit = handler as unknown as typeof emit;
+    return Promise.resolve(() => {});
+  });
   await setup({ ...empty, available: [vulkan] });
   let fail!: (v: { status: "error"; error: { message: string } }) => void;
   vi.spyOn(commands, "dictationRuntimeInstall").mockImplementation(() => new Promise(resolve => { fail = resolve; }));
   const cancel = vi.spyOn(commands, "dictationRuntimeCancel").mockResolvedValue(undefined);
   await act(async () => button("Install Vulkan runtime")!.click());
   expect(host.querySelector("progress")).not.toBeNull();
+  await act(async () => emit({ payload: { backend: "vulkan", received: 5242880, total: 52428800 } }));
+  const bar = host.querySelector("progress")!;
+  expect(bar.max).toBe(52428800);
+  expect(bar.value).toBe(5242880);
   await act(async () => button("Cancel Vulkan runtime download")!.click());
   expect(cancel).toHaveBeenCalledWith("vulkan");
   await act(async () => fail({ status: "error", error: { message: "Runtime download cancelled" } }));

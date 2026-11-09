@@ -6,7 +6,10 @@ use sha2::{Digest, Sha256};
 use std::{
     io::{Cursor, Read, Write},
     path::Path,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 fn sha(bytes: &[u8]) -> String {
@@ -133,6 +136,164 @@ fn leftovers(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A package big enough that the downloader needs several 64 KiB reads.
+fn large_package(version: &str) -> Vec<u8> {
+    let worker = vec![0x5a; 160 * 1024];
+    let manifest = serde_json::json!({
+        "backend": "vulkan", "version": version, "protocolVersion": PROTOCOL_VERSION,
+        "worker": "oxide-worker",
+        "files": {"oxide-worker": sha(&worker)},
+    });
+    let mut buf = Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(&mut buf);
+    let opts = zip::write::SimpleFileOptions::default();
+    for (name, body) in [
+        ("manifest.json", serde_json::to_vec(&manifest).unwrap()),
+        ("oxide-worker", worker),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(&body).unwrap();
+    }
+    zip.finish().unwrap();
+    buf.into_inner()
+}
+
+fn setup_for(version: &str, pkg: Vec<u8>) -> RuntimeManager {
+    let keys = keys();
+    let index = serde_json::to_vec(&RuntimeIndex {
+        version: 1,
+        runtimes: vec![RuntimeEntry {
+            backend: BackendId::Vulkan,
+            version: version.into(),
+            protocol_version: PROTOCOL_VERSION,
+            platform: runtimes::platform(),
+            url: "https://example.invalid/vulkan.zip".into(),
+            bytes: pkg.len() as u64,
+            sha256: sha(&pkg),
+            requirements: String::new(),
+        }],
+    })
+    .unwrap();
+    let signature = sign(&keys, &index);
+    RuntimeManager::new(
+        Box::new(Fake {
+            index,
+            signature,
+            package: pkg,
+        }),
+        keys.public,
+    )
+}
+
+/// Downloads its first chunk, then asks the installer to stop.
+struct CancellingSource {
+    index: Vec<u8>,
+    signature: String,
+    package: Vec<u8>,
+}
+
+struct CancelAfterFirstRead {
+    inner: Cursor<Vec<u8>>,
+    cancelled: Arc<AtomicBool>,
+    reads: usize,
+}
+
+impl Read for CancelAfterFirstRead {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.reads += 1;
+        if self.reads == 1 {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+        Ok(n)
+    }
+}
+
+impl RuntimeSource for CancellingSource {
+    fn index(&self) -> oxide_core::Result<(Vec<u8>, String)> {
+        Ok((self.index.clone(), self.signature.clone()))
+    }
+    fn open(
+        &self,
+        _: &RuntimeEntry,
+        cancelled: Arc<AtomicBool>,
+    ) -> oxide_core::Result<Box<dyn Read + Send>> {
+        Ok(Box::new(CancelAfterFirstRead {
+            inner: Cursor::new(self.package.clone()),
+            cancelled,
+            reads: 0,
+        }))
+    }
+}
+
+/// A source that refuses to be opened, so a cancelled install must not reach it.
+struct UnopenableSource {
+    index: Vec<u8>,
+    signature: String,
+}
+
+impl RuntimeSource for UnopenableSource {
+    fn index(&self) -> oxide_core::Result<(Vec<u8>, String)> {
+        Ok((self.index.clone(), self.signature.clone()))
+    }
+    fn open(
+        &self,
+        _: &RuntimeEntry,
+        _: Arc<AtomicBool>,
+    ) -> oxide_core::Result<Box<dyn Read + Send>> {
+        Err(oxide_core::Error::Dictation(
+            "the download source was opened".into(),
+        ))
+    }
+}
+
+fn unopenable_manager(version: &str, pkg: Vec<u8>) -> RuntimeManager {
+    let keys = keys();
+    let index = serde_json::to_vec(&RuntimeIndex {
+        version: 1,
+        runtimes: vec![RuntimeEntry {
+            backend: BackendId::Vulkan,
+            version: version.into(),
+            protocol_version: PROTOCOL_VERSION,
+            platform: runtimes::platform(),
+            url: "https://example.invalid/vulkan.zip".into(),
+            bytes: pkg.len() as u64,
+            sha256: sha(&pkg),
+            requirements: String::new(),
+        }],
+    })
+    .unwrap();
+    let signature = sign(&keys, &index);
+    RuntimeManager::new(Box::new(UnopenableSource { index, signature }), keys.public)
+}
+
+fn cancelling_manager(version: &str, pkg: Vec<u8>) -> RuntimeManager {
+    let keys = keys();
+    let index = serde_json::to_vec(&RuntimeIndex {
+        version: 1,
+        runtimes: vec![RuntimeEntry {
+            backend: BackendId::Vulkan,
+            version: version.into(),
+            protocol_version: PROTOCOL_VERSION,
+            platform: runtimes::platform(),
+            url: "https://example.invalid/vulkan.zip".into(),
+            bytes: pkg.len() as u64,
+            sha256: sha(&pkg),
+            requirements: String::new(),
+        }],
+    })
+    .unwrap();
+    let signature = sign(&keys, &index);
+    RuntimeManager::new(
+        Box::new(CancellingSource {
+            index,
+            signature,
+            package: pkg,
+        }),
+        keys.public,
+    )
+}
+
 #[test]
 fn installs_verified_package_and_finds_worker() {
     let dir = tempfile::tempdir().unwrap();
@@ -224,9 +385,11 @@ fn rejects_incompatible_protocol_in_package_and_index() {
             .to_string()
             .contains("protocol")
     );
+    assert!(leftovers(dir.path()).is_empty());
     let (m, _) = setup(package("vulkan", "1.0.0", 99, false, None), 99, None);
     assert!(m.available().unwrap().is_empty());
     assert!(install(&m, dir.path()).is_err());
+    assert!(leftovers(dir.path()).is_empty());
 }
 
 #[test]
@@ -285,6 +448,95 @@ fn reinstall_replaces_existing_version() {
     install(&m, dir.path()).unwrap();
     install(&m, dir.path()).unwrap();
     assert_eq!(runtimes::list(dir.path()).len(), 1);
+}
+
+#[test]
+fn install_reports_monotonic_byte_progress_ending_at_the_package_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = large_package("1.0.0");
+    let size = pkg.len() as u64;
+    let m = setup_for("1.0.0", pkg);
+    let seen = std::cell::RefCell::new(Vec::new());
+    m.install(
+        dir.path(),
+        BackendId::Vulkan,
+        Default::default(),
+        |received, total| {
+            seen.borrow_mut().push((received, total));
+        },
+    )
+    .unwrap();
+    let seen = seen.into_inner();
+    assert!(
+        seen.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "progress must only move forward: {seen:?}"
+    );
+    assert_eq!(seen.last(), Some(&(size, size)));
+}
+
+#[test]
+fn cancelling_a_download_leaves_no_staging_and_keeps_the_previous_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = setup_for(
+        "1.0.0",
+        package("vulkan", "1.0.0", PROTOCOL_VERSION, false, None),
+    );
+    let installed = install(&first, dir.path()).unwrap();
+
+    let m = cancelling_manager(
+        "1.1.0",
+        package("vulkan", "1.1.0", PROTOCOL_VERSION, false, None),
+    );
+    let e = m
+        .install(dir.path(), BackendId::Vulkan, Default::default(), |_, _| {})
+        .unwrap_err()
+        .to_string();
+    assert!(e.to_lowercase().contains("cancel"), "{e}");
+
+    assert!(!dir.path().join("vulkan/1.1.0").exists());
+    assert_eq!(leftovers(dir.path()), ["vulkan"]);
+    let listed = runtimes::list(dir.path());
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].version, "1.0.0");
+    assert_eq!(
+        runtimes::find_worker(dir.path(), BackendId::Vulkan),
+        Some(installed.worker.clone())
+    );
+    assert!(installed.worker.is_file());
+}
+
+#[test]
+fn a_pre_cancelled_install_does_not_touch_the_source_or_the_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = unopenable_manager(
+        "1.0.0",
+        package("vulkan", "1.0.0", PROTOCOL_VERSION, false, None),
+    );
+    let cancelled = Arc::new(AtomicBool::new(true));
+    let e = m
+        .install(dir.path(), BackendId::Vulkan, cancelled, |_, _| {})
+        .unwrap_err()
+        .to_string();
+    assert!(e.to_lowercase().contains("cancel"), "{e}");
+    assert!(leftovers(dir.path()).is_empty());
+}
+
+#[test]
+fn remove_deletes_the_backend_directory_and_worker_lookup_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = setup_for(
+        "1.0.0",
+        package("vulkan", "1.0.0", PROTOCOL_VERSION, false, None),
+    );
+    let installed = install(&m, dir.path()).unwrap();
+    assert!(installed.worker.is_file());
+
+    runtimes::remove(dir.path(), BackendId::Vulkan).unwrap();
+    assert!(!dir.path().join("vulkan").exists());
+    assert_eq!(runtimes::find_worker(dir.path(), BackendId::Vulkan), None);
+    assert!(runtimes::list(dir.path()).is_empty());
+    // Removing again is a no-op.
+    runtimes::remove(dir.path(), BackendId::Vulkan).unwrap();
 }
 
 #[test]

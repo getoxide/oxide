@@ -13,9 +13,9 @@ use tauri::{Emitter, State};
 
 use crate::{AppError, BackendId, convert};
 
-/// Where the signed index lives and the minisign key that must have signed it. Both are fixed at
-/// build time (`OXIDE_RUNTIME_INDEX_URL`, `OXIDE_RUNTIME_PUBLIC_KEY`); a build without them
-/// reports downloads as unavailable and keeps CPU dictation working.
+/// Optional build-time overrides for the signed index URL and minisign key. The shipped default is
+/// `RuntimeManager::official()`, which embeds the published index and public key in oxide-core, so
+/// downloads work without any build configuration. Set both to point a development build elsewhere.
 const INDEX_URL: Option<&str> = option_env!("OXIDE_RUNTIME_INDEX_URL");
 const PUBLIC_KEY: Option<&str> = option_env!("OXIDE_RUNTIME_PUBLIC_KEY");
 
@@ -93,9 +93,8 @@ fn manager() -> Result<RuntimeManager, oxide_core::Error> {
                 public_key,
             ))
         }
-        _ => Err(oxide_core::Error::Dictation(
-            "GPU runtime downloads are not configured in this build".into(),
-        )),
+        // Shipped builds set neither override: use the index and key embedded in oxide-core.
+        _ => Ok(RuntimeManager::official()),
     }
 }
 
@@ -212,10 +211,16 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_builds_report_downloads_unavailable() {
-        if INDEX_URL.is_none() || PUBLIC_KEY.is_none() {
-            let e = manager().err().expect("not configured");
-            assert!(e.to_string().contains("not configured"));
+    fn builds_without_env_overrides_use_the_official_runtime_index() {
+        match (INDEX_URL, PUBLIC_KEY) {
+            (Some(url), Some(key)) if !url.is_empty() && !key.is_empty() => {
+                assert_eq!(manager().unwrap().index_url(), Some(url));
+            }
+            _ => {
+                // Nothing sets the compile-time overrides, so the shipped build must still work.
+                let m = manager().expect("the official runtime source is always available");
+                assert_eq!(m.index_url(), Some(runtimes::RUNTIME_INDEX_URL));
+            }
         }
     }
 }
