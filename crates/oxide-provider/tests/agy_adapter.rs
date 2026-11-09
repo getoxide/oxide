@@ -490,3 +490,32 @@ fn agy_maps_command_outcomes_from_tool_steps() {
     );
     provider.shutdown().unwrap();
 }
+
+#[test]
+fn agy_reports_background_commands_for_detachment() {
+    use oxide_provider::{PermissionMode, ProviderEvent};
+
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("service_test").unwrap();
+
+    let mut requested = Vec::new();
+    while let Ok(event) = rx.recv_timeout(Duration::from_secs(5)) {
+        match event {
+            ProviderEvent::CommandRequested {
+                item_index,
+                command,
+            } => requested.push((item_index, command)),
+            ProviderEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        requested,
+        vec![(0, "npm run dev --port 5173".to_string())],
+        "only the server command is detached; `echo hi` follows the normal path"
+    );
+    provider.shutdown().unwrap();
+}

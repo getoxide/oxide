@@ -450,6 +450,44 @@ fn codex_provider_handles_interrupt() {
 
 #[cfg(unix)]
 #[test]
+fn codex_reports_background_commands_for_detachment() {
+    use oxide_provider::{PermissionMode, ProviderEvent, StartContext};
+    use std::time::Duration;
+
+    let fake_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/codex/fake_codex.py");
+    let mut provider = CodexProvider::with_command(fake_cli.to_str().unwrap());
+    let rx = provider
+        .start(&StartContext {
+            working_dir: PathBuf::from("."),
+            model: None,
+            effort: None,
+            permission_mode: PermissionMode::AutoEdit,
+        })
+        .expect("start should succeed");
+    provider.send_prompt("service_test").unwrap();
+
+    let mut requested = Vec::new();
+    while let Ok(event) = rx.recv_timeout(Duration::from_secs(5)) {
+        match event {
+            ProviderEvent::CommandRequested {
+                item_index,
+                command,
+            } => requested.push((item_index, command)),
+            ProviderEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        requested,
+        vec![(0, "npm run dev --port 5173".to_string())],
+        "only the server command is detached; `echo hi` follows the normal path"
+    );
+    provider.shutdown().expect("shutdown should succeed");
+}
+
+#[cfg(unix)]
+#[test]
 fn codex_provider_resume_passes_session_id() {
     use oxide_provider::{PermissionMode, ProviderEvent, StartContext};
     use std::time::Duration;

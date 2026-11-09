@@ -14,7 +14,9 @@ import {
 } from "./TerminalCommandBlock";
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput";
 import { terminalPath } from "./terminalPaths";
-import { commands } from "./bindings";
+import { commands, type ProjectServiceConflict } from "./bindings";
+import { errorMessage } from "./errors";
+import { backgroundCommand } from "./projectServiceCommands";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
@@ -30,9 +32,49 @@ interface Props {
   onCommandConsumed: () => void;
   /** The command a Command block is running, or `null` when the shell is idle. */
   onRunningChange?: (command: string | null) => void;
+  /** A structured port conflict, so the app can offer to switch to or restart the incumbent. */
+  onServiceConflict?: (conflict: ProjectServiceConflict) => void;
 }
 const WINDOWS = /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
+const now = () => Date.now();
+
+interface ServiceOutcome {
+  message: string;
+  /** The process exit code only when Oxide really observed one; never parsed from prose. */
+  exitCode: number | null;
+  conflict: ProjectServiceConflict | null;
+}
+
+/** Start a detached command in Core and turn its response into the line to show in the block. */
+async function startProjectService(
+  projectId: number,
+  threadId: number | null,
+  command: string,
+): Promise<ServiceOutcome> {
+  try {
+    const result = await commands.startProjectService(projectId, threadId, command);
+    if (result.status === "error") throw result.error;
+    const outcome = result.data;
+    if (outcome.outcome === "conflict") {
+      return { message: outcome.payload.message, exitCode: 1, conflict: outcome.payload };
+    }
+    const service = outcome.payload;
+    const url =
+      service.url ??
+      (service.port !== null ? `http://localhost:${service.port}` : null);
+    const where = url ? ` on ${url}` : "";
+    return {
+      message: `[Oxide] Started Project Service '${command}'${where} (PID ${service.pid})`,
+      exitCode: 0,
+      conflict: null,
+    };
+  } catch (cause) {
+    // A genuine startup crash arrives as a prose error with no structured exit code. The block
+    // shows that message but does not guess a code out of it.
+    return { message: errorMessage(cause), exitCode: null, conflict: null };
+  }
+}
 
 function loadHistory(key: string): CommandHistory[] {
   try {
@@ -61,6 +103,7 @@ export function TerminalWorkbench({
   queuedCommand,
   onCommandConsumed,
   onRunningChange,
+  onServiceConflict,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [history, setHistory] = useState<CommandHistory[]>(() =>
@@ -84,6 +127,11 @@ export function TerminalWorkbench({
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const runRef = useRef<(command: string) => void>(() => {});
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   const host = useRef<HTMLElement>(null);
   const pasteActive = useRef<((text: string) => void) | null>(null);
   const onPasteReady = useCallback((paste: ((text: string) => void) | null) => { pasteActive.current = paste; }, []);
@@ -262,18 +310,20 @@ export function TerminalWorkbench({
       setError(null);
       return;
     }
+    const service = backgroundCommand(command);
     const token = crypto.randomUUID();
     setFullscreen(null);
     const block: Block = {
       token,
       command,
-      output: "",
+      output: service ? "Starting Project Service…" : "",
       outputOffset: 0,
-      at: Date.now(),
+      at: now(),
       exitCode: null,
       started: false,
       ended: false,
       truncated: false,
+      service: service !== null,
     };
     activeBlock.current = token;
     runningCommand.current = command;
@@ -285,7 +335,40 @@ export function TerminalWorkbench({
     setHistory((old) =>
       [...old, { command, at: block.at, exitCode: null }].slice(-300),
     );
+    if (service) {
+      // No PTY launch: the block reports the Core-owned Project Service instead.
+      launched.current.add(token);
+      void startProjectService(projectId, threadId, service.command).then(
+        ({ message, exitCode, conflict }) => {
+          if (!alive.current) return;
+          setBlocks((old) =>
+            old.map((entry) =>
+              entry.token === token
+                ? {
+                    ...entry,
+                    output: `${entry.output}\r${message}\n`,
+                    started: true,
+                    ended: true,
+                    exitCode,
+                    completedAt: now(),
+                  }
+                : entry,
+            ),
+          );
+          setHistory((old) =>
+            old.map((entry, index) =>
+              index === old.length - 1 ? { ...entry, exitCode } : entry,
+            ),
+          );
+          activeBlock.current = null;
+          setRunning(false);
+          if (conflict) onServiceConflict?.(conflict);
+          if (visible) requestAnimationFrame(() => composer.current?.focus());
+        },
+      );
+    }
   }
+
   function launch(block: Block, rows: number, cols: number) {
     if (sessionId === null || launched.current.has(block.token)) return;
     launched.current.add(block.token);

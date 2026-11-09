@@ -46,6 +46,25 @@ export const commands = {
 	setProjectHidden: (id: number, hidden: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_hidden", { id, hidden })),
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
+	/**
+	 *  Starts `command` as a Project Service in the Project's (or Thread's) checkout.
+	 * 
+	 *  The startup grace check and the stop/restart waits all block for seconds, so they run off the
+	 *  async command thread like every other long-running Core call.
+	 */
+	startProjectService: (projectId: number, threadId: number | null, command: string) => typedError<ProjectServiceStartOutcome_Serialize, AppError>(__TAURI_INVOKE("start_project_service", { projectId, threadId, command })),
+	/**  The running Project Services of a Project. */
+	listProjectServices: (projectId: number) => typedError<ProjectService_Serialize[], AppError>(__TAURI_INVOKE("list_project_services", { projectId })),
+	/**  One Project Service, including one that has stopped or failed. */
+	projectService: (id: number) => typedError<ProjectService_Serialize | null, AppError>(__TAURI_INVOKE("project_service", { id })),
+	/**  Stops a Project Service, sending SIGTERM and then SIGKILL. */
+	stopProjectService: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_project_service", { id })),
+	/**  Stops and restarts a Project Service, reusing its id. */
+	restartProjectService: (id: number) => typedError<ProjectServiceStartOutcome_Serialize, AppError>(__TAURI_INVOKE("restart_project_service", { id })),
+	/**  Empties a Project Service's log buffer. */
+	clearProjectServiceLogs: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("clear_project_service_logs", { id })),
+	/**  A Project Service's buffered log, then every new line on `on_line`. */
+	subscribeProjectServiceLogs: (id: number, onLine: Channel<ProjectServiceLogLine>) => typedError<ProjectServiceLogLine[], AppError>(__TAURI_INVOKE("subscribe_project_service_logs", { id, onLine })),
 	getSettings: () => __TAURI_INVOKE<SettingsState_Serialize>("get_settings"),
 	saveSettings: (settings: Settings_Deserialize) => typedError<null, AppError>(__TAURI_INVOKE("save_settings", { settings })),
 	createThread: (projectId: number, provider: string, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_thread", { projectId, provider, model, effort, permissionMode })),
@@ -257,6 +276,11 @@ export const commands = {
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
 	/**  Opens a GitHub link, such as a check's run, in the system browser. */
 	openLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_link", { url })),
+	/**
+	 *  Opens a localhost URL detected in a Project Service's log in the system browser. Only
+	 *  loopback `http` addresses are accepted; the webview never opens pages itself.
+	 */
+	openLocalUrl: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_local_url", { url })),
 	/**  Moves a pull request out of draft (`draft` false), or back into it. */
 	setPullRequestDraft: (projectId: number, number: number, draft: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_pull_request_draft", { projectId, number, draft })),
 	/**  Brings a pull request's branch up to date with its base. */
@@ -1445,6 +1469,77 @@ export type Project = {
 	/**  Listed in the sidebar; scanned Projects stay closed until the user opens one. */
 	open: boolean,
 	missing: boolean,
+};
+
+/**  A long-running background process owned by a Project. */
+export type ProjectService = ProjectService_Serialize | ProjectService_Deserialize;
+
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict = ProjectServiceConflict_Serialize | ProjectServiceConflict_Deserialize;
+
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict_Deserialize = {
+	port: number,
+	existing?: ProjectService_Deserialize | null,
+	message: string,
+};
+
+/**  Why a Project Service could not start: its target port was already taken. */
+export type ProjectServiceConflict_Serialize = {
+	port: number,
+	existing: ProjectService_Serialize | null,
+	message: string,
+};
+
+/**  One line of a Project Service's output. */
+export type ProjectServiceLogLine = {
+	seq: number,
+	stream: ProjectServiceStream,
+	text: string,
+	at: string,
+};
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome = ProjectServiceStartOutcome_Serialize | ProjectServiceStartOutcome_Deserialize;
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome_Deserialize = { outcome: "started"; payload: ProjectService_Deserialize } | { outcome: "conflict"; payload: ProjectServiceConflict_Deserialize };
+
+/**  The result of asking for a Project Service to start. */
+export type ProjectServiceStartOutcome_Serialize = { outcome: "started"; payload: ProjectService_Serialize } | { outcome: "conflict"; payload: ProjectServiceConflict_Serialize };
+
+export type ProjectServiceStatus = "running" | "stopped" | "failed";
+
+export type ProjectServiceStream = "stdout" | "stderr";
+
+/**  A long-running background process owned by a Project. */
+export type ProjectService_Deserialize = {
+	id: number,
+	projectId: number,
+	threadId?: number | null,
+	command: string,
+	checkout: string,
+	status: ProjectServiceStatus,
+	pid: number,
+	port?: number | null,
+	url?: string | null,
+	startedAt: string,
+	exitCode?: number | null,
+};
+
+/**  A long-running background process owned by a Project. */
+export type ProjectService_Serialize = {
+	id: number,
+	projectId: number,
+	threadId: number | null,
+	command: string,
+	checkout: string,
+	status: ProjectServiceStatus,
+	pid: number,
+	port: number | null,
+	url: string | null,
+	startedAt: string,
+	exitCode: number | null,
 };
 
 /**  One piece of the prompt being sent: text, or a stored Attachment by id. */

@@ -7,6 +7,12 @@ pub mod codex;
 pub mod command;
 pub mod contract_suite;
 pub mod process;
+pub mod service_command;
+
+pub use service_command::{
+    is_background_command, is_explicit_background, port_in_command, service_notice, service_url,
+    without_background_marker,
+};
 
 use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
@@ -547,6 +553,14 @@ pub enum ProviderEvent {
         summary: String,
         #[serde(default)]
         options: Vec<String>,
+    },
+    /// A tool call is about to run `command`, and the adapter recognised it as a command
+    /// that should be detached into a Project Service. Emitted before the Provider executes
+    /// it, so Core can start the service and end the Turn without waiting for it.
+    CommandRequested {
+        item_index: u32,
+        /// The full command line, not the tool call's summary.
+        command: String,
     },
     /// A Provider-side failure. With `retrying` the Provider is retrying on its own (e.g. a rate
     /// limit); otherwise the Turn in flight has failed and must still end with `TurnCompleted`

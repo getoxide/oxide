@@ -600,6 +600,16 @@
 .terminal-block-status.error {
   color: var(--red);
 }
+.terminal-service-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--acc2) 15%, transparent);
+  color: var(--acc2);
+  font: 600 10px var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .terminal-block-spinner {
   width: 10px;
   height: 10px;

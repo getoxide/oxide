@@ -1,0 +1,118 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { clearQueryCache } from "./queryCache";
+import { App } from "./App";
+
+vi.mock("./ThreadView", () => ({ ThreadView: () => <div data-thread-view /> }));
+vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
+vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
+vi.mock("./TerminalSurface", () => ({
+  TerminalSurface: ({ terminals }: { terminals: { tabs: { id: number; kind: string; serviceId?: number }[] } }) => (
+    <div data-terminal-surface>
+      {terminals.tabs.filter((tab) => tab.kind === "service").map((tab) => (
+        <span key={tab.id} data-service-tab={tab.serviceId} />
+      ))}
+    </div>
+  ),
+}));
+vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
+
+Object.assign(globalThis, {
+  IS_REACT_ACT_ENVIRONMENT: true,
+  ResizeObserver: class { observe() {} disconnect() {} },
+});
+Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
+
+const project = { id: 1, name: "Alpha", path: "/alpha", hidden: false, open: true, missing: false };
+const thread = {
+  id: 2, projectId: 1, title: "Feature", status: "completed", provider: "claude",
+  updatedAt: "2026-01-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z",
+  branch: null, worktreePath: null, issueNumber: null,
+};
+const service = {
+  id: 9, projectId: 1, threadId: null, command: "npm run dev", checkout: "/alpha",
+  status: "running", pid: 900, port: 5173, url: "http://localhost:5173",
+  startedAt: "2026-01-01T00:00:00Z", exitCode: null,
+};
+
+let host: HTMLDivElement;
+let root: Root;
+let calls: { command: string; args: unknown }[] = [];
+
+beforeEach(() => {
+  clearQueryCache();
+  calls = [];
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  mockIPC((command, args) => {
+    calls.push({ command, args });
+    switch (command) {
+      case "list_projects": case "rescan_projects": return [project];
+      case "last_selection": return { projectId: 1, threadId: 2 };
+      case "list_threads": return [thread];
+      case "list_turns": return { offset: 0, turns: [], turnCount: 0 };
+      case "get_settings": return { settings: { defaultProvider: "claude", providers: {} }, errors: [] };
+      case "subscribe_board": return [];
+      case "list_project_services": return [service];
+      case "project_service": return service;
+      case "restart_project_service": return { outcome: "started", payload: service };
+      case "plugin:event|listen": return 1;
+      case "remember_selection": return null;
+      default: return null;
+    }
+  });
+});
+
+afterEach(async () => {
+  await act(() => root.unmount());
+  host.remove();
+  clearMocks();
+  localStorage.clear();
+});
+
+const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+
+it("pins the Project Services widget above the Settings button in the sidebar", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+
+  const sidebar = host.querySelector(".sidebar")!;
+  const widget = sidebar.querySelector(".project-services");
+  const footer = sidebar.querySelector(".sidebar-footer");
+  expect(widget).not.toBeNull();
+  expect(widget?.textContent).toContain("npm run dev");
+  expect(widget?.textContent).toContain(":5173");
+  expect(footer).not.toBeNull();
+  // The widget sits between the scroll area and Settings, so it stays pinned.
+  expect(widget!.compareDocumentPosition(footer!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(sidebar.querySelector(".sidebar-scroll")!.compareDocumentPosition(widget!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("opens the clicked service's log tab in the Terminal Surface", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+
+  const row = host.querySelector<HTMLButtonElement>(".service-open");
+  expect(row).not.toBeNull();
+  await act(async () => { row!.click(); });
+  await settle();
+
+  expect(host.querySelector('[data-service-tab="9"]')).not.toBeNull();
+});
+
+it("restarts a service from the sidebar", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+
+  const restart = host.querySelector<HTMLButtonElement>(".service-restart");
+  expect(restart).not.toBeNull();
+  expect(restart?.getAttribute("aria-label")).toBe("Restart npm run dev");
+  await act(async () => { restart!.click(); });
+  await settle();
+
+  expect(calls.find((call) => call.command === "restart_project_service")?.args).toEqual({ id: 9 });
+});

@@ -1,7 +1,9 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use oxide_provider::process::ProcessRegistry;
 use oxide_provider::{
-    ApprovalDecision, ItemKind, PermissionMode, PromptSegment, Provider, ProviderCapabilities,
-    ProviderError, ProviderEvent, StartContext, TurnStatus,
+    ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, ItemKind, PermissionMode,
+    PromptSegment, Provider, ProviderCapabilities, ProviderError, ProviderEvent, StartContext,
+    TurnStatus, service_notice, without_background_marker,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -12,6 +14,9 @@ use crate::activity::Activity;
 use crate::checkpoint::{self, Phase};
 use crate::clock::{Clock, PROVIDER_IDLE_TIMEOUT};
 use crate::error::{Error, Result};
+use crate::project_services::{
+    ProjectServiceConflict, ProjectServiceStartOutcome, ProjectServices,
+};
 use crate::storage_actor::{NewItem, StorageHandle};
 use crate::thread::{
     DebugSequencedThreadEvent, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
@@ -241,6 +246,22 @@ struct ActorState {
     usage: Arc<UsageHub>,
     /// The Provider key Usage limits are filed under.
     provider_name: String,
+    /// The Project the Thread belongs to, recorded on a detached Project Service.
+    project_id: u32,
+    /// The Project Services a detached agent command is started in.
+    project_services: Arc<ProjectServices>,
+    /// The registry a detached Project Service registers its process group with.
+    processes: Arc<ProcessRegistry>,
+    /// A background command was detached and its Turn was finished by Oxide. Everything the
+    /// Provider still says about that Turn is stale and must not rewrite the Transcript.
+    detached_turn: bool,
+    /// The Provider's own index for the detached Turn, so a very late `TurnCompleted` cannot
+    /// end the Turn that follows it.
+    detached_provider_turn: Option<u32>,
+    /// The Provider's index for the Turn in flight.
+    current_provider_turn: Option<u32>,
+    /// Items whose completion Oxide synthesised for a detached command.
+    detached_items: HashSet<u32>,
     /// A Provider process is running for this Thread.
     provider_live: bool,
     /// The Provider ended on its own; its adapter still has to be shut down before a restart.
@@ -268,6 +289,9 @@ impl ActorState {
             activity,
             usage,
             provider: provider_name,
+            project_id,
+            project_services,
+            processes,
         } = services;
         let idle_since = Some(clock.now());
         Self {
@@ -275,6 +299,13 @@ impl ActorState {
             activity,
             usage,
             provider_name,
+            project_id,
+            project_services,
+            processes,
+            detached_turn: false,
+            detached_provider_turn: None,
+            current_provider_turn: None,
+            detached_items: HashSet::new(),
             provider_live: false,
             provider_exited: false,
             idle_since,
@@ -361,21 +392,50 @@ impl ActorState {
     }
 }
 
-fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &StorageHandle) {
+fn handle_provider_event(
+    evt: ProviderEvent,
+    state: &mut ActorState,
+    storage: &StorageHandle,
+    provider: &mut dyn Provider,
+) {
     let raw = if !state.debug_subscribers.is_empty() {
         serde_json::to_string(&evt).ok()
     } else {
         None
     };
 
+    // Once Oxide has detached a command and finished the Turn itself, the Provider's own
+    // finish (usually `TurnCompleted { Interrupted }`) and any late Item events describe a
+    // Turn that is already over. Keep them out of the Transcript and the Thread status.
+    if state.detached_turn
+        && !matches!(
+            evt,
+            ProviderEvent::TurnStarted { .. }
+                | ProviderEvent::Exited { .. }
+                | ProviderEvent::SessionInfo { .. }
+                | ProviderEvent::UsageLimits { .. }
+                | ProviderEvent::SlashCommandsChanged
+        )
+    {
+        return;
+    }
+
+    // The next Turn can begin before a very late completion from the detached Turn arrives.
+    if let ProviderEvent::TurnCompleted { turn_index, .. } = &evt
+        && state.detached_provider_turn == Some(*turn_index)
+        && state.current_provider_turn != Some(*turn_index)
+    {
+        return;
+    }
+
     match evt {
         ProviderEvent::SessionInfo { session_id } => {
             storage.set_provider_session_id(state.thread_id, session_id);
         }
-        ProviderEvent::TurnStarted {
-            turn_index: _,
-            prompt,
-        } => {
+        ProviderEvent::TurnStarted { turn_index, prompt } => {
+            state.detached_turn = false;
+            state.detached_items.clear();
+            state.current_provider_turn = Some(turn_index);
             let turn_index = state.next_turn_index;
             state.next_turn_index += 1;
             state.dropped_items.clear();
@@ -491,6 +551,10 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
                 raw,
             );
         }
+        ProviderEvent::CommandRequested {
+            item_index,
+            command,
+        } => handle_command_requested(state, storage, provider, item_index, command),
         ProviderEvent::TurnCompleted {
             turn_index: _,
             status,
@@ -572,6 +636,136 @@ fn resolve_pending_approvals_if_any(state: &mut ActorState, storage: &StorageHan
         state.pending_approval_id.take().is_some(),
     ) {
         let _ = storage.resolve_pending_approvals(turn_id, ApprovalDecision::Deny, String::new());
+    }
+}
+
+/// Starts a Project Service for a Provider tool call the adapter recognised as a background
+/// command, then ends the Turn without waiting for the long-running process.
+///
+/// `CommandRequested` is only emitted by an adapter for a command
+/// [`oxide_provider::is_background_command`] accepts, so Core treats the event itself as the
+/// classification: the adapter has the full command line and the tool context, and the
+/// alternative — running the command in the Provider's own process — is exactly the hang this
+/// policy prevents.
+fn handle_command_requested(
+    state: &mut ActorState,
+    storage: &StorageHandle,
+    provider: &mut dyn Provider,
+    item_index: u32,
+    command: String,
+) {
+    // A request outside a running Turn, or a second one for the same Item, cannot be a new
+    // service: the first request already ended the Turn.
+    if state.current_turn.is_none() || state.detached_items.contains(&item_index) {
+        return;
+    }
+    state.detached_turn = true;
+    state.detached_provider_turn = state.current_provider_turn;
+    state.detached_items.insert(item_index);
+
+    // `&` is shell syntax, not part of the command: Project Services runs the command itself,
+    // so a trailing marker would make the wrapper shell exit before the process is observed.
+    let command = without_background_marker(&command).to_string();
+
+    let checkout = state.checkout.to_string_lossy().to_string();
+    let started = state.project_services.start(
+        state.project_id,
+        Some(state.thread_id),
+        &command,
+        &checkout,
+        Arc::clone(&state.processes),
+    );
+
+    match started {
+        Ok(ProjectServiceStartOutcome::Started(service)) => {
+            let notice = service_notice(&command, service.pid, service.port);
+            state.flush_pending_deltas();
+            if let Some(turn_id) = state.current_turn_id() {
+                // The Provider only asked for this command; Oxide ran (or refused) it as a
+                // service and the Provider never reported an outcome, so the record claims none.
+                let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
+                let _ = storage.write_item_completed(NewItem {
+                    turn_id,
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice.clone(),
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record.clone()),
+                });
+                state.broadcast(ThreadEvent::ItemCompleted {
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice,
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record),
+                });
+            }
+            // Stop the Provider's own copy of the command; the Project Service keeps running.
+            let _ = provider.interrupt();
+            finish_turn(state, storage, TurnStatus::Completed, None, None);
+        }
+        Ok(ProjectServiceStartOutcome::Conflict(conflict)) => {
+            // A conflict is a normal outcome: the incumbent keeps running and the agent gets a
+            // notice it can act on. Finishing as `Error` would hide the reusable service.
+            let notice = conflict_notice(&conflict);
+            state.flush_pending_deltas();
+            if let Some(turn_id) = state.current_turn_id() {
+                // The Provider only asked for this command; Oxide ran (or refused) it as a
+                // service and the Provider never reported an outcome, so the record claims none.
+                let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
+                let _ = storage.write_item_completed(NewItem {
+                    turn_id,
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice.clone(),
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record.clone()),
+                });
+                state.broadcast(ThreadEvent::ItemCompleted {
+                    item_index,
+                    kind: ItemKind::ToolCall,
+                    content: notice,
+                    parent_item_index: None,
+                    category: Some(ActivityCategory::Run),
+                    command: Some(record),
+                });
+            }
+            // Stop the Provider's own copy too: it would only collide with the incumbent.
+            let _ = provider.interrupt();
+            finish_turn(state, storage, TurnStatus::Completed, None, None);
+        }
+        Err(error) => {
+            // A crash during startup is a real Turn error, not something to retry in the CLI.
+            if let Some(turn) = state.current_turn.as_mut() {
+                turn.error_message = Some(error.to_string());
+            }
+            let _ = provider.interrupt();
+            finish_turn(state, storage, TurnStatus::Error, None, None);
+        }
+    }
+}
+
+/// The notice an agent reads when its server command lost the port race. It names the incumbent
+/// so the model can reuse or restart it instead of starting a second process.
+fn conflict_notice(conflict: &ProjectServiceConflict) -> String {
+    match &conflict.existing {
+        Some(existing) => {
+            let url = existing
+                .url
+                .clone()
+                .unwrap_or_else(|| format!("http://localhost:{}", conflict.port));
+            format!(
+                "[Oxide] Port {} is already used by Project Service #{} '{}' (PID {}, {url}). Reuse that service or restart it instead of starting another.",
+                conflict.port, existing.id, existing.command, existing.pid
+            )
+        }
+        None => format!(
+            "[Oxide] Port {} is already in use by another process. Start the server on a different port.",
+            conflict.port
+        ),
     }
 }
 
@@ -938,7 +1132,7 @@ fn run_thread_actor(
                     ThreadActorMsg::Tick => {
                         loop {
                             match prx.try_recv() {
-                                Ok(evt) => handle_provider_event(evt, &mut state, &storage),
+                                Ok(evt) => handle_provider_event(evt, &mut state, &storage, &mut *provider),
                                 Err(TryRecvError::Empty) => break,
                                 Err(TryRecvError::Disconnected) => {
                                     provider_channel_closed(&mut prx, &mut state, &storage);
@@ -960,7 +1154,7 @@ fn run_thread_actor(
                 }
             }
             recv(prx) -> evt => match evt {
-                Ok(evt) => handle_provider_event(evt, &mut state, &storage),
+                Ok(evt) => handle_provider_event(evt, &mut state, &storage, &mut *provider),
                 Err(_) => provider_channel_closed(&mut prx, &mut state, &storage),
             }
         }
