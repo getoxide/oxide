@@ -23,6 +23,7 @@ mod github;
 mod language_install;
 mod language_server;
 mod line_comments;
+mod project_services;
 mod project_setup;
 mod restore;
 mod review_ledger;
@@ -77,6 +78,11 @@ pub use line_comments::{
 };
 use oxide_provider::Provider as ProviderTrait;
 use oxide_provider::process::ProcessRegistry;
+pub use project_services::{
+    EARLY_FAILURE_GRACE, LOG_CAPACITY, ProjectService, ProjectServiceEvent,
+    ProjectServiceEventKind, ProjectServiceLogLine, ProjectServiceStatus, ProjectServiceStream,
+    detect_port, port_from_command,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -182,6 +188,7 @@ pub struct Core {
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
     next_terminal_id: AtomicU32,
+    project_services: project_services::ProjectServices,
     language_servers: language_server::LanguageServers,
     dirty_editors: Mutex<std::collections::HashSet<String>>,
     git: git::GitState,
@@ -246,6 +253,7 @@ impl Core {
             processes,
             terminals: Mutex::new(HashMap::new()),
             next_terminal_id: AtomicU32::new(1),
+            project_services: project_services::ProjectServices::new(),
             language_servers: language_server::LanguageServers::default(),
             dirty_editors: Mutex::new(std::collections::HashSet::new()),
             git: git::GitState::default(),
@@ -312,6 +320,7 @@ impl Core {
         for session in terminals {
             session.close();
         }
+        self.project_services.shutdown();
     }
 
     /// Installs the operating-system side of Core's activity: the App Nap assertion
@@ -577,6 +586,8 @@ impl Core {
             )?;
         } else {
             db.execute("UPDATE projects SET opened_at = NULL WHERE id = ?1", [id])?;
+            drop(db);
+            self.project_services.stop_project(id);
         }
         Ok(())
     }
@@ -2601,6 +2612,71 @@ impl Core {
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
         session.close();
         Ok(())
+    }
+
+    /// Starts `command` as a Project Service in the Project's checkout, or in the Thread's
+    /// worktree when one is given. The child runs in its own process group and is registered
+    /// with the process registry, so stopping it (or closing the Project, or quitting Oxide)
+    /// terminates its whole process tree.
+    pub fn start_project_service(
+        &self,
+        project_id: u32,
+        thread_id: Option<u32>,
+        command: &str,
+    ) -> Result<ProjectService> {
+        let checkout = self.checkout_path(project_id, thread_id)?;
+        self.project_services.start(
+            project_id,
+            thread_id,
+            command,
+            &checkout,
+            Arc::clone(&self.processes),
+        )
+    }
+
+    /// The running Project Services of a Project, oldest first.
+    pub fn list_project_services(&self, project_id: u32) -> Result<Vec<ProjectService>> {
+        Ok(self.project_services.list(project_id))
+    }
+
+    /// One Project Service, including one that has stopped or failed.
+    pub fn project_service(&self, id: u32) -> Result<Option<ProjectService>> {
+        Ok(self.project_services.service(id))
+    }
+
+    /// The buffered output of a Project Service followed by every new line. A subscriber that
+    /// falls too far behind is dropped rather than blocking the child.
+    pub fn subscribe_project_service_logs(
+        &self,
+        id: u32,
+    ) -> Result<(
+        Vec<ProjectServiceLogLine>,
+        crossbeam_channel::Receiver<ProjectServiceLogLine>,
+    )> {
+        self.project_services.subscribe_logs(id)
+    }
+
+    /// Every Project Service change, for the UI to refetch.
+    pub fn subscribe_project_services(&self) -> crossbeam_channel::Receiver<ProjectServiceEvent> {
+        self.project_services.subscribe_events()
+    }
+
+    /// Sends SIGTERM to the service's process group and SIGKILL after
+    /// [`oxide_provider::process::SHUTDOWN_GRACE`]. Safe to call twice.
+    pub fn stop_project_service(&self, id: u32) -> Result<()> {
+        self.project_services.stop(id);
+        Ok(())
+    }
+
+    /// Stops a Project Service and starts the same command in the same checkout again, reusing
+    /// its id so the log tab keeps its identity.
+    pub fn restart_project_service(&self, id: u32) -> Result<ProjectService> {
+        self.project_services.restart(id)
+    }
+
+    /// Empties a Project Service's log buffer; new output keeps streaming.
+    pub fn clear_project_service_logs(&self, id: u32) -> Result<()> {
+        self.project_services.clear_logs(id)
     }
 
     fn terminal(&self, id: u32) -> Result<Arc<TerminalSession>> {

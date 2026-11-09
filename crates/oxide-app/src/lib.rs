@@ -1513,6 +1513,129 @@ fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), Ap
     Ok(core.close_terminal(terminal_id)?)
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectServiceStatus {
+    Running,
+    Stopped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectServiceStream {
+    Stdout,
+    Stderr,
+}
+
+/// A long-running background process owned by a Project.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectService {
+    id: u32,
+    project_id: u32,
+    thread_id: Option<u32>,
+    command: String,
+    checkout: String,
+    status: ProjectServiceStatus,
+    pid: u32,
+    port: Option<u16>,
+    url: Option<String>,
+    started_at: String,
+    exit_code: Option<i32>,
+}
+
+/// One line of a Project Service's output.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectServiceLogLine {
+    seq: u32,
+    stream: ProjectServiceStream,
+    text: String,
+    at: String,
+}
+
+/// Starts `command` as a Project Service in the Project's (or Thread's) checkout.
+#[tauri::command]
+#[specta::specta]
+fn start_project_service(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    thread_id: Option<u32>,
+    command: String,
+) -> Result<ProjectService, AppError> {
+    Ok(convert(
+        &core.start_project_service(project_id, thread_id, &command)?,
+    ))
+}
+
+/// The running Project Services of a Project.
+#[tauri::command]
+#[specta::specta]
+fn list_project_services(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<Vec<ProjectService>, AppError> {
+    Ok(core
+        .list_project_services(project_id)?
+        .iter()
+        .map(convert)
+        .collect())
+}
+
+/// One Project Service, including one that has stopped or failed.
+#[tauri::command]
+#[specta::specta]
+fn project_service(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+) -> Result<Option<ProjectService>, AppError> {
+    Ok(core.project_service(id)?.as_ref().map(convert))
+}
+
+/// Stops a Project Service, sending SIGTERM and then SIGKILL.
+#[tauri::command]
+#[specta::specta]
+fn stop_project_service(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
+    Ok(core.stop_project_service(id)?)
+}
+
+/// Stops and restarts a Project Service, reusing its id.
+#[tauri::command]
+#[specta::specta]
+fn restart_project_service(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+) -> Result<ProjectService, AppError> {
+    Ok(convert(&core.restart_project_service(id)?))
+}
+
+/// Empties a Project Service's log buffer.
+#[tauri::command]
+#[specta::specta]
+fn clear_project_service_logs(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
+    Ok(core.clear_project_service_logs(id)?)
+}
+
+/// A Project Service's buffered log, then every new line on `on_line`.
+#[tauri::command]
+#[specta::specta]
+fn subscribe_project_service_logs(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+    on_line: tauri::ipc::Channel<ProjectServiceLogLine>,
+) -> Result<Vec<ProjectServiceLogLine>, AppError> {
+    let (backlog, rx) = core.subscribe_project_service_logs(id)?;
+    std::thread::spawn(move || {
+        while let Ok(line) = rx.recv() {
+            if on_line.send(convert(&line)).is_err() {
+                break;
+            }
+        }
+    });
+    Ok(backlog.iter().map(convert).collect())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
@@ -3976,6 +4099,10 @@ fn subscribe_thread_debug(
 /// Emitted when ⌘N is pressed (even with the window hidden): start a new Thread.
 pub const NEW_THREAD: &str = "new-thread";
 
+/// Emitted when a Project Service starts, changes, stops or is removed; payload is its
+/// `projectId`, so the webview refetches that Project's services.
+pub const PROJECT_SERVICES_CHANGED: &str = "project-services-changed";
+
 /// Emitted when Oxide is asked to quit while Threads are running; payload is how many.
 pub const QUIT_REQUESTED: &str = "quit-requested";
 
@@ -4118,6 +4245,13 @@ pub fn builder() -> Builder<tauri::Wry> {
         reveal_in_finder,
         set_project_hidden,
         set_project_open,
+        start_project_service,
+        list_project_services,
+        project_service,
+        stop_project_service,
+        restart_project_service,
+        clear_project_service_logs,
+        subscribe_project_service_logs,
         get_settings,
         save_settings,
         create_thread,
@@ -4336,6 +4470,13 @@ pub fn run() {
             let core = Core::open(home)?;
             core.start_usage_poller();
             let handle = app.handle().clone();
+            let service_events = core.subscribe_project_services();
+            let service_handle = handle.clone();
+            std::thread::spawn(move || {
+                while let Ok(event) = service_events.recv() {
+                    let _ = service_handle.emit(PROJECT_SERVICES_CHANGED, event.project_id);
+                }
+            });
             let dictation = app
                 .state::<Arc<oxide_core::dictation::Dictation>>()
                 .inner()
