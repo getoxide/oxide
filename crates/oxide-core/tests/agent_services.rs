@@ -1,13 +1,31 @@
 #![cfg(unix)]
 
 use oxide_core::{
-    Core, ItemKind, PermissionMode, ProjectServiceStatus, ThreadEvent, ThreadStatus, TurnStatus,
+    Core, ItemKind, PermissionMode, ProjectService, ProjectServiceStartOutcome,
+    ProjectServiceStatus, ThreadEvent, ThreadStatus, TurnStatus,
 };
 use oxide_provider::process::group_alive;
 use oxide_provider::{ActivityCategory, CommandOutcome, FakeProvider, ProviderEvent};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+fn started(outcome: ProjectServiceStartOutcome) -> ProjectService {
+    match outcome {
+        ProjectServiceStartOutcome::Started(service) => service,
+        ProjectServiceStartOutcome::Conflict(conflict) => {
+            panic!(
+                "expected a started service, got a conflict: {}",
+                conflict.message
+            )
+        }
+    }
+}
+
+fn free_port() -> u16 {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.local_addr().unwrap().port()
+}
 
 fn open_core_with_project(dir: &Path) -> (Core, u32) {
     let core = Core::open(dir).unwrap();
@@ -248,4 +266,84 @@ fn a_service_that_crashes_during_startup_fails_the_turn() {
         core.get_thread_snapshot(thread.id).unwrap().thread.status,
         ThreadStatus::Error
     );
+}
+
+#[test]
+fn an_agent_command_on_a_port_held_by_a_service_reuses_it_and_completes() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+    let port = free_port();
+    let incumbent = started(
+        core.start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+            .unwrap(),
+    );
+
+    let fake = FakeProvider::default();
+    let sender = fake.sender();
+    fake.on_prompt(move |prompt| {
+        let sender = sender.clone();
+        let prompt = prompt.to_string();
+        std::thread::spawn(move || {
+            let _ = sender.send(ProviderEvent::TurnStarted {
+                turn_index: 0,
+                prompt,
+            });
+            let _ = sender.send(ProviderEvent::ItemStarted {
+                item_index: 0,
+                kind: ItemKind::ToolCall,
+                parent_item_index: None,
+                category: Some(ActivityCategory::Run),
+            });
+            let _ = sender.send(ProviderEvent::CommandRequested {
+                item_index: 0,
+                command: format!("PORT={port} sleep 30"),
+            });
+        });
+    });
+
+    let thread = core
+        .create_thread(project_id, "fake", None, None, PermissionMode::AutoEdit)
+        .unwrap();
+    core.register_fake_provider(thread.id, fake);
+    let (_snapshot, rx) = core.subscribe_thread(thread.id).unwrap();
+
+    core.send_prompt(thread.id, "start the dev server").unwrap();
+
+    let turns = completed_turns(&rx);
+    assert_eq!(
+        turns,
+        vec![(TurnStatus::Completed, None)],
+        "a port conflict is reported to the agent, not as a Turn error"
+    );
+
+    let snapshot = core.get_thread_snapshot(thread.id).unwrap();
+    assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+    let item = snapshot.turns[0]
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::ToolCall)
+        .expect("the conflicted command has a tool-call Item");
+    assert!(
+        item.content.contains(&port.to_string()),
+        "the notice names the port: {}",
+        item.content
+    );
+    assert!(
+        item.content.contains("sleep 30") && item.content.contains(&incumbent.pid.to_string()),
+        "the notice names the incumbent command and PID: {}",
+        item.content
+    );
+    assert!(
+        item.content.contains("already used by Project Service"),
+        "the notice explains the reuse: {}",
+        item.content
+    );
+    assert_eq!(item.command.outcome, CommandOutcome::Succeeded);
+
+    // No second service was spawned: the incumbent remains the only one.
+    let services = core.list_project_services(project_id).unwrap();
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].id, incumbent.id);
+
+    core.shutdown();
 }

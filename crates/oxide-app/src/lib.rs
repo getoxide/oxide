@@ -1555,6 +1555,23 @@ pub struct ProjectServiceLogLine {
     at: String,
 }
 
+/// The result of asking for a Project Service to start.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(tag = "outcome", content = "payload", rename_all = "camelCase")]
+pub enum ProjectServiceStartOutcome {
+    Started(ProjectService),
+    Conflict(ProjectServiceConflict),
+}
+
+/// Why a Project Service could not start: its target port was already taken.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectServiceConflict {
+    port: u16,
+    existing: Option<ProjectService>,
+    message: String,
+}
+
 /// Starts `command` as a Project Service in the Project's (or Thread's) checkout.
 #[tauri::command]
 #[specta::specta]
@@ -1563,7 +1580,7 @@ fn start_project_service(
     project_id: u32,
     thread_id: Option<u32>,
     command: String,
-) -> Result<ProjectService, AppError> {
+) -> Result<ProjectServiceStartOutcome, AppError> {
     Ok(convert(
         &core.start_project_service(project_id, thread_id, &command)?,
     ))
@@ -1606,7 +1623,7 @@ fn stop_project_service(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppEr
 fn restart_project_service(
     core: State<'_, Arc<Core>>,
     id: u32,
-) -> Result<ProjectService, AppError> {
+) -> Result<ProjectServiceStartOutcome, AppError> {
     Ok(convert(&core.restart_project_service(id)?))
 }
 

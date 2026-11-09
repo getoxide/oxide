@@ -27,6 +27,7 @@ let calls: { name: string; args: unknown }[] = [];
 let service: ProjectService;
 let stopped = false;
 let backlog: ProjectServiceLogLine[] = [];
+let restartResult: unknown = null;
 
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
 const click = (element: Element | null | undefined) => act(async () => { (element as HTMLElement).click(); });
@@ -39,6 +40,7 @@ beforeEach(() => {
   channel = undefined;
   calls = [];
   backlog = [line(0, "stdout", "ready on http://localhost:5173")];
+  restartResult = null;
   root.render(null);
   mockIPC((name, args) => {
     calls.push({ name, args });
@@ -47,7 +49,7 @@ beforeEach(() => {
       case "subscribe_project_service_logs":
         channel = (args as { onLine: Channel<ProjectServiceLogLine> }).onLine;
         return backlog;
-      case "restart_project_service": return service;
+      case "restart_project_service": return restartResult ?? { outcome: "started", payload: service };
       case "stop_project_service": stopped = true; return null;
       case "clear_project_service_logs": return null;
       case "open_local_url": return null;
@@ -69,9 +71,7 @@ const render = async (projectId = 1) => {
     <ServiceLogPanel projectId={projectId} serviceId={9} checkout={checkout} visible />,
   ));
   await settle();
-};
-
-it("merges the backlog and live lines by sequence, dropping duplicates", () => {
+};it("merges the backlog and live lines by sequence, dropping duplicates", () => {
   const merged = mergeLogLines([line(0, "stdout", "a"), line(2, "stdout", "c")], [line(2, "stdout", "c"), line(1, "stderr", "b")]);
   expect(merged.map((entry) => entry.seq)).toEqual([0, 1, 2]);
   expect(mergeLogLines(merged, [line(2, "stdout", "c")])).toHaveLength(3);
@@ -136,4 +136,36 @@ it("detects a localhost URL from live output and opens it through Rust", async (
   expect(open).not.toBeUndefined();
   await click(open);
   expect(calls).toContainEqual({ name: "open_local_url", args: { url: "http://localhost:4321" } });
+});
+
+it("routes a restart port conflict to the app instead of failing silently", async () => {
+  const conflicts: unknown[] = [];
+  await act(async () => root.render(
+    <ServiceLogPanel
+      projectId={1}
+      serviceId={9}
+      checkout={checkout}
+      visible
+      onServiceConflict={(conflict) => conflicts.push(conflict)}
+    />,
+  ));
+  await settle();
+
+  restartResult = {
+    outcome: "conflict",
+    payload: {
+      port: 5173,
+      existing: { ...baseService },
+      message: "Port 5173 is already used by Project Service 'npm run dev' (PID 900)",
+    },
+  };
+  // Restart stops the service before it checks the port, so the refreshed header is Stopped.
+  stopped = true;
+  await click(button("Restart"));
+  await settle();
+
+  expect(conflicts).toHaveLength(1);
+  expect(conflicts[0]).toMatchObject({ port: 5173, existing: { id: 9 } });
+  expect(container.textContent).toContain("Stopped");
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });

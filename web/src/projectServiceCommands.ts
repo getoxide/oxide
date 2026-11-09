@@ -110,6 +110,46 @@ function bindsPort(tokens: Token[]): boolean {
   return false;
 }
 
+/** Trims non-digits from both ends, then requires a plain number, like Rust's `parse_port`. */
+function parsePort(raw: string): number | null {
+  const digits = raw.replace(/^\D+|\D+$/g, "");
+  if (!/^\d+$/.test(digits)) return null;
+  const value = Number(digits);
+  return value >= 1 && value <= 65_535 ? value : null;
+}
+
+/**
+ * The port a command line asks for (`--port N`, `--port=N`, `-p N`, `-p=N`, `PORT=N`, or the
+ * positional port of `python -m http.server PORT`). Mirrors `oxide_provider::port_in_command`
+ * and `oxide_core::port_from_command`; `projectServiceCommands.test.ts` holds the shared table.
+ */
+export function portInCommand(command: string): number | null {
+  const tokens = tokenize(command);
+  const values = tokens.map((token) => token.value);
+  const python = values.findIndex((value) => value === "python" || value === "python3" || value === "py");
+  if (python !== -1) {
+    const module = values.indexOf("-m", python + 1);
+    if (module !== -1 && values[module + 1] === "http.server") {
+      const port = parsePort(values[module + 2] ?? "");
+      if (port !== null) return port;
+    }
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
+    for (const prefix of ["--port=", "-p=", "PORT="]) {
+      if (value.startsWith(prefix)) {
+        const port = parsePort(value.slice(prefix.length));
+        if (port !== null) return port;
+      }
+    }
+    if (value === "--port" || value === "-p") {
+      const port = parsePort(values[index + 1] ?? "");
+      if (port !== null) return port;
+    }
+  }
+  return null;
+}
+
 const exact = (words: string[], prefix: string[]): boolean =>
   prefix.every((word, index) => words[index] === word);
 

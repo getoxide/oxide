@@ -1,10 +1,40 @@
 #![cfg(unix)]
 
-use oxide_core::{Core, ProjectServiceStatus};
+use oxide_core::{
+    Core, ProjectService, ProjectServiceConflict, ProjectServiceStartOutcome, ProjectServiceStatus,
+};
 use oxide_provider::process::group_alive;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+fn started(outcome: ProjectServiceStartOutcome) -> ProjectService {
+    match outcome {
+        ProjectServiceStartOutcome::Started(service) => service,
+        ProjectServiceStartOutcome::Conflict(conflict) => {
+            panic!(
+                "expected a started service, got a conflict: {}",
+                conflict.message
+            )
+        }
+    }
+}
+
+fn conflicted(outcome: ProjectServiceStartOutcome) -> ProjectServiceConflict {
+    match outcome {
+        ProjectServiceStartOutcome::Conflict(conflict) => conflict,
+        ProjectServiceStartOutcome::Started(service) => {
+            panic!("expected a conflict, got service {}", service.id)
+        }
+    }
+}
+
+/// A free loopback port. The listener is dropped before the caller uses it, so a test may race
+/// another process for it; every test here uses its own ephemeral port, which keeps that rare.
+fn free_port() -> u16 {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.local_addr().unwrap().port()
+}
 
 fn open_core_with_project(dir: &Path) -> (Core, u32) {
     let core = Core::open(dir).unwrap();
@@ -39,9 +69,10 @@ fn spawns_a_long_running_service_in_its_own_process_group() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let service = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
 
     assert_eq!(service.id, 1);
     assert_eq!(service.project_id, project_id);
@@ -94,9 +125,10 @@ fn captures_stdout_and_stderr_lines() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(project_id, None, "echo out; echo err >&2; sleep 30")
-        .unwrap();
+    let service = started(
+        core.start_project_service(project_id, None, "echo out; echo err >&2; sleep 30")
+            .unwrap(),
+    );
     let (backlog, _rx) = core.subscribe_project_service_logs(service.id).unwrap();
 
     assert!(backlog.iter().any(|line| line.text == "out"));
@@ -116,13 +148,14 @@ fn the_log_buffer_keeps_the_newest_ten_thousand_lines_and_streams_live_output() 
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(
+    let service = started(
+        core.start_project_service(
             project_id,
             None,
             "i=0; while [ $i -lt 10050 ]; do echo line-$i; i=$((i+1)); done; sleep 2; echo live-line; sleep 30",
         )
-        .unwrap();
+        .unwrap(),
+    );
     let (backlog, rx) = core.subscribe_project_service_logs(service.id).unwrap();
     let mut seen = backlog;
     if seen.last().is_none_or(|line| line.text != "live-line") {
@@ -169,13 +202,14 @@ fn detects_a_localhost_port_from_output() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(
+    let service = started(
+        core.start_project_service(
             project_id,
             None,
             "printf 'http://localhost:49152\\n'; sleep 30",
         )
-        .unwrap();
+        .unwrap(),
+    );
 
     assert!(
         wait_until(Duration::from_secs(5), || {
@@ -196,9 +230,10 @@ fn stop_terminates_the_group_marks_it_stopped_and_is_idempotent() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let service = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
     let pid = service.pid;
 
     core.stop_project_service(service.id).unwrap();
@@ -216,12 +251,13 @@ fn restart_reuses_the_id_and_runs_a_new_process() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let first = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let first = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
     let first_pid = first.pid;
 
-    let second = core.restart_project_service(first.id).unwrap();
+    let second = started(core.restart_project_service(first.id).unwrap());
 
     assert_eq!(second.id, first.id);
     assert_ne!(second.pid, first_pid);
@@ -239,9 +275,10 @@ fn reports_service_lifecycle_events() {
     let (core, project_id) = open_core_with_project(dir.path());
     let events = core.subscribe_project_services();
 
-    let service = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let service = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
     let started = events.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(started.kind, oxide_core::ProjectServiceEventKind::Started);
     assert_eq!(started.project_id, project_id);
@@ -258,12 +295,14 @@ fn shutdown_stops_every_service_and_leaves_no_live_groups() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let first = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
-    let second = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let first = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
+    let second = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
 
     core.shutdown();
 
@@ -277,9 +316,10 @@ fn closing_a_project_stops_its_services() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
 
-    let service = core
-        .start_project_service(project_id, None, "sleep 30")
-        .unwrap();
+    let service = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
     let pid = service.pid;
 
     core.set_project_open(project_id, false).unwrap();
@@ -290,4 +330,132 @@ fn closing_a_project_stops_its_services() {
         core.project_service(service.id).unwrap().unwrap().status,
         ProjectServiceStatus::Stopped
     );
+}
+
+#[test]
+fn starting_a_service_on_a_port_owned_by_another_service_is_a_conflict() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+    let port = free_port();
+
+    let first = started(
+        core.start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+            .unwrap(),
+    );
+    let outcome = core
+        .start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+        .unwrap();
+
+    let conflict = conflicted(outcome);
+    assert_eq!(conflict.port, port);
+    assert_eq!(
+        conflict.existing.as_ref().map(|service| service.id),
+        Some(first.id)
+    );
+    assert!(
+        conflict.message.contains(&port.to_string()),
+        "the message names the port: {}",
+        conflict.message
+    );
+    assert!(
+        conflict.message.contains("sleep 30"),
+        "the message names the incumbent command: {}",
+        conflict.message
+    );
+    assert!(
+        conflict.message.contains(&first.pid.to_string()),
+        "the message names the incumbent PID: {}",
+        conflict.message
+    );
+
+    // The second spawn was refused: only the incumbent is running.
+    let services = core.list_project_services(project_id).unwrap();
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].id, first.id);
+    assert!(group_alive(first.pid as i32));
+
+    core.stop_project_service(first.id).unwrap();
+}
+
+#[test]
+fn an_external_listener_on_the_port_is_a_conflict_without_an_incumbent() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+    // Keep the listener alive for the whole check: this is a process Oxide does not own.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let outcome = core
+        .start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+        .unwrap();
+
+    let conflict = conflicted(outcome);
+    assert_eq!(conflict.port, port);
+    assert!(conflict.existing.is_none());
+    assert!(
+        conflict.message.contains(&port.to_string()),
+        "the message names the port: {}",
+        conflict.message
+    );
+    assert!(core.list_project_services(project_id).unwrap().is_empty());
+    drop(listener);
+}
+
+#[test]
+fn restart_reuses_its_own_port_and_conflicts_with_another_service_holding_it() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+    let port = free_port();
+
+    // B owns the port first, then stops, leaving it free for A.
+    let b = started(
+        core.start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+            .unwrap(),
+    );
+    core.stop_project_service(b.id).unwrap();
+    assert_eq!(
+        core.project_service(b.id).unwrap().unwrap().status,
+        ProjectServiceStatus::Stopped
+    );
+    let a = started(
+        core.start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+            .unwrap(),
+    );
+
+    // A restarting itself must ignore its own (now stopped) record and re-bind its port.
+    let restarted = started(core.restart_project_service(a.id).unwrap());
+    assert_eq!(restarted.id, a.id);
+    assert_ne!(restarted.pid, a.pid);
+    assert_eq!(restarted.port, Some(port));
+    assert!(group_alive(restarted.pid as i32));
+
+    // B's stored command still asks for the port A now holds; the restart refuses to spawn.
+    let conflict = conflicted(core.restart_project_service(b.id).unwrap());
+    assert_eq!(conflict.port, port);
+    assert_eq!(
+        conflict.existing.as_ref().map(|service| service.id),
+        Some(restarted.id)
+    );
+    let b_after = core.project_service(b.id).unwrap().unwrap();
+    assert_eq!(b_after.status, ProjectServiceStatus::Stopped);
+    assert!(!group_alive(b.pid as i32));
+
+    core.stop_project_service(restarted.id).unwrap();
+}
+
+#[test]
+fn a_command_without_an_explicit_port_still_spawns() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+
+    // There is no port to check before the child writes one; output-only detection stays
+    // post-spawn, so this path must keep working exactly as before.
+    let service = started(
+        core.start_project_service(project_id, None, "sleep 30")
+            .unwrap(),
+    );
+    assert_eq!(service.status, ProjectServiceStatus::Running);
+    assert_eq!(service.port, None);
+
+    core.stop_project_service(service.id).unwrap();
 }

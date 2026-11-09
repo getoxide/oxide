@@ -47,10 +47,13 @@ pub fn without_background_marker(command: &str) -> &str {
     }
 }
 
-/// The port a command line asks for (`--port N`, `--port=N`, `-p N`, `-p=N`, `PORT=N`).
-/// This mirrors Core's `port_from_command`; the adapter only needs it to describe a service
-/// before Core has spawned it.
+/// The port a command line asks for (`--port N`, `--port=N`, `-p N`, `-p=N`, `PORT=N`, or the
+/// positional port of `python -m http.server PORT`). Core's `port_from_command` delegates here,
+/// and `web/src/projectServiceCommands.ts` mirrors the same syntax, so the three paths agree.
 pub fn port_in_command(command: &str) -> Option<u16> {
+    if let Some(port) = python_http_server_port(command) {
+        return Some(port);
+    }
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let mut index = 0;
     while index < tokens.len() {
@@ -256,6 +259,21 @@ fn parse_port(raw: &str) -> Option<u16> {
     (1..=65_535).contains(&value).then_some(value as u16)
 }
 
+/// The positional port of `python -m http.server [PORT]`: no flag names it, but it is the
+/// conventional first argument once the module is named.
+fn python_http_server_port(command: &str) -> Option<u16> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let python = tokens
+        .iter()
+        .position(|token| matches!(*token, "python" | "python3" | "py"))?;
+    let rest = &tokens[python + 1..];
+    let module = rest.iter().position(|token| *token == "-m")?;
+    if rest.get(module + 1) != Some(&"http.server") {
+        return None;
+    }
+    rest.get(module + 2).and_then(|raw| parse_port(raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +380,12 @@ mod tests {
         assert_eq!(port_in_command("vite --port=5173"), Some(5173));
         assert_eq!(port_in_command("serve -p 8080"), Some(8080));
         assert_eq!(port_in_command("PORT=4000 node server.js"), Some(4000));
+        assert_eq!(port_in_command("python3 -m http.server 8000"), Some(8000));
+        assert_eq!(
+            port_in_command("python -m http.server 8000 --bind 127.0.0.1"),
+            Some(8000)
+        );
+        assert_eq!(port_in_command("python3 -m http.server"), None);
         assert_eq!(port_in_command("sleep -p 1.5"), None);
         assert_eq!(port_in_command("npm run dev"), None);
     }

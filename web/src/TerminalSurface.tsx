@@ -4,7 +4,7 @@ import { TerminalWorkbench } from "./TerminalWorkbench";
 import { ServiceLogPanel } from "./ServiceLogPanel";
 import { isMismatched, type ProjectTerminals, type ServiceTab, type TerminalCheckout, type TerminalTab } from "./terminalTabs";
 import { terminalPath } from "./terminalPaths";
-import type { ProjectService } from "./bindings";
+import type { ProjectService, ProjectServiceConflict } from "./bindings";
 
 interface Props {
   projectId: number;
@@ -19,6 +19,8 @@ interface Props {
   onSelectTab: (tabId: number) => void;
   onCloseTab: (tabId: number) => void;
   onRunningChange: (tabId: number, command: string | null) => void;
+  /** A terminal command or a service Restart hit a port conflict; App owns the dialog. */
+  onServiceConflict: (conflict: ProjectServiceConflict) => void;
 }
 
 const folderName = (path: string) => {
@@ -30,7 +32,7 @@ const NO_CHECKOUT = "Select a Thread to open a terminal in its checkout.";
 
 /** One Project's shells and Project Service log views. Tabs outlive Thread selection. */
 export function TerminalSurface({
-  projectId, terminals, checkout, visible, queuedCommand, onCommandConsumed, onOpenTab, onSelectTab, onCloseTab, onRunningChange,
+  projectId, terminals, checkout, visible, queuedCommand, onCommandConsumed, onOpenTab, onSelectTab, onCloseTab, onRunningChange, onServiceConflict,
 }: Props) {
   const strip = useRef<HTMLDivElement>(null);
   const [serviceInfo, setServiceInfo] = useState<Record<number, ProjectService>>({});
@@ -93,6 +95,7 @@ export function TerminalSurface({
               checkout={tab}
               visible={visible && tab.id === selectedId}
               onServiceChange={rememberService}
+              onServiceConflict={onServiceConflict}
             />
           ) : (
             <TerminalWorkbench
@@ -104,6 +107,7 @@ export function TerminalSurface({
               queuedCommand={tab.id === selectedId ? queuedCommand : null}
               onCommandConsumed={onCommandConsumed}
               onRunningChange={(command) => onRunningChange(tab.id, command)}
+              onServiceConflict={onServiceConflict}
             />
           )}
         </div>

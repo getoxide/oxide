@@ -1280,6 +1280,9 @@ section.terminal.terminal-hidden { display: none; }
 .modal { background: var(--bg2); border: 1px solid var(--line-strong); border-radius: 12px; padding: 20px; min-width: 340px; max-width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; overflow-wrap: anywhere; display: grid; gap: 12px; box-shadow: 0 20px 60px #000a; }
 .modal h2 { margin: 0; font-size: 14px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.service-conflict-dialog { width: min(460px, calc(100vw - 32px)); gap: 10px; }
+.service-conflict-message { margin: 0; color: var(--fg); font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.service-conflict-dialog .hint { margin: 0; }
 .modal input, .modal textarea, .modal select { width: 100%; }
 .blind-review-fields { display: grid; gap: 12px; }
 .blind-review-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--dim); }

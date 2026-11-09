@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LinkExternalIcon, SquareFillIcon, SyncIcon, TrashIcon } from "@primer/octicons-react";
-import { commands, type ProjectService, type ProjectServiceLogLine } from "./bindings";
+import { commands, type ProjectService, type ProjectServiceConflict, type ProjectServiceLogLine } from "./bindings";
 import { PROJECT_SERVICES_CHANGED } from "./ProjectServices";
 import type { TerminalCheckout } from "./terminalTabs";
 import { terminalPath } from "./terminalPaths";
@@ -87,6 +87,8 @@ export interface ServiceLogPanelProps {
   visible: boolean;
   /** Reports the freshest service metadata so the tab strip can badge its live port. */
   onServiceChange?: (service: ProjectService) => void;
+  /** A Restart hit a port conflict; App owns the switch/restart dialog. */
+  onServiceConflict?: (conflict: ProjectServiceConflict) => void;
 }
 
 /**
@@ -98,7 +100,7 @@ export function ServiceLogPanel(props: ServiceLogPanelProps) {
   return <ServiceLogView key={`${props.projectId}:${props.serviceId}`} {...props} />;
 }
 
-function ServiceLogView({ projectId, serviceId, checkout, visible, onServiceChange }: ServiceLogPanelProps) {
+function ServiceLogView({ projectId, serviceId, checkout, visible, onServiceChange, onServiceConflict }: ServiceLogPanelProps) {
   const [service, setService] = useState<ProjectService | null>(null);
   const [lines, setLines] = useState<ProjectServiceLogLine[]>([]);
   const [detected, setDetected] = useState<DetectedServiceUrl | null>(null);
@@ -197,8 +199,14 @@ function ServiceLogView({ projectId, serviceId, checkout, visible, onServiceChan
       if (kind === "restart") {
         const result = await commands.restartProjectService(serviceId);
         if (result.status === "error") setError(result.error.message);
-        else {
-          setService(result.data);
+        else if (result.data.outcome === "conflict") {
+          // Restart stops the service before it checks the port, so it is stopped now. Refresh
+          // the header, then hand the structured conflict to App for the switch/restart dialog.
+          const refreshed = await commands.projectService(serviceId);
+          if (refreshed.status === "ok" && refreshed.data) setService(refreshed.data);
+          onServiceConflict?.(result.data.payload);
+        } else {
+          setService(result.data.payload);
           clearVisibleLogs();
         }
       } else if (kind === "stop") {

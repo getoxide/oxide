@@ -14,7 +14,7 @@ import {
 } from "./TerminalCommandBlock";
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput";
 import { terminalPath } from "./terminalPaths";
-import { commands } from "./bindings";
+import { commands, type ProjectServiceConflict } from "./bindings";
 import { backgroundCommand } from "./projectServiceCommands";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
@@ -31,6 +31,8 @@ interface Props {
   onCommandConsumed: () => void;
   /** The command a Command block is running, or `null` when the shell is idle. */
   onRunningChange?: (command: string | null) => void;
+  /** A structured port conflict, so the app can offer to switch to or restart the incumbent. */
+  onServiceConflict?: (conflict: ProjectServiceConflict) => void;
 }
 const WINDOWS = /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
@@ -51,6 +53,7 @@ function serviceExitCode(message: string): number {
 interface ServiceOutcome {
   message: string;
   exitCode: number;
+  conflict: ProjectServiceConflict | null;
 }
 
 /** Start a detached command in Core and turn its response into the line to show in the block. */
@@ -62,7 +65,11 @@ async function startProjectService(
   try {
     const result = await commands.startProjectService(projectId, threadId, command);
     if (result.status === "error") throw result.error;
-    const service = result.data;
+    const outcome = result.data;
+    if (outcome.outcome === "conflict") {
+      return { message: outcome.payload.message, exitCode: 1, conflict: outcome.payload };
+    }
+    const service = outcome.payload;
     const url =
       service.url ??
       (service.port !== null ? `http://localhost:${service.port}` : null);
@@ -70,10 +77,13 @@ async function startProjectService(
     return {
       message: `[Oxide] Started Project Service '${command}'${where} (PID ${service.pid})`,
       exitCode: 0,
+      conflict: null,
     };
   } catch (cause) {
+    // A genuine startup crash still arrives as a prose error; #407's exit-code extraction
+    // applies only to that case, never to a structured port conflict.
     const message = errorMessage(cause);
-    return { message, exitCode: serviceExitCode(message) };
+    return { message, exitCode: serviceExitCode(message), conflict: null };
   }
 }
 
@@ -104,6 +114,7 @@ export function TerminalWorkbench({
   queuedCommand,
   onCommandConsumed,
   onRunningChange,
+  onServiceConflict,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [history, setHistory] = useState<CommandHistory[]>(() =>
@@ -339,7 +350,7 @@ export function TerminalWorkbench({
       // No PTY launch: the block reports the Core-owned Project Service instead.
       launched.current.add(token);
       void startProjectService(projectId, threadId, service.command).then(
-        ({ message, exitCode }) => {
+        ({ message, exitCode, conflict }) => {
           if (!alive.current) return;
           setBlocks((old) =>
             old.map((entry) =>
@@ -362,6 +373,7 @@ export function TerminalWorkbench({
           );
           activeBlock.current = null;
           setRunning(false);
+          if (conflict) onServiceConflict?.(conflict);
           if (visible) requestAnimationFrame(() => composer.current?.focus());
         },
       );

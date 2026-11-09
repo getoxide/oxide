@@ -53,7 +53,7 @@ beforeEach(() => {
       case "subscribe_project_service_logs":
         serviceChannel = (args as { onLine: Channel<ProjectServiceLogLine> }).onLine;
         return [serviceLine(0, "ready on http://localhost:5173")];
-      case "restart_project_service": return service;
+      case "restart_project_service": return { outcome: "started", payload: service };
       case "stop_project_service": case "clear_project_service_logs": case "open_local_url": return null;
       default: return null;
     }
@@ -75,7 +75,8 @@ function Harness({ initial, checkout, visible = true }: { initial: TerminalsByPr
     onOpenTab={() => checkout && setState((s) => openTab(s, 1, checkout))}
     onSelectTab={(id) => setState((s) => selectTab(s, 1, id))}
     onCloseTab={(id) => setState((s) => closeTab(s, 1, id))}
-    onRunningChange={(id, command) => setState((s) => setRunning(s, 1, id, command))} />;
+    onRunningChange={(id, command) => setState((s) => setRunning(s, 1, id, command))}
+    onServiceConflict={() => {}} />;
 }
 
 it("starts no shell until a tab is explicitly opened", async () => {

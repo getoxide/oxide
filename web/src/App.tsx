@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, u
 import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type Project, type Thread, type ThreadStatus, type DiffFile } from "./bindings";
+import { commands, type Project, type Thread, type ThreadStatus, type DiffFile, type ProjectServiceConflict } from "./bindings";
 import type { CodeOpenRequest, ReviewTarget } from "./codeOpen";
 import {
   ChevronDownIcon,
@@ -44,6 +44,7 @@ import { GitHeader } from "./GitHeader";
 import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
 import { ProjectServices } from "./ProjectServices";
+import { ServiceConflictDialog } from "./ServiceConflictDialog";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
 import { SettingsView } from "./SettingsView";
@@ -115,6 +116,7 @@ export function App() {
   const sidebarSize = usePanelSize("sidebar");
   const toolsSize = usePanelSize("tools");
   const [openError, setOpenError] = useState<string | null>(null);
+  const [serviceConflict, setServiceConflict] = useState<ProjectServiceConflict | null>(null);
   const overlays = useRef<WorkspaceOverlaysHandle>(null);
   // A Project picked in the palette that should get a new Thread once its Threads have loaded.
   const pendingNewThread = useRef<number | null>(null);
@@ -236,6 +238,35 @@ export function App() {
       setOpenError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [selected, setActiveTool]);
+  /** Shows the switch/restart dialog for a port conflict from a terminal or a log tab. */
+  const showServiceConflict = useCallback((conflict: ProjectServiceConflict) => {
+    setServiceConflict(conflict);
+  }, []);
+  const dismissServiceConflict = useCallback(() => setServiceConflict(null), []);
+  const switchToConflictService = useCallback((serviceId: number) => {
+    setServiceConflict(null);
+    void openService(serviceId);
+  }, [openService]);
+  const restartConflictService = useCallback(async (serviceId: number) => {
+    try {
+      const result = await commands.restartProjectService(serviceId);
+      if (result.status === "error") {
+        setOpenError(result.error.message);
+        setServiceConflict(null);
+        return;
+      }
+      if (result.data.outcome === "conflict") {
+        // It lost the port again: keep the dialog up with the fresher incumbent.
+        setServiceConflict(result.data.payload);
+        return;
+      }
+      setServiceConflict(null);
+      await openService(result.data.payload.id);
+    } catch (cause) {
+      setOpenError(cause instanceof Error ? cause.message : String(cause));
+      setServiceConflict(null);
+    }
+  }, [openService]);
   // A Project's shells stay mounted while hidden; the selected Project shows the empty state once visited.
   const terminalSurfaces: TerminalsByProject = Object.fromEntries(
     Object.entries(terminals).filter(([, state]) => state.tabs.length > 0)
@@ -675,6 +706,11 @@ export function App() {
         if (active?.closest?.(".monaco-editor, .xterm, .terminal")) {
           return;
         }
+        if (serviceConflict) {
+          e.preventDefault();
+          setServiceConflict(null);
+          return;
+        }
         if (overlays.current?.hasOverlay()) {
           e.preventDefault();
           overlays.current.dismissTopmost();
@@ -774,7 +810,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shortcuts, selected, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention]);
+  }, [shortcuts, selected, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
 
   // Listen for low-rate thread status changes from backend
   useEffect(() => {
@@ -851,6 +887,14 @@ export function App() {
       <DictationController />
       <WorkspaceOverlays ref={overlays} projects={projects ?? []} onProjectsScanned={onProjectsScanned}
         onStartThread={startThreadIn} onOpenProject={openProject} onThreadDeleted={onThreadDeleted} />
+      {serviceConflict && (
+        <ServiceConflictDialog
+          conflict={serviceConflict}
+          onSwitch={switchToConflictService}
+          onRestart={restartConflictService}
+          onDismiss={dismissServiceConflict}
+        />
+      )}
       <header className="header" data-tauri-drag-region>
         {isWindows && <AppMenu onNewThread={() => { setShowSettings(false); void startNewThread(); }} />}
         {/* The sidebar already holds New Thread and Open a Project; the header only offers the way back when it is hidden. */}
@@ -1212,7 +1256,8 @@ export function App() {
                   onOpenTab={openTerminalTab}
                   onSelectTab={(tabId) => setTerminals((previous) => selectTab(previous, projectId, tabId))}
                   onCloseTab={(tabId) => setTerminals((previous) => closeTab(previous, projectId, tabId))}
-                  onRunningChange={(tabId, command) => setTerminals((previous) => setRunning(previous, projectId, tabId, command))} />
+                  onRunningChange={(tabId, command) => setTerminals((previous) => setRunning(previous, projectId, tabId, command))}
+                  onServiceConflict={showServiceConflict} />
               </Suspense>;
             })}
             {selected && currentThreadId === null && activeTool === "Files" && <section className="empty-state surface-empty"><p>Select a Thread to open files in its checkout.</p><button className="btn primary" onClick={() => void startNewThread()}>New Thread</button></section>}
