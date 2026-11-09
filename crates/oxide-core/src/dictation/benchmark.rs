@@ -14,8 +14,8 @@ use std::{
 
 mod dispatch;
 mod process;
-pub(crate) use dispatch::Recorder;
 pub use dispatch::{DISPATCH_REVISION, DictationDispatch, DispatchEvidence, DispatchRun};
+pub(crate) use dispatch::{MetalDispatchRecorder, Recorder};
 pub use process::{NativeDevice, ProcessWorker, worker_main, worker_main_with};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

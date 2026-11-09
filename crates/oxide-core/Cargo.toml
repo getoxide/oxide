@@ -40,7 +40,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Registry",
 ] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 whisper-rs = { version = "=0.16.0", features = ["metal"] }
 
 [features]
