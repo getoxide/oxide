@@ -169,6 +169,10 @@ _Avoid_: Turn, Thread, agent message
 **Project terminal tab**:
 One shell session in a Project's terminal tab strip. It keeps the checkout it was opened in, is flagged when that differs from the selected Thread's checkout, and survives Thread selection and Surface changes. Deleting a Board Thread closes only the tabs of its worktree.
 
+**Project Service**:
+A long-running background process (such as a local web server or watcher) started from a Project terminal tab or by an agent Turn. It belongs to the Project, shows in the sidebar with its port and status, streams output into the Terminal Surface, and terminates when stopped or when the Project closes.
+_Avoid_: Background job, daemon, subshell, orphan process
+
 **Surface**:
 One of the five tools in the right dock: Diff, Files, Terminal, Pull request or Issues. Files is a navigator, not an editor: it browses the selected checkout and opens files in the **Code workspace**, which lives in the centre beside the Thread. A Surface can be maximized and restored while keeping its content and working state. The Pull request and Issues lists belong to the Project's repository; only branch actions (opening a pull request, checking one out) act on the selected Thread's checkout and name it. Reviewing a remote pull request records its identity for the Diff Surface and never changes a checkout.
 _Avoid_: Tab, pane, widget
