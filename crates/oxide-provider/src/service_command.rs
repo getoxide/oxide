@@ -2,8 +2,9 @@
 //! file watchers, and anything the user or agent explicitly backgrounds with `&`.
 //!
 //! The classifier is deliberately conservative: a false positive turns an ordinary tool
-//! call into a detached process. It is shared by the terminal interception path and the
-//! Provider adapters, so both agree on what a "service command" is.
+//! call into a detached process. The Provider adapters use it to decide which tool calls to
+//! report for detachment; the terminal path mirrors the same patterns in
+//! `web/src/projectServiceCommands.ts`.
 
 /// A command that runs a local server or watcher and would otherwise block the caller.
 pub fn is_background_command(command: &str) -> bool {
@@ -12,6 +13,9 @@ pub fn is_background_command(command: &str) -> bool {
         return false;
     }
     if is_explicit_background(command) {
+        return true;
+    }
+    if binds_port(command) {
         return true;
     }
     let Some((program, args)) = invocation(command) else {
@@ -115,6 +119,34 @@ fn invocation(command: &str) -> Option<(String, Vec<String>)> {
     Some((program, args))
 }
 
+/// Whether the command names a port, which is enough to treat it as a server. Matches the
+/// terminal path's patterns (`--port`, `--port=N`, `-p N`, `-p=N`, `PORT=N`).
+fn binds_port(command: &str) -> bool {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        if token.starts_with("--port") || token.starts_with("PORT=") {
+            return true;
+        }
+        if token
+            .strip_prefix("-p=")
+            .is_some_and(|value| value.chars().all(|c| c.is_ascii_digit()))
+        {
+            return true;
+        }
+        if token == "-p"
+            && tokens
+                .get(index + 1)
+                .is_some_and(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
 fn is_env_assignment(token: &str) -> bool {
     let Some((name, _)) = token.split_once('=') else {
         return false;
@@ -151,8 +183,8 @@ fn is_server_invocation(program: &str, args: &[String]) -> bool {
             .map(|next| is_server_invocation(&normalize_program(next), &args[1..]))
             .unwrap_or(false),
         "vite" | "webpack-dev-server" | "serve" | "http-server" | "uvicorn" | "gunicorn"
-        | "watchexec" | "nodemon" | "browser-sync" => true,
-        "next" | "nuxt" | "astro" | "remix" => args
+        | "watchexec" | "watcher" | "nodemon" | "browser-sync" | "air" => true,
+        "next" | "nuxt" | "astro" | "remix" | "ng" => args
             .first()
             .is_some_and(|arg| matches!(arg.as_str(), "dev" | "start" | "serve" | "preview")),
         "webpack" => args
@@ -166,6 +198,13 @@ fn is_server_invocation(program: &str, args: &[String]) -> bool {
             .first()
             .is_some_and(|arg| matches!(arg.as_str(), "run" | "watch")),
         "go" => args.first().is_some_and(|arg| arg == "run"),
+        "deno" => args.first().is_some_and(|arg| arg == "run"),
+        "php" => args.first().is_some_and(|arg| arg == "-S"),
+        "parcel" => args.first().is_none_or(|arg| arg != "build"),
+        "hugo" => args.first().is_some_and(|arg| arg == "server"),
+        "jekyll" | "mkdocs" => args.first().is_some_and(|arg| arg == "serve"),
+        "docker" => args.len() >= 2 && args[0] == "compose" && args[1] == "up",
+        "docker-compose" => args.first().is_some_and(|arg| arg == "up"),
         "python" | "python3" | "py" => python_server(args),
         "tail" => args
             .first()
@@ -246,6 +285,18 @@ mod tests {
             "rails server",
             "nodemon server.js",
             "watchexec -e rs cargo test",
+            "watcher",
+            "air",
+            "ng serve",
+            "php -S localhost:8000",
+            "deno run --watch main.ts",
+            "docker compose up",
+            "docker-compose up",
+            "parcel",
+            "hugo server",
+            "jekyll serve",
+            "mkdocs serve",
+            "PORT=4000 node server.js",
             "tail -f logs/dev.log",
         ] {
             assert!(is_background_command(command), "{command} should detach");
@@ -267,6 +318,9 @@ mod tests {
             "next build",
             "flask --help",
             "rails db:migrate",
+            "parcel build",
+            "docker compose down",
+            "go test ./...",
             "tail -n 20 logs/dev.log",
             "ls -la",
         ] {
