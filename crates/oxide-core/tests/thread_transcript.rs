@@ -72,6 +72,7 @@ fn scenario_prompt_streams_events_and_persists_turn_and_items() {
                 item_index: 0,
                 kind: oxide_provider::ItemKind::AgentMessage,
                 content: "Hello world!".into(),
+                command: None,
             });
             let _ = s.send(ProviderEvent::TurnCompleted {
                 turn_index: 0,
@@ -164,6 +165,7 @@ fn resubscribing_after_simulated_gap_returns_consistent_snapshot() {
                 item_index: 0,
                 kind: oxide_provider::ItemKind::AgentMessage,
                 content: "First answer".into(),
+                command: None,
             });
             let _ = s.send(ProviderEvent::TurnCompleted {
                 turn_index: 0,
@@ -223,15 +225,12 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
 
     // Start turn
     core.send_prompt(thread.id, "Prompt for batching").unwrap();
-    // Consume TurnStarted & StatusChanged
-    let mut started = false;
-    while let Ok(evt) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
-        if let ThreadEvent::TurnStarted { .. } = evt.event {
-            started = true;
-            break;
-        }
-    }
-    assert!(started);
+    // Consume TurnStarted & StatusChanged. This wait is not the one being tested: the
+    // first prompt gives the Thread its worktree, and a Turn's end takes its Checkpoint,
+    // so both wait on git. Only the batching below has to be immediate.
+    wait_for(&rx, |event| {
+        matches!(event, ThreadEvent::TurnStarted { .. })
+    });
 
     // Send item started
     sender
@@ -315,6 +314,7 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
             item_index: 0,
             kind: oxide_provider::ItemKind::AgentMessage,
             content: "foobarbaz".into(),
+            command: None,
         })
         .unwrap();
     sender
@@ -324,14 +324,27 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
         })
         .unwrap();
 
-    let mut turn_completed = false;
-    while let Ok(evt) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
-        if let ThreadEvent::TurnCompleted { .. } = evt.event {
-            turn_completed = true;
-            break;
+    wait_for(&rx, |event| {
+        matches!(event, ThreadEvent::TurnCompleted { .. })
+    });
+}
+
+/// Waits for the next event a test cares about, without a stopwatch on the actor:
+/// these arrive after git work (a worktree, a Checkpoint), not on a schedule.
+fn wait_for(
+    rx: &crossbeam_channel::Receiver<SequencedThreadEvent>,
+    wanted: impl Fn(&ThreadEvent) -> bool,
+) -> ThreadEvent {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        let Ok(evt) = rx.recv_timeout(std::time::Duration::from_millis(500)) else {
+            continue;
+        };
+        if wanted(&evt.event) {
+            return evt.event;
         }
     }
-    assert!(turn_completed);
+    panic!("the Thread never sent the expected event");
 }
 
 fn open_core_with_project(dir: &std::path::Path) -> (Core, u32) {
@@ -808,6 +821,7 @@ fn thread_with_answering_provider(core: &Core, dir: &std::path::Path) -> oxide_c
             content: format!("answer to {prompt}"),
             parent_item_index: None,
             category: None,
+            command: None,
         });
         let _ = sender.send(ProviderEvent::TurnCompleted {
             turn_index: 0,
@@ -994,4 +1008,154 @@ fn switching_provider_after_first_turn_is_rejected() {
     // Attempting to switch provider after first turn should fail
     let err = core.set_thread_provider(thread.id, "codex");
     assert!(err.is_err());
+}
+
+#[test]
+fn command_evidence_is_stored_and_broadcast_with_its_item() {
+    use oxide_core::{CommandOutcome, CommandRecord, ThreadEvent};
+
+    let dir = tempdir().unwrap();
+    let core = Core::open(dir.path()).unwrap();
+    core.set_real_time_ticker(false);
+
+    let project_dir = dir.path().join("my-project");
+    std::fs::create_dir_all(project_dir.join(".git")).unwrap();
+    let project = core.add_project(&project_dir.to_string_lossy()).unwrap();
+
+    let fake = FakeProvider::default();
+    let sender = fake.sender();
+    fake.on_prompt(move |_prompt| {
+        let s = sender.clone();
+        std::thread::spawn(move || {
+            let _ = s.send(ProviderEvent::TurnStarted {
+                turn_index: 0,
+                prompt: "run the checks".into(),
+            });
+            for (index, command) in [
+                CommandRecord::reported("cargo test", CommandOutcome::Succeeded, Some(0)),
+                CommandRecord::reported("cargo clippy", CommandOutcome::Failed, Some(1)),
+                CommandRecord {
+                    line: Some("cargo fmt".into()),
+                    outcome: CommandOutcome::Unknown,
+                    exit_code: None,
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let index = index as u32;
+                let _ = s.send(ProviderEvent::ItemStarted {
+                    item_index: index,
+                    kind: oxide_provider::ItemKind::ToolCall,
+                    parent_item_index: None,
+                    category: Some(oxide_provider::ActivityCategory::Run),
+                });
+                let _ = s.send(ProviderEvent::ItemCompleted {
+                    item_index: index,
+                    kind: oxide_provider::ItemKind::ToolCall,
+                    content: command.line.clone().unwrap_or_default(),
+                    parent_item_index: None,
+                    category: Some(oxide_provider::ActivityCategory::Run),
+                    command: Some(command),
+                });
+            }
+            let _ = s.send(ProviderEvent::TurnCompleted {
+                turn_index: 0,
+                status: TurnStatus::Completed,
+            });
+        });
+    });
+
+    let thread = core
+        .create_thread(project.id, "fake", None, None, PermissionMode::AutoEdit)
+        .unwrap();
+    core.register_fake_provider(thread.id, fake);
+
+    let (_snapshot, rx) = core.subscribe_thread(thread.id).unwrap();
+    core.send_prompt(thread.id, "run the checks").unwrap();
+
+    let mut broadcast = Vec::new();
+    while let Ok(sequenced) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        match sequenced.event {
+            ThreadEvent::ItemCompleted {
+                command: Some(command),
+                ..
+            } => broadcast.push(command),
+            ThreadEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(broadcast.len(), 3);
+    assert_eq!(broadcast[0].outcome, CommandOutcome::Succeeded);
+    assert_eq!(broadcast[1].outcome, CommandOutcome::Failed);
+    assert_eq!(broadcast[1].exit_code, Some(1));
+    assert_eq!(broadcast[2].outcome, CommandOutcome::Unknown);
+
+    let snapshot = core.get_thread_snapshot(thread.id).unwrap();
+    let items = &snapshot.turns[0].items;
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0].command, broadcast[0]);
+    assert_eq!(items[1].command, broadcast[1]);
+    assert_eq!(items[2].command, broadcast[2]);
+}
+
+#[test]
+fn each_turn_records_the_permission_mode_it_started_in() {
+    let dir = tempdir().unwrap();
+    let core = Core::open(dir.path()).unwrap();
+    core.set_real_time_ticker(false);
+
+    let project_dir = dir.path().join("my-project");
+    std::fs::create_dir_all(project_dir.join(".git")).unwrap();
+    let project = core.add_project(&project_dir.to_string_lossy()).unwrap();
+
+    let fake = FakeProvider::scripted();
+    let thread = core
+        .create_thread(project.id, "fake", None, None, PermissionMode::AutoEdit)
+        .unwrap();
+    core.register_fake_provider(thread.id, fake);
+
+    let (_snapshot, rx) = core.subscribe_thread(thread.id).unwrap();
+    let mut started_modes = Vec::new();
+
+    core.send_prompt(thread.id, "first").unwrap();
+    while let Ok(sequenced) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        match sequenced.event {
+            ThreadEvent::TurnStarted {
+                permission_mode, ..
+            } => started_modes.push(permission_mode),
+            ThreadEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    core.set_thread_permission_mode(thread.id, PermissionMode::FullAccess)
+        .unwrap();
+    core.send_prompt(thread.id, "second").unwrap();
+    while let Ok(sequenced) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        match sequenced.event {
+            ThreadEvent::TurnStarted {
+                permission_mode, ..
+            } => started_modes.push(permission_mode),
+            ThreadEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        started_modes,
+        vec![
+            Some(PermissionMode::AutoEdit),
+            Some(PermissionMode::FullAccess)
+        ]
+    );
+    let snapshot = core.get_thread_snapshot(thread.id).unwrap();
+    assert_eq!(
+        snapshot.turns[0].permission_mode,
+        Some(PermissionMode::AutoEdit)
+    );
+    assert_eq!(
+        snapshot.turns[1].permission_mode,
+        Some(PermissionMode::FullAccess)
+    );
 }

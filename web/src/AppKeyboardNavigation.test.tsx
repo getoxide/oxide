@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./queryCache";
@@ -17,18 +16,12 @@ vi.mock("./ThreadView", () => ({
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./dictation", () => ({ DictationController: () => null }));
-vi.mock("./CodeWorkbench", () => ({
-  CodeWorkbench: ({ onOpenFilesChange }: { onOpenFilesChange?: (open: boolean) => void }) => {
-    // The editor reports a file as open, as it does once the user picks one.
-    useEffect(() => { onOpenFilesChange?.(true); }, [onOpenFilesChange]);
-    return <div className="code-workbench">Editor</div>;
-  },
-}));
+vi.mock("./CodeWorkbench", () => ({ CodeWorkbench: () => <div className="code-workbench">Editor</div> }));
+vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div className="files-navigation" /> }));
 vi.mock("./TerminalSurface", () => ({ TerminalSurface: () => <div className="terminal-surface">Terminal</div> }));
 vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div className="diff-panel">Diff content</div> }));
 vi.mock("./PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
 vi.mock("./IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
-vi.mock("./BoardView", () => ({ BoardView: () => <main aria-label="Thread Board">Board</main> }));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
@@ -159,7 +152,7 @@ it("handles Escape hierarchy: closes topmost overlay, else restores maximization
   await act(async () => toolsToggle.click());
   await settle();
 
-  // Full screen is for editing: no button on Diff, only on Files with a file open.
+  // Full screen is for browsing: no button on Diff, but the Files navigator can widen.
   expect(host.querySelector('button[aria-label="Maximize Surface"]')).toBeNull();
   await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!.click());
   await settle();
@@ -237,29 +230,6 @@ it("surface shortcut actions select the single Surface and move focus", async ()
   await press("P", { ctrlKey: true, shiftKey: true });
   await settle();
   expect(host.querySelector('[role="tab"][aria-label="Pull request"]')?.getAttribute("aria-selected")).toBe("true");
-});
-
-it("toggles Board with Mod+B preserving Thread selection and dock state", async () => {
-  await act(async () => root.render(<App />));
-  await settle();
-
-  // Open tools dock on Terminal
-  await press("T", { ctrlKey: true, shiftKey: true });
-  await settle();
-  expect(host.querySelector('[role="tab"][aria-label="Terminal"]')?.getAttribute("aria-selected")).toBe("true");
-
-  // Toggle Board with Mod+B
-  await press("B", { ctrlKey: true });
-  await settle();
-  expect(host.querySelector('[aria-label="Thread Board"]')).not.toBeNull();
-  expect(host.querySelector('#workspace-tools')?.hasAttribute("hidden")).toBe(true);
-
-  // Toggle Board back with Mod+B
-  await press("B", { ctrlKey: true });
-  await settle();
-  expect(host.querySelector('[aria-label="Thread Board"]')).toBeNull();
-  expect(host.querySelector('#workspace-tools')?.hasAttribute("hidden")).toBe(false);
-  expect(host.querySelector('[role="tab"][aria-label="Terminal"]')?.getAttribute("aria-selected")).toBe("true");
 });
 
 it("overlay dismissal returns focus to the invoker element", async () => {

@@ -11,7 +11,7 @@ function item(
   parentItemIndex: number | null = null,
   category: ItemSnapshot["category"] = null,
 ): ItemSnapshot {
-  return { id: nextId++, itemIndex, kind, content, parentItemIndex, category, createdAt: "2026-10-22T10:00:00Z" };
+  return { id: nextId++, itemIndex, kind, content, parentItemIndex, category, command: { line: null, outcome: "unknown", exitCode: null }, createdAt: "2026-10-22T10:00:00Z" };
 }
 
 function activityOf(items: ItemSnapshot[]): Activity | null {
@@ -43,6 +43,14 @@ describe("groupTurnItems", () => {
   it("draws Slash command output as its own block, never a message or Activity", () => {
     const blocks = groupTurnItems([item(0, "slash_command_output", "| a |")]);
     expect(blocks.map((b) => b.type)).toEqual(["command"]);
+  });
+
+  it("draws a restore mark as its own block, never a message or Activity", () => {
+    const blocks = groupTurnItems([
+      item(0, "agent_message", "done"),
+      item(1, "restore_marker", "Restored the files to how they were before Turn 1."),
+    ]);
+    expect(blocks.map((b) => b.type)).toEqual(["message", "restore"]);
   });
 
   it("renders no Activity for a Turn without tool-like Items", () => {

@@ -25,13 +25,15 @@ export type ShortcutAction =
   | "nextThread"
   | "closeThread"
   | "toggleTools"
-  | "toggleBoard"
   | "openSettings"
   | "toggleSidebar"
   | "maximizeSurface";
 
 /** An accelerator such as `Mod+Shift+M`: `Mod` is ⌘ on macOS and Ctrl elsewhere. */
 export type Shortcuts = Record<ShortcutAction, string>;
+
+/** Jumps to the most urgent request without opening the Attention Center tray; built into the app. */
+export const ATTENTION_SHORTCUT = "Mod+Shift+A";
 
 /** Mirrors the defaults of the Core's Settings, for the moment before Settings have loaded. */
 export const DEFAULT_SHORTCUTS: Shortcuts = {
@@ -48,7 +50,6 @@ export const DEFAULT_SHORTCUTS: Shortcuts = {
   nextThread: "Mod+ArrowDown",
   closeThread: "Mod+Shift+W",
   toggleTools: "Mod+\\",
-  toggleBoard: "Mod+B",
   openSettings: "Mod+,",
   toggleSidebar: "Mod+Shift+E",
   maximizeSurface: "Mod+Shift+Enter",
@@ -71,7 +72,6 @@ export const SHORTCUT_ACTIONS: { action: ShortcutAction; label: string; group: s
   { action: "toggleTools", label: "Tools panel", group: "Panels" },
   { action: "toggleSidebar", label: "Toggle sidebar", group: "Panels" },
   { action: "maximizeSurface", label: "Maximize / restore Surface", group: "Panels" },
-  { action: "toggleBoard", label: "Chat / Board", group: "Panels" },
   { action: "openSettings", label: "Settings", group: "Panels" },
 ];
 

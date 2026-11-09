@@ -6,7 +6,7 @@ Oxide is pre-1.0. Only the **latest release** gets security fixes. Fixes land on
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities **privately** through GitHub's private vulnerability reporting: open the repository's [Security tab](https://github.com/cavallinilorenzo/oxide/security) and choose **Report a vulnerability**. Don't open a public issue, pull request or discussion for a suspected vulnerability.
+Please report vulnerabilities **privately** through GitHub's private vulnerability reporting: open the repository's [Security tab](https://github.com/getoxide/oxide/security) and choose **Report a vulnerability**. Don't open a public issue, pull request or discussion for a suspected vulnerability.
 
 Include what you can:
 

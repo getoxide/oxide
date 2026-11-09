@@ -3,7 +3,12 @@
 
 mod dictation_advice;
 mod dictation_benchmark;
+mod dictation_runtimes;
 use dictation_benchmark::{dictation_cancel_performance, dictation_check_performance};
+use dictation_runtimes::{
+    dictation_runtime_cancel, dictation_runtime_install, dictation_runtime_remove,
+    dictation_runtimes,
+};
 mod system;
 mod updates;
 use updates::{app_update_status, check_app_update, install_app_update};
@@ -230,7 +235,6 @@ pub struct Shortcuts {
     next_thread: String,
     close_thread: String,
     toggle_tools: String,
-    toggle_board: String,
     open_settings: String,
     toggle_sidebar: String,
     maximize_surface: String,
@@ -793,6 +797,39 @@ pub struct ReviewLedgerEntry {
     pub merged_at: f64,
 }
 
+/// Status of a follow-up fix candidate in the Review ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum FollowUpStatus {
+    Candidate,
+    Confirmed,
+    Dismissed,
+}
+
+/// A revert commit detected on the default branch for a tracked merged pull request.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRevert {
+    pub pull_request: u32,
+    pub commit_sha: String,
+    pub commit_subject: String,
+    /// Seconds since the Unix epoch (UTC).
+    pub committed_at: f64,
+}
+
+/// A follow-up candidate commit detected on the default branch for a tracked merged pull request.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewFollowUp {
+    pub pull_request: u32,
+    pub commit_sha: String,
+    pub commit_subject: String,
+    /// Seconds since the Unix epoch (UTC).
+    pub committed_at: f64,
+    pub co_modified_files: Vec<String>,
+    pub status: FollowUpStatus,
+}
+
 /// A Project's wait between a finished Turn and the merge.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -802,6 +839,185 @@ pub struct ReviewLedger {
     pub count: u32,
     /// The most recent entries, newest merge first.
     pub entries: Vec<ReviewLedgerEntry>,
+    /// Review rounds grouped by Provider, Model and kind of work.
+    pub rounds: Vec<ReviewRoundGroup>,
+    /// Reverts detected on the default branch within 30 days.
+    pub reverts: Vec<ReviewRevert>,
+    /// Candidate follow-up fixes detected on the default branch within 30 days.
+    pub follow_ups: Vec<ReviewFollowUp>,
+}
+
+/// Recurring feedback the app offers to turn into a rule for the Project's agent instructions.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSuggestion {
+    pub id: u32,
+    pub project_id: u32,
+    /// The comments it is based on, oldest first.
+    pub comments: Vec<String>,
+}
+
+/// The band a change's diff size falls in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewSizeBand {
+    Small,
+    Medium,
+    Large,
+}
+
+/// What a review round was about: languages touched, diff size band and issue labels.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewWorkKind {
+    pub languages: Vec<String>,
+    pub size_band: ReviewSizeBand,
+    pub issue_labels: Vec<String>,
+}
+
+/// Review rounds of one Provider, Model and kind of work.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRoundGroup {
+    pub provider: String,
+    pub model: Option<String>,
+    pub kind: ReviewWorkKind,
+    /// How many rounds the group holds.
+    pub sample_size: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VerificationState {
+    Fresh,
+    Stale,
+    Failed,
+    NeverRun,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VerificationKind {
+    Test,
+    Lint,
+    TypeCheck,
+    Build,
+    Other,
+}
+
+/// One Verification command of a Thread, with the state of its most recent evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationCommand {
+    pub command: String,
+    pub kind: VerificationKind,
+    pub state: VerificationState,
+    pub turn_index: Option<u32>,
+    pub outcome: Option<CommandOutcome>,
+    pub exit_code: Option<i32>,
+}
+
+/// A commit on the branch that no Turn of the Thread accounts for.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCommit {
+    pub sha: String,
+    pub subject: String,
+}
+
+/// The branch's pull request with the checks GitHub reports for it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DossierPullRequest {
+    pub number: u32,
+    pub url: String,
+    pub checks: Vec<PullRequestCheck>,
+}
+
+/// One Permission mode and how many Turns started in it; `null` is a Turn stored before modes
+/// were recorded.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionModeUse {
+    pub mode: Option<PermissionMode>,
+    pub turns: u32,
+}
+
+/// How much supervision the work actually had.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Supervision {
+    pub approvals_granted: u32,
+    pub approvals_denied: u32,
+    pub permission_modes: Vec<PermissionModeUse>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RiskSignalKind {
+    UncheckedLanguage,
+    SourceWithoutTests,
+    SensitivePath,
+    LargeDiff,
+}
+
+/// One risk signal, with the files in the Diff it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RiskSignal {
+    pub kind: RiskSignalKind,
+    /// One sentence a reviewer can read on its own.
+    pub explanation: String,
+    /// The changed files the signal points at, relative to the checkout, in path order.
+    pub files: Vec<String>,
+    /// The language an unchecked-language signal is about.
+    pub language: Option<String>,
+    /// The line threshold a large-diff signal crossed.
+    pub threshold: Option<u32>,
+}
+
+/// The GitHub issue a Board Thread was started from.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DossierIssue {
+    pub number: u32,
+    pub title: Option<String>,
+    pub url: Option<String>,
+}
+
+/// What was asked for: the stored issue reference and the Thread's own prompts.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DossierIntent {
+    pub issue: Option<DossierIssue>,
+    pub prompts: Vec<String>,
+}
+
+/// The closing message of the agent, kept apart from what Oxide computed.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentClaim {
+    pub turn_index: u32,
+    pub text: String,
+}
+
+/// The Dossier of one Thread: its Verification commands, risk signals and supervision, plus
+/// branch evidence in Branch scope.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationDossier {
+    pub commands: Vec<VerificationCommand>,
+    pub signals: Vec<RiskSignal>,
+    pub intent: DossierIntent,
+    pub claim: Option<AgentClaim>,
+    pub base_branch: Option<String>,
+    pub coverage_known: bool,
+    pub uncovered_commits: Vec<BranchCommit>,
+    pub pull_request: Option<DossierPullRequest>,
+    pub pull_request_known: bool,
+    pub supervision: Supervision,
+    pub blind_reviews: Vec<BlindReviewSummary>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -830,6 +1046,7 @@ pub enum ItemKind {
     FileChange,
     Subagent,
     SlashCommandOutput,
+    RestoreMarker,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -871,6 +1088,7 @@ pub struct Thread {
     pub worktree_path: Option<String>,
     pub setup_output: Option<String>,
     pub issue_number: Option<u32>,
+    pub blind_review: bool,
 }
 
 /// An Approval the Provider is still waiting on.
@@ -929,6 +1147,22 @@ pub struct ContinuedThread {
     pub recap: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandOutcome {
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRecord {
+    pub line: Option<String>,
+    pub outcome: CommandOutcome,
+    pub exit_code: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSnapshot {
@@ -938,6 +1172,7 @@ pub struct ItemSnapshot {
     pub content: String,
     pub parent_item_index: Option<u32>,
     pub category: Option<ActivityCategory>,
+    pub command: CommandRecord,
     pub created_at: String,
 }
 
@@ -1022,6 +1257,7 @@ pub struct TurnSnapshot {
     pub prompt: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub permission_mode: Option<PermissionMode>,
     pub segments: Vec<PromptSegment>,
     pub status: TurnStatus,
     pub started_at: String,
@@ -1081,6 +1317,7 @@ pub enum ThreadEvent {
         prompt: String,
         model: Option<String>,
         effort: Option<String>,
+        permission_mode: Option<PermissionMode>,
         segments: Vec<PromptSegment>,
     },
     ItemStarted {
@@ -1099,6 +1336,7 @@ pub enum ThreadEvent {
         content: String,
         parent_item_index: Option<u32>,
         category: Option<ActivityCategory>,
+        command: Option<CommandRecord>,
     },
     TurnCompleted {
         turn_index: u32,
@@ -1757,6 +1995,8 @@ pub struct LineComment {
     code: String,
     body: String,
     outdated: bool,
+    /// The reviewing Provider for a kept Blind review finding.
+    provider: Option<String>,
 }
 
 #[tauri::command]
@@ -1807,11 +2047,163 @@ async fn send_line_comments(core: State<'_, Arc<Core>>, thread_id: u32) -> Resul
     git_blocking(&core, move |core| core.send_line_comments(thread_id)).await
 }
 
-/// What a Thread's latest Turn changed, from its two Checkpoints.
+/// Sends a request that addresses selected reviewer comments, counting it as a review round.
 #[tauri::command]
 #[specta::specta]
-async fn git_turn_diff(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Diff, AppError> {
-    git_blocking(&core, move |core| core.latest_turn_diff(thread_id))
+async fn send_reviewer_comments(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    prompt: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.send_reviewer_comments(thread_id, &prompt)
+    })
+    .await
+}
+
+/// A draft Line comment on a pull request's Diff.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NewPullRequestLineComment {
+    path: String,
+    side: CommentSide,
+    line: u32,
+    code: String,
+    body: String,
+}
+
+/// A draft Line comment on a pull request's Diff, kept until a review is submitted.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestLineComment {
+    id: u32,
+    project_id: u32,
+    pull_request: u32,
+    path: String,
+    side: CommentSide,
+    line: u32,
+    code: String,
+    body: String,
+}
+
+/// The decision a submitted review carries.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewVerdict {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn add_pull_request_line_comment(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    pull_request: u32,
+    comment: NewPullRequestLineComment,
+) -> Result<PullRequestLineComment, AppError> {
+    let comment: oxide_core::NewPullRequestLineComment = convert(&comment);
+    git_blocking(&core, move |core| {
+        core.add_pull_request_line_comment(project_id, pull_request, comment)
+    })
+    .await
+    .map(|c| convert(&c))
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn edit_pull_request_line_comment(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+    body: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.edit_pull_request_line_comment(id, &body)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn delete_pull_request_line_comment(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.delete_pull_request_line_comment(id)).await
+}
+
+/// A pull request's draft Line comments, oldest first.
+#[tauri::command]
+#[specta::specta]
+async fn list_pull_request_line_comments(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    pull_request: u32,
+) -> Result<Vec<PullRequestLineComment>, AppError> {
+    git_blocking(&core, move |core| {
+        core.list_pull_request_line_comments(project_id, pull_request)
+    })
+    .await
+    .map(|comments| comments.iter().map(convert).collect())
+}
+
+/// Sends every draft as one GitHub review, leaving them in place if GitHub refuses.
+#[tauri::command]
+#[specta::specta]
+async fn submit_pull_request_review(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    number: u32,
+    verdict: ReviewVerdict,
+    summary: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.submit_pull_request_review(project_id, number, convert(&verdict), &summary)
+    })
+    .await
+}
+
+/// One Turn of a Thread as the Diff Surface's Turn picker lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnPick {
+    pub turn_index: u32,
+    pub prompt: String,
+    /// Without Checkpoints a Turn has no diff.
+    pub checkpointed: bool,
+}
+
+/// The Thread's Turns, oldest first, for the Turn picker.
+#[tauri::command]
+#[specta::specta]
+async fn list_turn_picks(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Vec<TurnPick>, AppError> {
+    git_blocking(&core, move |core| {
+        Ok(core
+            .turn_picks(thread_id)?
+            .into_iter()
+            .map(|p| TurnPick {
+                turn_index: p.turn_index,
+                prompt: p.prompt,
+                checkpointed: p.checkpointed,
+            })
+            .collect::<Vec<_>>())
+    })
+    .await
+}
+
+/// What one Turn of a Thread changed, from its two Checkpoints.
+#[tauri::command]
+#[specta::specta]
+async fn git_turn_diff(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    turn_index: u32,
+) -> Result<Diff, AppError> {
+    git_blocking(&core, move |core| core.turn_diff(thread_id, turn_index))
         .await
         .map(|diff| convert(&diff))
 }
@@ -1858,6 +2250,112 @@ async fn revert_diff(
         core.revert_in(project_id, thread_id, scope, &target, confirm_delete)
     })
     .await
+}
+
+/// What a restore does to one file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RestoreChange {
+    /// The file is written back to how the Checkpoint had it.
+    Rewritten,
+    /// The file is brought back: it was deleted after the Checkpoint.
+    Reinstated,
+    /// The file is removed: it was created after the Checkpoint.
+    Removed,
+}
+
+/// One file a restore changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreFile {
+    /// The file's path in the checkout.
+    pub path: String,
+    /// What the restore does to it.
+    pub change: RestoreChange,
+}
+
+/// The files a restore would change, before it is done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePreview {
+    /// The Turn whose start Checkpoint the files go back to.
+    pub turn_index: u32,
+    /// The files that stand between the working tree and that Checkpoint.
+    pub files: Vec<RestoreFile>,
+}
+
+/// What a restore did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreOutcome {
+    /// The Turn whose start Checkpoint the files went back to.
+    pub turn_index: u32,
+    /// The files that changed.
+    pub files: Vec<RestoreFile>,
+    /// Whether this undid a restore instead of making one.
+    pub undone: bool,
+}
+
+/// A restore that can still be undone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingRestore {
+    /// The Turn whose start Checkpoint the files went back to.
+    pub turn_index: u32,
+    /// The files the restore changed.
+    pub files: Vec<RestoreFile>,
+}
+
+/// What restoring a Thread's files to before a Turn would change.
+#[tauri::command]
+#[specta::specta]
+async fn restore_preview(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    turn_index: u32,
+) -> Result<RestorePreview, AppError> {
+    git_blocking(&core, move |core| {
+        core.restore_preview(thread_id, turn_index)
+    })
+    .await
+    .map(|preview| convert(&preview))
+}
+
+/// Puts a Thread's files back to how they were before a Turn.
+#[tauri::command]
+#[specta::specta]
+async fn restore_turn(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    turn_index: u32,
+) -> Result<RestoreOutcome, AppError> {
+    git_blocking(&core, move |core| core.restore_turn(thread_id, turn_index))
+        .await
+        .map(|outcome| convert(&outcome))
+}
+
+/// Undoes a Thread's latest restore, putting the files back to its safety Checkpoint.
+#[tauri::command]
+#[specta::specta]
+async fn undo_restore(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<RestoreOutcome, AppError> {
+    git_blocking(&core, move |core| core.undo_restore(thread_id))
+        .await
+        .map(|outcome| convert(&outcome))
+}
+
+/// The restore of a Thread that can still be undone, if there is one.
+#[tauri::command]
+#[specta::specta]
+async fn pending_restore(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Option<PendingRestore>, AppError> {
+    git_blocking(&core, move |core| core.pending_restore(thread_id))
+        .await
+        .map(|pending| pending.map(|pending| convert(&pending)))
 }
 
 /// Checks out a branch; a remote one (`origin/x`) becomes a tracking branch.
@@ -1908,6 +2406,22 @@ async fn pull(
     git_blocking(&core, move |core| core.pull_in(project_id, thread_id)).await
 }
 
+/// Fast-forwards a Thread checkout only if it is still on the pull request's branch.
+#[tauri::command]
+#[specta::specta]
+async fn pull_pull_request_branch(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    thread_id: u32,
+    expected_branch: String,
+    expected_head: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.pull_thread_branch(project_id, thread_id, &expected_branch, &expected_head)
+    })
+    .await
+}
+
 /// Commits exactly the given files; other staged state is untouched.
 #[tauri::command]
 #[specta::specta]
@@ -1924,7 +2438,8 @@ async fn commit(
     .await
 }
 
-/// Pushes the current branch; never forced.
+/// Pushes the current branch; never forced. A Dossier update that fails is reported in the
+/// outcome rather than failing the push.
 #[tauri::command]
 #[specta::specta]
 async fn push(
@@ -1932,11 +2447,12 @@ async fn push(
     project_id: u32,
     thread_id: Option<u32>,
     allow_protected: bool,
-) -> Result<(), AppError> {
+) -> Result<PushOutcome, AppError> {
     git_blocking(&core, move |core| {
         core.push_in(project_id, thread_id, allow_protected)
     })
     .await
+    .map(|outcome| convert(&outcome))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -2042,6 +2558,30 @@ pub struct PullRequestComment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct ReviewThreadComment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReviewThread {
+    pub id: String,
+    pub path: String,
+    pub line: Option<u32>,
+    pub original_line: Option<u32>,
+    /// `old` for a removed line, `new` for an added or unchanged one.
+    pub side: Option<CommentSide>,
+    pub resolved: bool,
+    pub outdated: bool,
+    /// GitHub's excerpt around the commented line.
+    pub diff_hunk: String,
+    pub comments: Vec<ReviewThreadComment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestCandidates {
     pub users: Vec<String>,
     pub labels: Vec<PullRequestLabel>,
@@ -2064,6 +2604,10 @@ pub struct PullRequestDetail {
     pub pull_request: PullRequest,
     pub phase: PullRequestPhase,
     pub body: String,
+    /// The commit the pull request's head points at.
+    pub head_sha: String,
+    /// Whether the Dossier section in `body` describes an earlier commit than `head_sha`.
+    pub dossier_out_of_date: bool,
     pub checks: Vec<PullRequestCheck>,
     pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
@@ -2177,6 +2721,70 @@ pub struct PullRequestDraft {
     pub head: String,
 }
 
+/// What the author chose for a new pull request.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NewPullRequest {
+    pub title: String,
+    pub body: String,
+    pub base: String,
+    pub draft: bool,
+    /// The previewed Dossier section to publish in the body; `None` leaves the body as written.
+    pub dossier_section: Option<String>,
+    /// Explicit local consent, independent of edits to the Dossier preview.
+    pub dossier_include_prompts: bool,
+    pub dossier_include_agent_message: bool,
+    /// The checkout commit the preview was computed from.
+    pub dossier_head_sha: Option<String>,
+}
+
+/// Who can read the repository a pull request is opened in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RepositoryVisibility {
+    Public,
+    Private,
+    Internal,
+    Unknown,
+}
+
+/// The Dossier section offered for a pull request body, to preview before publishing.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DossierSection {
+    pub markdown: String,
+    pub visibility: RepositoryVisibility,
+    pub head_sha: String,
+}
+
+/// What a push from Oxide did besides moving the branch.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PushOutcome {
+    /// The published Dossier update; `None` for a push with no Thread to compute one from.
+    pub dossier: Option<DossierUpdate>,
+}
+
+/// What a push from Oxide, or the user's refresh, did to a pull request's Dossier section.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DossierUpdate {
+    pub state: DossierUpdateState,
+    pub pull_request: Option<u32>,
+    /// Why an update failed, when it did. The push itself still succeeded.
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DossierUpdateState {
+    Updated,
+    UpToDate,
+    NoPullRequest,
+    NoSection,
+    Failed,
+}
+
 /// Whether `gh` works and the branch's open pull request. Runs `gh` only when
 /// asked; the Surface decides when to refresh.
 #[tauri::command]
@@ -2221,6 +2829,31 @@ async fn pull_request_draft(
     .map(|draft| convert(&draft))
 }
 
+/// The Dossier section for the pull request about to be opened from a Thread's branch. Prompts
+/// and the agent's closing message are included only when asked for.
+#[tauri::command]
+#[specta::specta]
+async fn dossier_pull_request_section(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    thread_id: u32,
+    include_prompts: bool,
+    include_agent_message: bool,
+) -> Result<DossierSection, AppError> {
+    git_blocking(&core, move |core| {
+        core.dossier_pull_request_section(
+            project_id,
+            thread_id,
+            &oxide_core::DossierSectionOptions {
+                include_prompts,
+                include_agent_message,
+            },
+        )
+    })
+    .await
+    .map(|section| convert(&section))
+}
+
 /// Pushes the branch if needed, then opens a pull request for it.
 #[tauri::command]
 #[specta::specta]
@@ -2228,25 +2861,45 @@ async fn create_pull_request(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     thread_id: Option<u32>,
-    title: String,
-    body: String,
-    base: String,
-    draft: bool,
+    pull_request: NewPullRequest,
 ) -> Result<PullRequest, AppError> {
     git_blocking(&core, move |core| {
         core.create_pull_request_in(
             project_id,
             thread_id,
             &oxide_core::PullRequestInput {
-                title,
-                body,
-                base,
-                draft,
+                title: pull_request.title,
+                body: pull_request.body,
+                base: pull_request.base,
+                draft: pull_request.draft,
+                dossier_section: pull_request.dossier_section,
+                dossier_options: Some(oxide_core::DossierSectionOptions {
+                    include_prompts: pull_request.dossier_include_prompts,
+                    include_agent_message: pull_request.dossier_include_agent_message,
+                }),
+                dossier_head_sha: pull_request.dossier_head_sha,
             },
         )
     })
     .await
     .map(|pr| convert(&pr))
+}
+
+/// Recomputes and republishes a pull request's Dossier section, because the branch moved outside
+/// Oxide. A section removed by hand is not re-added.
+#[tauri::command]
+#[specta::specta]
+async fn refresh_pull_request_dossier(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    thread_id: u32,
+    number: u32,
+) -> Result<DossierUpdate, AppError> {
+    git_blocking(&core, move |core| {
+        core.refresh_published_dossier(project_id, thread_id, number)
+    })
+    .await
+    .map(|update| convert(&update))
 }
 
 /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
@@ -2422,6 +3075,20 @@ async fn pull_request_detail(
 
 #[tauri::command]
 #[specta::specta]
+async fn pull_request_review_threads(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    number: u32,
+) -> Result<Vec<PullRequestReviewThread>, AppError> {
+    git_blocking(&core, move |core| {
+        core.pull_request_review_threads(project_id, number)
+    })
+    .await
+    .map(|threads| convert(&threads))
+}
+
+#[tauri::command]
+#[specta::specta]
 async fn comment_pull_request(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -2573,6 +3240,11 @@ pub struct DispatchRequest {
     pub base_branch: Option<String>,
     pub issue_number: Option<u32>,
     pub issue_title: Option<String>,
+    /// The issue's page on GitHub, kept for the Dossier.
+    pub issue_url: Option<String>,
+    /// The labels of that issue, by name.
+    #[serde(default)]
+    pub issue_labels: Vec<String>,
 }
 
 /// Creates the Thread's worktree and branch, runs the Project's Setup command, starts its first Turn.
@@ -2586,6 +3258,127 @@ async fn dispatch_thread(
     git_blocking(&core, move |core| core.dispatch_thread(request))
         .await
         .map(|thread| convert(&thread))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewProviderOption {
+    pub provider: String,
+    pub name: String,
+    pub same_provider: bool,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewRequest {
+    pub project_id: u32,
+    pub thread_id: Option<u32>,
+    pub provider: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub scope: String,
+    pub turn_index: Option<u32>,
+    pub issue: Option<String>,
+}
+
+/// What the reviewer decided about one finding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum FindingDecision {
+    Pending,
+    Kept,
+    Dismissed,
+}
+
+/// One finding of a Blind review, anchored to the reviewed Diff or kept as plain text.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewFinding {
+    pub id: u32,
+    pub review_thread_id: u32,
+    pub provider: String,
+    pub path: Option<String>,
+    pub side: Option<CommentSide>,
+    pub line: Option<u32>,
+    pub code: String,
+    pub body: String,
+    pub plain: bool,
+    pub decision: FindingDecision,
+}
+
+/// Who reviewed a change and how many findings were kept.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewSummary {
+    pub review_thread_id: u32,
+    pub provider: String,
+    pub findings: u32,
+    pub kept: u32,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn blind_review_providers(
+    core: State<'_, Arc<Core>>,
+    current_provider: Option<String>,
+) -> Result<Vec<BlindReviewProviderOption>, AppError> {
+    Ok(core
+        .blind_review_providers(current_provider.as_deref())
+        .into_iter()
+        .map(|opt| BlindReviewProviderOption {
+            provider: opt.provider,
+            name: opt.name,
+            same_provider: opt.same_provider,
+            label: opt.label,
+        })
+        .collect())
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn start_blind_review(
+    core: State<'_, Arc<Core>>,
+    request: BlindReviewRequest,
+) -> Result<Thread, AppError> {
+    let req: oxide_core::BlindReviewRequest = convert(&request);
+    git_blocking(&core, move |core| core.start_blind_review(req))
+        .await
+        .map(|thread| convert(&thread))
+}
+
+/// The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
+/// review's closing message and validated against the reviewed Diff.
+#[tauri::command]
+#[specta::specta]
+async fn list_blind_review_findings(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Vec<BlindReviewFinding>, AppError> {
+    git_blocking(&core, move |core| {
+        core.list_blind_review_findings(thread_id)
+    })
+    .await
+    .map(|findings| convert(&findings))
+}
+
+/// Keeps one finding: an anchored finding becomes a draft Line comment on the reviewed Thread.
+#[tauri::command]
+#[specta::specta]
+async fn keep_blind_review_finding(
+    core: State<'_, Arc<Core>>,
+    id: u32,
+) -> Result<Option<LineComment>, AppError> {
+    git_blocking(&core, move |core| core.keep_blind_review_finding(id))
+        .await
+        .map(|comment| comment.as_ref().map(convert))
+}
+
+/// Dismisses one finding, so it never reaches the Thread.
+#[tauri::command]
+#[specta::specta]
+async fn dismiss_blind_review_finding(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.dismiss_blind_review_finding(id)).await
 }
 
 #[tauri::command]
@@ -2605,6 +3398,95 @@ fn set_project_setup_command(
     command: Option<String>,
 ) -> Result<(), AppError> {
     Ok(core.set_project_setup_command(project_id, command.as_deref())?)
+}
+
+/// The Project's own Verification commands, besides the built-in patterns.
+#[tauri::command]
+#[specta::specta]
+fn get_project_verification_commands(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<Vec<String>, AppError> {
+    Ok(core.project_verification_commands(project_id)?)
+}
+
+/// Replaces the Project's own Verification commands.
+#[tauri::command]
+#[specta::specta]
+fn set_project_verification_commands(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    commands: Vec<String>,
+) -> Result<(), AppError> {
+    Ok(core.set_project_verification_commands(project_id, &commands)?)
+}
+
+/// The Project's own sensitive paths, besides the built-in CI, dependency and migration patterns.
+#[tauri::command]
+#[specta::specta]
+fn get_project_sensitive_paths(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<Vec<String>, AppError> {
+    Ok(core.project_sensitive_paths(project_id)?)
+}
+
+/// Replaces the Project's own sensitive paths.
+#[tauri::command]
+#[specta::specta]
+fn set_project_sensitive_paths(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    paths: Vec<String>,
+) -> Result<(), AppError> {
+    Ok(core.set_project_sensitive_paths(project_id, &paths)?)
+}
+
+/// The Dossier of a Thread: which Verification commands ran, whether they still apply, the
+/// separate risk signals about what stayed uncovered, and how much supervision the Turns had.
+#[tauri::command]
+#[specta::specta]
+async fn verification_dossier(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<VerificationDossier, AppError> {
+    git_blocking(&core, move |core| core.verification_dossier(thread_id))
+        .await
+        .map(|dossier| convert(&dossier))
+}
+
+/// The Dossier of the Thread's whole branch: its commands and supervision, the commits no Turn
+/// produced and the pull request's checks.
+#[tauri::command]
+#[specta::specta]
+async fn branch_dossier(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<VerificationDossier, AppError> {
+    git_blocking(&core, move |core| core.branch_dossier(thread_id))
+        .await
+        .map(|dossier| convert(&dossier))
+}
+
+/// Whether chat Threads of this Project stay in the main checkout instead of each
+/// getting its own worktree on their first prompt.
+#[tauri::command]
+#[specta::specta]
+fn get_project_threads_in_main_checkout(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<bool, AppError> {
+    Ok(core.project_threads_in_main_checkout(project_id)?)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn set_project_threads_in_main_checkout(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    in_main_checkout: bool,
+) -> Result<(), AppError> {
+    Ok(core.set_project_threads_in_main_checkout(project_id, in_main_checkout)?)
 }
 
 /// Starts a new Thread that continues one whose Provider session is gone.
@@ -2969,6 +3851,71 @@ fn clear_review_ledger(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
     Ok(core.clear_review_ledger()?)
 }
 
+/// Confirms a candidate follow-up fix in the Review ledger.
+#[tauri::command]
+#[specta::specta]
+fn confirm_follow_up(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    pull_request: u32,
+    commit_sha: String,
+) -> Result<(), AppError> {
+    Ok(core.confirm_follow_up(project_id, pull_request, &commit_sha)?)
+}
+
+/// Dismisses a candidate follow-up fix in the Review ledger.
+#[tauri::command]
+#[specta::specta]
+fn dismiss_follow_up(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    pull_request: u32,
+    commit_sha: String,
+) -> Result<(), AppError> {
+    Ok(core.dismiss_follow_up(project_id, pull_request, &commit_sha)?)
+}
+
+/// Recurring Line comments the app offers to turn into a rule for the Project's agent instructions.
+#[tauri::command]
+#[specta::specta]
+fn rule_suggestions(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<Vec<RuleSuggestion>, AppError> {
+    Ok(core
+        .rule_suggestions(project_id)?
+        .iter()
+        .map(convert)
+        .collect())
+}
+
+/// Dismisses a rule suggestion for good.
+#[tauri::command]
+#[specta::specta]
+fn dismiss_rule_suggestion(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    id: u32,
+) -> Result<(), AppError> {
+    Ok(core.dismiss_rule_suggestion(project_id, id)?)
+}
+
+/// Starts a Thread that proposes the rule in the Project's agent instructions.
+#[tauri::command]
+#[specta::specta]
+async fn accept_rule_suggestion(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    id: u32,
+    provider: String,
+) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| {
+        core.accept_rule_suggestion(project_id, id, &provider)
+    })
+    .await
+    .map(|summary| convert(&summary))
+}
+
 /// A Provider's Usage limits now (if Oxide has seen any), then every update on `on_event`.
 #[tauri::command]
 #[specta::specta]
@@ -3157,6 +4104,10 @@ pub fn builder() -> Builder<tauri::Wry> {
         dictation_stop,
         dictation_retry_on_cpu,
         dictation_cancel,
+        dictation_runtimes,
+        dictation_runtime_install,
+        dictation_runtime_cancel,
+        dictation_runtime_remove,
         list_projects,
         rescan_projects,
         add_project,
@@ -3171,8 +4122,21 @@ pub fn builder() -> Builder<tauri::Wry> {
         save_settings,
         create_thread,
         dispatch_thread,
+        blind_review_providers,
+        start_blind_review,
+        list_blind_review_findings,
+        keep_blind_review_finding,
+        dismiss_blind_review_finding,
         get_project_setup_command,
         set_project_setup_command,
+        get_project_verification_commands,
+        set_project_verification_commands,
+        get_project_sensitive_paths,
+        set_project_sensitive_paths,
+        verification_dossier,
+        branch_dossier,
+        get_project_threads_in_main_checkout,
+        set_project_threads_in_main_checkout,
         continue_thread,
         delete_thread,
         set_thread_permission_mode,
@@ -3199,6 +4163,11 @@ pub fn builder() -> Builder<tauri::Wry> {
         subscribe_usage_limits,
         review_ledger,
         clear_review_ledger,
+        confirm_follow_up,
+        dismiss_follow_up,
+        rule_suggestions,
+        dismiss_rule_suggestion,
+        accept_rule_suggestion,
         start_terminal,
         start_block_terminal,
         write_file,
@@ -3225,25 +4194,40 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_branches,
         git_diff,
         git_turn_diff,
+        list_turn_picks,
+        restore_preview,
+        restore_turn,
+        undo_restore,
+        pending_restore,
         revert_diff,
         add_line_comment,
         edit_line_comment,
         delete_line_comment,
         list_line_comments,
         send_line_comments,
+        send_reviewer_comments,
+        add_pull_request_line_comment,
+        edit_pull_request_line_comment,
+        delete_pull_request_line_comment,
+        list_pull_request_line_comments,
+        submit_pull_request_review,
         checkout_branch,
         create_branch,
         fetch_project,
         pull,
+        pull_pull_request_branch,
         commit,
         push,
         pull_request_state,
         pull_request_base_branches,
         pull_request_draft,
         create_pull_request,
+        dossier_pull_request_section,
         open_pull_request,
         list_pull_requests,
         pull_request_detail,
+        refresh_pull_request_dossier,
+        pull_request_review_threads,
         comment_pull_request,
         merge_pull_request,
         close_pull_request,
@@ -3294,6 +4278,7 @@ pub fn run() {
         .manage(Arc::new(oxide_core::dictation::Dictation::default()))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(updates::Updates::default()))
+        .manage(Arc::new(dictation_runtimes::RuntimeOps::default()))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler({
@@ -3433,6 +4418,7 @@ mod tests {
                 worktree_path: None,
                 setup_output: None,
                 issue_number: None,
+                blind_review: false,
             },
             turns: vec![oxide_core::TurnSnapshot {
                 id: 3,
@@ -3440,6 +4426,7 @@ mod tests {
                 prompt: "hi".into(),
                 model: None,
                 effort: None,
+                permission_mode: Some(oxide_core::PermissionMode::Ask),
                 segments: vec![oxide_core::PromptSegment::text("hi")],
                 status: oxide_core::TurnStatus::Error,
                 started_at: "a".into(),
@@ -3452,6 +4439,11 @@ mod tests {
                     created_at: "a".into(),
                     parent_item_index: None,
                     category: None,
+                    command: oxide_core::CommandRecord {
+                        line: None,
+                        outcome: oxide_core::CommandOutcome::Unknown,
+                        exit_code: None,
+                    },
                 }],
                 error: Some(error.clone()),
                 approvals: vec![],

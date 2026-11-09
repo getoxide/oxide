@@ -1,6 +1,6 @@
 # Tauri v2 frontend choice for Oxide chat
 
-**Ticket:** [#8](https://github.com/cavallinilorenzo/oxide/issues/8)  
+**Ticket:** [#8](https://github.com/getoxide/oxide/issues/8)  
 **Research date:** 2026-10-21
 
 ## Recommendation

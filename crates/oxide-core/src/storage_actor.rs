@@ -9,8 +9,8 @@ use crate::thread::{
     ThreadSummary, TurnError, TurnPage, TurnSnapshot, UnknownEventSnapshot,
 };
 use oxide_provider::{
-    ActivityCategory, ApprovalDecision, ApprovalKind, ItemKind, PermissionMode, PromptSegment,
-    TurnStatus,
+    ActivityCategory, ApprovalDecision, ApprovalKind, CommandOutcome, CommandRecord, ItemKind,
+    PermissionMode, PromptSegment, TurnStatus,
 };
 
 /// What storage recorded when a Turn started.
@@ -18,7 +18,19 @@ pub struct TurnStarted {
     pub id: u32,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub permission_mode: Option<PermissionMode>,
     pub thread_title: Option<String>,
+}
+
+/// A completed Item to store.
+pub struct NewItem {
+    pub turn_id: u32,
+    pub item_index: u32,
+    pub kind: ItemKind,
+    pub content: String,
+    pub parent_item_index: Option<u32>,
+    pub category: Option<ActivityCategory>,
+    pub command: Option<CommandRecord>,
 }
 
 pub enum StorageMsg {
@@ -27,21 +39,18 @@ pub enum StorageMsg {
         turn_index: u32,
         prompt: String,
         segments: Vec<PromptSegment>,
+        head_before: Option<String>,
         reply: mpsc::Sender<Result<TurnStarted>>,
     },
     UpdateTurnCompleted {
         turn_id: u32,
         status: TurnStatus,
         error: Option<TurnError>,
+        head_after: Option<String>,
         reply: mpsc::Sender<Result<()>>,
     },
     WriteItemCompleted {
-        turn_id: u32,
-        item_index: u32,
-        kind: ItemKind,
-        content: String,
-        parent_item_index: Option<u32>,
-        category: Option<ActivityCategory>,
+        item: NewItem,
         reply: mpsc::Sender<Result<u32>>,
     },
     WriteApprovalRequested {
@@ -108,6 +117,17 @@ pub enum StorageMsg {
         raw: String,
         reply: mpsc::Sender<Result<u32>>,
     },
+    SetRestoreNotice {
+        thread_id: u32,
+        notice: String,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    RestoreNotice {
+        thread_id: u32,
+        /// Whether the notice goes away with it.
+        take: bool,
+        reply: mpsc::Sender<Option<String>>,
+    },
     Shutdown,
 }
 
@@ -149,6 +169,7 @@ impl StorageHandle {
         turn_index: u32,
         prompt: String,
         segments: Vec<PromptSegment>,
+        head_before: Option<String>,
     ) -> Result<TurnStarted> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let _ = self.sender.send(StorageMsg::WriteTurnStarted {
@@ -156,6 +177,7 @@ impl StorageHandle {
             turn_index,
             prompt,
             segments,
+            head_before,
             reply: reply_tx,
         });
         reply_rx
@@ -168,34 +190,23 @@ impl StorageHandle {
         turn_id: u32,
         status: TurnStatus,
         error: Option<TurnError>,
+        head_after: Option<String>,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let _ = self.sender.send(StorageMsg::UpdateTurnCompleted {
             turn_id,
             status,
             error,
+            head_after,
             reply: reply_tx,
         });
         reply_rx.recv().unwrap_or(Ok(()))
     }
 
-    pub fn write_item_completed(
-        &self,
-        turn_id: u32,
-        item_index: u32,
-        kind: ItemKind,
-        content: String,
-        parent_item_index: Option<u32>,
-        category: Option<ActivityCategory>,
-    ) -> Result<u32> {
+    pub fn write_item_completed(&self, item: NewItem) -> Result<u32> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let _ = self.sender.send(StorageMsg::WriteItemCompleted {
-            turn_id,
-            item_index,
-            kind,
-            content,
-            parent_item_index,
-            category,
+            item,
             reply: reply_tx,
         });
         reply_rx
@@ -363,6 +374,40 @@ impl StorageHandle {
             .unwrap_or(Err(rusqlite::Error::QueryReturnedNoRows.into()))
     }
 
+    /// Keeps what the agent is told on the Thread's next prompt.
+    pub fn set_restore_notice(&self, thread_id: u32, notice: String) -> Result<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let _ = self.sender.send(StorageMsg::SetRestoreNotice {
+            thread_id,
+            notice,
+            reply: reply_tx,
+        });
+        reply_rx.recv().unwrap_or(Ok(()))
+    }
+
+    /// The notice the agent has not been told yet, if there is one. It stays until
+    /// the agent is told: a prompt that fails to reach the provider leaves it for
+    /// the next one.
+    pub fn restore_notice(&self, thread_id: u32) -> Option<String> {
+        self.notice(thread_id, false)
+    }
+
+    /// The notice the agent has not been told yet, if there is one, and forgets it:
+    /// the agent is told once.
+    pub fn take_restore_notice(&self, thread_id: u32) -> Option<String> {
+        self.notice(thread_id, true)
+    }
+
+    fn notice(&self, thread_id: u32, take: bool) -> Option<String> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let _ = self.sender.send(StorageMsg::RestoreNotice {
+            thread_id,
+            take,
+            reply: reply_tx,
+        });
+        reply_rx.recv().ok().flatten()
+    }
+
     pub fn shutdown(&self) {
         let _ = self.sender.send(StorageMsg::Shutdown);
     }
@@ -376,23 +421,25 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 turn_index,
                 prompt,
                 segments,
+                head_before,
                 reply,
             } => {
                 let res = (|| -> Result<TurnStarted> {
-                    let tx = conn.unchecked_transaction()?;
-                    let (model, effort, current_title): (
+                    let tx = crate::db::write_transaction(&conn)?;
+                    let (model, effort, permission_mode, current_title): (
+                        Option<String>,
                         Option<String>,
                         Option<String>,
                         Option<String>,
                     ) = tx.query_row(
-                        "SELECT model, effort, title FROM threads WHERE id = ?1",
+                        "SELECT model, effort, permission_mode, title FROM threads WHERE id = ?1",
                         [thread_id],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                     )?;
                     let segments_json = serde_json::to_string(&segments).ok();
                     tx.execute(
-                        "INSERT INTO turns (thread_id, turn_index, prompt, model, effort, segments, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running')",
-                        rusqlite::params![thread_id, turn_index, prompt, model, effort, segments_json],
+                        "INSERT INTO turns (thread_id, turn_index, prompt, model, effort, permission_mode, segments, head_before, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'running')",
+                        rusqlite::params![thread_id, turn_index, prompt, model, effort, permission_mode, segments_json, head_before],
                     )?;
                     let turn_id = tx.last_insert_rowid() as u32;
                     let mut thread_title = None;
@@ -414,6 +461,7 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                         id: turn_id,
                         model,
                         effort,
+                        permission_mode: permission_mode.and_then(|mode| mode.parse().ok()),
                         thread_title,
                     })
                 })();
@@ -423,6 +471,7 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 turn_id,
                 status,
                 error,
+                head_after,
                 reply,
             } => {
                 let res = (|| -> Result<()> {
@@ -437,32 +486,27 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                         None => (None, None),
                     };
                     conn.execute(
-                        "UPDATE turns SET status = ?1, error_message = ?2, stderr_tail = ?3, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?4",
-                        rusqlite::params![status_str, error_message, stderr_tail, turn_id],
+                        "UPDATE turns SET status = ?1, error_message = ?2, stderr_tail = ?3, head_after = ?4, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?5",
+                        rusqlite::params![status_str, error_message, stderr_tail, head_after, turn_id],
                     )?;
                     Ok(())
                 })();
                 let _ = reply.send(res);
             }
-            StorageMsg::WriteItemCompleted {
-                turn_id,
-                item_index,
-                kind,
-                content,
-                parent_item_index,
-                category,
-                reply,
-            } => {
+            StorageMsg::WriteItemCompleted { item, reply } => {
                 let res = (|| -> Result<u32> {
                     conn.execute(
-                        "INSERT INTO items (turn_id, item_index, kind, content, parent_item_index, category) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        "INSERT INTO items (turn_id, item_index, kind, content, parent_item_index, category, command_line, command_outcome, command_exit_code) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                         rusqlite::params![
-                            turn_id,
-                            item_index,
-                            kind.as_str(),
-                            content,
-                            parent_item_index,
-                            category.map(ActivityCategory::as_str)
+                            item.turn_id,
+                            item.item_index,
+                            item.kind.as_str(),
+                            item.content,
+                            item.parent_item_index,
+                            item.category.map(ActivityCategory::as_str),
+                            item.command.as_ref().and_then(|c| c.line.as_deref()),
+                            item.command.as_ref().map(|c| c.outcome.as_str()),
+                            item.command.as_ref().and_then(|c| c.exit_code)
                         ],
                     )?;
                     let item_id = conn.last_insert_rowid() as u32;
@@ -636,6 +680,41 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 })();
                 let _ = reply.send(res);
             }
+            StorageMsg::SetRestoreNotice {
+                thread_id,
+                notice,
+                reply,
+            } => {
+                let res = (|| -> Result<()> {
+                    conn.execute(
+                        "UPDATE threads SET restore_notice = ?1 WHERE id = ?2",
+                        rusqlite::params![notice, thread_id],
+                    )?;
+                    Ok(())
+                })();
+                let _ = reply.send(res);
+            }
+            StorageMsg::RestoreNotice {
+                thread_id,
+                take,
+                reply,
+            } => {
+                let notice: Option<String> = conn
+                    .query_row(
+                        "SELECT restore_notice FROM threads WHERE id = ?1",
+                        [thread_id],
+                        |r| r.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                if take && notice.is_some() {
+                    let _ = conn.execute(
+                        "UPDATE threads SET restore_notice = NULL WHERE id = ?1",
+                        [thread_id],
+                    );
+                }
+                let _ = reply.send(notice);
+            }
             StorageMsg::Shutdown => break,
         }
     }
@@ -701,7 +780,7 @@ fn turn_page(
     limit: u32,
 ) -> Result<TurnPage> {
     let mut turn_stmt = conn.prepare_cached(
-        "SELECT id, turn_index, prompt, status, started_at, completed_at, model, effort, attachments, error_message, stderr_tail, segments
+        "SELECT id, turn_index, prompt, status, started_at, completed_at, model, effort, attachments, error_message, stderr_tail, segments, permission_mode
          FROM turns WHERE thread_id = ?1 ORDER BY id ASC LIMIT ?2 OFFSET ?3",
     )?;
     let turn_rows = turn_stmt.query_map(rusqlite::params![thread_id, limit, offset], |r| {
@@ -731,12 +810,14 @@ fn turn_page(
                 })
                 .transpose()?,
             r.get::<_, Option<String>>(11)?,
+            r.get::<_, Option<String>>(12)?,
         ))
     })?;
 
     let mut turns = Vec::new();
     let mut item_stmt = conn.prepare_cached(
-        "SELECT id, item_index, kind, content, created_at, parent_item_index, category
+        "SELECT id, item_index, kind, content, created_at, parent_item_index, category,
+                command_line, command_outcome, command_exit_code
          FROM items WHERE turn_id = ?1 ORDER BY item_index ASC",
     )?;
     let mut approval_stmt = conn.prepare_cached(
@@ -760,10 +841,24 @@ fn turn_page(
             attachments,
             error,
             segments,
+            permission_mode,
         ) = t?;
         let item_rows = item_stmt.query_map([t_id], |r| {
             let kind_str: String = r.get(2)?;
             let kind: ItemKind = kind_str.parse().unwrap_or(ItemKind::AgentMessage);
+            let category = r.get::<_, Option<String>>(6)?.and_then(|c| c.parse().ok());
+            let line: Option<String> = r.get(7)?;
+            let reported_outcome: Option<String> = r.get(8)?;
+            let exit_code: Option<i32> = r.get(9)?;
+            // Items stored before command evidence existed have NULL columns, so their outcome
+            // reads as unknown.
+            let command = CommandRecord {
+                line,
+                outcome: reported_outcome
+                    .and_then(|outcome| outcome.parse().ok())
+                    .unwrap_or(CommandOutcome::Unknown),
+                exit_code,
+            };
             Ok(ItemSnapshot {
                 id: r.get(0)?,
                 item_index: r.get(1)?,
@@ -771,7 +866,8 @@ fn turn_page(
                 content: r.get(3)?,
                 created_at: r.get(4)?,
                 parent_item_index: r.get(5)?,
-                category: r.get::<_, Option<String>>(6)?.and_then(|c| c.parse().ok()),
+                category,
+                command,
             })
         })?;
         let items: Vec<ItemSnapshot> = item_rows.collect::<std::result::Result<_, _>>()?;
@@ -813,6 +909,7 @@ fn turn_page(
             turn_index: t_idx,
             model,
             effort,
+            permission_mode: permission_mode.and_then(|mode| mode.parse().ok()),
             segments: crate::attachments::turn_segments(&prompt, segments.as_deref(), &attachments),
             prompt,
             status,

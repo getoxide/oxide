@@ -15,6 +15,12 @@ vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
+// jsdom does not implement HTMLCanvasElement.getContext(); some components touch it during render.
+class MockCanvasElement extends HTMLElement {
+  getContext() { return null; }
+  toDataURL() { return ""; }
+}
+Object.defineProperty(globalThis, "HTMLCanvasElement", { value: MockCanvasElement, writable: true, configurable: true });
 Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
 
 let host: HTMLDivElement;
@@ -26,11 +32,32 @@ const thread = (id: number, title: string, branch: string | null) => ({
 });
 const threads = [thread(2, "Alpha work", "feat-alpha"), thread(3, "Beta work", "feat-beta"), thread(4, "Chat", null)];
 const pullRequest = { number: 5, title: "Fix the thing", url: "https://github.com/me/repo/pull/5", draft: false, base: "main", head: "remote-topic", author: "alice", createdAt: "2026-01-01T00:00:00Z" };
-const prDetail = {
-  pullRequest, phase: "open", body: "", comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
+const baseDetail = {
+  pullRequest, phase: "open", body: "", headSha: "abc123", dossierOutOfDate: false, comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 1, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
-  checks: [{ name: "web", state: "failure", url: null, required: true }], diff: { base: "main", files: [] },
+  checks: [{ name: "web", state: "failure", url: null, required: true }],
+  diff: {
+    base: "main",
+    files: [{ path: "src/app.rs", oldPath: null, status: "modified", added: 1, removed: 0, binary: false, hunks: [{ header: "@@ -1,1 +1,1 @@", lines: [{ kind: "added", text: "    run();" }] }] }],
+  },
 };
+const reviewThreads = [
+  {
+    id: "t1", path: "src/app.rs", line: 1, originalLine: 1, side: "new", resolved: false, outdated: false,
+    diffHunk: "@@ -1,1 +1,1 @@\n+    run();\n",
+    comments: [{ author: "alice", body: "Please add a guard.", createdAt: "2026-01-01T00:00:00Z" }],
+  },
+  {
+    id: "t2", path: "src/app.rs", line: 1, originalLine: 1, side: "new", resolved: true,
+    outdated: false, diffHunk: "@@ -1,1 +1,1 @@\n+    run();\n",
+    comments: [{ author: "bob", body: "Done.", createdAt: "2026-01-02T00:00:00Z" }],
+  },
+  {
+    id: "t3", path: "src/gone.rs", line: null, originalLine: 9, side: "new", resolved: false,
+    outdated: true, diffHunk: "@@ -8,1 +8,1 @@\n-old run();\n",
+    comments: [{ author: "carol", body: "Old note.", createdAt: "2026-01-03T00:00:00Z" }],
+  },
+];
 const issue = { number: 9, title: "Crash on start", state: "OPEN", stateReason: "", author: "alice", url: "https://github.com/me/repo/issues/9", commentsCount: 0, createdAt: "2026-01-01T00:00:00Z", labels: [], assignees: [] };
 
 const calls: { command: string; args: Record<string, unknown> }[] = [];
@@ -38,12 +65,14 @@ const called = (command: string) => calls.filter((call) => call.command === comm
 let selection: { projectId: number; threadId: number | null };
 let fail: string | null;
 let statusFail: string | null;
+let prDetail: typeof baseDetail;
 
 beforeEach(() => {
   clearQueryCache();
   calls.length = 0;
   fail = null;
   statusFail = null;
+  prDetail = baseDetail;
   selection = { projectId: 1, threadId: 2 };
   host = document.createElement("div");
   document.body.append(host);
@@ -63,6 +92,11 @@ beforeEach(() => {
       }
       case "list_pull_requests": return [pullRequest];
       case "pull_request_detail": return prDetail;
+      case "pull_request_review_threads": return reviewThreads;
+      case "refresh_pull_request_dossier":
+        prDetail = { ...prDetail, dossierOutOfDate: false };
+        return { state: "updated", pullRequest: 5, message: null };
+      case "pull_pull_request_branch": if (fail) throw { message: fail }; return null;
       case "checkout_pull_request": if (fail) throw { message: fail }; return null;
       case "issues_state": return { availability: "ready", guidance: null };
       case "list_issues": return [issue];
@@ -99,6 +133,7 @@ async function open(tab: "Pull request" | "Issues") {
   await settle();
   await click(host.querySelector('[aria-label="Toggle tools panel"]'));
   await click(host.querySelector(`[role="tab"][aria-label="${tab}"]`));
+  await vi.waitFor(() => expect(host.querySelector(".pr-scope-title")).not.toBeNull());
 }
 
 it("labels the pull request list by repository and branch actions by the selected Thread's checkout", async () => {
@@ -141,6 +176,25 @@ it("opens a remote review without checking anything out, and checks out only in 
   expect(called("checkout_pull_request")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
 });
 
+it("shows GitHub inline review threads on the PR Diff scope", async () => {
+  await open("Pull request");
+  await click(byText("Fix the thing"));
+  await click(byText("Review files"));
+  expect(called("pull_request_review_threads")).toContainEqual({ projectId: 1, number: 5 });
+  const review = host.querySelector('[aria-label="Review threads"]');
+  expect(review?.textContent).toContain("src/app.rs:1");
+  expect(review?.textContent).toContain("@alice");
+  expect(review?.textContent).toContain("Please add a guard.");
+  expect(review?.textContent).toContain("Resolved");
+  // The resolved thread stays collapsed until the user asks for it.
+  expect(review?.textContent).not.toContain("Done.");
+  const lost = host.querySelector('[aria-label="Review threads not in this diff"]');
+  expect(lost?.textContent).toContain("src/gone.rs:9");
+  expect(lost?.textContent).toContain("Old note.");
+  await click(host.querySelector('.review-thread-summary[aria-expanded="false"]'));
+  expect(review?.textContent).toContain("Done.");
+});
+
 it("explains a failed local checkout instead of falling back to another checkout", async () => {
   fail = "Git refused: local changes";
   await open("Pull request");
@@ -181,6 +235,39 @@ it("starts a fix Thread from a failing pull request and selects it", async () =>
   expect(called("create_thread")).toHaveLength(1);
   expect(called("send_prompt")[0]?.threadId).toBe(10);
   expect(host.querySelector('[data-thread="10"]')).not.toBeNull();
+});
+
+it("shows a Dossier published for an earlier commit as out of date and refreshes it in place", async () => {
+  prDetail = {
+    ...baseDetail,
+    dossierOutOfDate: true,
+    pullRequest: { ...pullRequest, head: "feat-alpha" },
+  };
+  await open("Pull request");
+  await click(byText("Fix the thing"));
+  expect(text()).toContain("may not describe this branch's latest commit");
+  await click(byText("Refresh Dossier"));
+  expect(called("refresh_pull_request_dossier")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
+  await vi.waitFor(() => expect(text()).not.toContain("may not describe this branch's latest commit"));
+});
+
+it("can fast-forward the owning Thread checkout before refreshing the Dossier", async () => {
+  prDetail = {
+    ...baseDetail,
+    dossierOutOfDate: true,
+    pullRequest: { ...pullRequest, head: "feat-alpha" },
+  };
+  await open("Pull request");
+  await click(byText("Fix the thing"));
+  await click(byText("Pull & Refresh"));
+  expect(called("pull_pull_request_branch")).toEqual([
+    { projectId: 1, threadId: 2, expectedBranch: "feat-alpha", expectedHead: "abc123" },
+  ]);
+  expect(called("refresh_pull_request_dossier")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
+  expect(calls.findIndex((call) => call.command === "pull_pull_request_branch")).toBeLessThan(
+    calls.findIndex((call) => call.command === "refresh_pull_request_dossier"),
+  );
+  await vi.waitFor(() => expect(text()).not.toContain("may not describe this branch's latest commit"));
 });
 
 it("keeps the remote review readable when the Thread's checkout cannot be read", async () => {

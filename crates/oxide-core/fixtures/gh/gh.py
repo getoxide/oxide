@@ -5,6 +5,7 @@ State lives next to this script in `state.json`, which the test writes:
   {"auth": "ok" | "logged_out", "default_branch": "main", "next_number": 7, "prs": {"<branch>": {...}},
    "repo": {"mergeCommitAllowed": true, ...}}
 A PR may also carry "author", "body", "comments", "statusCheckRollup" and "diff" (a unified diff).
+A "review_error" fails every submitted review, and "review_submissions" records the ones accepted.
 Every invocation is recorded in its own file under `calls/` as {"args": [...], "cwd": "..."}:
 concurrent invocations must not share a file, appends are not atomic on Windows.
 """
@@ -15,16 +16,21 @@ import subprocess
 import sys
 import time
 
+# Real gh speaks UTF-8 on every OS, and so does Core. Python would otherwise use the locale code
+# page on Windows (cp1252), turning a UTF-8 body read from stdin into mojibake.
+for stream in (sys.stdin, sys.stdout, sys.stderr):
+    stream.reconfigure(encoding="utf-8")
+
 here = os.path.dirname(os.path.abspath(__file__))
 state_path = os.path.join(here, "state.json")
 args = sys.argv[1:]
 
 calls_dir = os.path.join(here, "calls")
 os.makedirs(calls_dir, exist_ok=True)
-with open(os.path.join(calls_dir, "%020d-%d.json" % (time.time_ns(), os.getpid())), "w") as f:
+with open(os.path.join(calls_dir, "%020d-%d.json" % (time.time_ns(), os.getpid())), "w", encoding="utf-8") as f:
     f.write(json.dumps({"args": args, "cwd": os.getcwd()}))
 
-with open(state_path) as f:
+with open(state_path, encoding="utf-8") as f:
     state = json.load(f)
 
 
@@ -43,7 +49,7 @@ def read_body():
 
 
 def save():
-    with open(state_path, "w") as f:
+    with open(state_path, "w", encoding="utf-8") as f:
         json.dump(state, f)
 
 
@@ -60,8 +66,25 @@ def number_arg():
 
 
 def branch():
-    out = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True)
+    out = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, encoding="utf-8")
     return out.stdout.strip()
+
+
+def head_oid(pr):
+    """The commit GitHub would report for the pull request's head, as the remote has it."""
+    head = pr.get("headRefName")
+    if head:
+        out = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/%s" % head],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    out = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    return out.stdout.strip() if out.returncode == 0 else ""
 
 
 if args[:2] == ["auth", "status"]:
@@ -87,10 +110,33 @@ if args[:2] == ["api", "user"]:
     print(state.get("viewer", "me"))
     sys.exit(0)
 
+REVIEWS = "repos/{owner}/{repo}/pulls/"
+if len(args) > 1 and args[0] == "api" and args[1].startswith(REVIEWS) and args[1].endswith("/reviews"):
+    # A submitted review, read as JSON from stdin through `--input -`.
+    if flag("--method") != "POST":
+        print("[]")
+        sys.exit(0)
+    if state.get("review_error"):
+        sys.stderr.write(state["review_error"] + "\n")
+        sys.exit(1)
+    review = json.load(sys.stdin)
+    review.setdefault("submittedAt", now())
+    state.setdefault("review_submissions", []).append(review)
+    save()
+    print(json.dumps(dict(review, id=len(state["review_submissions"]))))
+    sys.exit(0)
+
 if args[:2] == ["api", "graphql"]:
     if any("isRequired" in a for a in args):
         # The names of the checks branch protection requires, one per line through --jq.
         print("\n".join(state.get("required_checks", [])))
+        sys.exit(0)
+    if any("reviewThreads" in a for a in args):
+        # The inline review threads, printed through --jq as the nodes array.
+        if state.get("review_threads_error"):
+            sys.stderr.write(state["review_threads_error"] + "\n")
+            sys.exit(1)
+        print(json.dumps(state.get("review_threads", [])))
         sys.exit(0)
     # viewerDefaultMergeMethod, printed through --jq; empty when the test sets none.
     print(state.get("default_merge", ""))
@@ -107,7 +153,12 @@ if args[:2] == ["pr", "update-branch"]:
     sys.exit(0)
 
 if args[:2] == ["pr", "edit"]:
+    if state.get("pr_edit_error"):
+        sys.stderr.write(state["pr_edit_error"] + "\n")
+        sys.exit(1)
     pr = by_number(number_arg())
+    if "--body-file" in args or "--body" in args:
+        pr["body"] = read_body()
     csv = lambda name: [v for v in (flag(name) or "").split(",") if v]
     pr["assignees"] = [
         a for a in pr.get("assignees", []) if a["login"] not in csv("--remove-assignee")
@@ -189,7 +240,7 @@ if args[:2] == ["pr", "checkout"]:
         ["git", "fetch", "-q", "origin", head],
         ["git", "checkout", "-q", "-B", head, "FETCH_HEAD"],
     ):
-        out = subprocess.run(cmd, capture_output=True, text=True)
+        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if out.returncode != 0:
             sys.stderr.write(out.stderr)
             sys.exit(1)
@@ -215,6 +266,9 @@ if args[:2] == ["pr", "view"]:
     if pr is None:
         sys.stderr.write('no pull requests found for branch "%s"\n' % branch())
         sys.exit(1)
+    pr = dict(pr)
+    if "headRefOid" not in pr:
+        pr["headRefOid"] = head_oid(pr)
     print(json.dumps(pr))
     sys.exit(0)
 
