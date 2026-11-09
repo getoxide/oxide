@@ -85,6 +85,10 @@ pub trait RuntimeSource: Send + Sync {
         entry: &RuntimeEntry,
         cancelled: Arc<AtomicBool>,
     ) -> Result<Box<dyn Read + Send>>;
+    /// Where `index` reads from, when the source knows it. Used for diagnostics.
+    fn index_url(&self) -> Option<&str> {
+        None
+    }
 }
 
 pub fn platform() -> String {
@@ -234,6 +238,11 @@ impl RuntimeManager {
         self
     }
 
+    /// The published index this manager reads, when the source knows it.
+    pub fn index_url(&self) -> Option<&str> {
+        self.source.index_url()
+    }
+
     /// Verified index entries for this platform and protocol.
     pub fn available(&self) -> Result<Vec<RuntimeEntry>> {
         let (bytes, signature) = self.source.index()?;
@@ -264,6 +273,7 @@ impl RuntimeManager {
         cancelled: Arc<AtomicBool>,
         progress: impl Fn(u64, u64),
     ) -> Result<InstalledRuntime> {
+        ensure_not_cancelled(&cancelled)?;
         let entry = self
             .available()?
             .into_iter()
@@ -271,16 +281,27 @@ impl RuntimeManager {
             .max_by(|a, b| version_key(&a.version).cmp(&version_key(&b.version)))
             .ok_or_else(|| err("No compatible runtime is published for this platform"))?;
         let name = dir_name(backend)?;
+        ensure_not_cancelled(&cancelled)?;
         fs::create_dir_all(root).map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
         let staging = tempfile::Builder::new()
             .prefix(".staging-")
             .tempdir_in(root)
             .map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
 
         let archive = staging.path().join("package.zip");
-        download(&*self.source, &entry, cancelled, &archive, &progress)?;
+        download(
+            &*self.source,
+            &entry,
+            cancelled.clone(),
+            &archive,
+            &progress,
+        )?;
+        ensure_not_cancelled(&cancelled)?;
         let content = staging.path().join("content");
         extract(&archive, &content)?;
+        ensure_not_cancelled(&cancelled)?;
         let manifest = read_manifest(&content)?;
         if manifest.protocol_version != PROTOCOL_VERSION {
             return Err(err(format!(
@@ -291,13 +312,17 @@ impl RuntimeManager {
         if manifest.backend != backend || manifest.version != entry.version {
             return Err(err("Runtime package does not match the published index"));
         }
+        ensure_not_cancelled(&cancelled)?;
         verify_files(&content, &manifest)?;
+        ensure_not_cancelled(&cancelled)?;
 
         let parent = root.join(name);
         fs::create_dir_all(&parent).map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
         let target = parent.join(&entry.version);
         if target.exists() {
             // Reinstall of the same version: swap only after the new tree is verified.
+            // From here on the promotion is atomic: finish it rather than leave a half swap.
             let old = staging.path().join("old");
             fs::rename(&target, &old).map_err(err)?;
             if let Err(e) = fs::rename(&content, &target) {
@@ -330,6 +355,14 @@ fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()
         .map_err(|_| err("Runtime index signature is not valid"))
 }
 
+fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<()> {
+    if cancelled.load(Ordering::SeqCst) {
+        Err(err("Runtime install cancelled"))
+    } else {
+        Ok(())
+    }
+}
+
 fn download(
     source: &dyn RuntimeSource,
     entry: &RuntimeEntry,
@@ -337,15 +370,15 @@ fn download(
     path: &Path,
     progress: &impl Fn(u64, u64),
 ) -> Result<()> {
+    ensure_not_cancelled(&cancelled)?;
     let mut input = source.open(entry, cancelled.clone())?;
+    ensure_not_cancelled(&cancelled)?;
     let mut file = File::create(path).map_err(err)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     let mut received = 0u64;
     loop {
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(err("Runtime download cancelled"));
-        }
+        ensure_not_cancelled(&cancelled)?;
         let n = input.read(&mut buffer).map_err(err)?;
         if n == 0 {
             break;
@@ -355,9 +388,11 @@ fn download(
             return Err(err("Runtime package is larger than published"));
         }
         hasher.update(&buffer[..n]);
+        ensure_not_cancelled(&cancelled)?;
         file.write_all(&buffer[..n]).map_err(err)?;
         progress(received, entry.bytes);
     }
+    ensure_not_cancelled(&cancelled)?;
     file.flush().map_err(err)?;
     if received != entry.bytes {
         return Err(err("Runtime package is incomplete"));
@@ -483,5 +518,9 @@ impl RuntimeSource for HttpRuntimeSource {
             .and_then(|r| r.error_for_status())
             .map_err(err)?;
         Ok(Box::new(response))
+    }
+
+    fn index_url(&self) -> Option<&str> {
+        Some(&self.index_url)
     }
 }
