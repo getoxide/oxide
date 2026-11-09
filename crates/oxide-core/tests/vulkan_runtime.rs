@@ -19,6 +19,7 @@ fn fixture(reply: serde_json::Value, logs: &str) -> tempfile::TempDir {
 use std::io::{Read, Write};
 fn main() {
  let dir = std::env::current_exe().unwrap().parent().unwrap().to_owned();
+ std::fs::write(dir.join("pid"), std::process::id().to_string()).unwrap();
  if let Ok(code) = std::fs::read_to_string(dir.join("exit-code")) { std::process::exit(code.parse().unwrap()); }
  let mut size = [0;4]; std::io::stdin().read_exact(&mut size).unwrap();
  let mut request = vec![0;u32::from_le_bytes(size) as usize];
@@ -220,6 +221,30 @@ fn successful_text_without_native_gpu_execution_is_rejected() {
 }
 
 #[test]
+fn a_mul_mat_line_without_a_positive_timing_is_rejected() {
+    let dir = inference_fixture(
+        "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT:\nTotal time: 500 us.\n",
+    );
+    let result = fixture_runtime(&dir, None).transcribe(&request());
+    assert!(matches!(
+        result,
+        Err(oxide_core::dictation::BackendError::InferenceFailed(_))
+    ));
+}
+
+#[test]
+fn a_non_positive_total_time_is_rejected() {
+    let dir = inference_fixture(
+        "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT: 1 x 500 us = 500 us\nTotal time: 0 us.\n",
+    );
+    let result = fixture_runtime(&dir, None).transcribe(&request());
+    assert!(matches!(
+        result,
+        Err(oxide_core::dictation::BackendError::InferenceFailed(_))
+    ));
+}
+
+#[test]
 fn cancellation_terminates_the_worker_and_allows_a_new_inference() {
     let dir = inference_fixture(
         "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT: 1 x 500 us = 500 us\nTotal time: 500 us.\n",
@@ -365,4 +390,97 @@ fn recording_token_cancels_an_independently_selected_worker() {
     ));
     std::fs::remove_file(dir.path().join("delay-ms")).unwrap();
     assert!(runtime.transcribe(&request()).unwrap().execution.offloaded);
+}
+
+#[test]
+fn incompatible_protocol_version_is_rejected_without_panicking() {
+    let dir = fixture(
+        serde_json::json!({"protocol_version":2, "engine_version":"1.8.3",
+            "result":{"Ok":{"Adapters":[adapter()]}}}),
+        "",
+    );
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(message) if message.contains("Incompatible")
+    ));
+}
+
+#[test]
+fn incompatible_engine_version_is_rejected_without_panicking() {
+    let dir = fixture(
+        serde_json::json!({"protocol_version":1, "engine_version":"9.9.9",
+            "result":{"Ok":{"Adapters":[adapter()]}}}),
+        "",
+    );
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(message) if message.contains("Incompatible")
+    ));
+}
+
+#[test]
+fn a_worker_that_exits_before_replying_is_a_typed_failure() {
+    let dir = fixture(
+        response(serde_json::json!({"Ok":{"Adapters":[adapter()]}})),
+        "",
+    );
+    std::fs::write(dir.path().join("exit-code"), "3").unwrap();
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(_)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_reaps_the_worker_instead_of_leaving_a_zombie() {
+    let dir = inference_fixture(
+        "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT: 1 x 500 us = 500 us\nTotal time: 500 us.\n",
+    );
+    std::fs::write(dir.path().join("delay-ms"), "1000").unwrap();
+    let runtime = std::sync::Arc::new(fixture_runtime(&dir, None));
+    let running = runtime.clone();
+    let job = std::thread::spawn(move || running.transcribe(&request()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !dir.path().join("started").exists() || !dir.path().join("pid").exists() {
+        assert!(
+            !job.is_finished(),
+            "Vulkan inference ended before the worker started"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Vulkan worker did not start"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let pid: i32 = std::fs::read_to_string(dir.path().join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    runtime.cancel();
+    assert!(matches!(
+        job.join().unwrap(),
+        Err(oxide_core::dictation::BackendError::Cancelled)
+    ));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        // A zombie still answers signal 0, so ESRCH proves the child was reaped.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Vulkan worker {pid} was not reaped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }

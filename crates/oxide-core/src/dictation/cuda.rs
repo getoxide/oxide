@@ -3,17 +3,18 @@ use super::{
     BackendError, BackendId, BackendProbe, CapabilityState, MemoryPool, TranscriptionOutcome,
     TranscriptionRequest, WhisperBackendRuntime,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::{
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
+pub use super::protocol::{read_frame, write_frame};
+
 pub const ENGINE_VERSION: &str = "1.8.3";
-const MAX_FRAME: usize = 64 * 1024 * 1024;
 const DEFAULT_WORKING_SET: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,8 @@ pub enum WorkerResult {
         text: String,
         adapter_id: String,
         native_backend: String,
+        #[serde(default)]
+        dispatch: Option<super::benchmark::DispatchRun>,
     },
 }
 
@@ -54,37 +57,16 @@ pub struct WorkerResponse {
     pub result: Result<WorkerResult, BackendError>,
 }
 
-pub fn read_frame<T: DeserializeOwned>(mut input: impl Read) -> std::io::Result<T> {
-    let mut size = [0; 4];
-    input.read_exact(&mut size)?;
-    let size = u32::from_le_bytes(size) as usize;
-    if size > MAX_FRAME {
-        return Err(std::io::Error::other("Worker frame exceeds limit"));
-    }
-    let mut bytes = vec![0; size];
-    input.read_exact(&mut bytes)?;
-    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
-}
-
-pub fn write_frame(mut output: impl Write, value: &impl Serialize) -> std::io::Result<()> {
-    let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > MAX_FRAME {
-        return Err(std::io::Error::other("Worker frame exceeds limit"));
-    }
-    output.write_all(&(bytes.len() as u32).to_le_bytes())?;
-    output.write_all(&bytes)?;
-    output.flush()
-}
-
 /// Development override, then the folder of the executable, then a downloaded runtime.
 /// `PATH` is never searched.
 pub fn worker_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("OXIDE_CUDA_WORKER") {
-        return PathBuf::from(path);
+    if let Some(path) = super::protocol::override_from_env("OXIDE_CUDA_WORKER") {
+        return path;
     }
-    let beside = std::env::current_exe()
-        .unwrap_or_default()
-        .with_file_name(format!("oxide-cuda-worker{}", std::env::consts::EXE_SUFFIX));
+    let beside = super::protocol::beside_current_executable(&format!(
+        "oxide-cuda-worker{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     if beside.is_file() {
         return beside;
     }
@@ -160,6 +142,7 @@ impl CudaRuntime {
         if !self.path.is_file() {
             return Err(BackendError::Unavailable(CapabilityState::OmittedFromBuild));
         }
+        let timeout = super::protocol::timeout_for(matches!(&request, WorkerRequest::Probe));
         let required = match &request {
             WorkerRequest::Transcribe { request, .. } => required_memory(&request.model_path),
             WorkerRequest::Probe => 0,
@@ -201,7 +184,6 @@ impl CudaRuntime {
         });
 
         let start = Instant::now();
-        let timeout = Duration::from_secs(180);
         let status = loop {
             if generation.is_some_and(|target| self.generation.load(Ordering::Acquire) != target)
                 || cancelled.is_some_and(|c| c.load(Ordering::SeqCst))
@@ -369,7 +351,7 @@ impl WhisperBackendRuntime for CudaRuntime {
         let mut request = request.clone();
         request.samples = super::resample(&request.samples, request.sample_rate);
         request.sample_rate = 16000;
-        let (result, logs) = self.exchange(
+        let (result, _logs) = self.exchange(
             WorkerRequest::Transcribe {
                 request,
                 adapter_id: device.id.clone(),
@@ -385,29 +367,20 @@ impl WhisperBackendRuntime for CudaRuntime {
                 text,
                 adapter_id,
                 native_backend,
+                dispatch,
             } if adapter_id == device.id && native_backend == device.native_backend => {
+                let dispatch = dispatch.filter(|dispatch| {
+                    dispatch.completed_graphs > 0
+                        && dispatch.matrix_ops >= dispatch.completed_graphs
+                        && dispatch.failures == 0
+                        && dispatch.native_backend == device.native_backend
+                        && dispatch.adapter == device.name
+                });
+                let dispatch = dispatch.ok_or_else(unproven_offload)?;
                 let selected = format!("whisper_backend_init_gpu: using {native_backend} backend");
-                let has_offload_evidence = logs.contains(&selected)
-                    && (logs.contains("compute buffer")
-                        || logs.contains("ggml_backend_cuda_init")
-                        || logs.contains("CUDA Timings:")
-                        || logs.contains("allocating"));
-                if !has_offload_evidence {
-                    return Err(BackendError::InferenceFailed(
-                        "CUDA offload was not evidenced by native GPU execution; CPU fallback is refused".into(),
-                    ));
-                }
-                let timing_line = logs
-                    .lines()
-                    .find(|line| {
-                        line.contains("CUDA Timings:")
-                            || line.contains("Total time: ")
-                            || line.contains("compute buffer")
-                    })
-                    .unwrap_or("CUDA verified");
                 let evidence = format!(
-                    "whisper.cpp {ENGINE_VERSION}; {}; {selected}; {timing_line}",
-                    device.id
+                    "whisper.cpp {ENGINE_VERSION}; {}; {selected}; native dispatch: {} graphs, {} matrix ops, {} failures",
+                    device.id, dispatch.completed_graphs, dispatch.matrix_ops, dispatch.failures
                 );
                 Ok(TranscriptionOutcome {
                     text,
@@ -428,4 +401,10 @@ impl WhisperBackendRuntime for CudaRuntime {
             )),
         }
     }
+}
+
+fn unproven_offload() -> BackendError {
+    BackendError::InferenceFailed(
+        "CUDA offload was not evidenced by native GPU execution; CPU fallback is refused".into(),
+    )
 }

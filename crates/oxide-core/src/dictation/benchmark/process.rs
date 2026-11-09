@@ -1,5 +1,5 @@
 use super::*;
-use crate::dictation::vulkan::{read_frame, write_frame};
+use crate::dictation::protocol::{read_frame, write_frame};
 use crate::dictation::{CapabilityState, MetalRuntime, WhisperBackendRuntime};
 use std::{
     path::PathBuf,

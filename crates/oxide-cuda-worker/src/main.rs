@@ -1,10 +1,12 @@
 //! This executable alone links CUDA libraries. A crash cannot take down Oxide.
 use oxide_core::dictation::{
-    BackendError, CapabilityState, MemoryPool,
+    BackendError, BackendId, BackendProbe, CapabilityState, MemoryPool,
+    benchmark::{DictationDispatch, NativeDevice},
     cuda::{
         CudaAdapter, ENGINE_VERSION, WorkerRequest, WorkerResponse, WorkerResult, read_frame,
         write_frame,
     },
+    resources::BackendCandidate,
     runtime::run_whisper_on_device,
 };
 use std::ffi::{CStr, c_char, c_void};
@@ -343,6 +345,25 @@ fn native_pci_id(name: &str) -> Result<String, BackendError> {
     ))
 }
 
+fn native_device(device: &CudaAdapter) -> Result<NativeDevice, BackendError> {
+    Ok(NativeDevice {
+        native_device_id: Some(native_pci_id(&device.native_backend)?),
+        candidate: BackendCandidate {
+            probe: BackendProbe {
+                backend: BackendId::Cuda,
+                state: device.capability.clone(),
+                adapter: Some(device.name.clone()),
+                memory_pool: device.memory.clone(),
+            },
+            adapter_id: Some(device.id.clone()),
+            driver_version: device.driver.clone(),
+            runtime_version: oxide_core::dictation::resources::runtime_version(BackendId::Cuda),
+        },
+        native_index: device.native_index,
+        native_backend: device.native_backend.clone(),
+    })
+}
+
 fn execute(message: WorkerRequest) -> Result<WorkerResult, BackendError> {
     match message {
         WorkerRequest::Probe => Ok(WorkerResult::Adapters(adapters(false)?)),
@@ -360,11 +381,20 @@ fn execute(message: WorkerRequest) -> Result<WorkerResult, BackendError> {
                 return Err(BackendError::Unavailable(device.capability));
             }
             oxide_core::dictation::cuda::check_memory(&device, &request.model_path)?;
+            let mut dispatch = DictationDispatch::install(&native_device(&device)?)?;
+            if let Some(dispatch) = &dispatch {
+                dispatch.reset();
+            }
             let (text, _, _) = run_whisper_on_device(&request, true, device.native_index)?;
+            let dispatch = dispatch
+                .as_mut()
+                .map(DictationDispatch::read)
+                .transpose()?;
             Ok(WorkerResult::Transcription {
                 text,
                 adapter_id: device.id,
                 native_backend: device.native_backend,
+                dispatch,
             })
         }
     }
