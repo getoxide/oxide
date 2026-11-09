@@ -188,7 +188,7 @@ pub struct Core {
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
     next_terminal_id: AtomicU32,
-    project_services: project_services::ProjectServices,
+    project_services: Arc<project_services::ProjectServices>,
     language_servers: language_server::LanguageServers,
     dirty_editors: Mutex<std::collections::HashSet<String>>,
     git: git::GitState,
@@ -253,7 +253,7 @@ impl Core {
             processes,
             terminals: Mutex::new(HashMap::new()),
             next_terminal_id: AtomicU32::new(1),
-            project_services: project_services::ProjectServices::new(),
+            project_services: Arc::new(project_services::ProjectServices::new()),
             language_servers: language_server::LanguageServers::default(),
             dirty_editors: Mutex::new(std::collections::HashSet::new()),
             git: git::GitState::default(),
@@ -1066,14 +1066,14 @@ impl Core {
         }
 
         let snapshot = self.storage.get_snapshot(thread_id, 0)?;
-        let project_path = {
+        let (project_id, project_path) = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let path_str: String = db.query_row(
-                "SELECT COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
+            let row: (u32, String) = db.query_row(
+                "SELECT p.id, COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
                 [thread_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            PathBuf::from(path_str)
+            (row.0, PathBuf::from(row.1))
         };
 
         let provider: Box<dyn ProviderTrait> =
@@ -1134,6 +1134,9 @@ impl Core {
                 activity: Arc::clone(&self.activity),
                 usage: Arc::clone(&self.usage),
                 provider: snapshot.thread.provider.clone(),
+                project_id,
+                project_services: Arc::clone(&self.project_services),
+                processes: Arc::clone(&self.processes),
             },
         )?;
 

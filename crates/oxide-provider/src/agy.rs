@@ -10,7 +10,7 @@ use crate::{
     ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, Detection, ItemKind,
     ModelInfo, PermissionMode, PromptSegment, Provider, ProviderCapabilities, ProviderError,
     ProviderEvent, SlashCommandInfo, SlashRoute, StartContext, TurnStatus,
-    attachment_path_reference,
+    attachment_path_reference, is_background_command,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
@@ -704,6 +704,9 @@ struct OpenItem {
     content: String,
     /// Set while the Item is a command; its outcome stays unknown until the step reports one.
     command: Option<CommandRecord>,
+    /// The background command was already reported to Core, so a later ACTIVE update of the
+    /// same step cannot start the service twice.
+    service_requested: bool,
 }
 
 impl TurnRun {
@@ -866,7 +869,19 @@ impl TurnRun {
                     outcome: CommandOutcome::Unknown,
                     exit_code: None,
                 });
-                self.open(steps, step_index, next_item, kind, category, command);
+                let item = self.open(steps, step_index, next_item, kind, category, command);
+                if !done
+                    && is_command
+                    && !item.service_requested
+                    && let Some(line) = command_line(info)
+                    && is_background_command(&line)
+                {
+                    item.service_requested = true;
+                    let _ = self.tx.send(ProviderEvent::CommandRequested {
+                        item_index: item.item_index,
+                        command: line,
+                    });
+                }
                 if done {
                     let content = self.tool_content(kind, step, info);
                     let command = is_command.then(|| agy_command(info));
@@ -903,6 +918,7 @@ impl TurnRun {
                 category,
                 content: String::new(),
                 command,
+                service_requested: false,
             }
         })
     }

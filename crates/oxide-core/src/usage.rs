@@ -55,13 +55,19 @@ impl UsageLimits {
     }
 }
 
-/// What a Thread actor shares with the rest of Core: its status feed and the Usage limits of its
-/// Provider.
+/// What a Thread actor shares with the rest of Core: its status feed, the Usage limits of its
+/// Provider, and the Project Services it can detach agent commands into.
 pub struct ActorServices {
     pub activity: std::sync::Arc<crate::activity::Activity>,
     pub usage: std::sync::Arc<UsageHub>,
     /// The Provider key Usage limits are filed under.
     pub provider: String,
+    /// The Project the Thread belongs to, recorded on a Project Service.
+    pub project_id: u32,
+    /// The Project Services a detached agent command is started in.
+    pub project_services: std::sync::Arc<crate::project_services::ProjectServices>,
+    /// The process registry a Project Service registers its process group with.
+    pub processes: std::sync::Arc<oxide_provider::process::ProcessRegistry>,
 }
 
 pub struct UsageHub {
