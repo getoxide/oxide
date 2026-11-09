@@ -12,7 +12,8 @@ pub fn now_secs() -> u64 {
 /// Read current OS resources on a worker thread. No GPU initialization or downloads.
 pub fn capture(model_directory: &std::path::Path) -> ResourceSnapshot {
     use sysinfo::{CpuRefreshKind, ProcessRefreshKind, ProcessesToUpdate, System};
-    let mut system = System::new();
+    let mut system = System::new()
+        .unwrap_or_else(|_| System::new_with_specifics(sysinfo::RefreshKind::nothing()).unwrap());
     system.refresh_cpu_list(CpuRefreshKind::nothing());
     let baseline_bytes = sysinfo::get_current_pid().ok().and_then(|pid| {
         system.refresh_processes_specifics(
@@ -27,10 +28,14 @@ pub fn capture(model_directory: &std::path::Path) -> ResourceSnapshot {
         .find_map(|path| dunce::canonicalize(path).ok());
     let free_disk_bytes = directory.and_then(|path| {
         sysinfo::Disks::new_with_refreshed_list()
-            .iter()
-            .filter(|disk| path.starts_with(disk.mount_point()))
-            .max_by_key(|disk| disk.mount_point().as_os_str().len())
-            .map(|disk| disk.available_space())
+            .ok()
+            .and_then(|disks| {
+                disks
+                    .iter()
+                    .filter(|disk| path.starts_with(disk.mount_point()))
+                    .max_by_key(|disk| disk.mount_point().as_os_str().len())
+                    .map(|disk| disk.available_space())
+            })
     });
     // Disk enumeration may block; RAM must be the last OS measurement before load.
     system.refresh_memory();
@@ -212,7 +217,7 @@ pub fn backend_candidates() -> Vec<BackendCandidate> {
             None
         };
         let driver_version = if probe.backend == BackendId::Metal {
-            sysinfo::System::kernel_version()
+            sysinfo::System::kernel_version().ok()
         } else {
             None
         };

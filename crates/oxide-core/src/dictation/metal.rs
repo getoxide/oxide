@@ -116,10 +116,13 @@ impl WhisperBackendRuntime for MetalRuntime {
 
         match query_metal_device() {
             Ok(device) => {
-                let mut system = sysinfo::System::new();
-                system.refresh_memory();
-                let total_bytes = system.total_memory();
-                let available_bytes = Some(system.available_memory());
+                let (total_bytes, available_bytes) = if let Ok(mut system) = sysinfo::System::new()
+                {
+                    system.refresh_memory();
+                    (system.total_memory(), Some(system.available_memory()))
+                } else {
+                    (0, None)
+                };
 
                 BackendProbe {
                     backend: BackendId::Metal,
