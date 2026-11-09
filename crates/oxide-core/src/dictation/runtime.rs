@@ -82,6 +82,31 @@ pub fn run_whisper_on_device(
     Ok((text, use_gpu, None))
 }
 
+/// Normal in-process Metal inference with native dispatch evidence.
+///
+/// The recorder must be installed before this call, so its hook is active while
+/// `load_context` creates the device context. Counters are reset once the state
+/// exists and read immediately after the single inference pass.
+pub(crate) fn run_whisper_recorded(
+    request: &TranscriptionRequest,
+    recorder: &super::benchmark::MetalDispatchRecorder,
+) -> Result<(String, super::benchmark::DispatchRun), BackendError> {
+    let context = load_context(request, true, 0)?;
+    let mut state = context
+        .create_state()
+        .map_err(|e| BackendError::InitializationFailed(e.to_string()))?;
+    let run = recorder.begin_run();
+    infer(request, &mut state)?;
+    let dispatch = run.end();
+    let text = state
+        .as_iter()
+        .map(|s| s.to_string())
+        .collect::<String>()
+        .trim()
+        .to_string();
+    Ok((text, dispatch))
+}
+
 fn load_context(
     request: &TranscriptionRequest,
     use_gpu: bool,
