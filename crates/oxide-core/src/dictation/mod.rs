@@ -827,7 +827,7 @@ fn capture(stop: mpsc::Receiver<()>, ready: mpsc::Sender<Result<()>>) -> Result<
         let on_error = move |e: cpal::Error| {
             *error_buffer.lock().unwrap() = Some(e.to_string());
         };
-        let config: cpal::StreamConfig = supported.clone().into();
+        let config: cpal::StreamConfig = supported.into();
         let stream = match supported.sample_format() {
             cpal::SampleFormat::F32 => {
                 input::<f32>(&device, config, samples.clone(), channels, on_error)
