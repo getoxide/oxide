@@ -106,7 +106,7 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 
 ### `supply-chain`
 
-- **What:** the Tauri alignment check (the `tauri` crate and `@tauri-apps/*` packages must share a `major.minor`); `cargo deny check bans licenses sources` against the macOS and Windows graphs, and against the Vulkan and CUDA worker lockfiles (they ship but are outside the workspace), using [`deny.toml`](../deny.toml); on PRs, GitHub's dependency review (`fail-on-severity: high`, licence allowlist).
+- **What:** the Tauri alignment check (the `tauri` crate and `@tauri-apps/*` packages must share a `major.minor`); `cargo deny check bans licenses sources` against the macOS and Windows graphs, and against the Vulkan and CUDA worker lockfiles (they ship but are outside the workspace), using [`deny.toml`](../deny.toml); on PRs, GitHub's dependency review (`fail-on-severity: high`, licence allowlist, with a per-package exception for the two bundled font packages under OFL-1.1).
 - **Why:** it is policy over lockfiles and needs no build. It stops a licence we can't ship, a git source, a wildcard version, a new dependency with a high advisory, or a half-landed Tauri bump from reaching `main`.
 - **When / where:** `supplyChain` lane (any manifest, lockfile or `deny.toml`), Linux.
 - **Local:** `node tools/ci/cli.mjs tauri-alignment` (in `check.mjs`), and `cargo deny check bans licenses sources` after `cargo install --locked cargo-deny`. Dependency review runs only in CI.
