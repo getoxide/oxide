@@ -7,8 +7,8 @@
       "protocolVersion": 2,
       "platform": "windows-x86_64",
       "url": "https://github.com/example/oxide/releases/download/v0.0.1/oxide-runtime-cuda-windows-x64-0.0.1.zip",
-      "bytes": 1535,
-      "sha256": "1d888521bb8db8e27a3b3b23c5679bf8fa62df276e6df372db4e199941bc6cac",
+      "bytes": 1531,
+      "sha256": "44bbdaa8e409322f7c448839f1f85e1bcd6d3aad20d59d9bebf3ce37c7b4c692",
       "requirements": "an NVIDIA driver for CUDA 12.9 and compute capability 5.0 or later"
     },
     {
@@ -17,8 +17,8 @@
       "protocolVersion": 2,
       "platform": "windows-x86_64",
       "url": "https://github.com/example/oxide/releases/download/v0.0.1/oxide-runtime-vulkan-windows-x64-0.0.1.zip",
-      "bytes": 846,
-      "sha256": "438ca7516a27a86664840bbee45147dd3d5daa4bb02619b6a8fc234e1a5a0e92",
+      "bytes": 848,
+      "sha256": "274c08416948f770d3b9f42b0276b000593c02279f03d1d283f575781fad76bc",
       "requirements": "a Vulkan 1.2 driver with 16-bit storage and timestamp queries"
     }
   ]
