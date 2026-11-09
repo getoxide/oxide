@@ -819,24 +819,24 @@ fn capture(stop: mpsc::Receiver<()>, ready: mpsc::Sender<Result<()>>) -> Result<
             .default_input_device()
             .ok_or_else(|| err("No microphone found. Check system microphone permissions."))?;
         let supported = device.default_input_config().map_err(err)?;
-        let rate = supported.sample_rate().0;
+        let rate = supported.sample_rate();
         let channels = supported.channels() as usize;
         let samples = Arc::new(Mutex::new(Vec::new()));
         let errors = Arc::new(Mutex::new(None));
         let error_buffer = errors.clone();
-        let on_error = move |e: cpal::StreamError| {
+        let on_error = move |e: cpal::Error| {
             *error_buffer.lock().unwrap() = Some(e.to_string());
         };
         let config: cpal::StreamConfig = supported.clone().into();
         let stream = match supported.sample_format() {
             cpal::SampleFormat::F32 => {
-                input::<f32>(&device, &config, samples.clone(), channels, on_error)
+                input::<f32>(&device, config, samples.clone(), channels, on_error)
             }
             cpal::SampleFormat::I16 => {
-                input::<i16>(&device, &config, samples.clone(), channels, on_error)
+                input::<i16>(&device, config, samples.clone(), channels, on_error)
             }
             cpal::SampleFormat::U16 => {
-                input::<u16>(&device, &config, samples.clone(), channels, on_error)
+                input::<u16>(&device, config, samples.clone(), channels, on_error)
             }
             _ => {
                 return Err(err(
@@ -863,16 +863,16 @@ fn capture(stop: mpsc::Receiver<()>, ready: mpsc::Sender<Result<()>>) -> Result<
 
 fn input<T>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     samples: Arc<Mutex<Vec<f32>>>,
     channels: usize,
-    on_error: impl FnMut(cpal::StreamError) + Send + 'static,
+    on_error: impl FnMut(cpal::Error) + Send + 'static,
 ) -> Result<cpal::Stream>
 where
     T: cpal::SizedSample,
     f32: cpal::FromSample<T>,
 {
-    let max = config.sample_rate.0 as usize * 120;
+    let max = config.sample_rate as usize * 120;
     device
         .build_input_stream(
             config,
