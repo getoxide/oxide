@@ -153,7 +153,6 @@ impl Recorder {
         // SAFETY: all prior inference is complete; no callbacks remain in flight.
         unsafe { oxide_dispatch_reset() };
     }
-
     pub fn end_run(&mut self) {
         // SAFETY: Snapshot is a C-compatible all-zero-valid layout. Native read
         // copies counters and bounded, zero-terminated identity strings under a mutex.
@@ -195,5 +194,32 @@ impl Recorder {
             candidate.probe.adapter.as_deref(),
         )?;
         Ok(evidence)
+    }
+
+    fn last_run(&self) -> Option<DispatchRun> {
+        self.runs.last().cloned()
+    }
+}
+
+/// Process-global native dispatch recorder for one normal dictation inference.
+///
+/// Unlike the benchmark recorder this needs exactly one run. Only constructed
+/// inside the disposable worker process that owns the GPU context.
+pub struct DictationDispatch {
+    recorder: Recorder,
+}
+
+impl DictationDispatch {
+    pub fn install(device: &NativeDevice) -> Result<Option<Self>, BackendError> {
+        Ok(Recorder::install(device)?.map(|recorder| Self { recorder }))
+    }
+
+    pub fn reset(&self) {
+        self.recorder.begin_run();
+    }
+
+    pub fn read(&mut self) -> Result<DispatchRun, BackendError> {
+        self.recorder.end_run();
+        self.recorder.last_run().ok_or_else(unproven)
     }
 }

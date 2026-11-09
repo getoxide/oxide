@@ -3,6 +3,7 @@ pub mod benchmark;
 pub mod cuda;
 pub mod metal;
 pub mod models;
+pub mod protocol;
 pub mod resources;
 pub mod runtime;
 pub mod runtimes;

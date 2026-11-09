@@ -19,6 +19,7 @@ fn fixture(reply: serde_json::Value, logs: &str) -> tempfile::TempDir {
 use std::io::{Read, Write};
 fn main() {
  let dir = std::env::current_exe().unwrap().parent().unwrap().to_owned();
+ std::fs::write(dir.join("pid"), std::process::id().to_string()).unwrap();
  if let Ok(code) = std::fs::read_to_string(dir.join("exit-code")) { std::process::exit(code.parse().unwrap()); }
  let mut size = [0;4]; std::io::stdin().read_exact(&mut size).unwrap();
  let mut request = vec![0;u32::from_le_bytes(size) as usize];
@@ -52,6 +53,30 @@ fn worker(dir: &tempfile::TempDir) -> PathBuf {
 
 fn response(result: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"protocol_version":1, "engine_version":"1.8.3", "result":result})
+}
+
+fn dispatch() -> serde_json::Value {
+    serde_json::json!({
+        "nativeBackend":"CUDA0",
+        "adapter":"RTX 4090",
+        "deviceId":null,
+        "completedGraphs":12,
+        "matrixOps":40,
+        "failures":0
+    })
+}
+
+fn transcription(extra: serde_json::Value) -> serde_json::Value {
+    let mut value = serde_json::json!({"Ok":{"Transcription":{
+        "text":"ask not what your country can do for you",
+        "adapter_id":"cuda:0000000010de",
+        "native_backend":"CUDA0"}}});
+    if let Some(transcription) = value["Ok"]["Transcription"].as_object_mut() {
+        for (key, entry) in extra.as_object().unwrap() {
+            transcription.insert(key.clone(), entry.clone());
+        }
+    }
+    response(value)
 }
 
 #[test]
@@ -237,10 +262,7 @@ fn successful_text_without_native_gpu_execution_is_rejected() {
 #[test]
 fn inference_reports_the_actual_adapter_and_native_cuda_evidence() {
     let dir = fixture(
-        response(serde_json::json!({"Ok":{"Transcription":{
-            "text":"ask not what your country can do for you",
-            "adapter_id":"cuda:0000000010de",
-            "native_backend":"CUDA0"}}})),
+        transcription(serde_json::json!({"dispatch": dispatch()})),
         "whisper_backend_init_gpu: using CUDA0 backend\nggml_cuda_init: compute capability 8.9\nCUDA Timings: Total time: 1420.50 us.\n",
     );
     std::fs::write(
@@ -261,6 +283,60 @@ fn inference_reports_the_actual_adapter_and_native_cuda_evidence() {
     assert!(evidence.contains("whisper.cpp 1.8.3"));
     assert!(evidence.contains("cuda:0000000010de"));
     assert!(evidence.contains("using CUDA0 backend"));
+    assert!(evidence.contains("12 graphs"));
+}
+
+#[test]
+fn missing_native_dispatch_evidence_is_rejected() {
+    let dir = fixture(
+        transcription(serde_json::json!({})),
+        "whisper_backend_init_gpu: using CUDA0 backend\nggml_cuda_init: compute capability 8.9\n",
+    );
+    std::fs::write(
+        dir.path().join("probe.json"),
+        response(serde_json::json!({"Ok":{"Adapters":[adapter()]}})).to_string(),
+    )
+    .unwrap();
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.transcribe(&request()),
+        Err(oxide_core::dictation::BackendError::InferenceFailed(reason))
+            if reason.contains("CUDA offload was not evidenced")
+    ));
+}
+
+#[test]
+fn invalid_native_dispatch_evidence_is_rejected() {
+    for invalid in [
+        serde_json::json!({"completedGraphs":0}),
+        serde_json::json!({"matrixOps":1}),
+        serde_json::json!({"failures":1}),
+        serde_json::json!({"nativeBackend":"CUDA1"}),
+        serde_json::json!({"adapter":"Some Other GPU"}),
+    ] {
+        let mut run = dispatch();
+        for (key, value) in invalid.as_object().unwrap() {
+            run[key] = value.clone();
+        }
+        let dir = fixture(
+            transcription(serde_json::json!({"dispatch": run})),
+            "whisper_backend_init_gpu: using CUDA0 backend\n",
+        );
+        std::fs::write(
+            dir.path().join("probe.json"),
+            response(serde_json::json!({"Ok":{"Adapters":[adapter()]}})).to_string(),
+        )
+        .unwrap();
+        let runtime = fixture_runtime(&dir, None);
+        assert!(
+            matches!(
+                runtime.transcribe(&request()),
+                Err(oxide_core::dictation::BackendError::InferenceFailed(reason))
+                    if reason.contains("CUDA offload was not evidenced")
+            ),
+            "expected {invalid} to be rejected"
+        );
+    }
 }
 
 #[test]
@@ -423,4 +499,104 @@ fn recording_token_cancels_an_independently_selected_worker() {
         handle.join().unwrap(),
         Err(oxide_core::dictation::BackendError::Cancelled)
     ));
+}
+
+#[test]
+fn incompatible_protocol_version_is_rejected_without_panicking() {
+    let dir = fixture(
+        serde_json::json!({"protocol_version":2, "engine_version":"1.8.3",
+            "result":{"Ok":{"Adapters":[adapter()]}}}),
+        "",
+    );
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(message) if message.contains("Incompatible")
+    ));
+}
+
+#[test]
+fn incompatible_engine_version_is_rejected_without_panicking() {
+    let dir = fixture(
+        serde_json::json!({"protocol_version":1, "engine_version":"9.9.9",
+            "result":{"Ok":{"Adapters":[adapter()]}}}),
+        "",
+    );
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(message) if message.contains("Incompatible")
+    ));
+}
+
+#[test]
+fn a_worker_that_exits_before_replying_is_a_typed_failure() {
+    let dir = fixture(
+        response(serde_json::json!({"Ok":{"Adapters":[adapter()]}})),
+        "",
+    );
+    std::fs::write(dir.path().join("exit-code"), "3").unwrap();
+    let runtime = fixture_runtime(&dir, None);
+    assert!(matches!(
+        runtime.probe().state,
+        CapabilityState::InitializationFailure(_)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_reaps_the_worker_instead_of_leaving_a_zombie() {
+    let dir = fixture(
+        response(serde_json::json!({"Ok":{"Transcription":{
+            "text":"ignored","adapter_id":"cuda:0000000010de","native_backend":"CUDA0"}}})),
+        "whisper_backend_init_gpu: using CUDA0 backend\nCUDA Timings: Total time: 1200 us.\n",
+    );
+    std::fs::write(dir.path().join("delay-ms"), "1000").unwrap();
+    std::fs::write(
+        dir.path().join("probe.json"),
+        response(serde_json::json!({"Ok":{"Adapters":[adapter()]}})).to_string(),
+    )
+    .unwrap();
+    let runtime = std::sync::Arc::new(fixture_runtime(&dir, None));
+    let worker_clone = runtime.clone();
+    let handle = std::thread::spawn(move || worker_clone.transcribe(&request()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !dir.path().join("started").exists() || !dir.path().join("pid").exists() {
+        assert!(
+            !handle.is_finished(),
+            "CUDA inference ended before the worker started"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "CUDA worker did not start"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let pid: i32 = std::fs::read_to_string(dir.path().join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    runtime.cancel();
+    assert!(matches!(
+        handle.join().unwrap(),
+        Err(oxide_core::dictation::BackendError::Cancelled)
+    ));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        // A zombie still answers signal 0, so ESRCH proves the child was reaped.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "CUDA worker {pid} was not reaped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
