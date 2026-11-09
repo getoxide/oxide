@@ -318,8 +318,12 @@ fn fixture_metadata_and_cache_corruption_never_produce_advice_from_invalid_data(
     use sha2::{Digest, Sha256};
     let fixture = include_bytes!("fixtures/jfk.pcm");
     assert_eq!(fixture.len(), 352000);
+    let digest: String = Sha256::digest(fixture)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(
-        format!("{:x}", Sha256::digest(fixture)),
+        digest,
         "a29462b8ebd467318000e683b9117ade46230d3255ed2024e7db894abd9b38c9"
     );
     let home = tempfile::tempdir().unwrap();

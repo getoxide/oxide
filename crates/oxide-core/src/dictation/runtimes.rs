@@ -408,7 +408,14 @@ fn verify_files(dir: &Path, manifest: &PackageManifest) -> Result<()> {
         let mut file = File::open(dir.join(name))
             .map_err(|_| err(format!("Runtime package is missing {name}")))?;
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher).map_err(err)?;
+        let mut buf = [0; 65536];
+        loop {
+            let n = file.read(&mut buf).map_err(err)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
         if !hex(&hasher.finalize()).eq_ignore_ascii_case(expected) {
             return Err(err(format!("Runtime file {name} failed verification")));
         }

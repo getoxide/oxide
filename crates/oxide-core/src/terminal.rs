@@ -274,7 +274,9 @@ fn interrupt_shell_children(shell_pid: u32) -> bool {
     use sysinfo::{Pid, ProcessesToUpdate, System};
 
     let shell = Pid::from_u32(shell_pid);
-    let mut system = System::new();
+    let Ok(mut system) = System::new() else {
+        return false;
+    };
     system.refresh_processes(ProcessesToUpdate::All, true);
 
     let mut descendants = vec![shell];
