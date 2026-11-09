@@ -21,7 +21,8 @@ pub(super) struct HttpSource;
 impl ModelSource for HttpSource {
     fn available_space(&self, directory: &Path) -> Result<u64> {
         let path = dunce::canonicalize(directory).map_err(err)?;
-        sysinfo::Disks::new_with_refreshed_list()
+        let disks = sysinfo::Disks::new_with_refreshed_list().map_err(err)?;
+        disks
             .iter()
             .filter(|disk| path.starts_with(disk.mount_point()))
             .max_by_key(|disk| disk.mount_point().as_os_str().len())

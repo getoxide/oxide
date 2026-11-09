@@ -316,7 +316,7 @@ pub fn worker_main() {
                 BackendCandidate {
                     adapter_id: probe.adapter.clone(),
                     probe,
-                    driver_version: sysinfo::System::kernel_version(),
+                    driver_version: sysinfo::System::kernel_version().ok(),
                     runtime_version: runtime_version(BackendId::Metal),
                 }
             }
