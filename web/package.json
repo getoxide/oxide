@@ -15,6 +15,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@primer/octicons-react": "^19.42.0",
     "@tanstack/react-virtual": "^3.14.25",
     "@tauri-apps/api": "^2.12.4",

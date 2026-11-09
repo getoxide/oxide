@@ -349,7 +349,7 @@ export function CodeWorkbench({
       fontSize: fontStyle("code").size,
       fontWeight: String(fontStyle("code").weight),
       fontFamily: getAppearance().fonts.code,
-      fontLigatures: true,
+      fontLigatures: false,
       minimap: { enabled: false },
       padding: { top: 16, bottom: 16 },
       tabSize: 4,

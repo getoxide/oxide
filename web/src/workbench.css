@@ -233,7 +233,7 @@
 .editor-welcome {
   position: absolute;
   inset: 0;
-  background: #0f1117;
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -527,7 +527,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #0b0d12;
+  background: var(--terminal-background, var(--bg));
 }
 .workbench-terminal-header {
   display: flex;

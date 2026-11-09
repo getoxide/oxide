@@ -14,16 +14,81 @@ export interface Appearance {
   themeJson: string;
   themeName: string;
 }
+// Bundled through fonts.css, so they win over installed copies; the rest cover scripts the subsets do not.
 const SYSTEM =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
-const MONO = '"Cascadia Code", "SFMono-Regular", Consolas, Menlo, monospace';
+  'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+const MONO =
+  '"JetBrains Mono", ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, Menlo, monospace';
+// Titanium values for the editor, terminal and syntax (assets/brand/oxide/palette/oxide-titanium-theme.json).
+// Chrome colours stay in styles.css so the built-in theme keeps the focus ring and control tokens from :root.
+const TITANIUM_DARK: Record<string, unknown> = {
+  "editor.background": "#1C1C1E",
+  "editor.foreground": "#E8E6E1",
+  "editor.gutter.background": "#1C1C1E",
+  "editor.line_number": "#7A7974",
+  "editor.active_line_number": "#B3B1AB",
+  "editor.active_line.background": "#242426",
+  "editor.selection.background": "#2A4A78",
+  "editor.cursor": "#E8E6E1",
+  "editor.indent_guide": "#333335",
+  "editor.widget.background": "#2C2C2E",
+  "editor.widget.border": "#48484A",
+  "terminal.background": "#1C1C1E",
+  "terminal.foreground": "#E8E6E1",
+  "terminal.cursor": "#58A6FF",
+  "terminal.selection.background": "#2A4A78",
+  "terminal.ansi.black": "#2C2C2E",
+  "terminal.ansi.red": "#F27A72",
+  "terminal.ansi.green": "#5FCB8F",
+  "terminal.ansi.yellow": "#E8B84F",
+  "terminal.ansi.blue": "#78A9F0",
+  "terminal.ansi.magenta": "#C9A8F0",
+  "terminal.ansi.cyan": "#7DD3D8",
+  "terminal.ansi.white": "#E8E6E1",
+  "terminal.ansi.bright_black": "#8A8883",
+  "terminal.ansi.bright_red": "#FF9A92",
+  "terminal.ansi.bright_green": "#86E0AE",
+  "terminal.ansi.bright_yellow": "#F5CF7E",
+  "terminal.ansi.bright_blue": "#9DC2F7",
+  "terminal.ansi.bright_magenta": "#DBC2F9",
+  "terminal.ansi.bright_cyan": "#A1E6EA",
+  "terminal.ansi.bright_white": "#FFFFFF",
+  "syntax": {
+    "comment": {
+      "color": "#9A9892",
+      "font_style": "italic"
+    },
+    "keyword": {
+      "color": "#C9A8F0"
+    },
+    "string": {
+      "color": "#A8D5A2"
+    },
+    "number": {
+      "color": "#E6B673"
+    },
+    "type": {
+      "color": "#8FC1E8"
+    },
+    "identifier": {
+      "color": "#E8E6E1"
+    },
+    "operator": {
+      "color": "#B3B1AB"
+    }
+  }
+};
+export const BUNDLED_FONTS = [
+  { label: "Inter (bundled)", value: SYSTEM },
+  { label: "JetBrains Mono (bundled)", value: MONO },
+];
 export const DEFAULT_APPEARANCE: Appearance = {
   fonts: { ui: SYSTEM, chat: SYSTEM, code: MONO, terminal: MONO },
   typography: { ui: { size: 13, weight: 400 }, chat: { size: 14, weight: 400 }, code: { size: 13, weight: 400 }, terminal: { size: 13, weight: 400 } },
   themeJson: JSON.stringify(
     {
       name: "Oxide",
-      themes: [{ name: "Oxide Dark", appearance: "dark", style: {} }],
+      themes: [{ name: "Oxide Dark", appearance: "dark", style: TITANIUM_DARK }],
     },
     null,
     2,
@@ -55,23 +120,58 @@ export const COLOR_TOKENS: Record<string, string> = {
   hint: "--purple",
 };
 const LIGHT: Record<string, string> = {
-  background: "#ffffff",
-  "surface.background": "#f5f7fa",
-  "elevated_surface.background": "#e9edf3",
-  "element.background": "#e0e6ee",
-  text: "#202732",
-  "text.bright": "#101720",
-  "text.muted": "#4f5e70",
-  "text.disabled": "#677587",
-  border: "#d1d9e0",
-  "border.focused": "#8c9bad",
-  "element.border": "#c2cbd5",
-  "element.hover": "#e2e8f0",
-  "element.active": "#d4dde8",
-  "text.accent": "#0969da",
-  error: "#cf222e",
-  success: "#116329",
-  warning: "#7d4e00",
+  background: "#FBFBFA",
+  "surface.background": "#F2F1EE",
+  "elevated_surface.background": "#E9E8E4",
+  "element.background": "#DEDDD8",
+  text: "#2C2C2E",
+  "text.bright": "#1C1C1E",
+  "text.muted": "#5F5E5A",
+  "text.disabled": "#62615C",
+  "text.accent": "#0860C7",
+  border: "#DEDDD8",
+  "border.focused": "#BDBCB7",
+  "element.border": "#C7C6C1",
+  "element.hover": "#E9E8E4",
+  "element.active": "#DEDDD8",
+  accent: "#0969DA",
+  "accent.hover": "#0860C7",
+  "accent.foreground": "#FFFFFF",
+  error: "#C4281F",
+  success: "#15703C",
+  warning: "#8A5A00",
+  hint: "#7148C0",
+};
+const LIGHT_ONLY_TOKENS: Record<string, string> = {
+  "--acc-pressed": "#0757B5",
+  "--diff-added-bg": "#15703C1F",
+  "--diff-removed-bg": "#C4281F1F",
+  "--attention-approval-bg": "#F7EBCB",
+  "--attention-input-bg": "#DCE9F9",
+  "--attention-error-bg": "#F9DEDC",
+  "--attention-interrupted-bg": "#E9E8E4",
+};
+const TITANIUM_LIGHT_TERMINAL: Record<string, string> = {
+  "terminal.background": "#FBFBFA",
+  "terminal.foreground": "#2C2C2E",
+  "terminal.cursor": "#0969DA",
+  "terminal.selection.background": "#BCD6F5",
+  "terminal.ansi.black": "#2C2C2E",
+  "terminal.ansi.red": "#C4281F",
+  "terminal.ansi.green": "#15703C",
+  "terminal.ansi.yellow": "#8A5A00",
+  "terminal.ansi.blue": "#0969DA",
+  "terminal.ansi.magenta": "#7148C0",
+  "terminal.ansi.cyan": "#0B7285",
+  "terminal.ansi.white": "#62615C",
+  "terminal.ansi.bright_black": "#62615C",
+  "terminal.ansi.bright_red": "#A5201A",
+  "terminal.ansi.bright_green": "#0F5A30",
+  "terminal.ansi.bright_yellow": "#6E4700",
+  "terminal.ansi.bright_blue": "#0757B5",
+  "terminal.ansi.bright_magenta": "#5B38A0",
+  "terminal.ansi.bright_cyan": "#095C6B",
+  "terminal.ansi.bright_white": "#1C1C1E",
 };
 export function isColor(value: unknown): value is string {
   return (
@@ -221,15 +321,21 @@ export function applyAppearance(): void {
   }
   root.style.removeProperty("--gh-btn");
   root.style.removeProperty("--gh-blue");
-  if (theme.appearance === "light" || Object.keys(theme.style).length)
+  for (const [variable, value] of Object.entries(LIGHT_ONLY_TOKENS)) {
+    if (theme.appearance === "light") root.style.setProperty(variable, value);
+    else root.style.removeProperty(variable);
+  }
+  if (theme.appearance === "light")
+    root.style.setProperty("--gh-btn", "var(--bg2)");
+  else if (Object.keys(theme.style).length)
     root.style.setProperty("--gh-btn", "var(--bg3)");
-  if (isColor(theme.style.accent))
+  if (isColor(colors.accent))
     root.style.setProperty("--gh-blue", "var(--acc)");
   root.style.colorScheme = theme.appearance;
   root.dataset.appearance = theme.appearance;
   root.style.setProperty(
     "--terminal-background",
-    themeColor("terminal.background", String(colors.background ?? "#0f1115")),
+    themeColor("terminal.background", String(colors.background ?? TITANIUM_DARK["terminal.background"])),
   );
   for (const [key, family] of Object.entries(current.fonts))
     root.style.setProperty(`--font-${key}`, family);
@@ -253,7 +359,8 @@ export function saveAppearance(value: Appearance) {
   window.dispatchEvent(new Event("oxide-appearance-changed"));
 }
 export function terminalAppearance() {
-  const light = activeTheme().appearance === "light";
+  const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
+  const color = (token: string) => themeColor(token, String(fallbacks[token]));
   return {
     fontFamily: current.fonts.terminal,
     fontSize: fontStyle("terminal").size,
@@ -263,17 +370,11 @@ export function terminalAppearance() {
         "terminal.background",
         getComputedStyle(document.documentElement)
           .getPropertyValue("--bg")
-          .trim() || "#0f1115",
+          .trim() || String(fallbacks["terminal.background"]),
       ),
-      foreground: themeColor(
-        "terminal.foreground",
-        light ? "#202732" : "#d7dbe4",
-      ),
-      cursor: themeColor("terminal.cursor", light ? "#0969da" : "#58a6ff"),
-      selectionBackground: themeColor(
-        "terminal.selection.background",
-        light ? "#b6d7ff" : "#264f78",
-      ),
+      foreground: color("terminal.foreground"),
+      cursor: color("terminal.cursor"),
+      selectionBackground: color("terminal.selection.background"),
       ...Object.fromEntries(
         [
           "black",
@@ -294,29 +395,7 @@ export function terminalAppearance() {
           "brightWhite",
         ].map((key) => [
           key,
-          themeColor(
-            `terminal.ansi.${key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`,
-            (
-              {
-                black: "#1b1f29",
-                red: "#f06a6a",
-                green: "#4cc38a",
-                yellow: "#e6b450",
-                blue: "#58a6ff",
-                magenta: "#a98bff",
-                cyan: "#56d4dd",
-                white: "#d7dbe4",
-                brightBlack: "#8994a9",
-                brightRed: "#ff8b8b",
-                brightGreen: "#7ee2ae",
-                brightYellow: "#f7ce7a",
-                brightBlue: "#90c8ff",
-                brightMagenta: "#cbb5ff",
-                brightCyan: "#8deaf1",
-                brightWhite: "#ffffff",
-              } as Record<string, string>
-            )[key],
-          ),
+          color(`terminal.ansi.${key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`),
         ]),
       ),
     },
