@@ -69,16 +69,10 @@ pub fn run_whisper_on_device(
     gpu_device: i32,
 ) -> Result<(String, bool, Option<String>), BackendError> {
     let context = load_context(request, use_gpu, gpu_device)?;
-    let mut state = context
-        .create_state()
-        .map_err(|e| BackendError::InitializationFailed(e.to_string()))?;
-    infer(request, &mut state)?;
-    let text = state
-        .as_iter()
-        .map(|s| s.to_string())
-        .collect::<String>()
-        .trim()
-        .to_string();
+    let (text, ()) = transcribe_loaded(&context, |state| {
+        infer(request, state)?;
+        Ok(())
+    })?;
     Ok((text, use_gpu, None))
 }
 
@@ -92,19 +86,31 @@ pub(crate) fn run_whisper_recorded(
     recorder: &super::benchmark::MetalDispatchRecorder,
 ) -> Result<(String, super::benchmark::DispatchRun), BackendError> {
     let context = load_context(request, true, 0)?;
+    let (text, dispatch) = transcribe_loaded(&context, |state| {
+        let run = recorder.begin_run();
+        infer(request, state)?;
+        Ok(run.end())
+    })?;
+    Ok((text, dispatch))
+}
+
+/// Create one state from a loaded context, run inference and collect its text.
+/// The callback owns warmup/recording around the single inference pass.
+fn transcribe_loaded<T>(
+    context: &WhisperContext,
+    inference: impl FnOnce(&mut whisper_rs::WhisperState) -> Result<T, BackendError>,
+) -> Result<(String, T), BackendError> {
     let mut state = context
         .create_state()
         .map_err(|e| BackendError::InitializationFailed(e.to_string()))?;
-    let run = recorder.begin_run();
-    infer(request, &mut state)?;
-    let dispatch = run.end();
+    let evidence = inference(&mut state)?;
     let text = state
         .as_iter()
         .map(|s| s.to_string())
         .collect::<String>()
         .trim()
         .to_string();
-    Ok((text, dispatch))
+    Ok((text, evidence))
 }
 
 fn load_context(

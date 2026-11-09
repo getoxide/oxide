@@ -60,17 +60,15 @@ pub struct WorkerResponse {
 /// Development override, then the folder of the executable, then a downloaded runtime.
 /// `PATH` is never searched.
 pub fn worker_path() -> PathBuf {
-    if let Some(path) = super::protocol::override_from_env("OXIDE_CUDA_WORKER") {
-        return path;
-    }
     let beside = super::protocol::beside_current_executable(&format!(
         "oxide-cuda-worker{}",
         std::env::consts::EXE_SUFFIX
     ));
-    if beside.is_file() {
-        return beside;
-    }
-    super::runtimes::installed_worker(BackendId::Cuda).unwrap_or(beside)
+    super::protocol::choose_worker_path(
+        super::protocol::override_from_env("OXIDE_CUDA_WORKER"),
+        beside,
+        || super::runtimes::installed_worker(BackendId::Cuda),
+    )
 }
 
 /// Provisional conservative working set, separate from model file size.
@@ -370,11 +368,7 @@ impl WhisperBackendRuntime for CudaRuntime {
                 dispatch,
             } if adapter_id == device.id && native_backend == device.native_backend => {
                 let dispatch = dispatch.filter(|dispatch| {
-                    dispatch.completed_graphs > 0
-                        && dispatch.matrix_ops >= dispatch.completed_graphs
-                        && dispatch.failures == 0
-                        && dispatch.native_backend == device.native_backend
-                        && dispatch.adapter == device.name
+                    dispatch.proves(BackendId::Cuda, &device.native_backend, &device.name)
                 });
                 let dispatch = dispatch.ok_or_else(unproven_offload)?;
                 let selected = format!("whisper_backend_init_gpu: using {native_backend} backend");

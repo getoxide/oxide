@@ -711,7 +711,7 @@ describe("checkDictationPackage", () => {
 describe("checkWorkerProbe", () => {
   const probe = (result, overrides = {}) => ({
     worker: "oxide-vulkan-worker.exe", status: 0, engineVersion: "1.8.3",
-    response: { protocol_version: 1, engine_version: "1.8.3", result }, ...overrides,
+    response: { protocol_version: 2, engine_version: "1.8.3", result }, ...overrides,
   });
 
   test("a worker that enumerates adapters or reports a typed capability state answered correctly", () => {
@@ -743,7 +743,7 @@ describe("checkWorkerProbe", () => {
     assert.match(checkWorkerProbe(probe(undefined, { status: null, response: undefined })).message, /did not finish/);
     assert.match(checkWorkerProbe(probe(undefined, { response: undefined })).message, /no valid answer/);
     assert.match(checkWorkerProbe(probe({ Ok: { Adapters: [] } }, { engineVersion: "1.8.4" })).message, /engine 1\.8\.3, expected 1\.8\.4/);
-    assert.match(checkWorkerProbe(probe({ Ok: { Adapters: [] } }, { response: { protocol_version: 2, engine_version: "1.8.3", result: { Ok: { Adapters: [] } } } })).message, /protocol 2/);
+    assert.match(checkWorkerProbe(probe({ Ok: { Adapters: [] } }, { response: { protocol_version: 1, engine_version: "1.8.3", result: { Ok: { Adapters: [] } } } })).message, /protocol 1/);
   });
 });
 

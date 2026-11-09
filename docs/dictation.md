@@ -266,7 +266,7 @@ from native model inference behind the `WhisperBackendRuntime` boundary:
     worker child processes. Worker processes communicate over standard I/O using length-prefixed
     JSON messages corresponding to `TranscriptionRequest` and `TranscriptionOutcome`.
     Vulkan uses one request/response per worker, four-byte little-endian JSON frame
-    lengths and a 64 MiB frame limit. Responses include `protocol_version: 1` and
+    lengths and a 64 MiB frame limit. Responses include `protocol_version: 2` and
     `engine_version: "1.8.3"`; mismatches fail. Closing stdin before a complete
     request fails. Cancellation kills/reaps the worker, discarding the pending result;
     probes time out after 15 seconds and inference after 180 seconds.

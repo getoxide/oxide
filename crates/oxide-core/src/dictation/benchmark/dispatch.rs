@@ -35,6 +35,21 @@ pub(super) fn unproven() -> BackendError {
     )
 }
 
+impl DispatchRun {
+    /// The one rule both Metal and CUDA use to accept a normal-dictation run:
+    /// at least one matrix-bearing graph completed on the selected backend and
+    /// adapter with no failures.
+    pub fn proves(&self, backend: BackendId, native_backend: &str, adapter: &str) -> bool {
+        matches!(backend, BackendId::Cuda | BackendId::Metal)
+            && !adapter.is_empty()
+            && self.native_backend == native_backend
+            && self.adapter == adapter
+            && self.completed_graphs > 0
+            && self.matrix_ops >= self.completed_graphs
+            && self.failures == 0
+    }
+}
+
 impl DispatchEvidence {
     pub(super) fn validate(
         &self,
@@ -194,11 +209,11 @@ impl DictationDispatch {
         Ok(Recorder::install(device)?.map(|recorder| Self { recorder }))
     }
 
-    pub fn reset(&self) {
+    pub fn begin_run(&self) {
         self.recorder.begin_run();
     }
 
-    pub fn read(&mut self) -> Result<DispatchRun, BackendError> {
+    pub fn end_run(&mut self) -> Result<DispatchRun, BackendError> {
         self.recorder.end_run();
         self.recorder.last_run().ok_or_else(unproven)
     }
@@ -292,5 +307,45 @@ impl MetalDispatchRun<'_> {
     /// Read the counters after inference. The recording lock is held until here.
     pub(crate) fn end(self) -> DispatchRun {
         read_run()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(
+        native_backend: &str,
+        adapter: &str,
+        graphs: u64,
+        ops: u64,
+        failures: u64,
+    ) -> DispatchRun {
+        DispatchRun {
+            native_backend: native_backend.into(),
+            adapter: adapter.into(),
+            device_id: None,
+            completed_graphs: graphs,
+            matrix_ops: ops,
+            failures,
+        }
+    }
+
+    #[test]
+    fn a_dispatch_run_proves_only_a_completed_matrix_bearing_run_on_the_selected_device() {
+        assert!(run("Metal", "Apple M3", 4, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(run("CUDA0", "RTX 4090", 4, 8, 0).proves(BackendId::Cuda, "CUDA0", "RTX 4090"));
+
+        assert!(!run("Metal", "Apple M3", 0, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "Apple M3", 4, 3, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "Apple M3", 4, 8, 1).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("CUDA1", "RTX 4090", 4, 8, 0).proves(BackendId::Cuda, "CUDA0", "RTX 4090"));
+        assert!(!run("Metal", "Other GPU", 4, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "", 4, 8, 0).proves(BackendId::Metal, "Metal", ""));
+        assert!(!run("Vulkan0", "RX 5600 XT", 4, 8, 0).proves(
+            BackendId::Vulkan,
+            "Vulkan0",
+            "RX 5600 XT"
+        ));
     }
 }

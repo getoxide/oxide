@@ -58,17 +58,15 @@ pub struct WorkerResponse {
 /// Development override, then the folder of the executable, then a downloaded runtime.
 /// `PATH` is never searched.
 pub fn worker_path() -> PathBuf {
-    if let Some(path) = super::protocol::override_from_env("OXIDE_VULKAN_WORKER") {
-        return path;
-    }
     let beside = super::protocol::beside_current_executable(&format!(
         "oxide-vulkan-worker{}",
         std::env::consts::EXE_SUFFIX
     ));
-    if beside.is_file() {
-        return beside;
-    }
-    super::runtimes::installed_worker(BackendId::Vulkan).unwrap_or(beside)
+    super::protocol::choose_worker_path(
+        super::protocol::override_from_env("OXIDE_VULKAN_WORKER"),
+        beside,
+        || super::runtimes::installed_worker(BackendId::Vulkan),
+    )
 }
 
 /// Provisional conservative Small working set, separate from model file size.
@@ -84,11 +82,20 @@ fn is_positive(number: f64) -> bool {
     number.is_finite() && number > 0.0
 }
 
-/// First positive number on a line, ignoring unit and separator tokens.
-fn positive_number(line: &str) -> Option<f64> {
-    line.split(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .filter_map(|token| token.parse::<f64>().ok())
-        .find(|number| is_positive(*number))
+/// The timing value on a `MUL_MAT` line, never the leading op count. whisper.cpp
+/// prints `MUL_MAT: <ops> x <time> us = <time> us`, so prefer the number after
+/// `=` and fall back to the last numeric token.
+fn positive_timing(line: &str) -> Option<f64> {
+    let numbers = |text: &str| {
+        text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect::<Vec<_>>()
+    };
+    let value = match line.split_once('=') {
+        Some((_, timing)) => numbers(timing).last().copied(),
+        None => numbers(line).last().copied(),
+    }?;
+    is_positive(value).then_some(value)
 }
 
 /// Real whisper.cpp prints a `Vulkan Timings:` block like:
@@ -99,7 +106,7 @@ fn vulkan_timings(logs: &str) -> Option<(String, String)> {
     let block = logs.split_once("Vulkan Timings:")?.1;
     let mul_mat = block
         .lines()
-        .find(|line| line.contains("MUL_MAT") && positive_number(line).is_some())?
+        .find(|line| line.contains("MUL_MAT") && positive_timing(line).is_some())?
         .trim()
         .to_string();
     let total = block.lines().find_map(|line| {

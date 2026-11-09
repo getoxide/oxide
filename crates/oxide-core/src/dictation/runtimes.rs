@@ -20,7 +20,7 @@ use std::{
 };
 
 /// Worker wire protocol this app speaks. Packages with another value are refused.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Where the app reads the signed index: the newest published GitHub release.
 /// `tools/ci/policy.mjs` (`runtimeIndexUrl`) builds the same URL for the release pipeline.
 pub const RUNTIME_INDEX_URL: &str =
@@ -85,10 +85,6 @@ pub trait RuntimeSource: Send + Sync {
         entry: &RuntimeEntry,
         cancelled: Arc<AtomicBool>,
     ) -> Result<Box<dyn Read + Send>>;
-    /// Where `index` reads from, when the source knows it. Used for diagnostics.
-    fn index_url(&self) -> Option<&str> {
-        None
-    }
 }
 
 pub fn platform() -> String {
@@ -238,11 +234,6 @@ impl RuntimeManager {
         self
     }
 
-    /// The published index this manager reads, when the source knows it.
-    pub fn index_url(&self) -> Option<&str> {
-        self.source.index_url()
-    }
-
     /// Verified index entries for this platform and protocol.
     pub fn available(&self) -> Result<Vec<RuntimeEntry>> {
         let (bytes, signature) = self.source.index()?;
@@ -320,18 +311,10 @@ impl RuntimeManager {
         fs::create_dir_all(&parent).map_err(err)?;
         ensure_not_cancelled(&cancelled)?;
         let target = parent.join(&entry.version);
-        if target.exists() {
-            // Reinstall of the same version: swap only after the new tree is verified.
-            // From here on the promotion is atomic: finish it rather than leave a half swap.
-            let old = staging.path().join("old");
-            fs::rename(&target, &old).map_err(err)?;
-            if let Err(e) = fs::rename(&content, &target) {
-                let _ = fs::rename(&old, &target);
-                return Err(err(e));
-            }
-        } else {
-            fs::rename(&content, &target).map_err(err)?;
-        }
+        // Keep the previous tree beside the target, not in the staging TempDir,
+        // so a failed swap can restore it even after staging is dropped.
+        let backup = parent.join(format!(".{}.old", entry.version));
+        promote(&content, &target, &backup)?;
         // Drop superseded versions only once the new one is in place.
         for old in fs::read_dir(&parent).into_iter().flatten().flatten() {
             if old.path() != target {
@@ -343,6 +326,32 @@ impl RuntimeManager {
             .find(|r| r.backend == backend && r.version == entry.version)
             .ok_or_else(|| err("Runtime installed but could not be read back"))
     }
+}
+
+/// Swap a verified content tree into `target`. An existing install is moved to
+/// `backup` first and restored if the content rename fails; the backup is
+/// removed only after the new tree is in place.
+fn promote(content: &Path, target: &Path, backup: &Path) -> Result<()> {
+    if !target.exists() {
+        if let Err(e) = fs::rename(content, target) {
+            // A prior promotion may have crashed after parking the old tree.
+            if backup.exists() {
+                let _ = fs::rename(backup, target);
+            }
+            return Err(err(e));
+        }
+        return Ok(());
+    }
+    if backup.exists() {
+        fs::remove_dir_all(backup).map_err(err)?;
+    }
+    fs::rename(target, backup).map_err(err)?;
+    if let Err(e) = fs::rename(content, target) {
+        let _ = fs::rename(backup, target);
+        return Err(err(e));
+    }
+    let _ = fs::remove_dir_all(backup);
+    Ok(())
 }
 
 fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()> {
@@ -519,8 +528,46 @@ impl RuntimeSource for HttpRuntimeSource {
             .map_err(err)?;
         Ok(Box::new(response))
     }
+}
 
-    fn index_url(&self) -> Option<&str> {
-        Some(&self.index_url)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn previous_install(target: &Path) {
+        fs::create_dir_all(target).unwrap();
+        fs::write(target.join("worker"), b"previous").unwrap();
+    }
+
+    #[test]
+    fn a_failed_promotion_restores_the_previous_install() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("1.0.0");
+        let backup = root.path().join(".1.0.0.old");
+        previous_install(&target);
+
+        // The content rename fails because the source does not exist.
+        let missing_content = root.path().join("missing-content");
+        promote(&missing_content, &target, &backup).unwrap_err();
+
+        assert_eq!(fs::read(target.join("worker")).unwrap(), b"previous");
+        assert!(!backup.exists(), "the backup must be gone after a restore");
+    }
+
+    #[test]
+    fn a_successful_promotion_removes_the_backup() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("1.0.0");
+        let backup = root.path().join(".1.0.0.old");
+        let content = root.path().join("content");
+        previous_install(&target);
+        fs::create_dir(&content).unwrap();
+        fs::write(content.join("worker"), b"new").unwrap();
+
+        promote(&content, &target, &backup).unwrap();
+
+        assert_eq!(fs::read(target.join("worker")).unwrap(), b"new");
+        assert!(!backup.exists());
+        assert!(!content.exists());
     }
 }

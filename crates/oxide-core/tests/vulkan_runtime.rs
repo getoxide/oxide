@@ -1,3 +1,4 @@
+use oxide_core::dictation::runtimes::PROTOCOL_VERSION;
 use oxide_core::dictation::vulkan::VulkanRuntime;
 use oxide_core::dictation::{CapabilityState, WhisperBackendRuntime};
 use std::{path::PathBuf, sync::OnceLock};
@@ -52,7 +53,7 @@ fn worker(dir: &tempfile::TempDir) -> PathBuf {
 }
 
 fn response(result: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({"protocol_version":1, "engine_version":"1.8.3", "result":result})
+    serde_json::json!({"protocol_version":PROTOCOL_VERSION, "engine_version":"1.8.3", "result":result})
 }
 
 #[test]
@@ -233,6 +234,18 @@ fn a_mul_mat_line_without_a_positive_timing_is_rejected() {
 }
 
 #[test]
+fn a_mul_mat_line_with_a_zero_timing_after_a_positive_op_count_is_rejected() {
+    let dir = inference_fixture(
+        "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT: 12 x 0.0 us = 0.0 us\nTotal time: 500 us.\n",
+    );
+    let result = fixture_runtime(&dir, None).transcribe(&request());
+    assert!(matches!(
+        result,
+        Err(oxide_core::dictation::BackendError::InferenceFailed(_))
+    ));
+}
+
+#[test]
 fn a_non_positive_total_time_is_rejected() {
     let dir = inference_fixture(
         "whisper_backend_init_gpu: using Vulkan0 backend\nVulkan Timings:\nMUL_MAT: 1 x 500 us = 500 us\nTotal time: 0 us.\n",
@@ -395,7 +408,7 @@ fn recording_token_cancels_an_independently_selected_worker() {
 #[test]
 fn incompatible_protocol_version_is_rejected_without_panicking() {
     let dir = fixture(
-        serde_json::json!({"protocol_version":2, "engine_version":"1.8.3",
+        serde_json::json!({"protocol_version":PROTOCOL_VERSION + 1, "engine_version":"1.8.3",
             "result":{"Ok":{"Adapters":[adapter()]}}}),
         "",
     );
@@ -409,7 +422,7 @@ fn incompatible_protocol_version_is_rejected_without_panicking() {
 #[test]
 fn incompatible_engine_version_is_rejected_without_panicking() {
     let dir = fixture(
-        serde_json::json!({"protocol_version":1, "engine_version":"9.9.9",
+        serde_json::json!({"protocol_version":PROTOCOL_VERSION, "engine_version":"9.9.9",
             "result":{"Ok":{"Adapters":[adapter()]}}}),
         "",
     );
