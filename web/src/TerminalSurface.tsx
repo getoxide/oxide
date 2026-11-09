@@ -3,12 +3,15 @@ import { PlusIcon, TerminalIcon, XIcon } from "@primer/octicons-react";
 import { TerminalWorkbench } from "./TerminalWorkbench";
 import { isMismatched, type ProjectTerminals, type TerminalCheckout, type TerminalTab } from "./terminalTabs";
 import { terminalPath } from "./terminalPaths";
+import type { OpenServiceRequest } from "./serviceOpen";
 
 interface Props {
   projectId: number;
   terminals: ProjectTerminals;
   /** The selected Thread's checkout, or `null` when none is selected. */
   checkout: TerminalCheckout | null;
+  /** A one-shot sidebar request to reveal a service log tab; #406 consumes it. */
+  openServiceRequest?: OpenServiceRequest | null;
   /** Whether the Terminal Surface is showing; hidden tabs keep running. */
   visible: boolean;
   queuedCommand: { id: number; command: string } | null;
@@ -28,7 +31,7 @@ const NO_CHECKOUT = "Select a Thread to open a terminal in its checkout.";
 
 /** One Project's shells. Tabs outlive Thread selection, Surface changes and maximizing. */
 export function TerminalSurface({
-  projectId, terminals, checkout, visible, queuedCommand, onCommandConsumed, onOpenTab, onSelectTab, onCloseTab, onRunningChange,
+  projectId, terminals, checkout, openServiceRequest, visible, queuedCommand, onCommandConsumed, onOpenTab, onSelectTab, onCloseTab, onRunningChange,
 }: Props) {
   const strip = useRef<HTMLDivElement>(null);
   const { tabs, selectedId } = terminals;
@@ -36,6 +39,13 @@ export function TerminalSurface({
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [selectedId, tabs.length]);
+
+  useEffect(() => {
+    if (!openServiceRequest || openServiceRequest.projectId !== projectId) return;
+    // #406 opens the matching service log tab here. Until then, hand keyboard focus to the
+    // Terminal Surface the sidebar just revealed so the row click does not strand it.
+    strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [openServiceRequest, projectId]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = tabs.findIndex((tab) => tab.id === selectedId);

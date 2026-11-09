@@ -43,6 +43,8 @@ import { performThreadDelete, selectionAfterDelete, threadsAfterDelete } from ".
 import { GitHeader } from "./GitHeader";
 import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
+import { ProjectServices } from "./ProjectServices";
+import type { OpenServiceRequest } from "./serviceOpen";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
 import { SettingsView } from "./SettingsView";
@@ -134,6 +136,9 @@ export function App() {
   const [threadReload, setThreadReload] = useState(0);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { contextKey: string }) | null>(null);
   const codeSequence = useRef(0);
+  // One-shot navigation requested by the sidebar's Project Services rows; #406 opens the log tab.
+  const [openServiceRequest, setOpenServiceRequest] = useState<OpenServiceRequest | null>(null);
+  const openServiceSequence = useRef(0);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
   // A New Thread request that reopened an empty Thread: the selection may not change, so
   // ThreadView gets a one-shot request to focus the composer and show a cue.
@@ -212,6 +217,12 @@ export function App() {
       setTerminals((previous) => (previous[workbenchContext.projectId]?.tabs.length ?? 0) > 0 ? previous : openTab(previous, workbenchContext.projectId, workbenchContext));
     }
   }, [setActiveTool, workbenchContext]);
+  /** A sidebar service row reveals the Terminal Surface and leaves a request for #406's log tab. */
+  const openService = useCallback((serviceId: number) => {
+    if (!selected) return;
+    selectSurface("Terminal");
+    setOpenServiceRequest({ projectId: selected.id, serviceId, token: ++openServiceSequence.current });
+  }, [selected, selectSurface]);
   // A Project's shells stay mounted while hidden; the selected Project shows the empty state once visited.
   const terminalSurfaces: TerminalsByProject = Object.fromEntries(
     Object.entries(terminals).filter(([, state]) => state.tabs.length > 0)
@@ -934,6 +945,7 @@ export function App() {
             }}
             onRenameThread={onThreadTitleChange}
             onOpenPalette={() => overlays.current?.openPalette()}
+            onOpenService={openService}
             onOpenSettings={() => { setSettingsSection(null); setShowSettings(true); }}
             settingsOpen={showSettings}
           />
@@ -1182,6 +1194,7 @@ export function App() {
               const projectId = Number(id); const isSelectedProject = projectId === selected?.id;
               return <Suspense key={id} fallback={isSelectedProject && dockVisible && activeTool === "Terminal" ? <Skeleton kind="code" label="Loading Terminalâ€¦" /> : null}>
                 <TerminalSurface projectId={projectId} terminals={state} checkout={isSelectedProject ? workbenchContext : null}
+                  openServiceRequest={openServiceRequest?.projectId === projectId ? openServiceRequest : null}
                   visible={isSelectedProject && dockVisible && activeTool === "Terminal"}
                   queuedCommand={isSelectedProject ? installCommand : null} onCommandConsumed={() => setInstallCommand(null)}
                   onOpenTab={openTerminalTab}
@@ -1228,6 +1241,7 @@ interface SidebarProps {
   onRenameThread?: (threadId: number, newTitle: string) => void;
   /** âŒ˜â‡§N: every known Project, scanned ones included, is found there. */
   onOpenPalette: () => void;
+  onOpenService: (serviceId: number) => void;
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }
@@ -1245,6 +1259,7 @@ function Sidebar({
   onNewThread,
   onRenameThread,
   onOpenPalette,
+  onOpenService,
   onOpenSettings,
   settingsOpen,
 }: SidebarProps) {
@@ -1402,6 +1417,7 @@ function Sidebar({
           })}
         </ul>
       </div>
+      {selected && <ProjectServices projectId={selected.id} onOpenService={onOpenService} />}
       <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title={`Settings (${keys("openSettings")})`}>
         <GearIcon size={14} /> Settings
       </button>
