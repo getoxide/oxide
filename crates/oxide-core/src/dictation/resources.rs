@@ -540,7 +540,9 @@ pub fn recommend(
             decision.status != AdviceStatus::Recommended,
             decision.provisional,
             performance_rank,
-            decision.backend != BackendId::Cpu,
+            // Auto routes to the best eligible GPU: a safe non-CPU backend wins an
+            // otherwise equal provisional tie against CPU.
+            decision.backend == BackendId::Cpu,
             decision.backend.to_string(),
             decision.adapter_id.clone(),
             decision.adapter.clone(),
@@ -564,4 +566,33 @@ pub fn recommend(
         decisions,
         selected,
     }
+}
+
+/// Chooses the backend Auto should use for an explicitly snapshotted model.
+/// Safe eligible GPU choices win an otherwise equal provisional tie against CPU;
+/// measured latency and confidence still take precedence when present.
+pub fn select_for_model(recommendation: &Recommendation, model: ModelId) -> Option<usize> {
+    recommendation
+        .decisions
+        .iter()
+        .enumerate()
+        .filter(|(_, decision)| {
+            decision.model == model
+                && decision.safe_to_load
+                && matches!(
+                    decision.status,
+                    AdviceStatus::Recommended | AdviceStatus::UsableSlower
+                )
+        })
+        .min_by_key(|(_, decision)| {
+            (
+                decision.provisional,
+                decision.median_rtf_milli.unwrap_or(u64::MAX),
+                decision.backend == BackendId::Cpu,
+                decision.backend.to_string(),
+                decision.adapter_id.clone(),
+                decision.adapter.clone(),
+            )
+        })
+        .map(|(index, _)| index)
 }
