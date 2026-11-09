@@ -21,6 +21,10 @@ use std::{
 use transport::HttpSource;
 pub use transport::ModelSource;
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalogue {
@@ -194,7 +198,7 @@ impl ModelManager {
             }
             hash.update(&buffer[..n]);
         }
-        let valid = format!("{:x}", hash.finalize()) == entry.sha256;
+        let valid = hex(&hash.finalize()) == entry.sha256;
         VERIFIED_CACHE
             .lock()
             .unwrap()
@@ -329,7 +333,7 @@ impl ModelManager {
             if received != entry.expected_bytes {
                 return Err(err("Unexpected model size"));
             }
-            if format!("{:x}", hash.finalize()) != entry.sha256 {
+            if hex(&hash.finalize()) != entry.sha256 {
                 return Err(err("Model checksum mismatch. Download again."));
             }
             file.as_file().sync_all().map_err(err)?;
