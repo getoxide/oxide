@@ -144,13 +144,16 @@ mod tests {
 
     #[test]
     fn the_beside_fallback_is_never_a_bare_relative_filename() {
-        let cwd = Path::new("/opt/oxide");
-        let beside = beside_executable("app/oxide", "oxide-vulkan-worker", cwd);
-        assert_eq!(beside, PathBuf::from("/opt/oxide/app/oxide-vulkan-worker"));
+        // Use a real absolute directory so this holds on Windows too: `/opt/...`
+        // has no drive prefix there and `Path::is_absolute` rejects it.
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        let beside = beside_executable(cwd.join("app").join("oxide"), "oxide-vulkan-worker", cwd);
+        assert_eq!(beside, cwd.join("app/oxide-vulkan-worker"));
         assert!(beside.is_absolute());
 
         let empty = beside_executable("", "oxide-cuda-worker", cwd);
-        assert_eq!(empty, PathBuf::from("/opt/oxide/oxide-cuda-worker"));
+        assert_eq!(empty, cwd.join("oxide-cuda-worker"));
         assert!(empty.is_absolute());
     }
 
