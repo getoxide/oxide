@@ -1,17 +1,24 @@
 # Fonts and JSON themes
 
 Open **Settings → Appearance**. Interface, Chat, Code editor and Terminal each
-have dropdowns for the installed font family, weight (Regular through Bold) and
-size (10–32 px), with a preview. Font families come from the operating system;
-there is no CSS to type. Existing saved fallback lists remain selectable.
+have dropdowns for the font family, weight (Regular through Bold) and size
+(10–32 px), with a preview. The families are Inter and JetBrains Mono, bundled
+with the app and used by default, plus the fonts installed on the operating
+system; there is no CSS to type. A saved fallback list stays selectable as
+"Saved: …".
 Press **Save** in Settings (or **Apply appearance** in a standalone appearance view).
 Existing buffers and shell processes stay open. **Restore defaults** resets
 appearance.
 
 Appearance is global across Projects and persists in this desktop profile's
 local application storage, separately from the Provider settings file. Theme
-Import/Export transfers JSON; font preferences are configured separately and
-font files must already be installed on the destination machine.
+Import/Export transfers JSON; font preferences are configured separately, and
+a font other than the bundled two must already be installed on the destination
+machine.
+
+The default theme is Titanium Dark. Its editor, syntax and terminal colours are
+in the built-in theme's `style`, and a theme that omits them falls back to
+Titanium values.
 
 ## Create or import a theme
 

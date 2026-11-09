@@ -85,6 +85,37 @@ it("falls back to Titanium Dark for a theme saved before the rebrand", async () 
   expect(theme.background).toBe(kitDark["terminal.background"]);
 });
 
+it("moves the previous default font stacks to the bundled families and leaves chosen fonts alone", async () => {
+  const previousUi = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
+  const previousMono = '"Cascadia Code", "SFMono-Regular", Consolas, Menlo, monospace';
+  localStorage.setItem("oxide:appearance:v1", JSON.stringify({
+    fonts: { ui: previousUi, chat: "Georgia", code: previousMono, terminal: previousMono },
+    themeJson: DEFAULT_APPEARANCE.themeJson,
+    themeName: DEFAULT_APPEARANCE.themeName,
+  }));
+  vi.resetModules();
+  const fresh = await import("./appearance");
+  expect(fresh.getAppearance().fonts).toEqual({
+    ui: DEFAULT_APPEARANCE.fonts.ui,
+    chat: "Georgia",
+    code: DEFAULT_APPEARANCE.fonts.code,
+    terminal: DEFAULT_APPEARANCE.fonts.terminal,
+  });
+});
+
+it("gives a profile that stored the previous built-in theme the Titanium one", async () => {
+  const previousBuiltIn = JSON.stringify({ name: "Oxide", themes: [{ name: "Oxide Dark", appearance: "dark", style: {} }] }, null, 2);
+  localStorage.setItem("oxide:appearance:v1", JSON.stringify({
+    fonts: DEFAULT_APPEARANCE.fonts,
+    themeJson: previousBuiltIn,
+    themeName: "Oxide Dark",
+  }));
+  vi.resetModules();
+  const fresh = await import("./appearance");
+  expect(fresh.getAppearance().themeJson).toBe(DEFAULT_APPEARANCE.themeJson);
+  expect(fresh.activeTheme().style.syntax).toEqual(kitDark.syntax);
+});
+
 it("imports both variants of the Titanium theme pack", () => {
   for (const variant of parseThemePack(kitThemeJson).themes) {
     saveAppearance({ ...getAppearance(), themeJson: kitThemeJson, themeName: variant.name });

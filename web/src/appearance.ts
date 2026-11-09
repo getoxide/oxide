@@ -78,6 +78,16 @@ const TITANIUM_DARK: Record<string, unknown> = {
     }
   }
 };
+// Applying any setting used to store the default stacks, so those profiles did not choose them.
+const PREVIOUS_DEFAULT_FONTS: Record<string, string> = {
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif': SYSTEM,
+  '"Cascadia Code", "SFMono-Regular", Consolas, Menlo, monospace': MONO,
+};
+const PREVIOUS_BUILT_IN_THEME = JSON.stringify(
+  { name: "Oxide", themes: [{ name: "Oxide Dark", appearance: "dark", style: {} }] },
+  null,
+  2,
+);
 export const BUNDLED_FONTS = [
   { label: "Inter (bundled)", value: SYSTEM },
   { label: "JetBrains Mono (bundled)", value: MONO },
@@ -262,6 +272,10 @@ function load(): Appearance {
     ) as Appearance | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
     validateAppearance(stored);
+    for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[])
+      stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[stored.fonts[key]] ?? stored.fonts[key];
+    if (stored.themeJson === PREVIOUS_BUILT_IN_THEME)
+      stored.themeJson = DEFAULT_APPEARANCE.themeJson;
     return stored;
   } catch {
     return structuredClone(DEFAULT_APPEARANCE);
