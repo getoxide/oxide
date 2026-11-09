@@ -388,6 +388,57 @@ fn measured_rtf(sample: &MeasuredPerformance) -> u64 {
         as u64
 }
 
+/// Lower is better. Shared by `recommend` and Auto's per-model selection so
+/// they cannot drift.
+fn decision_rank(
+    decision: &Decision,
+    target: ModelId,
+    preference: Preference,
+) -> (
+    bool,
+    bool,
+    u64,
+    bool,
+    String,
+    Option<String>,
+    Option<String>,
+) {
+    let model_rank = match (target, decision.model) {
+        (a, b) if a == b => 0,
+        (_, ModelId::Base) => 1,
+        (_, ModelId::Tiny) => 2,
+        (_, ModelId::Small) => 3,
+        _ => 4,
+    };
+    // No unmeasured GPU speed advantage is assumed; stable identity breaks ties.
+    let quality_rank = match decision.model {
+        ModelId::LargeV3 => 0,
+        ModelId::LargeV3Turbo => 1,
+        ModelId::Medium => 2,
+        ModelId::Small => 3,
+        ModelId::Base => 4,
+        ModelId::Tiny => 5,
+    };
+    let performance_rank = if !decision.provisional && preference == Preference::Quality {
+        quality_rank
+    } else if !decision.provisional {
+        decision.median_rtf_milli.unwrap_or(u64::MAX)
+    } else {
+        model_rank
+    };
+    (
+        decision.status != AdviceStatus::Recommended,
+        decision.provisional,
+        performance_rank,
+        // Auto routes to the best eligible GPU: a safe non-CPU backend wins an
+        // otherwise equal provisional tie against CPU.
+        decision.backend == BackendId::Cpu,
+        decision.backend.to_string(),
+        decision.adapter_id.clone(),
+        decision.adapter.clone(),
+    )
+}
+
 /// Read-only policy: never selects a model in Settings or starts a download.
 pub fn recommend(
     snapshot: &ResourceSnapshot,
@@ -512,40 +563,7 @@ pub fn recommend(
     } else {
         ModelId::Base
     };
-    let rank = |decision: &Decision| {
-        let model_rank = match (target, decision.model) {
-            (a, b) if a == b => 0,
-            (_, ModelId::Base) => 1,
-            (_, ModelId::Tiny) => 2,
-            (_, ModelId::Small) => 3,
-            _ => 4,
-        };
-        // No unmeasured GPU speed advantage is assumed; stable identity breaks ties.
-        let quality_rank = match decision.model {
-            ModelId::LargeV3 => 0,
-            ModelId::LargeV3Turbo => 1,
-            ModelId::Medium => 2,
-            ModelId::Small => 3,
-            ModelId::Base => 4,
-            ModelId::Tiny => 5,
-        };
-        let performance_rank = if !decision.provisional && preference == Preference::Quality {
-            quality_rank
-        } else if !decision.provisional {
-            decision.median_rtf_milli.unwrap_or(u64::MAX)
-        } else {
-            model_rank
-        };
-        (
-            decision.status != AdviceStatus::Recommended,
-            decision.provisional,
-            performance_rank,
-            decision.backend != BackendId::Cpu,
-            decision.backend.to_string(),
-            decision.adapter_id.clone(),
-            decision.adapter.clone(),
-        )
-    };
+    let rank = |decision: &Decision| decision_rank(decision, target, preference);
     let selected = decisions
         .iter()
         .enumerate()
@@ -564,4 +582,22 @@ pub fn recommend(
         decisions,
         selected,
     }
+}
+
+/// Chooses the backend Auto should use for an explicitly snapshotted model.
+/// Safe eligible GPU choices win an otherwise equal provisional tie against CPU;
+/// measured latency and confidence still take precedence when present.
+pub fn select_for_model(recommendation: &Recommendation, model: ModelId) -> Option<&Decision> {
+    recommendation
+        .decisions
+        .iter()
+        .filter(|decision| {
+            decision.model == model
+                && decision.safe_to_load
+                && matches!(
+                    decision.status,
+                    AdviceStatus::Recommended | AdviceStatus::UsableSlower
+                )
+        })
+        .min_by_key(|decision| decision_rank(decision, model, recommendation.preference))
 }

@@ -266,7 +266,7 @@ from native model inference behind the `WhisperBackendRuntime` boundary:
     worker child processes. Worker processes communicate over standard I/O using length-prefixed
     JSON messages corresponding to `TranscriptionRequest` and `TranscriptionOutcome`.
     Vulkan uses one request/response per worker, four-byte little-endian JSON frame
-    lengths and a 64 MiB frame limit. Responses include `protocol_version: 1` and
+    lengths and a 64 MiB frame limit. Responses include `protocol_version: 2` and
     `engine_version: "1.8.3"`; mismatches fail. Closing stdin before a complete
     request fails. Cancellation kills/reaps the worker, discarding the pending result;
     probes time out after 15 seconds and inference after 180 seconds.
@@ -282,7 +282,15 @@ from native model inference behind the `WhisperBackendRuntime` boundary:
 
 - **Architecture filtering**: Metal acceleration is enabled exclusively for Apple Silicon
   Macs (`aarch64`). Intel Mac GPU support remains unadvertised until separately validated on
-  supported x86_64 hardware.
+  supported x86_64 hardware; Intel builds do not link Metal or `ggml-metal`.
+- **Inference evidence**: Normal in-process dictation installs the same native dispatch
+  recorder used by performance checks before the first Metal context. Counters are reset
+  immediately before inference and read after it. `offloaded` is only reported when a
+  completed matrix-bearing graph ran on the selected device (`completedGraphs > 0`,
+  `matrixOps >= completedGraphs`, zero failures, native backend `Metal`, and a matching
+  adapter); those counters and the device name/working set appear in `offloadEvidence`.
+  Requesting GPU mode, allocating a context or producing text is never accepted as offload
+  proof, and an unproven run returns `InferenceFailed`.
 - **Device enumeration and unified memory**: Probes query the physical Metal device via
   the Metal framework (`MTLCreateSystemDefaultDevice`). Topology is reported as a single shared
   unified pool (`MemoryPool: { unified: true, totalBytes, availableBytes, maxWorkingSetBytes }`),

@@ -20,7 +20,7 @@ use std::{
 };
 
 /// Worker wire protocol this app speaks. Packages with another value are refused.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Where the app reads the signed index: the newest published GitHub release.
 /// `tools/ci/policy.mjs` (`runtimeIndexUrl`) builds the same URL for the release pipeline.
 pub const RUNTIME_INDEX_URL: &str =
@@ -264,6 +264,7 @@ impl RuntimeManager {
         cancelled: Arc<AtomicBool>,
         progress: impl Fn(u64, u64),
     ) -> Result<InstalledRuntime> {
+        ensure_not_cancelled(&cancelled)?;
         let entry = self
             .available()?
             .into_iter()
@@ -271,16 +272,27 @@ impl RuntimeManager {
             .max_by(|a, b| version_key(&a.version).cmp(&version_key(&b.version)))
             .ok_or_else(|| err("No compatible runtime is published for this platform"))?;
         let name = dir_name(backend)?;
+        ensure_not_cancelled(&cancelled)?;
         fs::create_dir_all(root).map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
         let staging = tempfile::Builder::new()
             .prefix(".staging-")
             .tempdir_in(root)
             .map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
 
         let archive = staging.path().join("package.zip");
-        download(&*self.source, &entry, cancelled, &archive, &progress)?;
+        download(
+            &*self.source,
+            &entry,
+            cancelled.clone(),
+            &archive,
+            &progress,
+        )?;
+        ensure_not_cancelled(&cancelled)?;
         let content = staging.path().join("content");
         extract(&archive, &content)?;
+        ensure_not_cancelled(&cancelled)?;
         let manifest = read_manifest(&content)?;
         if manifest.protocol_version != PROTOCOL_VERSION {
             return Err(err(format!(
@@ -291,22 +303,18 @@ impl RuntimeManager {
         if manifest.backend != backend || manifest.version != entry.version {
             return Err(err("Runtime package does not match the published index"));
         }
+        ensure_not_cancelled(&cancelled)?;
         verify_files(&content, &manifest)?;
+        ensure_not_cancelled(&cancelled)?;
 
         let parent = root.join(name);
         fs::create_dir_all(&parent).map_err(err)?;
+        ensure_not_cancelled(&cancelled)?;
         let target = parent.join(&entry.version);
-        if target.exists() {
-            // Reinstall of the same version: swap only after the new tree is verified.
-            let old = staging.path().join("old");
-            fs::rename(&target, &old).map_err(err)?;
-            if let Err(e) = fs::rename(&content, &target) {
-                let _ = fs::rename(&old, &target);
-                return Err(err(e));
-            }
-        } else {
-            fs::rename(&content, &target).map_err(err)?;
-        }
+        // Keep the previous tree beside the target, not in the staging TempDir,
+        // so a failed swap can restore it even after staging is dropped.
+        let backup = parent.join(format!(".{}.old", entry.version));
+        promote(&content, &target, &backup)?;
         // Drop superseded versions only once the new one is in place.
         for old in fs::read_dir(&parent).into_iter().flatten().flatten() {
             if old.path() != target {
@@ -320,6 +328,32 @@ impl RuntimeManager {
     }
 }
 
+/// Swap a verified content tree into `target`. An existing install is moved to
+/// `backup` first and restored if the content rename fails; the backup is
+/// removed only after the new tree is in place.
+fn promote(content: &Path, target: &Path, backup: &Path) -> Result<()> {
+    if !target.exists() {
+        if let Err(e) = fs::rename(content, target) {
+            // A prior promotion may have crashed after parking the old tree.
+            if backup.exists() {
+                let _ = fs::rename(backup, target);
+            }
+            return Err(err(e));
+        }
+        return Ok(());
+    }
+    if backup.exists() {
+        fs::remove_dir_all(backup).map_err(err)?;
+    }
+    fs::rename(target, backup).map_err(err)?;
+    if let Err(e) = fs::rename(content, target) {
+        let _ = fs::rename(backup, target);
+        return Err(err(e));
+    }
+    let _ = fs::remove_dir_all(backup);
+    Ok(())
+}
+
 fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()> {
     let key = minisign_verify::PublicKey::from_base64(public_key)
         .or_else(|_| minisign_verify::PublicKey::decode(public_key))
@@ -330,6 +364,14 @@ fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()
         .map_err(|_| err("Runtime index signature is not valid"))
 }
 
+fn ensure_not_cancelled(cancelled: &AtomicBool) -> Result<()> {
+    if cancelled.load(Ordering::SeqCst) {
+        Err(err("Runtime install cancelled"))
+    } else {
+        Ok(())
+    }
+}
+
 fn download(
     source: &dyn RuntimeSource,
     entry: &RuntimeEntry,
@@ -337,15 +379,15 @@ fn download(
     path: &Path,
     progress: &impl Fn(u64, u64),
 ) -> Result<()> {
+    ensure_not_cancelled(&cancelled)?;
     let mut input = source.open(entry, cancelled.clone())?;
+    ensure_not_cancelled(&cancelled)?;
     let mut file = File::create(path).map_err(err)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     let mut received = 0u64;
     loop {
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(err("Runtime download cancelled"));
-        }
+        ensure_not_cancelled(&cancelled)?;
         let n = input.read(&mut buffer).map_err(err)?;
         if n == 0 {
             break;
@@ -355,9 +397,11 @@ fn download(
             return Err(err("Runtime package is larger than published"));
         }
         hasher.update(&buffer[..n]);
+        ensure_not_cancelled(&cancelled)?;
         file.write_all(&buffer[..n]).map_err(err)?;
         progress(received, entry.bytes);
     }
+    ensure_not_cancelled(&cancelled)?;
     file.flush().map_err(err)?;
     if received != entry.bytes {
         return Err(err("Runtime package is incomplete"));
@@ -483,5 +527,47 @@ impl RuntimeSource for HttpRuntimeSource {
             .and_then(|r| r.error_for_status())
             .map_err(err)?;
         Ok(Box::new(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn previous_install(target: &Path) {
+        fs::create_dir_all(target).unwrap();
+        fs::write(target.join("worker"), b"previous").unwrap();
+    }
+
+    #[test]
+    fn a_failed_promotion_restores_the_previous_install() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("1.0.0");
+        let backup = root.path().join(".1.0.0.old");
+        previous_install(&target);
+
+        // The content rename fails because the source does not exist.
+        let missing_content = root.path().join("missing-content");
+        promote(&missing_content, &target, &backup).unwrap_err();
+
+        assert_eq!(fs::read(target.join("worker")).unwrap(), b"previous");
+        assert!(!backup.exists(), "the backup must be gone after a restore");
+    }
+
+    #[test]
+    fn a_successful_promotion_removes_the_backup() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("1.0.0");
+        let backup = root.path().join(".1.0.0.old");
+        let content = root.path().join("content");
+        previous_install(&target);
+        fs::create_dir(&content).unwrap();
+        fs::write(content.join("worker"), b"new").unwrap();
+
+        promote(&content, &target, &backup).unwrap();
+
+        assert_eq!(fs::read(target.join("worker")).unwrap(), b"new");
+        assert!(!backup.exists());
+        assert!(!content.exists());
     }
 }

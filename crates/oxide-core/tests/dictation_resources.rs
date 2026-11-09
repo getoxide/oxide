@@ -12,6 +12,26 @@ fn cpu() -> BackendProbe {
     }
 }
 
+fn vulkan() -> BackendCandidate {
+    use oxide_core::dictation::MemoryPool;
+    BackendCandidate {
+        probe: BackendProbe {
+            backend: BackendId::Vulkan,
+            state: CapabilityState::Available,
+            adapter: Some("AMD RX 5600 XT".into()),
+            memory_pool: Some(MemoryPool {
+                unified: false,
+                total_bytes: 6 * GIB,
+                available_bytes: Some(3 * GIB),
+                max_working_set_bytes: None,
+            }),
+        },
+        adapter_id: Some("pci:1002:731f".into()),
+        driver_version: Some("AMD 26.10.1".into()),
+        runtime_version: runtime_version(BackendId::Vulkan),
+    }
+}
+
 fn resources() -> ResourceSnapshot {
     ResourceSnapshot {
         captured_at_secs: 100,
@@ -97,6 +117,73 @@ fn advice_is_conservative_provisional_and_quality_is_explicit() {
         ))
         .unwrap()
     );
+}
+
+#[test]
+fn auto_advice_prefers_an_eligible_gpu_over_an_otherwise_equal_cpu() {
+    let snapshot = resources();
+    let candidates = vec![BackendCandidate::cpu(), vulkan()];
+    let advice = recommend(&snapshot, &candidates, &[], Preference::Balanced, &[], 100);
+
+    let selected = &advice.decisions[advice.selected.unwrap()];
+    assert_eq!(selected.backend, BackendId::Vulkan);
+    assert!(selected.provisional);
+
+    let choice = select_for_model(&advice, ModelId::Base).expect("Base is eligible");
+    assert_eq!(choice.backend, BackendId::Vulkan);
+    assert_eq!(choice.model, ModelId::Base);
+    let selected = &advice.decisions[advice.selected.expect("a decision is selected")];
+    assert_eq!(choice.model, selected.model);
+    assert_eq!(choice.backend, selected.backend);
+    assert_eq!(choice.adapter_id, selected.adapter_id);
+}
+
+#[test]
+fn auto_selection_uses_the_same_ranking_as_the_recommendation() {
+    // Same model: the shared rank puts a recommended CPU ahead of an otherwise
+    // equal usable-slower GPU, so Auto cannot drift from `recommend`.
+    let recommended_cpu = Decision {
+        model: ModelId::Base,
+        backend: BackendId::Cpu,
+        adapter: Some("CPU".into()),
+        adapter_id: None,
+        status: AdviceStatus::Recommended,
+        confidence: Confidence::Low,
+        provisional: true,
+        safe_to_load: true,
+        reason: String::new(),
+        median_rtf_milli: None,
+        cold_load_ms: None,
+    };
+    let slower_gpu = Decision {
+        backend: BackendId::Vulkan,
+        adapter: Some("AMD RX 5600 XT".into()),
+        adapter_id: Some("pci:1002:731f".into()),
+        status: AdviceStatus::UsableSlower,
+        ..recommended_cpu.clone()
+    };
+    let advice = Recommendation {
+        policy_version: POLICY_VERSION,
+        catalogue_version: oxide_core::dictation::models::catalogue().version,
+        preference: Preference::Balanced,
+        decisions: vec![slower_gpu, recommended_cpu],
+        selected: Some(1),
+    };
+    assert_eq!(
+        select_for_model(&advice, ModelId::Base).map(|decision| decision.backend),
+        Some(BackendId::Cpu)
+    );
+}
+
+#[test]
+fn auto_selection_has_no_choice_without_an_eligible_safe_decision() {
+    let snapshot = resources();
+    let candidates = vec![BackendCandidate::cpu()];
+    let mut advice = recommend(&snapshot, &candidates, &[], Preference::Balanced, &[], 100);
+    for decision in &mut advice.decisions {
+        decision.safe_to_load = false;
+    }
+    assert!(select_for_model(&advice, ModelId::Base).is_none());
 }
 
 #[test]

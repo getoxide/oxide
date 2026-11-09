@@ -3,17 +3,18 @@ use super::{
     BackendError, BackendId, BackendProbe, CapabilityState, MemoryPool, TranscriptionOutcome,
     TranscriptionRequest, WhisperBackendRuntime,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::{
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
+pub use super::protocol::{read_frame, write_frame};
+
 pub const ENGINE_VERSION: &str = "1.8.3";
-const MAX_FRAME: usize = 64 * 1024 * 1024;
 const DEFAULT_WORKING_SET: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,44 +55,18 @@ pub struct WorkerResponse {
     pub result: Result<WorkerResult, BackendError>,
 }
 
-pub fn read_frame<T: DeserializeOwned>(mut input: impl Read) -> std::io::Result<T> {
-    let mut size = [0; 4];
-    input.read_exact(&mut size)?;
-    let size = u32::from_le_bytes(size) as usize;
-    if size > MAX_FRAME {
-        return Err(std::io::Error::other("Worker frame exceeds limit"));
-    }
-    let mut bytes = vec![0; size];
-    input.read_exact(&mut bytes)?;
-    serde_json::from_slice(&bytes).map_err(std::io::Error::other)
-}
-
-pub fn write_frame(mut output: impl Write, value: &impl Serialize) -> std::io::Result<()> {
-    let bytes = serde_json::to_vec(value)?;
-    if bytes.len() > MAX_FRAME {
-        return Err(std::io::Error::other("Worker frame exceeds limit"));
-    }
-    output.write_all(&(bytes.len() as u32).to_le_bytes())?;
-    output.write_all(&bytes)?;
-    output.flush()
-}
-
 /// Development override, then the folder of the executable, then a downloaded runtime.
 /// `PATH` is never searched.
 pub fn worker_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("OXIDE_VULKAN_WORKER") {
-        return PathBuf::from(path);
-    }
-    let beside = std::env::current_exe()
-        .unwrap_or_default()
-        .with_file_name(format!(
-            "oxide-vulkan-worker{}",
-            std::env::consts::EXE_SUFFIX
-        ));
-    if beside.is_file() {
-        return beside;
-    }
-    super::runtimes::installed_worker(BackendId::Vulkan).unwrap_or(beside)
+    let beside = super::protocol::beside_current_executable(&format!(
+        "oxide-vulkan-worker{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    super::protocol::choose_worker_path(
+        super::protocol::override_from_env("OXIDE_VULKAN_WORKER"),
+        beside,
+        || super::runtimes::installed_worker(BackendId::Vulkan),
+    )
 }
 
 /// Provisional conservative Small working set, separate from model file size.
@@ -101,6 +76,45 @@ fn required_memory(path: &Path) -> u64 {
         .entry_for_path(path)
         .and_then(|entry| entry.estimated_peak(BackendId::Vulkan))
         .unwrap_or(DEFAULT_WORKING_SET)
+}
+
+fn is_positive(number: f64) -> bool {
+    number.is_finite() && number > 0.0
+}
+
+/// The timing value on a `MUL_MAT` line, never the leading op count. whisper.cpp
+/// prints `MUL_MAT: <ops> x <time> us = <time> us`, so prefer the number after
+/// `=` and fall back to the last numeric token.
+fn positive_timing(line: &str) -> Option<f64> {
+    let numbers = |text: &str| {
+        text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect::<Vec<_>>()
+    };
+    let value = match line.split_once('=') {
+        Some((_, timing)) => numbers(timing).last().copied(),
+        None => numbers(line).last().copied(),
+    }?;
+    is_positive(value).then_some(value)
+}
+
+/// Real whisper.cpp prints a `Vulkan Timings:` block like:
+/// `MUL_MAT: 1 x 500 us = 500 us` followed by `Total time: 500 us.`.
+/// Both a positive per-`MUL_MAT` timing and a positive graph total are
+/// required; merely mentioning the kernel is not proof of execution.
+fn vulkan_timings(logs: &str) -> Option<(String, String)> {
+    let block = logs.split_once("Vulkan Timings:")?.1;
+    let mul_mat = block
+        .lines()
+        .find(|line| line.contains("MUL_MAT") && positive_timing(line).is_some())?
+        .trim()
+        .to_string();
+    let total = block.lines().find_map(|line| {
+        let rest = line.trim_start().strip_prefix("Total time: ")?;
+        let value = rest.split_whitespace().next()?.parse::<f64>().ok()?;
+        is_positive(value).then(|| line.trim().to_string())
+    })?;
+    Some((mul_mat, total))
 }
 
 pub fn check_memory(device: &VulkanAdapter, model_path: &Path) -> Result<(), BackendError> {
@@ -165,11 +179,7 @@ impl VulkanRuntime {
         {
             return Err(BackendError::Cancelled);
         }
-        let timeout = if matches!(request, WorkerRequest::Probe) {
-            Duration::from_secs(15)
-        } else {
-            Duration::from_secs(180)
-        };
+        let timeout = super::protocol::timeout_for(matches!(request, WorkerRequest::Probe));
         if !self.worker.is_file() {
             return Err(BackendError::Unavailable(CapabilityState::OmittedFromBuild));
         }
@@ -399,26 +409,17 @@ impl WhisperBackendRuntime for VulkanRuntime {
                 native_backend,
             } if adapter_id == device.id && native_backend == device.native_backend => {
                 let selected = format!("whisper_backend_init_gpu: using {native_backend} backend");
-                let timing = logs.lines().find(|line| {
-                    line.starts_with("Total time: ")
-                        && line
-                            .trim_start_matches("Total time: ")
-                            .split_whitespace()
-                            .next()
-                            .and_then(|n| n.parse::<f64>().ok())
-                            .is_some_and(|n| n.is_finite() && n > 0.0)
-                });
-                if !logs.contains(&selected)
-                    || !logs.contains("Vulkan Timings:")
-                    || !logs.contains("MUL_MAT")
-                    || timing.is_none()
-                {
-                    return Err(BackendError::InferenceFailed("Vulkan offload was not evidenced by native GPU kernel timestamps; CPU fallback is refused".into()));
+                if !logs.contains(&selected) {
+                    return Err(BackendError::InferenceFailed(
+                        "Vulkan offload was not evidenced by native GPU kernel timestamps; CPU fallback is refused".into(),
+                    ));
                 }
+                let (mul_mat, total) = vulkan_timings(&logs).ok_or_else(|| {
+                    BackendError::InferenceFailed("Vulkan offload was not evidenced by native GPU kernel timestamps; CPU fallback is refused".into())
+                })?;
                 let evidence = format!(
-                    "whisper.cpp {ENGINE_VERSION}; {}; {selected}; Vulkan Timings: {}",
-                    device.id,
-                    timing.unwrap()
+                    "whisper.cpp {ENGINE_VERSION}; {}; {selected}; Vulkan Timings: {total} ({mul_mat})",
+                    device.id
                 );
                 Ok(TranscriptionOutcome {
                     text,

@@ -1,6 +1,7 @@
 use super::{BackendError, BackendId, NativeDevice};
 use serde::{Deserialize, Serialize};
 use std::ffi::{CStr, CString, c_char};
+use std::sync::{Mutex, MutexGuard};
 
 pub const DISPATCH_REVISION: &str = "whisper-1.8.3-ggml-abi2-dispatch-v1";
 
@@ -32,6 +33,21 @@ pub(super) fn unproven() -> BackendError {
     BackendError::InferenceFailed(
         "Completed GPU dispatch was not proven for warmup and every measured run on the selected device; no measurement saved. Try CPU.".into(),
     )
+}
+
+impl DispatchRun {
+    /// The one rule both Metal and CUDA use to accept a normal-dictation run:
+    /// at least one matrix-bearing graph completed on the selected backend and
+    /// adapter with no failures.
+    pub fn proves(&self, backend: BackendId, native_backend: &str, adapter: &str) -> bool {
+        matches!(backend, BackendId::Cuda | BackendId::Metal)
+            && !adapter.is_empty()
+            && self.native_backend == native_backend
+            && self.adapter == adapter
+            && self.completed_graphs > 0
+            && self.matrix_ops >= self.completed_graphs
+            && self.failures == 0
+    }
 }
 
 impl DispatchEvidence {
@@ -153,30 +169,8 @@ impl Recorder {
         // SAFETY: all prior inference is complete; no callbacks remain in flight.
         unsafe { oxide_dispatch_reset() };
     }
-
     pub fn end_run(&mut self) {
-        // SAFETY: Snapshot is a C-compatible all-zero-valid layout. Native read
-        // copies counters and bounded, zero-terminated identity strings under a mutex.
-        let snapshot = unsafe {
-            let mut snapshot: Snapshot = std::mem::zeroed();
-            oxide_dispatch_read(&mut snapshot);
-            snapshot
-        };
-        let string = |chars: &[c_char]| {
-            // SAFETY: the native fixed arrays always include a trailing zero.
-            unsafe { CStr::from_ptr(chars.as_ptr()) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        let id = string(&snapshot.device_id);
-        self.runs.push(DispatchRun {
-            native_backend: string(&snapshot.native_backend),
-            adapter: string(&snapshot.adapter),
-            device_id: (!id.is_empty()).then_some(id),
-            completed_graphs: snapshot.completed_graphs,
-            matrix_ops: snapshot.matrix_ops,
-            failures: snapshot.failures,
-        });
+        self.runs.push(read_run());
     }
 
     pub fn finish(self) -> Result<DispatchEvidence, BackendError> {
@@ -195,5 +189,163 @@ impl Recorder {
             candidate.probe.adapter.as_deref(),
         )?;
         Ok(evidence)
+    }
+
+    fn last_run(&self) -> Option<DispatchRun> {
+        self.runs.last().cloned()
+    }
+}
+
+/// Process-global native dispatch recorder for one normal dictation inference.
+///
+/// Unlike the benchmark recorder this needs exactly one run. Only constructed
+/// inside the disposable worker process that owns the GPU context.
+pub struct DictationDispatch {
+    recorder: Recorder,
+}
+
+impl DictationDispatch {
+    pub fn install(device: &NativeDevice) -> Result<Option<Self>, BackendError> {
+        Ok(Recorder::install(device)?.map(|recorder| Self { recorder }))
+    }
+
+    pub fn begin_run(&self) {
+        self.recorder.begin_run();
+    }
+
+    pub fn end_run(&mut self) -> Result<DispatchRun, BackendError> {
+        self.recorder.end_run();
+        self.recorder.last_run().ok_or_else(unproven)
+    }
+}
+
+fn read_run() -> DispatchRun {
+    // SAFETY: Snapshot is a C-compatible all-zero-valid layout. Native read
+    // copies counters and bounded, zero-terminated identity strings under a mutex.
+    let snapshot = unsafe {
+        let mut snapshot: Snapshot = std::mem::zeroed();
+        oxide_dispatch_read(&mut snapshot);
+        snapshot
+    };
+    let string = |chars: &[c_char]| {
+        // SAFETY: the native fixed arrays always include a trailing zero.
+        unsafe { CStr::from_ptr(chars.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let id = string(&snapshot.device_id);
+    DispatchRun {
+        native_backend: string(&snapshot.native_backend),
+        adapter: string(&snapshot.adapter),
+        device_id: (!id.is_empty()).then_some(id),
+        completed_graphs: snapshot.completed_graphs,
+        matrix_ops: snapshot.matrix_ops,
+        failures: snapshot.failures,
+    }
+}
+
+/// Once per process the native hook can be installed for one GPU device.
+static METAL_INSTALLED: Mutex<Option<String>> = Mutex::new(None);
+/// Serializes reset/read pairs; ggml counters are process-global.
+static METAL_RECORDING: Mutex<()> = Mutex::new(());
+
+/// Dispatch recorder for normal Metal inference (not the benchmark worker).
+///
+/// Install before creating a Whisper context. Repeated installs for the same
+/// adapter reuse the process-global hook; a different adapter is an error.
+pub(crate) struct MetalDispatchRecorder;
+
+impl MetalDispatchRecorder {
+    pub(crate) fn install(adapter: &str) -> Result<Self, BackendError> {
+        let mut installed = METAL_INSTALLED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match installed.as_deref() {
+            Some(current) if current == adapter => {}
+            Some(_) => {
+                return Err(BackendError::InferenceFailed(
+                    "Metal offload was not proven: the dispatch recorder is already bound to another Metal device. Try CPU.".into(),
+                ));
+            }
+            None => {
+                let unproven = || {
+                    BackendError::InferenceFailed(
+                        "Metal offload was not proven: cannot instrument the selected Metal device for dispatch evidence. Try CPU.".into(),
+                    )
+                };
+                let name = CString::new("Metal").map_err(|_| unproven())?;
+                let description = CString::new(adapter).map_err(|_| unproven())?;
+                // SAFETY: strings live through this synchronous call. It validates
+                // the pinned ABI and unique native device before changing its init callback.
+                if !unsafe {
+                    oxide_dispatch_install(name.as_ptr(), description.as_ptr(), std::ptr::null())
+                } {
+                    return Err(unproven());
+                }
+                *installed = Some(adapter.to_string());
+            }
+        }
+        Ok(Self)
+    }
+
+    /// Reset counters once the context exists and immediately before inference.
+    pub(crate) fn begin_run(&self) -> MetalDispatchRun<'_> {
+        let guard = METAL_RECORDING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // SAFETY: all prior inference is complete; no callbacks remain in flight.
+        unsafe { oxide_dispatch_reset() };
+        MetalDispatchRun { _guard: guard }
+    }
+}
+
+pub(crate) struct MetalDispatchRun<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
+
+impl MetalDispatchRun<'_> {
+    /// Read the counters after inference. The recording lock is held until here.
+    pub(crate) fn end(self) -> DispatchRun {
+        read_run()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(
+        native_backend: &str,
+        adapter: &str,
+        graphs: u64,
+        ops: u64,
+        failures: u64,
+    ) -> DispatchRun {
+        DispatchRun {
+            native_backend: native_backend.into(),
+            adapter: adapter.into(),
+            device_id: None,
+            completed_graphs: graphs,
+            matrix_ops: ops,
+            failures,
+        }
+    }
+
+    #[test]
+    fn a_dispatch_run_proves_only_a_completed_matrix_bearing_run_on_the_selected_device() {
+        assert!(run("Metal", "Apple M3", 4, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(run("CUDA0", "RTX 4090", 4, 8, 0).proves(BackendId::Cuda, "CUDA0", "RTX 4090"));
+
+        assert!(!run("Metal", "Apple M3", 0, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "Apple M3", 4, 3, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "Apple M3", 4, 8, 1).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("CUDA1", "RTX 4090", 4, 8, 0).proves(BackendId::Cuda, "CUDA0", "RTX 4090"));
+        assert!(!run("Metal", "Other GPU", 4, 8, 0).proves(BackendId::Metal, "Metal", "Apple M3"));
+        assert!(!run("Metal", "", 4, 8, 0).proves(BackendId::Metal, "Metal", ""));
+        assert!(!run("Vulkan0", "RX 5600 XT", 4, 8, 0).proves(
+            BackendId::Vulkan,
+            "Vulkan0",
+            "RX 5600 XT"
+        ));
     }
 }

@@ -539,7 +539,28 @@ fn auto_retries_cpu_once_on_gpu_failure_and_records_why() {
     let mock = Arc::new(MockFailingGpuRuntime {
         calls: AtomicUsize::new(0),
     });
-    let dictation = Dictation::with_runtime(mock.clone());
+    let cpu = Arc::new(MockCpuRuntime {
+        calls: AtomicUsize::new(0),
+        samples_seen: Default::default(),
+    });
+    let dictation = Dictation::with_runtime(mock.clone())
+        .with_cpu_runtime(cpu.clone())
+        .with_resources(Arc::new(|| {
+            use oxide_core::dictation::resources::*;
+            ResourceSnapshot {
+                captured_at_secs: now_secs(),
+                cpu: CpuResources {
+                    architecture: "x86_64".into(),
+                    model: "CPU".into(),
+                    usable_cores: 8,
+                    instruction_compatible: Some(true),
+                },
+                total_ram_bytes: Some(16 << 30),
+                available_ram_bytes: Some(8 << 30),
+                baseline_bytes: Some(1 << 29),
+                free_disk_bytes: None,
+            }
+        }));
 
     let snapshot = RecordingSnapshot {
         language: "auto".into(),
@@ -554,8 +575,6 @@ fn auto_retries_cpu_once_on_gpu_failure_and_records_why() {
     dictation.inject_recording_for_test(snapshot, samples, 16000);
 
     let home = tempfile::tempdir().unwrap();
-    // Provide a dummy file so model path check passes if needed, or mock CPU
-    // Note: If model file is not present, CPU retry will return error gracefully
     let settings = DictationSettings {
         enabled: true,
         language: "auto".into(),
@@ -565,25 +584,272 @@ fn auto_retries_cpu_once_on_gpu_failure_and_records_why() {
         adapter_id: None,
     };
 
-    let result = dictation.stop(home.path(), &settings);
-    // The GPU runtime was called once
-    assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
+    let text = dictation.stop(home.path(), &settings).unwrap();
+    assert_eq!(text, "retried on cpu");
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 1, "GPU is tried once");
+    assert_eq!(cpu.calls.load(Ordering::SeqCst), 1, "CPU retried once");
 
-    // It attempted CPU fallback (which reported either model missing or success)
-    // and critically, the app did NOT crash or panic
-    let last_exec = dictation.last_execution();
-    if result.is_ok() {
-        assert!(last_exec.is_some());
-        let exec = last_exec.unwrap();
-        assert_eq!(exec.backend, BackendId::Cpu);
-        assert!(!exec.offloaded);
-        assert!(
-            exec.offload_evidence
-                .as_deref()
-                .unwrap_or("")
-                .contains("Fell back to CPU after primary backend failure")
-        );
+    let exec = dictation.last_execution().expect("execution details");
+    assert_eq!(exec.backend, BackendId::Cpu);
+    assert!(!exec.offloaded);
+    assert!(
+        exec.fallback_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("Fake native GPU crash or driver failure"),
+        "fallback reason should explain the GPU failure: {exec:?}"
+    );
+    assert!(
+        exec.offload_evidence
+            .as_deref()
+            .unwrap_or("")
+            .contains("Fell back to CPU after primary backend failure")
+    );
+}
+
+mod fixture {
+    pub const EXPECTED_SAMPLES: usize = 176_000;
+
+    pub fn samples() -> Vec<f32> {
+        include_bytes!("fixtures/jfk.pcm")
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .collect()
     }
+}
+
+#[test]
+fn auto_cpu_primary_uses_the_injected_cpu_runtime() {
+    let cpu = Arc::new(MockCpuRuntime {
+        calls: AtomicUsize::new(0),
+        samples_seen: Default::default(),
+    });
+    let dictation =
+        Dictation::with_runtime(Arc::new(MockSuccessfulGpuRuntime)).with_cpu_runtime(cpu.clone());
+    dictation.inject_recording_for_test(
+        RecordingSnapshot {
+            language: "auto".into(),
+            device: Device::Auto,
+            model: ModelId::Small,
+            backend: Some(BackendId::Cpu),
+            adapter_id: None,
+        },
+        fixture::samples(),
+        16000,
+    );
+
+    let home = tempfile::tempdir().unwrap();
+    let text = dictation
+        .stop(
+            home.path(),
+            &DictationSettings {
+                enabled: true,
+                device: Device::Auto,
+                model: ModelId::Small,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(text, "retried on cpu");
+    assert_eq!(cpu.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *cpu.samples_seen.lock().unwrap(),
+        vec![fixture::EXPECTED_SAMPLES]
+    );
+    assert_eq!(dictation.last_execution().unwrap().backend, BackendId::Cpu);
+}
+
+#[test]
+fn bundled_fixture_transcribes_through_the_injected_cpu_runtime() {
+    let cpu = Arc::new(MockCpuRuntime {
+        calls: AtomicUsize::new(0),
+        samples_seen: Default::default(),
+    });
+    let dictation =
+        Dictation::with_runtime(Arc::new(MockSuccessfulGpuRuntime)).with_cpu_runtime(cpu.clone());
+    let samples = fixture::samples();
+    assert_eq!(samples.len(), fixture::EXPECTED_SAMPLES);
+    dictation.inject_recording_for_test(
+        RecordingSnapshot {
+            language: "auto".into(),
+            device: Device::Cpu,
+            model: ModelId::Small,
+            backend: None,
+            adapter_id: None,
+        },
+        samples,
+        16000,
+    );
+
+    let home = tempfile::tempdir().unwrap();
+    let text = dictation
+        .stop(
+            home.path(),
+            &DictationSettings {
+                enabled: true,
+                device: Device::Cpu,
+                model: ModelId::Small,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(text, "retried on cpu");
+    assert_eq!(
+        *cpu.samples_seen.lock().unwrap(),
+        vec![fixture::EXPECTED_SAMPLES]
+    );
+    let exec = dictation.last_execution().expect("execution details");
+    assert_eq!(exec.backend, BackendId::Cpu);
+    assert!(!exec.offloaded);
+}
+
+#[test]
+fn cancel_discards_an_in_flight_cpu_result() {
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    struct BlockingCpuRuntime {
+        entered: mpsc::Sender<()>,
+    }
+    impl WhisperBackendRuntime for BlockingCpuRuntime {
+        fn backend_id(&self) -> BackendId {
+            BackendId::Cpu
+        }
+        fn probe(&self) -> BackendProbe {
+            BackendProbe {
+                backend: BackendId::Cpu,
+                state: CapabilityState::Available,
+                adapter: None,
+                memory_pool: None,
+            }
+        }
+        fn transcribe(
+            &self,
+            request: &TranscriptionRequest,
+        ) -> Result<TranscriptionOutcome, BackendError> {
+            self.entered.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !request.cancelled.load(Ordering::SeqCst) {
+                if Instant::now() >= deadline {
+                    return Err(BackendError::Cancelled);
+                }
+                std::thread::yield_now();
+            }
+            // A late result must be discarded by the coordinator, not returned to the caller.
+            Ok(TranscriptionOutcome {
+                text: "late cpu transcription".into(),
+                execution: ExecutionDetails {
+                    backend: BackendId::Cpu,
+                    adapter: None,
+                    offloaded: false,
+                    offload_evidence: None,
+                    fallback_reason: None,
+                },
+            })
+        }
+    }
+
+    let (entered, ready) = mpsc::channel();
+    let cpu = Arc::new(BlockingCpuRuntime { entered });
+    let dictation =
+        Arc::new(Dictation::with_runtime(Arc::new(MockSuccessfulGpuRuntime)).with_cpu_runtime(cpu));
+    dictation.inject_recording_for_test(
+        RecordingSnapshot {
+            language: "auto".into(),
+            device: Device::Cpu,
+            model: ModelId::Small,
+            backend: None,
+            adapter_id: None,
+        },
+        fixture::samples(),
+        16000,
+    );
+    let home = tempfile::tempdir().unwrap();
+    std::thread::scope(|scope| {
+        let task = scope.spawn(|| {
+            dictation.stop(
+                home.path(),
+                &DictationSettings {
+                    enabled: true,
+                    device: Device::Cpu,
+                    model: ModelId::Small,
+                    ..Default::default()
+                },
+            )
+        });
+        ready
+            .recv_timeout(Duration::from_secs(5))
+            .expect("CPU runtime entered");
+        dictation.cancel();
+        let error = task.join().unwrap().unwrap_err().to_string();
+        assert!(error.contains("cancelled"), "{error}");
+    });
+    assert!(dictation.last_execution().is_none());
+}
+
+#[test]
+fn cpu_retry_is_refused_when_ram_is_exhausted() {
+    let gpu = Arc::new(MockFailingGpuRuntime {
+        calls: AtomicUsize::new(0),
+    });
+    let cpu = Arc::new(MockCpuRuntime {
+        calls: AtomicUsize::new(0),
+        samples_seen: Default::default(),
+    });
+    let dictation = Dictation::with_runtime(gpu.clone())
+        .with_cpu_runtime(cpu.clone())
+        .with_resources(Arc::new(|| {
+            use oxide_core::dictation::resources::*;
+            ResourceSnapshot {
+                captured_at_secs: now_secs(),
+                cpu: CpuResources {
+                    architecture: "x86_64".into(),
+                    model: "CPU".into(),
+                    usable_cores: 8,
+                    instruction_compatible: Some(true),
+                },
+                total_ram_bytes: Some(16 << 30),
+                available_ram_bytes: Some(1 << 30),
+                baseline_bytes: Some(1 << 29),
+                free_disk_bytes: None,
+            }
+        }));
+    dictation.inject_recording_for_test(
+        RecordingSnapshot {
+            language: "auto".into(),
+            device: Device::Gpu,
+            model: ModelId::Small,
+            backend: None,
+            adapter_id: None,
+        },
+        vec![0.1f32; 16000],
+        16000,
+    );
+    let home = tempfile::tempdir().unwrap();
+    let settings = DictationSettings {
+        enabled: true,
+        device: Device::Gpu,
+        ..Default::default()
+    };
+
+    dictation.stop(home.path(), &settings).unwrap_err();
+    assert!(dictation.has_retry_audio());
+    let refusal = dictation
+        .retry_on_cpu(home.path(), &settings)
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains("CPU retry refused"), "{refusal}");
+    assert_eq!(
+        cpu.calls.load(Ordering::SeqCst),
+        0,
+        "CPU must not run without RAM headroom"
+    );
+    assert!(
+        dictation.has_retry_audio(),
+        "audio stays available after a refused retry"
+    );
 }
 
 #[test]

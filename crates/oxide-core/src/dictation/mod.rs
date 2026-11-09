@@ -3,6 +3,7 @@ pub mod benchmark;
 pub mod cuda;
 pub mod metal;
 pub mod models;
+pub mod protocol;
 pub mod resources;
 pub mod runtime;
 pub mod runtimes;
@@ -438,26 +439,7 @@ impl Dictation {
         let mut adapter_id = settings.adapter_id.clone();
         if settings.device == Device::Auto && backend.is_none() {
             let advice = resources::inspect(home, resources::Preference::Balanced);
-            let choice = advice
-                .recommendation
-                .decisions
-                .iter()
-                .filter(|d| {
-                    d.model == settings.model
-                        && d.safe_to_load
-                        && matches!(
-                            d.status,
-                            resources::AdviceStatus::Recommended
-                                | resources::AdviceStatus::UsableSlower
-                        )
-                })
-                .min_by_key(|d| {
-                    (
-                        d.provisional,
-                        d.median_rtf_milli.unwrap_or(u64::MAX),
-                        d.backend != BackendId::Cpu,
-                    )
-                });
+            let choice = resources::select_for_model(&advice.recommendation, settings.model);
             backend = Some(choice.map_or(BackendId::Cpu, |d| d.backend));
             adapter_id = choice.and_then(|d| d.adapter_id.clone());
         }
@@ -697,7 +679,7 @@ impl Dictation {
         } else {
             snapshot.backend
         } {
-            Some(BackendId::Cpu) => Arc::new(CpuRuntime),
+            Some(BackendId::Cpu) => self.cpu_runtime.clone(),
             Some(BackendId::Vulkan) => Arc::new(vulkan::VulkanRuntime::new(
                 vulkan::worker_path(),
                 snapshot.adapter_id.clone(),

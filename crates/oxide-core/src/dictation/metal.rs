@@ -94,6 +94,36 @@ pub fn query_metal_device() -> Result<MetalDeviceInfo, String> {
     Err("Metal acceleration is only supported on Apple Silicon macOS".into())
 }
 
+/// Pure acceptance check for one normal-inference dispatch run.
+///
+/// Metal offload is only proven by a completed matrix-bearing graph on the same
+/// native backend and device the request selected. A successful transcription
+/// or a requested GPU mode by itself never satisfies this.
+pub fn validate_metal_dispatch(
+    run: &super::benchmark::DispatchRun,
+    adapter: &str,
+) -> Result<(), BackendError> {
+    if run.proves(super::BackendId::Metal, "Metal", adapter) {
+        return Ok(());
+    }
+    Err(BackendError::InferenceFailed(format!(
+        "Metal offload was not proven: expected a completed matrix-bearing Metal dispatch on '{adapter}', observed backend '{}', adapter '{}', {} completed graph(s), {} matrix op(s), {} failure(s). Try CPU.",
+        run.native_backend, run.adapter, run.completed_graphs, run.matrix_ops, run.failures
+    )))
+}
+
+fn contextualize(error: BackendError) -> BackendError {
+    match error {
+        BackendError::InitializationFailed(msg) => {
+            BackendError::InitializationFailed(format!("Metal initialization failed: {msg}"))
+        }
+        BackendError::InferenceFailed(msg) => {
+            BackendError::InferenceFailed(format!("Metal inference failed: {msg}"))
+        }
+        other => other,
+    }
+}
+
 /// Native Metal execution runtime for macOS Apple Silicon.
 #[derive(Default)]
 pub struct MetalRuntime;
@@ -159,17 +189,21 @@ impl WhisperBackendRuntime for MetalRuntime {
             )));
         }
 
-        let result = super::resources::check_before_load(&request.model_path, &self.probe())
-            .and_then(|()| super::runtime::run_whisper_inference(request, true));
-        let (text, offloaded, _) = result.map_err(|e| match e {
-            BackendError::InitializationFailed(msg) => {
-                BackendError::InitializationFailed(format!("Metal initialization failed: {msg}"))
-            }
-            BackendError::InferenceFailed(msg) => {
-                BackendError::InferenceFailed(format!("Metal inference failed: {msg}"))
-            }
-            other => other,
-        })?;
+        // Keep the memory preflight before any device context exists.
+        super::resources::check_before_load(&request.model_path, &self.probe())
+            .map_err(contextualize)?;
+
+        // The native hook is installed once per process before the first context
+        // so whisper.cpp's Metal backend is instrumented from initialization on.
+        let recorder = super::benchmark::MetalDispatchRecorder::install(&device_info.name)
+            .map_err(contextualize)?;
+
+        let (text, dispatch) =
+            super::runtime::run_whisper_recorded(request, &recorder).map_err(contextualize)?;
+
+        // Never report offload from the request flag: only observed native
+        // dispatches on the selected Metal device count.
+        validate_metal_dispatch(&dispatch, &device_info.name)?;
 
         let budget_desc = match device_info.max_working_set_bytes {
             Some(bytes) => format!(", max working set {:.1} GB", bytes as f64 / 1_073_741_824.0),
@@ -182,10 +216,10 @@ impl WhisperBackendRuntime for MetalRuntime {
                 fallback_reason: None,
                 backend: BackendId::Metal,
                 adapter: Some(device_info.name.clone()),
-                offloaded,
+                offloaded: true,
                 offload_evidence: Some(format!(
-                    "Metal acceleration verified on {} (unified memory{})",
-                    device_info.name, budget_desc
+                    "Metal dispatch verified on {}: {} completed matrix-bearing graph(s), {} matrix op(s), 0 failures (unified memory{})",
+                    device_info.name, dispatch.completed_graphs, dispatch.matrix_ops, budget_desc
                 )),
             },
         })
