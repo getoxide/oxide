@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { ProjectService_Serialize as ProjectService } from "./bindings";
+import type { ProjectService_Serialize as ProjectService, ProjectServiceConflict } from "./bindings";
 import { ProjectServices } from "./ProjectServices";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -16,6 +16,7 @@ type Call = { command: string; args: unknown };
 let calls: Call[] = [];
 let servicesByProject: Record<number, ProjectService[]> = {};
 let stopError: { message: string } | null = null;
+let restartResult: unknown = null;
 
 const service = (id: number, projectId = 1, overrides: Partial<ProjectService> = {}): ProjectService => ({
   id,
@@ -36,6 +37,7 @@ beforeEach(() => {
   calls = [];
   servicesByProject = {};
   stopError = null;
+  restartResult = null;
   mockIPC((command, args) => {
     calls.push({ command, args });
     switch (command) {
@@ -43,6 +45,8 @@ beforeEach(() => {
         return servicesByProject[(args as { projectId: number }).projectId] ?? [];
       case "stop_project_service":
         return stopError ? Promise.reject(stopError) : null;
+      case "restart_project_service":
+        return restartResult ?? { outcome: "started", payload: service(4) };
       default:
         return null;
     }
@@ -55,12 +59,13 @@ afterEach(async () => {
 });
 
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-const renderServices = (projectId: number, opened: number[] = [], stopped: number[] = []) => act(async () => {
+const renderServices = (projectId: number, opened: number[] = [], stopped: number[] = [], conflicts: ProjectServiceConflict[] = []) => act(async () => {
   root.render(
     <ProjectServices
       projectId={projectId}
       onOpenService={(id) => opened.push(id)}
       onStopService={(id) => stopped.push(id)}
+      onServiceConflict={(conflict) => conflicts.push(conflict)}
     />,
   );
 });
@@ -119,6 +124,61 @@ it("stops a service from its quick-stop button without opening it", async () => 
   expect(opened).toEqual([]);
   expect(stopped).toEqual([4]);
   expect(rows()).toEqual([]);
+});
+
+it("restarts a service from its sidebar button without opening it", async () => {
+  servicesByProject[1] = [service(4)];
+  const opened: number[] = [];
+  await renderServices(1, opened);
+  await settle();
+
+  await act(async () => { container.querySelector<HTMLElement>(".service-restart")!.click(); });
+  await settle();
+
+  const restart = calls.find((call) => call.command === "restart_project_service");
+  expect(restart?.args).toEqual({ id: 4 });
+  expect(opened).toEqual([]);
+});
+
+it("routes a sidebar restart conflict to the app dialog", async () => {
+  servicesByProject[1] = [service(4)];
+  const conflicts: ProjectServiceConflict[] = [];
+  restartResult = {
+    outcome: "conflict",
+    payload: {
+      port: 3003,
+      existing: service(1),
+      message: "Port 3003 is already used by Project Service 'npm run dev1' (PID 1001)",
+    },
+  };
+  await renderServices(1, [], [], conflicts);
+  await settle();
+
+  await act(async () => { container.querySelector<HTMLElement>(".service-restart")!.click(); });
+  await settle();
+
+  expect(conflicts).toHaveLength(1);
+  expect(conflicts[0]).toMatchObject({ port: 3003, existing: { id: 1 } });
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("collapses and expands the services section", async () => {
+  servicesByProject[1] = [service(1), service(2)];
+  await renderServices(1);
+  await settle();
+
+  const header = container.querySelector<HTMLButtonElement>(".project-services-header")!;
+  expect(header.getAttribute("aria-expanded")).toBe("true");
+  expect(rows()).toHaveLength(2);
+
+  await act(async () => header.click());
+  expect(header.getAttribute("aria-expanded")).toBe("false");
+  expect(rows()).toEqual([]);
+  expect(container.querySelector(".project-services")).not.toBeNull();
+
+  await act(async () => header.click());
+  expect(header.getAttribute("aria-expanded")).toBe("true");
+  expect(rows()).toHaveLength(2);
 });
 
 it("refetches when the Project Services change event names this Project", async () => {

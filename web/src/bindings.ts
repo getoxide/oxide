@@ -46,7 +46,12 @@ export const commands = {
 	setProjectHidden: (id: number, hidden: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_hidden", { id, hidden })),
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
-	/**  Starts `command` as a Project Service in the Project's (or Thread's) checkout. */
+	/**
+	 *  Starts `command` as a Project Service in the Project's (or Thread's) checkout.
+	 * 
+	 *  The startup grace check and the stop/restart waits all block for seconds, so they run off the
+	 *  async command thread like every other long-running Core call.
+	 */
 	startProjectService: (projectId: number, threadId: number | null, command: string) => typedError<ProjectServiceStartOutcome_Serialize, AppError>(__TAURI_INVOKE("start_project_service", { projectId, threadId, command })),
 	/**  The running Project Services of a Project. */
 	listProjectServices: (projectId: number) => typedError<ProjectService_Serialize[], AppError>(__TAURI_INVOKE("list_project_services", { projectId })),

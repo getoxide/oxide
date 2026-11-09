@@ -681,7 +681,9 @@ fn handle_command_requested(
             let notice = service_notice(&command, service.pid, service.port);
             state.flush_pending_deltas();
             if let Some(turn_id) = state.current_turn_id() {
-                let record = CommandRecord::reported(&command, CommandOutcome::Succeeded, Some(0));
+                // The Provider only asked for this command; Oxide ran (or refused) it as a
+                // service and the Provider never reported an outcome, so the record claims none.
+                let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
                 let _ = storage.write_item_completed(NewItem {
                     turn_id,
                     item_index,
@@ -710,7 +712,9 @@ fn handle_command_requested(
             let notice = conflict_notice(&conflict);
             state.flush_pending_deltas();
             if let Some(turn_id) = state.current_turn_id() {
-                let record = CommandRecord::reported(&command, CommandOutcome::Succeeded, Some(0));
+                // The Provider only asked for this command; Oxide ran (or refused) it as a
+                // service and the Provider never reported an outcome, so the record claims none.
+                let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
                 let _ = storage.write_item_completed(NewItem {
                     turn_id,
                     item_index,
@@ -754,8 +758,8 @@ fn conflict_notice(conflict: &ProjectServiceConflict) -> String {
                 .clone()
                 .unwrap_or_else(|| format!("http://localhost:{}", conflict.port));
             format!(
-                "[Oxide] Port {} is already used by Project Service '{}' (PID {}, {url}). Reuse that service or restart it instead of starting another.",
-                conflict.port, existing.command, existing.pid
+                "[Oxide] Port {} is already used by Project Service #{} '{}' (PID {}, {url}). Reuse that service or restart it instead of starting another.",
+                conflict.port, existing.id, existing.command, existing.pid
             )
         }
         None => format!(

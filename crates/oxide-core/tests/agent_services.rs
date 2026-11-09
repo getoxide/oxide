@@ -1,53 +1,15 @@
 #![cfg(unix)]
 
+mod support;
+
 use oxide_core::{
-    Core, ItemKind, PermissionMode, ProjectService, ProjectServiceStartOutcome,
-    ProjectServiceStatus, ThreadEvent, ThreadStatus, TurnStatus,
+    ItemKind, PermissionMode, ProjectServiceStatus, ThreadEvent, ThreadStatus, TurnStatus,
 };
 use oxide_provider::process::group_alive;
 use oxide_provider::{ActivityCategory, CommandOutcome, FakeProvider, ProviderEvent};
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use support::{free_port, open_core_with_project, started, wait_group_gone};
 use tempfile::tempdir;
-
-fn started(outcome: ProjectServiceStartOutcome) -> ProjectService {
-    match outcome {
-        ProjectServiceStartOutcome::Started(service) => service,
-        ProjectServiceStartOutcome::Conflict(conflict) => {
-            panic!(
-                "expected a started service, got a conflict: {}",
-                conflict.message
-            )
-        }
-    }
-}
-
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    listener.local_addr().unwrap().port()
-}
-
-fn open_core_with_project(dir: &Path) -> (Core, u32) {
-    let core = Core::open(dir).unwrap();
-    core.set_real_time_ticker(false);
-    std::fs::create_dir_all(dir.join("my-project").join(".git")).unwrap();
-    let project_id = core
-        .add_project(&dir.join("my-project").to_string_lossy())
-        .unwrap()
-        .id;
-    (core, project_id)
-}
-
-fn wait_group_gone(pid: u32) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if !group_alive(pid as i32) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
 
 /// Every TurnCompleted the Thread emits, up to a short quiet period after the first one.
 fn completed_turns(
@@ -140,7 +102,9 @@ fn an_agent_server_command_detaches_and_the_turn_completes_without_the_provider(
         item.content
     );
     assert!(item.content.contains("(PID "), "the notice has the PID");
-    assert_eq!(item.command.outcome, CommandOutcome::Succeeded);
+    // The Provider never ran this command; Oxide only intercepted the request.
+    assert_eq!(item.command.outcome, CommandOutcome::Unknown);
+    assert_eq!(item.command.exit_code, None);
 
     let services = core.list_project_services(project_id).unwrap();
     assert_eq!(services.len(), 1);
@@ -334,11 +298,23 @@ fn an_agent_command_on_a_port_held_by_a_service_reuses_it_and_completes() {
         item.content
     );
     assert!(
+        item.content.contains(&format!("#{}", incumbent.id)),
+        "the notice names the incumbent service id: {}",
+        item.content
+    );
+    assert!(
+        item.content.contains(&format!("http://localhost:{port}")),
+        "the notice names the incumbent URL: {}",
+        item.content
+    );
+    assert!(
         item.content.contains("already used by Project Service"),
         "the notice explains the reuse: {}",
         item.content
     );
-    assert_eq!(item.command.outcome, CommandOutcome::Succeeded);
+    // The command was intercepted, never run by the Provider: no outcome is claimed.
+    assert_eq!(item.command.outcome, CommandOutcome::Unknown);
+    assert_eq!(item.command.exit_code, None);
 
     // No second service was spawned: the incumbent remains the only one.
     let services = core.list_project_services(project_id).unwrap();

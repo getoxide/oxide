@@ -12,10 +12,7 @@ export interface ServiceConflictDialogProps {
 
 /** The sentence the dialog and the terminal notice share. */
 export function serviceConflictMessage(conflict: ProjectServiceConflict): string {
-  const existing = conflict.existing;
-  return existing
-    ? `Port ${conflict.port} is already used by ${existing.command} (PID ${existing.pid})`
-    : `Port ${conflict.port} is already in use by another process`;
+  return conflict.message;
 }
 
 /**

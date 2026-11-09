@@ -15,9 +15,6 @@ pub fn is_background_command(command: &str) -> bool {
     if is_explicit_background(command) {
         return true;
     }
-    if binds_port(command) {
-        return true;
-    }
     let Some((program, args)) = invocation(command) else {
         return false;
     };
@@ -122,34 +119,6 @@ fn invocation(command: &str) -> Option<(String, Vec<String>)> {
     Some((program, args))
 }
 
-/// Whether the command names a port, which is enough to treat it as a server. Matches the
-/// terminal path's patterns (`--port`, `--port=N`, `-p N`, `-p=N`, `PORT=N`).
-fn binds_port(command: &str) -> bool {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let mut index = 0;
-    while index < tokens.len() {
-        let token = tokens[index];
-        if token.starts_with("--port") || token.starts_with("PORT=") {
-            return true;
-        }
-        if token
-            .strip_prefix("-p=")
-            .is_some_and(|value| value.chars().all(|c| c.is_ascii_digit()))
-        {
-            return true;
-        }
-        if token == "-p"
-            && tokens
-                .get(index + 1)
-                .is_some_and(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
-        {
-            return true;
-        }
-        index += 1;
-    }
-    false
-}
-
 fn is_env_assignment(token: &str) -> bool {
     let Some((name, _)) = token.split_once('=') else {
         return false;
@@ -185,8 +154,11 @@ fn is_server_invocation(program: &str, args: &[String]) -> bool {
             .first()
             .map(|next| is_server_invocation(&normalize_program(next), &args[1..]))
             .unwrap_or(false),
-        "vite" | "webpack-dev-server" | "serve" | "http-server" | "uvicorn" | "gunicorn"
-        | "watchexec" | "watcher" | "nodemon" | "browser-sync" | "air" => true,
+        "vite" => args
+            .first()
+            .is_none_or(|arg| matches!(arg.as_str(), "dev" | "preview") || arg.starts_with('-')),
+        "webpack-dev-server" | "serve" | "http-server" | "uvicorn" | "gunicorn" | "watchexec"
+        | "watcher" | "nodemon" | "browser-sync" | "air" => true,
         "next" | "nuxt" | "astro" | "remix" | "ng" => args
             .first()
             .is_some_and(|arg| matches!(arg.as_str(), "dev" | "start" | "serve" | "preview")),
@@ -206,8 +178,6 @@ fn is_server_invocation(program: &str, args: &[String]) -> bool {
         "parcel" => args.first().is_none_or(|arg| arg != "build"),
         "hugo" => args.first().is_some_and(|arg| arg == "server"),
         "jekyll" | "mkdocs" => args.first().is_some_and(|arg| arg == "serve"),
-        "docker" => args.len() >= 2 && args[0] == "compose" && args[1] == "up",
-        "docker-compose" => args.first().is_some_and(|arg| arg == "up"),
         "python" | "python3" | "py" => python_server(args),
         "tail" => args
             .first()
@@ -239,15 +209,14 @@ fn package_manager_script(args: &[String]) -> bool {
 
 fn python_server(args: &[String]) -> bool {
     let runs_module = args.windows(2).any(|window| {
-        window[0] == "-m"
-            && matches!(
-                window[1].as_str(),
-                "http.server" | "uvicorn" | "gunicorn" | "flask"
-            )
+        window[0] == "-m" && matches!(window[1].as_str(), "http.server" | "uvicorn" | "gunicorn")
     });
+    let runs_flask = args
+        .windows(3)
+        .any(|window| window[0] == "-m" && window[1] == "flask" && window[2] == "run");
     let runs_script = args.first().is_some_and(|arg| arg.ends_with("manage.py"))
         && args.iter().any(|arg| arg == "runserver");
-    runs_module || runs_script
+    runs_module || runs_flask || runs_script
 }
 
 fn parse_port(raw: &str) -> Option<u16> {
@@ -289,33 +258,54 @@ mod tests {
             "yarn watch",
             "bun run dev:client",
             "npx vite",
+            "pnpx vite",
+            "bunx vite",
+            "./node_modules/.bin/vite",
             "vite",
             "next dev",
             "next start",
+            "remix dev",
             "cargo run",
             "cargo watch -x test",
             "go run .",
             "python3 -m http.server",
             "python -m http.server 8000",
             "python3 manage.py runserver",
+            "python -m flask run",
             "uvicorn app:app --reload",
+            "gunicorn app:app",
             "flask run",
             "rails server",
             "nodemon server.js",
             "watchexec -e rs cargo test",
             "watcher",
+            "browser-sync start --proxy localhost:3000",
+            "webpack-dev-server",
             "air",
             "ng serve",
             "php -S localhost:8000",
             "deno run --watch main.ts",
-            "docker compose up",
-            "docker-compose up",
             "parcel",
             "hugo server",
             "jekyll serve",
             "mkdocs serve",
-            "PORT=4000 node server.js",
+            "PORT=4000 npm start",
             "tail -f logs/dev.log",
+        ] {
+            assert!(is_background_command(command), "{command} should detach");
+        }
+    }
+
+    #[test]
+    fn strips_wrappers_before_classifying() {
+        for command in [
+            "env npm run dev",
+            "env FOO=bar npm run dev",
+            "nohup npm run dev",
+            "sudo npm run dev",
+            "nice npm run dev",
+            "exec npm run dev",
+            "time npm run dev",
         ] {
             assert!(is_background_command(command), "{command} should detach");
         }
@@ -329,18 +319,28 @@ mod tests {
             "cargo build",
             "npm test",
             "npm run build",
+            "vite build",
             "pnpm install",
             "git status",
             "python script.py",
             "python3 -c 'print(1)'",
+            "python -m flask --help",
             "next build",
             "flask --help",
             "rails db:migrate",
             "parcel build",
-            "docker compose down",
             "go test ./...",
             "tail -n 20 logs/dev.log",
             "ls -la",
+            // A port flag alone is not a server: `-p` means something else to these tools.
+            "ssh -p 22 host",
+            "lsof -p 123",
+            "PORT=4000 cargo test",
+            "node server.js --port 3000",
+            // Docker Compose is out of scope for Project Services.
+            "docker compose up",
+            "docker-compose up",
+            "docker compose down",
         ] {
             assert!(
                 !is_background_command(command),

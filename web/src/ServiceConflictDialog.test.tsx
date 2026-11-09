@@ -71,7 +71,7 @@ it("names the incumbent command and PID, and switches to it", async () => {
   const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
   expect(dialog?.getAttribute("aria-modal")).toBe("true");
   expect(dialog?.textContent).toContain(
-    "Port 5173 is already used by npm run dev (PID 900)",
+    "Port 5173 is already used by Project Service 'npm run dev' (PID 900)",
   );
 
   const switchButton = button("Switch to active service");

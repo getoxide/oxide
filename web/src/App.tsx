@@ -1003,6 +1003,7 @@ export function App() {
             onRenameThread={onThreadTitleChange}
             onOpenPalette={() => overlays.current?.openPalette()}
             onOpenService={openService}
+            onServiceConflict={showServiceConflict}
             onOpenSettings={() => { setSettingsSection(null); setShowSettings(true); }}
             settingsOpen={showSettings}
           />
@@ -1299,6 +1300,8 @@ interface SidebarProps {
   /** âŒ˜â‡§N: every known Project, scanned ones included, is found there. */
   onOpenPalette: () => void;
   onOpenService: (serviceId: number) => void;
+  /** A sidebar restart lost the port race; App owns the switch/restart dialog. */
+  onServiceConflict: (conflict: ProjectServiceConflict) => void;
   onOpenSettings: () => void;
   settingsOpen: boolean;
 }
@@ -1317,6 +1320,7 @@ function Sidebar({
   onRenameThread,
   onOpenPalette,
   onOpenService,
+  onServiceConflict,
   onOpenSettings,
   settingsOpen,
 }: SidebarProps) {
@@ -1474,7 +1478,7 @@ function Sidebar({
           })}
         </ul>
       </div>
-      {selected && <ProjectServices projectId={selected.id} onOpenService={onOpenService} />}
+      {selected && <ProjectServices projectId={selected.id} onOpenService={onOpenService} onServiceConflict={onServiceConflict} />}
       <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title={`Settings (${keys("openSettings")})`}>
         <GearIcon size={14} /> Settings
       </button>

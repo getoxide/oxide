@@ -497,6 +497,10 @@ impl ProjectServices {
             && let Some(conflict) = self.conflict_on_port(port, Some(id))
         {
             // Leave it stopped: the caller can switch to the incumbent or choose another port.
+            // It never bound the port this time, so it must not advertise the one it asked for.
+            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.summary.port = None;
+            state.summary.url = None;
             return Ok(ProjectServiceStartOutcome::Conflict(conflict));
         }
         {
@@ -566,12 +570,20 @@ impl ProjectServices {
 /// Whether nothing is listening on `port` on loopback or the wildcard address. The probes are
 /// released immediately: a conflicting check only needs the bind to fail.
 fn port_available(port: u16) -> bool {
-    let loopback = TcpListener::bind(("127.0.0.1", port));
-    if loopback.is_err() {
-        return false;
+    for host in ["127.0.0.1", "0.0.0.0"] {
+        match TcpListener::bind((host, port)) {
+            Ok(listener) => drop(listener),
+            Err(_) => return false,
+        }
     }
-    drop(loopback);
-    TcpListener::bind(("0.0.0.0", port)).is_ok()
+    // IPv6 is best-effort: a listener on `::1` must be detected, but a host without IPv6 must
+    // not make every port look taken.
+    match TcpListener::bind(("::1", port)) {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {}
+        Err(_) => return false,
+    }
+    true
 }
 
 fn launch(service: &Arc<Service>) -> Result<()> {

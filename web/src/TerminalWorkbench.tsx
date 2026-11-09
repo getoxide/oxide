@@ -15,6 +15,7 @@ import {
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput";
 import { terminalPath } from "./terminalPaths";
 import { commands, type ProjectServiceConflict } from "./bindings";
+import { errorMessage } from "./errors";
 import { backgroundCommand } from "./projectServiceCommands";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
@@ -38,21 +39,10 @@ const WINDOWS = /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
 const now = () => Date.now();
 
-function errorMessage(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  if (cause && typeof cause === "object" && "message" in cause)
-    return String((cause as { message: unknown }).message);
-  return String(cause);
-}
-
-function serviceExitCode(message: string): number {
-  const match = /exited with code (-?\d+)/i.exec(message);
-  return match ? Number(match[1]) : 1;
-}
-
 interface ServiceOutcome {
   message: string;
-  exitCode: number;
+  /** The process exit code only when Oxide really observed one; never parsed from prose. */
+  exitCode: number | null;
   conflict: ProjectServiceConflict | null;
 }
 
@@ -80,10 +70,9 @@ async function startProjectService(
       conflict: null,
     };
   } catch (cause) {
-    // A genuine startup crash still arrives as a prose error; #407's exit-code extraction
-    // applies only to that case, never to a structured port conflict.
-    const message = errorMessage(cause);
-    return { message, exitCode: serviceExitCode(message), conflict: null };
+    // A genuine startup crash arrives as a prose error with no structured exit code. The block
+    // shows that message but does not guess a code out of it.
+    return { message: errorMessage(cause), exitCode: null, conflict: null };
   }
 }
 

@@ -94,22 +94,6 @@ function splitExplicit(command: string): { command: string; explicit: boolean } 
   return { command: trimmed, explicit: false };
 }
 
-/** `--port`, `--port=N`, `-p N`, `-p=N` and `PORT=N`, ignoring quoted text. */
-function bindsPort(tokens: Token[]): boolean {
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index]!;
-    if (token.quoted) continue;
-    if (token.value === "--port" || token.value.startsWith("--port=")) return true;
-    if (token.value.startsWith("PORT=")) return true;
-    if (token.value === "-p") {
-      const value = tokens[index + 1]?.value ?? "";
-      if (/^\d+$/.test(value)) return true;
-    }
-    if (token.value.startsWith("-p=") && /^\d+$/.test(token.value.slice(3))) return true;
-  }
-  return false;
-}
-
 /** Trims non-digits from both ends, then requires a plain number, like Rust's `parse_port`. */
 function parsePort(raw: string): number | null {
   const digits = raw.replace(/^\D+|\D+$/g, "");
@@ -150,79 +134,119 @@ export function portInCommand(command: string): number | null {
   return null;
 }
 
-const exact = (words: string[], prefix: string[]): boolean =>
-  prefix.every((word, index) => words[index] === word);
+/** Wrappers that run another command; they do not change what is being started. Mirrors Rust. */
+const WRAPPERS = new Set(["env", "exec", "nohup", "sudo", "time", "command", "nice"]);
 
-/** Known dev servers, watchers and port-binding runners. Conservative: a miss is cheaper than a false positive. */
+function isEnvAssignment(value: string): boolean {
+  const equals = value.indexOf("=");
+  if (equals <= 0) return false;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.slice(0, equals));
+}
+
+/** The basename, lowercased and without `.exe`, like Rust's `normalize_program`. */
+function normalizeProgram(value: string): string {
+  const name = value.split(/[\\/]/).pop() ?? value;
+  return name
+    .replace(/^["'`(;,]+|["'`(;,]+$/g, "")
+    .toLowerCase()
+    .replace(/\.exe$/, "");
+}
+
+/** Package manager scripts that are servers/watchers. Mirrors Rust's `package_manager_script`. */
+function packageManagerScript(rest: string[]): boolean {
+  const first = rest[0];
+  if (!first) return false;
+  if (["start", "serve", "watch", "dev"].includes(first)) return true;
+  if (first !== "run") return false;
+  const script = rest[1];
+  return (
+    script !== undefined &&
+    (["start", "serve", "watch", "dev"].includes(script) ||
+      script.startsWith("dev:") ||
+      script.startsWith("watch:") ||
+      script.startsWith("serve:"))
+  );
+}
+
+function pythonServer(rest: string[]): boolean {
+  for (let index = 0; index + 1 < rest.length; index += 1) {
+    if (
+      rest[index] === "-m" &&
+      ["http.server", "uvicorn", "gunicorn"].includes(rest[index + 1]!)
+    ) {
+      return true;
+    }
+  }
+  for (let index = 0; index + 2 < rest.length; index += 1) {
+    if (rest[index] === "-m" && rest[index + 1] === "flask" && rest[index + 2] === "run") {
+      return true;
+    }
+  }
+  return (rest[0]?.endsWith("manage.py") ?? false) && rest.includes("runserver");
+}
+
+const STANDALONE_SERVERS = new Set([
+  "webpack-dev-server",
+  "serve",
+  "http-server",
+  "uvicorn",
+  "gunicorn",
+  "watchexec",
+  "watcher",
+  "nodemon",
+  "browser-sync",
+  "air",
+]);
+
+/** Known dev servers and watchers. Conservative: a miss is cheaper than a false positive. */
 function matchesServer(words: string[]): boolean {
   const [first, second] = words;
   if (!first) return false;
   const rest = words.slice(1);
 
-  if (first === "npx") return matchesServer(rest);
+  if (first === "npx" || first === "pnpx" || first === "bunx") {
+    const [program, ...args] = rest.map((word, index) => (index === 0 ? normalizeProgram(word) : word));
+    return program !== undefined && matchesServer([program, ...args]);
+  }
+  if (["npm", "pnpm", "yarn", "bun"].includes(first)) return packageManagerScript(rest);
+  if (STANDALONE_SERVERS.has(first)) return true;
 
   switch (first) {
-    case "npm":
-      return exact(rest, ["run", "dev"]) || exact(rest, ["run", "start"]) || second === "start";
-    case "pnpm":
-    case "yarn":
-      return (
-        second === "dev" ||
-        second === "start" ||
-        exact(rest, ["run", "dev"]) ||
-        exact(rest, ["run", "start"])
-      );
-    case "bun":
-      return second === "dev" || exact(rest, ["run", "dev"]);
     case "vite":
-      return second === undefined || second === "dev" || second === "preview" || second!.startsWith("-");
+      return second === undefined || second === "dev" || second === "preview" || second.startsWith("-");
     case "next":
     case "nuxt":
-      return second === "dev" || second === "start";
-    case "ng":
-      return second === "serve";
     case "astro":
-      return second === "dev" || second === "preview";
-    case "cargo":
-      return second === "run" || second === "watch";
-    case "python":
-    case "python3":
-      return (
-        (second === "-m" && words[2] === "http.server") ||
-        (second === "-m" && words[2] === "flask" && words[3] === "run")
-      );
-    case "uvicorn":
-      return true;
+    case "remix":
+    case "ng":
+      return second !== undefined && ["dev", "start", "serve", "preview"].includes(second);
+    case "webpack":
+      return rest.some((word) => ["serve", "--watch", "-w", "--serve"].includes(word));
     case "flask":
       return second === "run";
     case "rails":
       return second === "server" || second === "s";
-    case "php":
-      return second === "-S";
+    case "cargo":
+      return second === "run" || second === "watch";
     case "go":
       return second === "run";
-    case "air":
-    case "watchexec":
-    case "nodemon":
-    case "watcher":
-    case "http-server":
-    case "serve":
-      return true;
     case "deno":
       return second === "run";
-    case "docker":
-      return exact(rest, ["compose", "up"]);
-    case "docker-compose":
-      return second === "up";
-    case "webpack":
-      return second === "serve";
+    case "php":
+      return second === "-S";
     case "parcel":
-      return second !== "build";
+      return second === undefined || second !== "build";
     case "hugo":
       return second === "server";
     case "jekyll":
     case "mkdocs":
       return second === "serve";
+    case "python":
+    case "python3":
+    case "py":
+      return pythonServer(rest);
+    case "tail":
+      return second === "-f" || second === "-F";
     default:
       return false;
   }
@@ -230,7 +254,8 @@ function matchesServer(words: string[]): boolean {
 
 /**
  * Classify a shell command as something that should become a Project Service: a known dev
- * server/watcher, a command that binds a port, or any command explicitly ended with `&`.
+ * server/watcher, or any command explicitly ended with `&`. A port flag on its own is not
+ * enough (`ssh -p 22`, `lsof -p 123` and `PORT=4000 cargo test` stay in the shell).
  * Returns `null` when the command should stay in the interactive shell.
  */
 export function backgroundCommand(command: string): BackgroundCommand | null {
@@ -239,10 +264,17 @@ export function backgroundCommand(command: string): BackgroundCommand | null {
 
   const tokens = tokenize(stripped);
   let start = 0;
-  while (start < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[start]!.value)) {
-    start += 1;
+  while (start < tokens.length) {
+    const token = tokens[start]!;
+    if (!token.quoted && (WRAPPERS.has(token.value) || isEnvAssignment(token.value))) {
+      start += 1;
+      continue;
+    }
+    break;
   }
-  const server = bindsPort(tokens) || matchesServer(tokens.slice(start).map((token) => token.value));
+  const words = tokens.slice(start).map((token) => token.value);
+  if (words.length > 0) words[0] = normalizeProgram(words[0]!);
+  const server = matchesServer(words);
   if (!explicit && !server) return null;
   return { command: stripped, explicit };
 }

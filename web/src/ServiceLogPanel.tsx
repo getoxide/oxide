@@ -4,11 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { LinkExternalIcon, SquareFillIcon, SyncIcon, TrashIcon } from "@primer/octicons-react";
 import { commands, type ProjectService, type ProjectServiceConflict, type ProjectServiceLogLine } from "./bindings";
 import { PROJECT_SERVICES_CHANGED } from "./ProjectServices";
+import { errorMessage } from "./errors";
 import type { TerminalCheckout } from "./terminalTabs";
 import { terminalPath } from "./terminalPaths";
 
 /** How many lines the view keeps; the Core owns the authoritative 10,000-line buffer. */
-export const MAX_SERVICE_LOG_LINES = 5_000;
+export const MAX_SERVICE_LOG_LINES = 10_000;
 
 /** Removes terminal escape sequences without a control-character regex. */
 export function stripAnsi(text: string): string {
@@ -77,8 +78,6 @@ export function detectServiceUrl(text: string): DetectedServiceUrl | null {
   return port >= 1 && port <= 65_535 ? { port, url: `http://localhost:${port}` } : null;
 }
 
-const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
-
 export interface ServiceLogPanelProps {
   projectId: number;
   serviceId: number;
@@ -92,8 +91,8 @@ export interface ServiceLogPanelProps {
 }
 
 /**
- * One Project Service's read-only log. There is deliberately no stdin: services are daemons, and
- * their only controls are Restart, Stop and Clear.
+ * One Project Service's read-only log. There is deliberately no stdin: services are background
+ * processes, and their only controls are Restart, Stop and Clear.
  */
 export function ServiceLogPanel(props: ServiceLogPanelProps) {
   // A different service is a different log; remount so no line from the old one survives.
