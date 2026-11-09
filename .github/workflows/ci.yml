@@ -184,7 +184,7 @@ jobs:
           allow-licenses: >-
             MIT, MIT-0, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
             Unicode-3.0, Unicode-DFS-2016, Zlib, MPL-2.0, CC0-1.0, Unlicense, BSL-1.0, BlueOak-1.0.0,
-            CC-BY-4.0, Python-2.0, CDLA-Permissive-2.0
+            CC-BY-4.0, Python-2.0, CDLA-Permissive-2.0, LicenseRef-bad-apache-2.0mit
 
   automation:
     name: automation
