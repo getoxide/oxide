@@ -40,6 +40,10 @@ Local language servers provide language intelligence without an extension system
 
 ## Brand and interaction commitments
 
-Extend the incumbent dark surfaces, GitHub-blue actions and Octicons vocabulary.
+Oxide's identity is the Braces mark, always in Titanium, on warm Titanium neutral
+surfaces. GitHub blue is for actions, focus and links and never appears in the
+logo. Interface and chat use Inter; the editor and terminal use JetBrains Mono
+with ligatures off. Keep the Octicons vocabulary. `assets/brand/oxide/` is the
+source of truth.
 Keep working controls compact and the primary content prominent. Use restrained
 motion, honor reduced motion, and preserve keyboard access and visible focus.
