@@ -40,13 +40,16 @@ const service = {
 
 let host: HTMLDivElement;
 let root: Root;
+let calls: { command: string; args: unknown }[] = [];
 
 beforeEach(() => {
   clearQueryCache();
+  calls = [];
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  mockIPC((command) => {
+  mockIPC((command, args) => {
+    calls.push({ command, args });
     switch (command) {
       case "list_projects": case "rescan_projects": return [project];
       case "last_selection": return { projectId: 1, threadId: 2 };
@@ -56,6 +59,7 @@ beforeEach(() => {
       case "subscribe_board": return [];
       case "list_project_services": return [service];
       case "project_service": return service;
+      case "restart_project_service": return { outcome: "started", payload: service };
       case "plugin:event|listen": return 1;
       case "remember_selection": return null;
       default: return null;
@@ -98,4 +102,17 @@ it("opens the clicked service's log tab in the Terminal Surface", async () => {
   await settle();
 
   expect(host.querySelector('[data-service-tab="9"]')).not.toBeNull();
+});
+
+it("restarts a service from the sidebar", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+
+  const restart = host.querySelector<HTMLButtonElement>(".service-restart");
+  expect(restart).not.toBeNull();
+  expect(restart?.getAttribute("aria-label")).toBe("Restart npm run dev");
+  await act(async () => { restart!.click(); });
+  await settle();
+
+  expect(calls.find((call) => call.command === "restart_project_service")?.args).toEqual({ id: 9 });
 });

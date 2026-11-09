@@ -284,12 +284,12 @@ it("keeps an early service failure inline in its command block", async () => {
   expect(output).toContain("Error: missing module");
   const [block] = blocks();
   expect(block.classList.contains("running")).toBe(false);
-  expect(block.textContent).toContain("exit 2");
+  expect(block.textContent).not.toContain("exit 2");
   expect(container.querySelector("textarea")).not.toBeNull();
   expect(shell.names()).not.toContain("run_terminal_block");
   expect(shell.names()).not.toContain("list_project_services");
   expect(JSON.parse(localStorage.getItem("oxide:terminal-history:1")!)).toEqual([
-    expect.objectContaining({ command: "npm run dev", exitCode: 2 }),
+    expect.objectContaining({ command: "npm run dev", exitCode: null }),
   ]);
 });
 

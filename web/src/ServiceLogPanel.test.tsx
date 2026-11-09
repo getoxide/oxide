@@ -77,6 +77,14 @@ const render = async (projectId = 1) => {
   expect(mergeLogLines(merged, [line(2, "stdout", "c")])).toHaveLength(3);
 });
 
+it("keeps up to ten thousand lines like the Core's buffer", () => {
+  const many = Array.from({ length: 10_050 }, (_, index) => line(index, "stdout", `line-${index}`));
+  const merged = mergeLogLines([], many);
+  expect(merged).toHaveLength(10_000);
+  expect(merged[0]?.seq).toBe(50);
+  expect(merged.at(-1)?.seq).toBe(10_049);
+});
+
 it("renders the service status, command and read-only backlog", async () => {
   await render();
   expect(container.textContent).toContain("npm run dev");

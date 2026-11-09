@@ -1,68 +1,14 @@
 #![cfg(unix)]
 
-use oxide_core::{
-    Core, ProjectService, ProjectServiceConflict, ProjectServiceStartOutcome, ProjectServiceStatus,
-};
+mod support;
+
+use oxide_core::ProjectServiceStatus;
 use oxide_provider::process::group_alive;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use support::{
+    conflicted, free_port, open_core_with_project, started, wait_group_gone, wait_until,
+};
 use tempfile::tempdir;
-
-fn started(outcome: ProjectServiceStartOutcome) -> ProjectService {
-    match outcome {
-        ProjectServiceStartOutcome::Started(service) => service,
-        ProjectServiceStartOutcome::Conflict(conflict) => {
-            panic!(
-                "expected a started service, got a conflict: {}",
-                conflict.message
-            )
-        }
-    }
-}
-
-fn conflicted(outcome: ProjectServiceStartOutcome) -> ProjectServiceConflict {
-    match outcome {
-        ProjectServiceStartOutcome::Conflict(conflict) => conflict,
-        ProjectServiceStartOutcome::Started(service) => {
-            panic!("expected a conflict, got service {}", service.id)
-        }
-    }
-}
-
-/// A free loopback port. The listener is dropped before the caller uses it, so a test may race
-/// another process for it; every test here uses its own ephemeral port, which keeps that rare.
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    listener.local_addr().unwrap().port()
-}
-
-fn open_core_with_project(dir: &Path) -> (Core, u32) {
-    let core = Core::open(dir).unwrap();
-    core.set_real_time_ticker(false);
-    std::fs::create_dir_all(dir.join("my-project").join(".git")).unwrap();
-    let project_id = core
-        .add_project(&dir.join("my-project").to_string_lossy())
-        .unwrap()
-        .id;
-    (core, project_id)
-}
-
-fn wait_until(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if check() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn wait_group_gone(pid: u32) -> bool {
-    wait_until(Duration::from_secs(5), || !group_alive(pid as i32))
-}
 
 #[test]
 fn spawns_a_long_running_service_in_its_own_process_group() {
@@ -402,6 +348,27 @@ fn an_external_listener_on_the_port_is_a_conflict_without_an_incumbent() {
 }
 
 #[test]
+fn an_ipv6_only_listener_on_the_port_is_a_conflict() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+    // Keep the listener alive for the whole check. A host without IPv6 cannot run this case.
+    let Ok(listener) = std::net::TcpListener::bind(("::1", 0)) else {
+        return;
+    };
+    let port = listener.local_addr().unwrap().port();
+
+    let outcome = core
+        .start_project_service(project_id, None, &format!("PORT={port} sleep 30"))
+        .unwrap();
+
+    let conflict = conflicted(outcome);
+    assert_eq!(conflict.port, port);
+    assert!(conflict.existing.is_none());
+    assert!(core.list_project_services(project_id).unwrap().is_empty());
+    drop(listener);
+}
+
+#[test]
 fn restart_reuses_its_own_port_and_conflicts_with_another_service_holding_it() {
     let dir = tempdir().unwrap();
     let (core, project_id) = open_core_with_project(dir.path());
@@ -438,6 +405,11 @@ fn restart_reuses_its_own_port_and_conflicts_with_another_service_holding_it() {
     );
     let b_after = core.project_service(b.id).unwrap().unwrap();
     assert_eq!(b_after.status, ProjectServiceStatus::Stopped);
+    assert_eq!(
+        b_after.port, None,
+        "a restart that never bound its port must not advertise it"
+    );
+    assert_eq!(b_after.url, None);
     assert!(!group_alive(b.pid as i32));
 
     core.stop_project_service(restarted.id).unwrap();

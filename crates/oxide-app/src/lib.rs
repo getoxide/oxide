@@ -1573,17 +1573,26 @@ pub struct ProjectServiceConflict {
 }
 
 /// Starts `command` as a Project Service in the Project's (or Thread's) checkout.
+///
+/// The startup grace check and the stop/restart waits all block for seconds, so they run off the
+/// async command thread like every other long-running Core call.
 #[tauri::command]
 #[specta::specta]
-fn start_project_service(
+async fn start_project_service(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     thread_id: Option<u32>,
     command: String,
 ) -> Result<ProjectServiceStartOutcome, AppError> {
-    Ok(convert(
-        &core.start_project_service(project_id, thread_id, &command)?,
-    ))
+    let core = Arc::clone(&core);
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        core.start_project_service(project_id, thread_id, &command)
+    })
+    .await
+    .map_err(|e| AppError {
+        message: e.to_string(),
+    })??;
+    Ok(convert(&outcome))
 }
 
 /// The running Project Services of a Project.
@@ -1613,25 +1622,43 @@ fn project_service(
 /// Stops a Project Service, sending SIGTERM and then SIGKILL.
 #[tauri::command]
 #[specta::specta]
-fn stop_project_service(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
-    Ok(core.stop_project_service(id)?)
+async fn stop_project_service(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
+    let core = Arc::clone(&core);
+    tauri::async_runtime::spawn_blocking(move || core.stop_project_service(id))
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })?
+        .map_err(AppError::from)
 }
 
 /// Stops and restarts a Project Service, reusing its id.
 #[tauri::command]
 #[specta::specta]
-fn restart_project_service(
+async fn restart_project_service(
     core: State<'_, Arc<Core>>,
     id: u32,
 ) -> Result<ProjectServiceStartOutcome, AppError> {
-    Ok(convert(&core.restart_project_service(id)?))
+    let core = Arc::clone(&core);
+    let outcome = tauri::async_runtime::spawn_blocking(move || core.restart_project_service(id))
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })??;
+    Ok(convert(&outcome))
 }
 
 /// Empties a Project Service's log buffer.
 #[tauri::command]
 #[specta::specta]
-fn clear_project_service_logs(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
-    Ok(core.clear_project_service_logs(id)?)
+async fn clear_project_service_logs(core: State<'_, Arc<Core>>, id: u32) -> Result<(), AppError> {
+    let core = Arc::clone(&core);
+    tauri::async_runtime::spawn_blocking(move || core.clear_project_service_logs(id))
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })?
+        .map_err(AppError::from)
 }
 
 /// A Project Service's buffered log, then every new line on `on_line`.

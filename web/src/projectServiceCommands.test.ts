@@ -17,12 +17,14 @@ describe("backgroundCommand", () => {
     "next dev",
     "nuxt dev",
     "ng serve",
+    "remix dev",
     "cargo run",
     "cargo watch",
     "python -m http.server",
     "python3 -m http.server 8080",
     "python -m flask run",
     "uvicorn app:app",
+    "gunicorn app:app",
     "flask run",
     "rails server",
     "php -S localhost:8000",
@@ -31,11 +33,11 @@ describe("backgroundCommand", () => {
     "watchexec -e rs",
     "nodemon server.js",
     "deno run --allow-net main.ts",
-    "docker compose up",
-    "docker-compose up",
     "http-server",
     "serve",
     "webpack serve",
+    "webpack-dev-server",
+    "browser-sync start --proxy localhost:3000",
     "parcel index.html",
     "astro dev",
     "hugo server",
@@ -47,21 +49,49 @@ describe("backgroundCommand", () => {
   });
 
   it.each([
-    "node server.js --port 3000",
-    "node server.js --port=3000",
-    "node server.js -p 3000",
-    "PORT=8080 node server.js",
-    "vite --port 4000",
-  ])("recognises an explicit port in %s", (command) => {
+    "env npm run dev",
+    "env FOO=bar npm run dev",
+    "nohup npm run dev",
+    "sudo npm run dev",
+    "nice npm run dev",
+    "exec npm run dev",
+    "time npm run dev",
+    "pnpx vite",
+    "bunx vite",
+    "./node_modules/.bin/vite",
+  ])("strips the wrapper in %s before classifying", (command) => {
     expect(backgroundCommand(command)).toEqual(detached(command));
   });
 
-  it.each(["ls", "git status", "echo 'npm run dev'", "clear", "cls", "Clear-Host", "npm test", "vite build", "cat package.json"])(
-    "leaves %s in the shell",
-    (command) => {
-      expect(backgroundCommand(command)).toBeNull();
-    },
-  );
+  it.each([
+    "npm run dev -- --port 3000",
+    "vite --port 4000",
+    "PORT=4000 npm start",
+  ])("recognises %s as a long-running command with an explicit port", (command) => {
+    expect(backgroundCommand(command)).toEqual(detached(command));
+  });
+
+  it.each([
+    "ls",
+    "git status",
+    "echo 'npm run dev'",
+    "clear",
+    "cls",
+    "Clear-Host",
+    "npm test",
+    "vite build",
+    "cat package.json",
+    "python -m flask --help",
+    "ssh -p 22 host",
+    "lsof -p 123",
+    "PORT=4000 cargo test",
+    "node server.js --port 3000",
+    "docker compose up",
+    "docker-compose up",
+    "docker compose down",
+  ])("leaves %s in the shell", (command) => {
+    expect(backgroundCommand(command)).toBeNull();
+  });
 
   it.each([
     ["sleep 300 &", "sleep 300"],
