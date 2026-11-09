@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands } from "./bindings";
 import { CodeIcon, DownloadIcon, UploadIcon } from "@primer/octicons-react";
 import {
+  BUNDLED_FONTS,
   DEFAULT_APPEARANCE,
   getAppearance,
   parseThemePack,
@@ -88,7 +89,8 @@ export function AppearanceSettings({ onDraftChange }: { onDraftChange?: (value: 
                   edit({ fonts: { ...draft.fonts, [key]: event.target.value } })
                 }
               >
-                {!fonts.includes(draft.fonts[key]) && <option value={draft.fonts[key]}>{draft.fonts[key] === DEFAULT_APPEARANCE.fonts[key] ? "System default" : `Saved: ${draft.fonts[key]}`}</option>}
+                {!fonts.includes(draft.fonts[key]) && !BUNDLED_FONTS.some((font) => font.value === draft.fonts[key]) && <option value={draft.fonts[key]}>{`Saved: ${draft.fonts[key]}`}</option>}
+                {BUNDLED_FONTS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}
                 {fonts.map((font) => <option key={font} value={font}>{font}</option>)}
               </select></label>
               <label className="settings-field">Weight

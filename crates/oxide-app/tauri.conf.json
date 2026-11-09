@@ -15,7 +15,7 @@
         "title": "Oxide",
         "width": 1280,
         "height": 800,
-        "backgroundColor": "#0f1115",
+        "backgroundColor": "#1C1C1E",
         "maximized": true,
         "minWidth": 1064,
         "minHeight": 560,
@@ -38,7 +38,9 @@
     "active": true,
     "resources": {
       "../../docs/licenses/whisper.txt": "licenses/whisper.txt",
-      "../../docs/licenses/dictation-fixture.txt": "licenses/dictation-fixture.txt"
+      "../../docs/licenses/dictation-fixture.txt": "licenses/dictation-fixture.txt",
+      "../../docs/licenses/inter.txt": "licenses/inter.txt",
+      "../../docs/licenses/jetbrains-mono.txt": "licenses/jetbrains-mono.txt"
     },
     "targets": ["app", "dmg", "nsis", "msi"],
     "macOS": { "minimumSystemVersion": "11.0" },

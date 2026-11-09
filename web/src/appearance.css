@@ -1,5 +1,5 @@
 :root {
-  --mono: var(--font-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  --mono: var(--font-code, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
   font-family: var(--font-ui, system-ui, sans-serif);
   font-size: var(--font-ui-size, 13px);
   font-weight: var(--font-ui-weight, 400);
@@ -19,6 +19,33 @@
 .terminal-workbench,
 .terminal {
   --mono: var(--font-terminal, monospace);
+}
+/* index.html paints the splash dark before any theme is known; once the app runs, the theme decides. */
+html body,
+html #root {
+  background: var(--bg);
+}
+.xterm,
+.diff-content,
+.tool-detail,
+code,
+pre,
+kbd {
+  font-variant-ligatures: none;
+}
+/* Effort tiers are tuned for dark surfaces; as text on Titanium Light they would miss 4.5:1. */
+/* GitHub label colours are arbitrary; mixing toward white only suits dark surfaces. */
+:root[data-appearance="light"] .pr-label {
+  color: color-mix(in srgb, var(--label) 45%, var(--fg-bright));
+}
+:root[data-appearance="light"] .effort-stop.active {
+  color: var(--fg-bright);
+}
+:root[data-appearance="light"] .effort-stop.active .effort-word {
+  background: none;
+  color: inherit;
+  text-shadow: none;
+  animation: none;
 }
 .terminal-block-output,
 .terminal,

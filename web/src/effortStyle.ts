@@ -9,12 +9,12 @@ export interface EffortLook {
 }
 
 const LEVELS: Record<string, EffortLook> = {
-  none: { color: "#8994a9", tier: 0, sparkles: 0 },
-  minimal: { color: "#8994a9", tier: 0, sparkles: 0 },
-  low: { color: "#f2c14e", tier: 0, sparkles: 0 },
-  medium: { color: "#5fc98c", tier: 1, sparkles: 0 },
-  high: { color: "#9aa8ff", tier: 2, sparkles: 0 },
-  xhigh: { color: "#b08cff", tier: 3, sparkles: 5 },
+  none: { color: "#9A9892", tier: 0, sparkles: 0 },
+  minimal: { color: "#9A9892", tier: 0, sparkles: 0 },
+  low: { color: "#E8B84F", tier: 0, sparkles: 0 },
+  medium: { color: "#5FCB8F", tier: 1, sparkles: 0 },
+  high: { color: "#78A9F0", tier: 2, sparkles: 0 },
+  xhigh: { color: "#B79CF0", tier: 3, sparkles: 5 },
   max: { color: "#ee7f9d", tier: 4, sparkles: 9 },
   ultra: { color: "#ff7ad9", tier: 5, sparkles: 14 },
 };

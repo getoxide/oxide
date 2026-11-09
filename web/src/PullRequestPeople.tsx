@@ -101,7 +101,7 @@ export function ReviewStateIcon({ state, size = 14 }: { state: ReviewState; size
 const HEX = /^[0-9a-f]{6}$/i;
 
 export function LabelChip({ label }: { label: PullRequestLabel }) {
-  const color = HEX.test(label.color) ? `#${label.color}` : "#8994a9";
+  const color = HEX.test(label.color) ? `#${label.color}` : "#9A9892";
   return (
     <span className="pr-label" style={{ "--label": color } as CSSProperties}>
       {label.name}
@@ -333,7 +333,7 @@ export function Picker({
                 <span className="pr-picker-check">{on && <CheckIcon size={14} />}</span>
                 {item.login !== undefined && <Avatar login={item.login} size={18} />}
                 {item.color !== undefined && (
-                  <span className="pr-swatch" style={{ background: HEX.test(item.color) ? `#${item.color}` : "#8994a9" }} />
+                  <span className="pr-swatch" style={{ background: HEX.test(item.color) ? `#${item.color}` : "#9A9892" }} />
                 )}
                 <span className="pr-person">{item.label}</span>
               </button>
