@@ -6,13 +6,13 @@ Some reports link into `references/`, which holds pinned upstream snapshots as G
 
 | Topic | Report | Map ticket |
 |---|---|---|
-| Claude Code Provider | [claude-code-provider.md](claude-code-provider.md) | [#2](https://github.com/cavallinilorenzo/oxide/issues/2) |
-| Codex Provider | [codex-provider.md](codex-provider.md) | [#3](https://github.com/cavallinilorenzo/oxide/issues/3) |
-| Antigravity CLI Provider | [antigravity-cli-provider.md](antigravity-cli-provider.md) | [#4](https://github.com/cavallinilorenzo/oxide/issues/4) |
-| ACP as common protocol | [acp-as-single-provider-protocol.md](acp-as-single-provider-protocol.md) | [#5](https://github.com/cavallinilorenzo/oxide/issues/5) |
-| T3 Code architecture | [t3-code-architecture.md](t3-code-architecture.md) | [#6](https://github.com/cavallinilorenzo/oxide/issues/6) |
-| Tauri and Rust building blocks | [tauri-rust-building-blocks.md](tauri-rust-building-blocks.md) | [#7](https://github.com/cavallinilorenzo/oxide/issues/7) |
-| Tauri frontend frameworks | [tauri-frontend-frameworks.md](tauri-frontend-frameworks.md) | [#8](https://github.com/cavallinilorenzo/oxide/issues/8) |
+| Claude Code Provider | [claude-code-provider.md](claude-code-provider.md) | [#2](https://github.com/getoxide/oxide/issues/2) |
+| Codex Provider | [codex-provider.md](codex-provider.md) | [#3](https://github.com/getoxide/oxide/issues/3) |
+| Antigravity CLI Provider | [antigravity-cli-provider.md](antigravity-cli-provider.md) | [#4](https://github.com/getoxide/oxide/issues/4) |
+| ACP as common protocol | [acp-as-single-provider-protocol.md](acp-as-single-provider-protocol.md) | [#5](https://github.com/getoxide/oxide/issues/5) |
+| T3 Code architecture | [t3-code-architecture.md](t3-code-architecture.md) | [#6](https://github.com/getoxide/oxide/issues/6) |
+| Tauri and Rust building blocks | [tauri-rust-building-blocks.md](tauri-rust-building-blocks.md) | [#7](https://github.com/getoxide/oxide/issues/7) |
+| Tauri frontend frameworks | [tauri-frontend-frameworks.md](tauri-frontend-frameworks.md) | [#8](https://github.com/getoxide/oxide/issues/8) |
 
 ## Cross-cutting takeaways
 
@@ -23,4 +23,4 @@ Some reports link into `references/`, which holds pinned upstream snapshots as G
 - Prototype Svelte 5, Solid, and React with the same representative chat workload. The research found no apples-to-apples evidence for declaring a fastest framework.
 - T3 Code offers useful domain and process-boundary references, but its event-sourced persistence, broad provider surface, worktree/checkpoint system, and multi-client architecture carry significant scope. Reuse the ideas that support the MVP rather than reproducing the full system.
 
-These takeaways are research synthesis, not additional settled decisions. See the [MVP map](https://github.com/cavallinilorenzo/oxide/issues/1) and the dependent design tickets before turning them into implementation requirements.
+These takeaways are research synthesis, not additional settled decisions. See the [MVP map](https://github.com/getoxide/oxide/issues/1) and the dependent design tickets before turning them into implementation requirements.

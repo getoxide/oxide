@@ -3,6 +3,7 @@
 
 mod activity;
 pub mod attachments;
+pub mod blind_review;
 mod board;
 mod checkpoint;
 mod clock;
@@ -12,6 +13,8 @@ pub mod desktop_tools;
 mod detection_cache;
 pub mod dictation;
 mod discovery;
+mod dossier;
+mod dossier_publish;
 mod error;
 mod files;
 mod git;
@@ -21,7 +24,9 @@ mod language_install;
 mod language_server;
 mod line_comments;
 mod project_setup;
+mod restore;
 mod review_ledger;
+mod rule_suggestions;
 mod settings;
 mod slash_catalog;
 mod storage_actor;
@@ -36,9 +41,22 @@ mod usage_poll;
 mod worktree;
 
 pub use activity::{Notification, NotificationKind, System};
+pub use blind_review::{
+    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, BlindReviewSummary,
+    FindingDecision,
+};
 pub use board::{BoardCard, BoardEvent, PendingApproval};
 pub use continuation::{ContinuedThread, RECAP_MAX_CHARS};
 pub use files::{FileContent, FileEntry};
+
+/// One Turn as the Diff Surface's Turn picker lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnPick {
+    pub turn_index: u32,
+    pub prompt: String,
+    /// Whether the Turn has Checkpoints; without them it has no diff.
+    pub checkpointed: bool,
+}
 pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
 pub use git_diff::{
     Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus, RevertHunk, RevertScope,
@@ -49,11 +67,14 @@ pub use github::{
     IssueComment, IssueDetail, IssueEdit, IssueSummary, IssueTemplateFile, IssuesState,
     MergeMethod, MergeState, PullRequest, PullRequestCandidates, PullRequestCheck,
     PullRequestComment, PullRequestDetail, PullRequestDraft, PullRequestEdit, PullRequestInput,
-    PullRequestLabel, PullRequestPhase, PullRequestReviewer, PullRequestState, ReviewDecision,
-    ReviewState,
+    PullRequestLabel, PullRequestPhase, PullRequestReviewThread, PullRequestReviewer,
+    PullRequestState, ReviewDecision, ReviewState, ReviewThreadComment, ReviewVerdict,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use line_comments::{CommentScope, CommentSide, LineComment, NewLineComment};
+pub use line_comments::{
+    CommentScope, CommentSide, LineComment, NewLineComment, NewPullRequestLineComment,
+    PullRequestLineComment,
+};
 use oxide_provider::Provider as ProviderTrait;
 use oxide_provider::process::ProcessRegistry;
 use std::collections::HashMap;
@@ -63,26 +84,41 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_actor::StorageHandle;
+use storage_actor::{NewItem, StorageHandle};
 pub use terminal::TerminalSummary;
 use terminal::{TerminalSession, next_id};
 use thread_actor::ThreadActorHandle;
 pub use worktree::{DeleteOutcome, DispatchRequest};
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use attachments::{
     AttachmentError, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_PROMPT, PromptInput,
 };
 pub use clock::{Clock, ManualClock, PROVIDER_IDLE_TIMEOUT, SystemClock};
 pub use db::MIGRATIONS;
+pub use dossier::{
+    AgentClaim, BranchCommit, DossierIntent, DossierIssue, DossierPullRequest, LARGE_DIFF_LINES,
+    PermissionModeUse, RiskSignal, RiskSignalKind, Supervision, VerificationCommand,
+    VerificationDossier, VerificationKind, VerificationState,
+};
+pub use dossier_publish::{
+    DossierSection, DossierSectionOptions, DossierUpdate, DossierUpdateState, RepositoryVisibility,
+    SECTION_END, SECTION_START,
+};
 pub use error::{Error, Result};
 pub use oxide_provider::{
-    ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, Detection,
-    ItemKind, ModelInfo, PromptSegment, ProviderCapabilities, TurnStatus, UsageStatus,
+    ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
+    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities, TurnStatus,
+    UsageStatus,
 };
-pub use review_ledger::{RECENT_ENTRIES, ReviewLedger, ReviewLedgerEntry};
+pub use restore::{PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
+pub use review_ledger::{
+    FollowUpStatus, RECENT_ENTRIES, ReviewFollowUp, ReviewLedger, ReviewLedgerEntry, ReviewRevert,
+    ReviewRoundGroup, ReviewSizeBand, ReviewWorkKind,
+};
+pub use rule_suggestions::RuleSuggestion;
 use settings::SettingsStore;
 pub use settings::{
     FieldError, PermissionMode, Provider, ProviderSettings, Providers, Settings, SettingsState,
@@ -119,6 +155,14 @@ pub struct ProjectSummary {
 pub struct Selection {
     pub project_id: u32,
     pub thread_id: Option<u32>,
+}
+
+/// What a push from Oxide did besides moving the branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushOutcome {
+    /// The published Dossier update; `None` for a push with no Thread to compute one from.
+    pub dossier: Option<DossierUpdate>,
 }
 
 /// How long quitting waits for interrupted Turns to wind down before killing their processes.
@@ -422,7 +466,7 @@ impl Core {
         let found = discovery::find_repositories(&roots);
         {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::db::write_transaction(&db)?;
             for path in &found {
                 let name = path
                     .file_name()
@@ -543,6 +587,35 @@ impl Core {
             "UPDATE projects SET hidden = ?2 WHERE id = ?1",
             (id, hidden),
         )?;
+        Ok(())
+    }
+
+    /// Whether chat Threads of this Project stay in the main checkout instead of
+    /// each getting its own worktree on its first prompt. Defaults to false.
+    pub fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT threads_in_main_checkout FROM projects WHERE id = ?1",
+            [project_id],
+            |r| Ok(r.get::<_, i64>(0)? != 0),
+        )?)
+    }
+
+    /// Sets whether chat Threads of this Project stay in the main checkout instead
+    /// of each getting its own worktree on its first prompt.
+    pub fn set_project_threads_in_main_checkout(
+        &self,
+        project_id: u32,
+        in_main_checkout: bool,
+    ) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = db.execute(
+            "UPDATE projects SET threads_in_main_checkout = ?2 WHERE id = ?1",
+            (project_id, in_main_checkout as i64),
+        )?;
+        if changed == 0 {
+            return Err(Error::Db(rusqlite::Error::QueryReturnedNoRows));
+        }
         Ok(())
     }
 
@@ -700,7 +773,7 @@ impl Core {
                 })
                 .collect();
             drop(stmt);
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::db::write_transaction(&db)?;
             for table in ["approvals", "unknown_events", "items"] {
                 tx.execute(
                     &format!(
@@ -712,6 +785,26 @@ impl Core {
             tx.execute(
                 "DELETE FROM line_comments WHERE thread_id = ?1",
                 [thread_id],
+            )?;
+            // A Blind review's findings die with the review or with the change it reviewed.
+            tx.execute(
+                "DELETE FROM blind_review_findings WHERE review_id IN
+                 (SELECT id FROM blind_reviews WHERE thread_id = ?1 OR review_thread_id = ?1)",
+                [thread_id],
+            )?;
+            tx.execute(
+                "DELETE FROM blind_reviews WHERE thread_id = ?1 OR review_thread_id = ?1",
+                [thread_id],
+            )?;
+            // A review Thread whose change was deleted loses the link, not its own history.
+            tx.execute(
+                "UPDATE threads SET blind_review_of = NULL WHERE blind_review_of = ?1",
+                [thread_id],
+            )?;
+            tx.execute("DELETE FROM restores WHERE thread_id = ?1", [thread_id])?;
+            tx.execute(
+                "DELETE FROM app_state WHERE key GLOB ?1",
+                [format!("dossier_options:{project_id}:{thread_id}:*")],
             )?;
             tx.execute("DELETE FROM turns WHERE thread_id = ?1", [thread_id])?;
             tx.execute(
@@ -1051,7 +1144,12 @@ impl Core {
     /// them.
     pub fn send_prompt_segments(&self, thread_id: u32, input: &[PromptInput]) -> Result<()> {
         let segments = self.attachment_store().resolve(input)?;
-        self.ensure_worktree(thread_id)?;
+        // Giving a chat Thread its own worktree (and running the Setup command) happens on its
+        // first prompt; a failed Setup means no Turn is started.
+        let start_turn = self.ensure_worktree(thread_id)?;
+        if !start_turn {
+            return Ok(());
+        }
         let actor = self.get_or_create_thread_actor(thread_id)?;
         actor.send_prompt(segments)
     }
@@ -1462,7 +1560,7 @@ impl Core {
     pub fn git_status_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitStatus> {
         let target = self.git_target(project_id, thread_id)?;
         let mut status = git::status(&target.root)?;
-        status.picker_disabled_reason = self.checkout_blocked_reason(project_id, &target)?;
+        status.picker_disabled_reason = self.checkout_blocked_reason(&target)?;
         Ok(status)
     }
 
@@ -1492,16 +1590,240 @@ impl Core {
     pub fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
         let snapshot = self.storage.get_snapshot(thread_id, 0)?;
         match snapshot.turn_count.checked_sub(1) {
-            Some(latest) => {
-                let cwd =
-                    PathBuf::from(self.checkout_path(snapshot.thread.project_id, Some(thread_id))?);
-                checkpoint::turn_diff(&cwd, thread_id, latest)
-            }
+            Some(latest) => self.turn_diff(thread_id, latest),
             None => Ok(Diff {
                 base: None,
                 files: Vec::new(),
             }),
         }
+    }
+
+    /// Every Turn of the Thread by position and prompt, for the Diff Surface's Turn picker.
+    pub fn turn_picks(&self, thread_id: u32) -> Result<Vec<TurnPick>> {
+        let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
+        let cwd = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
+        let page = self.storage.list_turns(thread_id, 0, u32::MAX)?;
+        Ok(page
+            .turns
+            .into_iter()
+            .map(|turn| TurnPick {
+                turn_index: turn.turn_index,
+                checkpointed: checkpoint::has_start(&cwd, thread_id, turn.turn_index),
+                prompt: turn.prompt,
+            })
+            .collect())
+    }
+
+    /// What restoring the Thread's files to how they were before `turn_index` would change.
+    pub fn restore_preview(&self, thread_id: u32, turn_index: u32) -> Result<RestorePreview> {
+        let target = self.thread_target(thread_id)?;
+        self.restore_refused(thread_id, &target)?;
+        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        let files = restore::plan(&target.root, &source)?;
+        Ok(RestorePreview { turn_index, files })
+    }
+
+    /// Puts the Thread's files back to how they were before `turn_index`. A Checkpoint of
+    /// the files is taken first, so the restore can be undone.
+    pub fn restore_turn(&self, thread_id: u32, turn_index: u32) -> Result<RestoreOutcome> {
+        let target = self.thread_target(thread_id)?;
+        self.restore_refused(thread_id, &target)?;
+        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        // The files are written under the checkout's lock, like every other change to
+        // it: the plan, the safety Checkpoint and the restore happen together.
+        let (safety, files) = self.git.mutate(&target.root, || {
+            let files = restore::plan(&target.root, &source)?;
+            // The safety Checkpoint comes first: it is what the undo returns to.
+            let safety = restore::take_safety(&target.root, thread_id)?;
+            restore::apply(&target.root, &source, &files)?;
+            Ok((safety, files))
+        })?;
+        // The restore is kept only once it happened: one that failed is not undoable.
+        self.record_restore(thread_id, turn_index, &safety, &files)?;
+        self.record_restore_in_transcript(thread_id, turn_index, &files, false)?;
+        // The agent is told on its next prompt which files went back.
+        self.storage
+            .set_restore_notice(thread_id, restore::notice(turn_index, &files, false))?;
+        Ok(RestoreOutcome {
+            turn_index,
+            files,
+            undone: false,
+        })
+    }
+
+    /// The restore that can still be undone, if any.
+    pub fn pending_restore(&self, thread_id: u32) -> Result<Option<PendingRestore>> {
+        Ok(self
+            .latest_restore(thread_id)?
+            .map(|record| PendingRestore {
+                turn_index: record.turn_index,
+                files: record.files,
+            }))
+    }
+
+    /// Undoes the Thread's latest restore, putting the files it changed back to the
+    /// Checkpoint the restore took. Work done after the restore stays.
+    pub fn undo_restore(&self, thread_id: u32) -> Result<RestoreOutcome> {
+        let target = self.thread_target(thread_id)?;
+        self.restore_refused(thread_id, &target)?;
+        let Some(record) = self.latest_restore(thread_id)? else {
+            return Err(Error::Git("There is no restore to undo.".into()));
+        };
+        let source = checkpoint::tree_of(&target.root, &record.safety_ref)?;
+        let files = self.git.mutate(&target.root, || {
+            restore::undo(&target.root, &source, &record.files)
+        })?;
+        self.mark_restore_undone(thread_id)?;
+        self.record_restore_in_transcript(thread_id, record.turn_index, &files, true)?;
+        self.storage
+            .set_restore_notice(thread_id, restore::notice(record.turn_index, &files, true))?;
+        Ok(RestoreOutcome {
+            turn_index: record.turn_index,
+            files,
+            undone: true,
+        })
+    }
+
+    /// Writes the mark of a restore into the Transcript, at the end of the Thread's last
+    /// Turn: a restore happens between Turns, not inside the one it restores to.
+    fn record_restore_in_transcript(
+        &self,
+        thread_id: u32,
+        restored_to: u32,
+        files: &[RestoreFile],
+        undone: bool,
+    ) -> Result<()> {
+        let (turn_id, item_index) = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let turn_id: u32 = db.query_row(
+                "SELECT id FROM turns WHERE thread_id = ?1 ORDER BY turn_index DESC LIMIT 1",
+                [thread_id],
+                |r| r.get(0),
+            )?;
+            let item_index: i64 = db.query_row(
+                "SELECT COALESCE(MAX(item_index), -1) + 1 FROM items WHERE turn_id = ?1",
+                [turn_id],
+                |r| r.get(0),
+            )?;
+            (turn_id, item_index.max(0) as u32)
+        };
+        self.storage.write_item_completed(NewItem {
+            turn_id,
+            item_index,
+            kind: ItemKind::RestoreMarker,
+            content: restore::marker(restored_to, files, undone),
+            parent_item_index: None,
+            category: None,
+            command: None,
+        })?;
+        Ok(())
+    }
+
+    /// Why a restore is refused, if it is. The files are not ours to put back while a
+    /// Turn is running: neither the Thread's own, nor one of another Thread in the same
+    /// checkout.
+    fn restore_refused(&self, thread_id: u32, target: &GitTarget) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let status: String = db.query_row(
+            "SELECT status FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| r.get(0),
+        )?;
+        let running: u32 = db.query_row(
+            "SELECT COUNT(*) FROM turns WHERE thread_id = ?1 AND status = 'running'",
+            [thread_id],
+            |r| r.get(0),
+        )?;
+        if running > 0 || matches!(status.as_str(), "working" | "needs-input") {
+            return Err(Error::Git(
+                "A Turn is running in this Thread. Wait for it to finish or stop it.".into(),
+            ));
+        }
+        let others = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
+        if others
+            .iter()
+            .any(|(id, status)| *id != thread_id && is_busy(status))
+        {
+            return Err(Error::Git(
+                "Another Thread is working in this checkout. Wait for its Turn to finish or stop it."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Keeps a restore, so it can be undone.
+    fn record_restore(
+        &self,
+        thread_id: u32,
+        turn_index: u32,
+        safety_ref: &str,
+        files: &[RestoreFile],
+    ) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let files = serde_json::to_string(files).unwrap_or_else(|_| "[]".into());
+        db.execute(
+            "INSERT INTO restores (thread_id, turn_index, safety_ref, files) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![thread_id, turn_index, safety_ref, files],
+        )?;
+        Ok(())
+    }
+
+    /// The Thread's latest restore that has not been undone yet.
+    fn latest_restore(&self, thread_id: u32) -> Result<Option<restore::RestoreRecord>> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let row = rusqlite::OptionalExtension::optional(db.query_row(
+            "SELECT turn_index, safety_ref, files FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1",
+            [thread_id],
+            |r| {
+                Ok((
+                    r.get::<_, u32>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        ))?;
+        let Some((turn_index, safety_ref, files)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(restore::RestoreRecord {
+            turn_index,
+            safety_ref,
+            files: serde_json::from_str(&files).unwrap_or_default(),
+        }))
+    }
+
+    /// Marks the Thread's latest restore as undone.
+    fn mark_restore_undone(&self, thread_id: u32) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute(
+            "UPDATE restores SET undone_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = (SELECT id FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1)",
+            [thread_id],
+        )?;
+        Ok(())
+    }
+
+    /// The checkout a Thread's files live in: its worktree, or the Project's main one.
+    fn thread_target(&self, thread_id: u32) -> Result<GitTarget> {
+        let project_id = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            db.query_row(
+                "SELECT project_id FROM threads WHERE id = ?1",
+                [thread_id],
+                |r| r.get(0),
+            )?
+        };
+        self.git_target(project_id, Some(thread_id))
+    }
+
+    /// The tree of a Turn's start Checkpoint: what the files were before the Turn.
+    fn turn_checkpoint_tree(&self, cwd: &Path, thread_id: u32, turn_index: u32) -> Result<String> {
+        if !checkpoint::has_start(cwd, thread_id, turn_index) {
+            return Err(Error::Git(
+                "This Turn has no Checkpoint to restore to.".into(),
+            ));
+        }
+        checkpoint::start_tree(cwd, thread_id, turn_index)
     }
 
     /// Takes a file, or one hunk of it, out of the Uncommitted or Turn diff of the checkout a
@@ -1598,7 +1920,13 @@ impl Core {
 
     /// Like [`Core::fetch_project`], with the current time injected.
     pub fn fetch_project_at(&self, project_id: u32, now: std::time::Instant) -> Result<bool> {
-        self.git.fetch(&self.main_checkout(project_id)?, now)
+        let checkout = self.main_checkout(project_id)?;
+        let fetched = self.git.fetch(&checkout, now)?;
+        if fetched {
+            let _ =
+                review_ledger::detect_reverts_and_follow_ups(&checkout, project_id, &self.ledger);
+        }
+        Ok(fetched)
     }
 
     /// `git pull --ff-only`; a diverged branch fails with Git's message.
@@ -1610,6 +1938,65 @@ impl Core {
     pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
         // Pulling rewrites files like a checkout does, so it takes the same guard.
         self.switch_branch(project_id, thread_id, git::pull)
+    }
+
+    /// Fast-forwards a Thread checkout only if it is still on the pull request's branch.
+    pub fn pull_thread_branch(
+        &self,
+        project_id: u32,
+        thread_id: u32,
+        expected_branch: &str,
+        expected_head: &str,
+    ) -> Result<()> {
+        self.switch_branch(project_id, Some(thread_id), |cwd| {
+            let actual = git::status(cwd)?.branch;
+            if actual.as_deref() != Some(expected_branch) {
+                return Err(Error::Git(format!(
+                    "This Thread's checkout is on `{}` rather than the pull request branch `{expected_branch}`; check out the pull request branch before pulling.",
+                    actual.as_deref().unwrap_or("detached HEAD")
+                )));
+            }
+            if expected_head.is_empty()
+                || !expected_head.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(Error::Git(
+                    "GitHub did not report a valid pull request head commit.".into(),
+                ));
+            }
+            let remote = git::run(
+                cwd,
+                &["config", "--get", &format!("branch.{expected_branch}.remote")],
+            )?
+            .trim()
+            .to_string();
+            let merge_ref = git::run(
+                cwd,
+                &["config", "--get", &format!("branch.{expected_branch}.merge")],
+            )?
+            .trim()
+            .to_string();
+            let expected_merge_ref = format!("refs/heads/{expected_branch}");
+            if remote == "." || merge_ref != expected_merge_ref {
+                return Err(Error::Git(format!(
+                    "This checkout is not tracking the pull request branch `{expected_branch}`."
+                )));
+            }
+            git::run(cwd, &["fetch", "--no-tags", &remote, &merge_ref])?;
+            let fetched = git::run(cwd, &["rev-parse", "--verify", "FETCH_HEAD^{commit}"])?;
+            if fetched.trim() != expected_head {
+                return Err(Error::Git(
+                    "The configured upstream does not match the pull request's current head; no checkout changes were made."
+                        .into(),
+                ));
+            }
+            git::run(cwd, &["merge", "--ff-only", "--no-edit", expected_head])?;
+            if git::head(cwd).as_deref() != Some(expected_head) {
+                return Err(Error::Git(
+                    "The checkout did not fast-forward to the pull request's current head.".into(),
+                ));
+            }
+            Ok(())
+        })
     }
 
     /// Commits exactly the given files of the main checkout with `message`,
@@ -1632,19 +2019,25 @@ impl Core {
 
     /// Pushes the current branch (upstream set on the first push, never
     /// forced). Pushing `main`/`master` needs `allow_protected`.
-    pub fn push(&self, project_id: u32, allow_protected: bool) -> Result<()> {
+    pub fn push(&self, project_id: u32, allow_protected: bool) -> Result<PushOutcome> {
         self.push_in(project_id, None, allow_protected)
     }
 
-    /// [`Core::push`] from a Thread's checkout (`None`: the main one).
+    /// [`Core::push`] from a Thread's checkout (`None`: the main one). After a successful push
+    /// from a Thread, the published Dossier of the branch's pull request is updated; a failure
+    /// there is reported in the outcome and never fails the push.
     pub fn push_in(
         &self,
         project_id: u32,
         thread_id: Option<u32>,
         allow_protected: bool,
-    ) -> Result<()> {
+    ) -> Result<PushOutcome> {
         let cwd = self.git_target(project_id, thread_id)?.root;
-        self.git.mutate(&cwd, || git::push(&cwd, allow_protected))
+        self.git.mutate(&cwd, || git::push(&cwd, allow_protected))?;
+        Ok(PushOutcome {
+            dossier: thread_id
+                .map(|thread_id| self.update_published_dossier(project_id, thread_id)),
+        })
     }
 
     /// Replaces the directories `gh` is looked up in (default: the process PATH
@@ -1710,13 +2103,74 @@ impl Core {
     ) -> Result<PullRequest> {
         let cwd = self.git_target(project_id, thread_id)?.root;
         let mut input = input.clone();
+        if let Some(section) = input.dossier_section.as_deref() {
+            let expected_head = input.dossier_head_sha.as_deref().ok_or_else(|| {
+                Error::Github(
+                    "A published Dossier section must include the commit its preview was computed from. Refresh the preview before creating the pull request.".into(),
+                )
+            })?;
+            if git::head(&cwd).as_deref() != Some(expected_head) {
+                return Err(Error::Github(
+                    "The branch moved after the Dossier preview. Refresh the preview before creating the pull request."
+                        .into(),
+                ));
+            }
+            if dossier_publish::is_dossier_markdown(section)
+                && dossier_publish::section_commit(section) != Some(expected_head)
+            {
+                return Err(Error::Github(
+                    "The Dossier section does not match the commit its preview was computed from. Refresh the preview before creating the pull request.".into(),
+                ));
+            }
+            if thread_id.is_some() && input.dossier_options.is_none() {
+                return Err(Error::Github(
+                    "A Thread Dossier preview must include its explicit disclosure choices. Refresh the preview before creating the pull request."
+                        .into(),
+                ));
+            }
+        }
+        // A section from an earlier attempt goes first, so a `Closes` inside it cannot stand in
+        // for the one this pull request needs.
+        if input.dossier_section.is_some() {
+            input.body = dossier_publish::without_section(&input.body);
+        }
         if let Some(branch) = git::status(&cwd)?.branch
             && let Some(n) = self.issue_of_branch(project_id, &branch)?
         {
             input.body = worktree::closing_issue(&input.body, n);
         }
-        self.git
-            .mutate(&cwd, || github::create_pull_request(&self.gh, &cwd, &input))
+        // After `Closes`, so the section's text can never stand in for it.
+        if let Some(section) = &input.dossier_section {
+            input.body = dossier_publish::with_section(&input.body, section);
+        }
+        // Before the push: GitHub refuses a longer body only after the branch is already out.
+        if input.body.chars().count() > dossier_publish::MAX_BODY_CHARS {
+            return Err(Error::Github(format!(
+                "The description is longer than GitHub's {} characters; shorten it or the Dossier preview.",
+                dossier_publish::MAX_BODY_CHARS
+            )));
+        }
+        let pull_request = self
+            .git
+            .mutate(&cwd, || github::create_pull_request(&self.gh, &cwd, &input))?;
+        if let (Some(thread_id), Some(options)) = (thread_id, input.dossier_options.as_ref())
+            && input.dossier_section.is_some()
+        {
+            self.remember_dossier_options(
+                project_id,
+                thread_id,
+                pull_request.number,
+                &pull_request.url,
+                options,
+            )
+                .map_err(|error| {
+                    Error::Github(format!(
+                        "Pull request #{} was created, but Oxide could not save its Dossier disclosure choices; later updates will use the safe defaults. {error}",
+                        pull_request.number
+                    ))
+                })?;
+        }
+        Ok(pull_request)
     }
 
     /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
@@ -1836,12 +2290,58 @@ impl Core {
     /// A pull request's description, checks, conversation, allowed merge
     /// methods and changed files.
     pub fn pull_request_detail(&self, project_id: u32, number: u32) -> Result<PullRequestDetail> {
-        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number)
+        let mut detail =
+            github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number)?;
+        detail.dossier_out_of_date = dossier_publish::section_state(&detail.body, &detail.head_sha)
+            == dossier_publish::DossierSectionState::OutOfDate;
+        Ok(detail)
+    }
+
+    /// A pull request's inline review threads, anchored to the lines of its diff.
+    pub fn pull_request_review_threads(
+        &self,
+        project_id: u32,
+        number: u32,
+    ) -> Result<Vec<PullRequestReviewThread>> {
+        github::review_threads(&self.gh, &self.main_checkout(project_id)?, number)
     }
 
     /// Adds a conversation comment to a pull request.
     pub fn comment_pull_request(&self, project_id: u32, number: u32, body: &str) -> Result<()> {
         github::comment_pull_request(&self.gh, &self.main_checkout(project_id)?, number, body)
+    }
+
+    /// Submits the pull request's draft Line comments as one GitHub review. A refusal leaves the
+    /// drafts in place, so the reviewer can fix them and try again. Reviewing never changes a
+    /// checkout: `gh` runs in the Project's main checkout and only talks to GitHub.
+    pub fn submit_pull_request_review(
+        &self,
+        project_id: u32,
+        number: u32,
+        verdict: ReviewVerdict,
+        summary: &str,
+    ) -> Result<()> {
+        let summary = summary.trim();
+        let comments = self.list_pull_request_line_comments(project_id, number)?;
+        if summary.is_empty() && verdict == ReviewVerdict::RequestChanges {
+            return Err(Error::Github(
+                "Write a summary when requesting changes.".into(),
+            ));
+        }
+        if summary.is_empty() && comments.is_empty() && verdict == ReviewVerdict::Comment {
+            return Err(Error::Github(
+                "Write a summary or leave a line comment first.".into(),
+            ));
+        }
+        github::submit_review(
+            &self.gh,
+            &self.main_checkout(project_id)?,
+            number,
+            verdict,
+            summary,
+            &comments,
+        )?;
+        self.clear_pull_request_line_comments(project_id, number)
     }
 
     /// Moves a pull request out of draft (`draft` false), or back into it.
@@ -1887,7 +2387,7 @@ impl Core {
             if delete_branch
                 && !auto
                 && let Some(reason) =
-                    self.checkout_blocked_reason(project_id, &self.git_target(project_id, None)?)?
+                    self.checkout_blocked_reason(&self.git_target(project_id, None)?)?
             {
                 return Err(Error::Git(reason));
             }
@@ -1915,9 +2415,40 @@ impl Core {
         self.ledger.ledger(project_id)
     }
 
-    /// Removes every entry of the Review ledger.
+    /// Removes every entry of the Review ledger, and the comments kept to suggest rules.
     pub fn clear_review_ledger(&self) -> Result<()> {
-        self.ledger.clear()
+        self.ledger.clear()?;
+        self.clear_rule_feedback()
+    }
+
+    /// Confirms a candidate follow-up fix in the Review ledger.
+    pub fn confirm_follow_up(
+        &self,
+        project_id: u32,
+        pull_request: u32,
+        commit_sha: &str,
+    ) -> Result<()> {
+        self.ledger.set_follow_up_status(
+            project_id,
+            pull_request,
+            commit_sha,
+            FollowUpStatus::Confirmed,
+        )
+    }
+
+    /// Dismisses a candidate follow-up fix in the Review ledger.
+    pub fn dismiss_follow_up(
+        &self,
+        project_id: u32,
+        pull_request: u32,
+        commit_sha: &str,
+    ) -> Result<()> {
+        self.ledger.set_follow_up_status(
+            project_id,
+            pull_request,
+            commit_sha,
+            FollowUpStatus::Dismissed,
+        )
     }
 
     /// Closes a pull request on GitHub without merging it.
@@ -1955,7 +2486,7 @@ impl Core {
     ) -> Result<()> {
         let target = self.git_target(project_id, thread_id)?;
         self.git.mutate(&target.root, || {
-            if let Some(reason) = self.checkout_blocked_reason(project_id, &target)? {
+            if let Some(reason) = self.checkout_blocked_reason(&target)? {
                 return Err(Error::Git(reason));
             }
             f(&target.root)
@@ -1965,27 +2496,16 @@ impl Core {
     /// Threads started from the chat work in the main checkout, so switching branches under a
     /// running Turn would change its files. Board Threads have worktrees of their own, so only
     /// a Turn in that same worktree blocks them.
-    fn checkout_blocked_reason(
-        &self,
-        project_id: u32,
-        target: &GitTarget,
-    ) -> Result<Option<String>> {
+    fn checkout_blocked_reason(&self, target: &GitTarget) -> Result<Option<String>> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let working: u32 = match &target.worktree {
-            None => db.query_row(
-                "SELECT COUNT(*) FROM threads WHERE project_id = ?1 AND status = 'working' AND worktree_path IS NULL",
-                [project_id],
-                |r| r.get(0),
-            )?,
-            Some(path) => db.query_row(
-                "SELECT COUNT(*) FROM threads WHERE project_id = ?1 AND status = 'working' AND worktree_path = ?2",
-                rusqlite::params![project_id, path],
-                |r| r.get(0),
-            )?,
-        };
-        Ok((working > 0).then(|| {
-            "A Thread is working in this checkout. Wait for its Turn to finish or stop it.".into()
-        }))
+        let threads = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
+        Ok(threads
+            .iter()
+            .any(|(_, status)| status == "working")
+            .then(|| {
+                "A Thread is working in this checkout. Wait for its Turn to finish or stop it."
+                    .into()
+            }))
     }
 
     /// Resolves the checkout a Git operation acts on. `None` is the Project's main checkout;
@@ -1995,6 +2515,7 @@ impl Core {
     fn git_target(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitTarget> {
         let Some(thread_id) = thread_id else {
             return Ok(GitTarget {
+                project_id,
                 root: self.main_checkout(project_id)?,
                 worktree: None,
             });
@@ -2019,14 +2540,18 @@ impl Core {
                 root.display()
             )));
         }
-        Ok(GitTarget { root, worktree })
+        Ok(GitTarget {
+            project_id,
+            root,
+            worktree,
+        })
     }
 
     fn main_checkout(&self, project_id: u32) -> Result<PathBuf> {
         Ok(PathBuf::from(self.checkout_path(project_id, None)?))
     }
 
-    fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
+    pub fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(match thread_id {
             Some(thread_id) => db.query_row(
@@ -2151,7 +2676,39 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
 
 /// The checkout a Git operation resolved to.
 struct GitTarget {
+    /// The Project the checkout belongs to.
+    project_id: u32,
     root: PathBuf,
     /// The Thread's worktree path, or `None` for the Project's main checkout.
     worktree: Option<String>,
+}
+
+/// The Threads of the Project that work in the given checkout, with their status: the
+/// Threads with that worktree, or the Threads without one when the checkout is the
+/// Project's main one.
+fn threads_in_checkout(
+    db: &Connection,
+    project_id: u32,
+    worktree: Option<&str>,
+) -> Result<Vec<(u32, String)>> {
+    let read = |r: &rusqlite::Row<'_>| Ok((r.get(0)?, r.get(1)?));
+    let mut stmt = match worktree {
+        None => db.prepare(
+            "SELECT id, status FROM threads WHERE project_id = ?1 AND worktree_path IS NULL",
+        )?,
+        Some(_) => db.prepare(
+            "SELECT id, status FROM threads WHERE project_id = ?1 AND worktree_path = ?2",
+        )?,
+    };
+    let rows = match worktree {
+        None => stmt.query_map([project_id], read)?,
+        Some(path) => stmt.query_map(rusqlite::params![project_id, path], read)?,
+    };
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Whether a Thread of that status is busy: a Turn runs in its checkout, or waits there
+/// for the user.
+fn is_busy(status: &str) -> bool {
+    matches!(status, "working" | "needs-input")
 }

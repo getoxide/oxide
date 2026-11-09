@@ -1,6 +1,6 @@
 use oxide_provider::{
-    ActivityCategory, ApprovalDecision, ApprovalKind, ItemKind, PermissionMode, PromptSegment,
-    TurnStatus,
+    ActivityCategory, ApprovalDecision, ApprovalKind, CommandRecord, ItemKind, PermissionMode,
+    PromptSegment, TurnStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,10 +68,12 @@ pub struct ThreadSummary {
     pub setup_output: Option<String>,
     /// The GitHub issue a Board Thread was started from.
     pub issue_number: Option<u32>,
+    /// Whether this Thread was created as a Blind review.
+    pub blind_review: bool,
 }
 
 /// The `threads` columns [`parse_thread_summary`] reads, in order.
-pub const THREAD_COLUMNS: &str = "id, project_id, provider, model, effort, permission_mode, status, created_at, updated_at, session_lost, continued_from, (SELECT MIN(c.id) FROM threads c WHERE c.continued_from = threads.id), title, branch, worktree_path, setup_output, issue_number";
+pub const THREAD_COLUMNS: &str = "id, project_id, provider, model, effort, permission_mode, status, created_at, updated_at, session_lost, continued_from, (SELECT MIN(c.id) FROM threads c WHERE c.continued_from = threads.id), title, branch, worktree_path, setup_output, issue_number, blind_review";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +88,9 @@ pub struct ItemSnapshot {
     /// categories existed.
     #[serde(default)]
     pub category: Option<ActivityCategory>,
+    /// What the Provider reported about this Item's command. Its outcome is `Unknown` for
+    /// non-command Items and for Items stored before command evidence existed.
+    pub command: CommandRecord,
     pub created_at: String,
 }
 
@@ -119,6 +124,9 @@ pub struct TurnSnapshot {
     /// The Model and Effort the Turn ran with.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The Permission mode the Thread was in when the Turn started. `None` for Turns stored
+    /// before it was recorded.
+    pub permission_mode: Option<PermissionMode>,
     /// The prompt in order: text, and Attachments at the place the user put them.
     pub segments: Vec<PromptSegment>,
     pub status: TurnStatus,
@@ -129,6 +137,16 @@ pub struct TurnSnapshot {
     pub error: Option<TurnError>,
     pub approvals: Vec<ApprovalSnapshot>,
     pub unknown_events: Vec<UnknownEventSnapshot>,
+}
+
+impl TurnSnapshot {
+    /// The agent's last top-level message of this Turn. A message nested under a Subagent is not
+    /// the agent closing the Turn.
+    pub fn final_agent_message(&self) -> Option<&ItemSnapshot> {
+        self.items
+            .iter()
+            .rfind(|item| item.kind == ItemKind::AgentMessage && item.parent_item_index.is_none())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +193,7 @@ pub enum ThreadEvent {
         prompt: String,
         model: Option<String>,
         effort: Option<String>,
+        permission_mode: Option<PermissionMode>,
         segments: Vec<PromptSegment>,
     },
     ItemStarted {
@@ -193,6 +212,8 @@ pub enum ThreadEvent {
         content: String,
         parent_item_index: Option<u32>,
         category: Option<ActivityCategory>,
+        #[serde(default)]
+        command: Option<CommandRecord>,
     },
     TurnCompleted {
         turn_index: u32,
@@ -279,5 +300,6 @@ pub fn parse_thread_summary(r: &rusqlite::Row) -> rusqlite::Result<ThreadSummary
         worktree_path: r.get(14)?,
         setup_output: r.get(15)?,
         issue_number: r.get(16)?,
+        blind_review: r.get::<_, i64>(17)? != 0,
     })
 }

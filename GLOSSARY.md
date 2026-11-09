@@ -40,12 +40,16 @@ A file the user puts inside a prompt, at a position in its text, stored under th
 _Avoid_: Upload, file input, image (when meaning any Attachment)
 
 **Item**:
-One unit of a Turn's output: an agent message, reasoning, a tool call, a file change, a subagent, or the output of a Slash command. Slash command output is its own kind, never an agent message, and stays out of the Continue in new Thread recap.
+One unit of a Turn's output: an agent message, reasoning, a tool call, a file change, a subagent, the output of a Slash command, or the mark of a Restore. Slash command output and the mark of a Restore are their own kinds, never an agent message, and stay out of the Continue in new Thread recap.
 _Avoid_: Step, block, event (when meaning the unit)
 
 **Activity**:
-The compressed, expandable record of what the Provider did in one Turn: a one-line summary of macro actions with counts ("Explored 4 files · Edited 2 files"), expanding into Phases and then Items. A view of the Turn's Items, not a new kind of Item; the agent's messages stay outside it. While the Turn runs it carries a live status line; a Turn with no tool-like Items has no Activity.
+The compressed, expandable record of what the Provider did in one Turn: a one-line summary of macro actions with counts ("Explored 4 files · Edited 2 files"), expanding into Phases and then Items. A view of the Turn's Items, not a new kind of Item; the agent's messages stay outside it. While the Turn runs it carries a live status line; a Turn with no tool-like Items has no Activity. A command the Provider reports as failed is marked even while the Activity is collapsed.
 _Avoid_: Timeline, log, steps
+
+**Command record**:
+What a Provider reported about one command it ran during a Turn: the command line, whether it succeeded, failed or is unknown, and the exit code when reported. Stored on the command's Item and never inferred from the command's output; a Provider that reports nothing leaves the outcome unknown. See **Activity**.
+_Avoid_: Command (alone), command evidence, exit status
 
 **Phase**:
 A run of consecutive Items of the same macro kind within an Activity: reasoning, explore, edit, run, delegate or other. A tool call's kind is assigned by its Provider adapter when it emits the Item (unmapped tools are other); Items stored without one fall back on their Item kind. The same kind returning later starts a new Phase.
@@ -68,12 +72,8 @@ An optional per-Project shell command run in every new worktree before its Threa
 _Avoid_: Init script, bootstrap
 
 **Board Thread**:
-A Thread dispatched from the Thread Board. It works in a git worktree of its own at `~/.oxide/worktrees/<project>/<slug>`, on a new `oxide/<slug>` branch cut from the chosen base branch's local commits (uncommitted changes stay behind), and shows a branch icon in the sidebar. A new Thread started from the chat does the same by default, creating its worktree with its first prompt; a Project can opt out, and then its chat Threads work in the main checkout, as do chat Threads that existed before the default. See ADR-0011.
+A Thread dispatched from an Issue, or any Thread that works in a git worktree of its own (there is no Thread Board any more). It works in a git worktree of its own at `~/.oxide/worktrees/<project>/<slug>`, on a new `oxide/<slug>` branch cut from the chosen base branch's local commits (uncommitted changes stay behind), and shows a branch icon in the sidebar. A new Thread started from the chat does the same by default, creating its worktree with its first prompt; a Project can opt out, and then its chat Threads work in the main checkout, as do chat Threads that existed before the default. See ADR-0011.
 _Avoid_: Background agent, background task
-
-**Thread Board**:
-The per-Project view of all its Threads grouped by Thread status into needs input (including error and interrupted), working and completed, from which a Board Thread can be dispatched.
-_Avoid_: Agent view, dashboard
 
 ## Review
 
@@ -81,13 +81,33 @@ _Avoid_: Agent view, dashboard
 A draft on one line of a Diff, with the quoted code, written by the user or by a reviewing Provider. It stays a draft until sent, and is then delivered to a Thread as part of one prompt, or to GitHub as part of a review.
 _Avoid_: Inline comment, annotation, note
 
+**Review thread**:
+A GitHub discussion on the lines of a pull request's diff: the opening comment, its replies, and the path, line and side they refer to, which GitHub marks resolved or outdated. Shown in the Diff Surface's PR scope. Its own term, not a Thread: a Thread is Oxide's conversation with a Provider.
+_Avoid_: Inline comment, comment thread, conversation
+
 **Verification command**:
 A command that counts as a check (tests, type checks, lint, build), recognized from built-in patterns plus the Project's own additions. Its state for a change is fresh, stale, failed, never run or unknown.
 _Avoid_: Test command, check script
 
 **Verification Dossier**:
-The account of a change's intent, evidence and risk signals that Oxide computes, without an LLM, from the Transcript, Checkpoints, Settings and GitHub. It is a section of the Diff Surface, shows separate signals instead of a single score, and keeps the agent's closing message apart as a claim. Also called the Dossier.
+The account of a change's intent, evidence and risk signals that Oxide computes, without an LLM, from the Transcript, Checkpoints, Settings and GitHub. It is a section of the Diff Surface, shows separate signals instead of a single score, and keeps the agent's closing message apart as a claim. In Branch scope it covers the whole branch: every Turn, the commits no Turn produced, the pull request's checks, Approvals and Permission modes. Also called the Dossier. Published, it is a section of a pull request's body between HTML comment markers: computed facts only, commands redacted, and prompts or the agent's message only when the author opts in for that pull request. The section records the commit and the options it was published with; a push from Oxide rewrites only the marked range, and a section the author removed is never re-added. When the branch moves outside Oxide the section is out of date until the author refreshes it.
 _Avoid_: Report, summary, risk score
+
+**Risk signal**:
+One separate fact in the Dossier that says what stayed uncovered and where to look first: a changed language no Verification command covers, source without a test change, a sensitive path, or a diff over the shown line threshold. Each signal explains itself in one sentence and points at the files in the Diff; signals are never combined into a score.
+_Avoid_: Risk score, warning, severity
+
+**Sensitive path**:
+A changed path the Dossier flags for a reviewer: CI configuration, dependency manifests, migrations, or a glob the Project added. Matched with gitignore-style patterns.
+_Avoid_: Dangerous path, protected path
+
+**Uncovered commit**:
+A commit on the branch since the base that no Turn of the Thread recorded as produced. The Dossier lists uncovered commits instead of presenting the whole branch as the Thread's work.
+_Avoid_: Foreign commit, orphan commit
+
+**Supervision**:
+The Dossier section that counts the Approvals granted and denied over a Thread's Turns and the Permission modes those Turns started in. A Turn stored before its mode was recorded counts as unknown.
+_Avoid_: Oversight, permissions summary
 
 **Blind review**:
 A review of a change by a Provider session that received only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
@@ -96,6 +116,18 @@ _Avoid_: Second opinion, AI review, auto-review
 **Review ledger**:
 Local figures about completed work that outlive Threads: identifiers, Provider, Model, timestamps and counts, never Transcript text. It is never sent anywhere and the user can clear it. See ADR-0010.
 _Avoid_: History, analytics, telemetry
+
+**Review round**:
+One send of Line comments, or of selected reviewer comments, to a Thread. The Review ledger counts review rounds by Provider, Model and kind of work (languages touched, diff size band and the issue's labels when present), with the sample size of each group, so small groups are not read as strongly. It stores no comment text.
+_Avoid_: Review pass, iteration, cycle
+
+**Rule suggestion**:
+A proposal to turn feedback the user keeps giving into a rule for the Project's agent instructions. Oxide groups the Line comments sent in the Project by normalized word similarity and suggests one once a group holds at least three similar comments from at least two Threads, showing the comments it is based on; a dismissed suggestion never comes back. The comments kept for this live apart from the Review ledger, and clearing the ledger clears them too. Accepting starts a normal Thread that proposes the edit in `AGENTS.md`, which the user reviews like any other change.
+_Avoid_: Rule, recommendation, tip
+
+**Reviewer comment**:
+One comment of a Review thread, written by a GitHub reviewer rather than by the user. It reaches a Thread only when the user selects its thread and asks for a fix, quoted and marked as external content. It is not a Line comment.
+_Avoid_: Review comment, review note
 
 ## Providers
 
@@ -138,15 +170,27 @@ _Avoid_: Turn, Thread, agent message
 One shell session in a Project's terminal tab strip. It keeps the checkout it was opened in, is flagged when that differs from the selected Thread's checkout, and survives Thread selection and Surface changes. Deleting a Board Thread closes only the tabs of its worktree.
 
 **Surface**:
-One of the five tools in the right dock: Diff, Files, Terminal, Pull request or Issues. A Surface can be maximized and restored while keeping its content and working state. The Pull request and Issues lists belong to the Project's repository; only branch actions (opening a pull request, checking one out) act on the selected Thread's checkout and name it. Reviewing a remote pull request records its identity for the Diff Surface and never changes a checkout.
+One of the five tools in the right dock: Diff, Files, Terminal, Pull request or Issues. Files is a navigator, not an editor: it browses the selected checkout and opens files in the **Code workspace**, which lives in the centre beside the Thread. A Surface can be maximized and restored while keeping its content and working state. The Pull request and Issues lists belong to the Project's repository; only branch actions (opening a pull request, checking one out) act on the selected Thread's checkout and name it. Reviewing a remote pull request records its identity for the Diff Surface and never changes a checkout.
 _Avoid_: Tab, pane, widget
 
+**Code workspace**:
+The Project's editor in the centre, one Thread/Code switch away from the conversation. It owns the file tabs, Monaco and the language servers; the Files Surface opens files into it on a double click or Enter/Space, and a Diff can open one too. Each Project keeps its own Code workspace, so moving between Threads keeps the open buffers, and a Board Thread's editor works in its worktree. See **Surface**.
+_Avoid_: Editor pane, code tab, work mode
+
+**Attention Center**:
+The header's tray of Threads waiting on the user across every open Project, grouped by Project: a pending **Approval**, a Thread needing input, a failed Turn or an interrupted one, each with a reason badge. The bell counts them, opens the tray, and jumps to the most urgent: the earliest pending Approval (by Thread activity, then lowest id), else a Thread needing input, else an error or interrupted one, in sidebar order. Opening the tray instead jumps to one Thread and focuses its response; a failed jump offers Retry.
+_Avoid_: Notification center, inbox, alerts
+
 **Diff scope**:
-What the Diff Surface compares: Uncommitted (staged, unstaged and untracked changes against HEAD), Branch (commits since the merge-base with the base branch) or Turn (the files changed between a Turn's two Checkpoints; a Turn of a Thread in a shared checkout may include concurrent changes from other Threads), all computed by Git; or PR, the changed files of a pull request opened for review, as GitHub reports them through `gh`. The default is Turn for Threads in the main checkout and Branch for Threads in a worktree of their own; PR is offered only once a pull request was opened for review.
+What the Diff Surface compares: Uncommitted (staged, unstaged and untracked changes against HEAD), Branch (commits since the merge-base with the base branch) or Turn (the files changed between a Turn's two Checkpoints, for any Turn picked by position and prompt, the latest by default; a Turn of a Thread in a shared checkout may include concurrent changes from other Threads), all computed by Git; or PR, the changed files of a pull request opened for review, as GitHub reports them through `gh`. The default is Turn for Threads in the main checkout and Branch for Threads in a worktree of their own; PR is offered only once a pull request was opened for review.
 _Avoid_: Diff mode, diff type
 
 **Revert**:
-Taking one file, or one hunk of it, out of the Uncommitted or Turn Diff by applying its patch in reverse to the selected Thread's checkout, leaving the rest of the change untouched. All-or-nothing: a patch that no longer applies cleanly changes nothing and says why. Deleting a file asks first, and it is refused while a Turn is running in that checkout. Not a Checkpoint restore, which rewinds the whole checkout to before a Turn.
+Taking one file, or one hunk of it, out of the Uncommitted or Turn Diff by applying its patch in reverse to the selected Thread's checkout, leaving the rest of the change untouched. All-or-nothing: a patch that no longer applies cleanly changes nothing and says why. Deleting a file asks first, and it is refused while a Turn is running in that checkout. Not a **Restore**, which rewinds the whole checkout to before a Turn.
+
+**Restore**:
+Putting the selected Thread's files back to how they were before a chosen Turn, file by file: HEAD, the branches, the user's index and the ignored files stay as they were, and the Provider's session is not rewound. It asks first, naming the files it changes, and takes a Checkpoint first, so it can be undone. It is refused while a Turn runs in that checkout, and the agent is told on its next prompt which files went back. See ADR-0011.
+_Avoid_: Rewind, rollback, checkout
 
 **Base branch**:
 The branch the Branch scope compares against: the remote's default branch, else `main`, `master` or `dev` (remote copy first).

@@ -71,6 +71,8 @@ impl Fixture {
                 base_branch: Some("main".into()),
                 issue_number: None,
                 issue_title: None,
+                issue_url: None,
+                issue_labels: Vec::new(),
             })
             .unwrap()
     }

@@ -2,8 +2,10 @@
 //! is whatever `gh` resolves from the checkout. Nothing here runs unless the
 //! user asked: there is no polling.
 
+use crate::dossier_publish::DossierSectionOptions;
 use crate::git;
 use crate::git_diff::{Diff, parse_patch};
+use crate::line_comments::{CommentSide, PullRequestLineComment};
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
 use serde::{Deserialize, Serialize};
@@ -71,6 +73,15 @@ pub struct BranchPullRequest {
     pub checks_pending: u32,
 }
 
+/// A branch's pull request with each check GitHub reports, for the Dossier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchPullRequestChecks {
+    pub number: u32,
+    pub url: String,
+    pub checks: Vec<PullRequestCheck>,
+}
+
 /// How `gh pr merge` combines the commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +109,7 @@ impl MergeMethod {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckState {
     Success,
@@ -116,7 +127,7 @@ impl CheckState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestCheck {
     pub name: String,
@@ -163,6 +174,25 @@ pub enum ReviewState {
     Dismissed,
 }
 
+/// The decision a submitted review carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewVerdict {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+impl ReviewVerdict {
+    fn event(self) -> &'static str {
+        match self {
+            Self::Comment => "COMMENT",
+            Self::Approve => "APPROVE",
+            Self::RequestChanges => "REQUEST_CHANGES",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestReviewer {
@@ -187,6 +217,34 @@ pub struct PullRequestComment {
     pub created_at: String,
     /// Set when the entry is a review rather than a plain comment.
     pub review: Option<ReviewState>,
+}
+
+/// One comment in an inline review thread, as GitHub shows it next to the code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadComment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// A GitHub inline review thread, anchored to a line of a pull request's diff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReviewThread {
+    pub id: String,
+    pub path: String,
+    /// The line on the current diff; `None` when the thread is outdated and GitHub no longer maps it.
+    pub line: Option<u32>,
+    /// The line the thread was written on, kept when [`line`](Self::line) is gone.
+    pub original_line: Option<u32>,
+    /// `old` for a removed line, `new` for an added or unchanged one.
+    pub side: Option<CommentSide>,
+    pub resolved: bool,
+    pub outdated: bool,
+    /// GitHub's excerpt around the commented line.
+    pub diff_hunk: String,
+    pub comments: Vec<ReviewThreadComment>,
 }
 
 /// Who and what a pull request can be assigned, for the settings pickers.
@@ -216,6 +274,11 @@ pub struct PullRequestDetail {
     pub pull_request: PullRequest,
     pub phase: PullRequestPhase,
     pub body: String,
+    /// The commit the pull request's head points at.
+    pub head_sha: String,
+    /// Whether the Dossier section in `body` describes an earlier commit than `head_sha`. Set by
+    /// Core, which owns the section format.
+    pub dossier_out_of_date: bool,
     pub checks: Vec<PullRequestCheck>,
     pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
@@ -267,6 +330,12 @@ pub struct PullRequestInput {
     pub body: String,
     pub base: String,
     pub draft: bool,
+    /// The Dossier section the author chose to publish; `None` leaves the body as written.
+    pub dossier_section: Option<String>,
+    /// The author's disclosure choices, separate from the editable section preview.
+    pub dossier_options: Option<DossierSectionOptions>,
+    /// The commit the Dossier preview was computed from, supplied separately from its Markdown.
+    pub dossier_head_sha: Option<String>,
 }
 
 /// One of the user's GitHub repositories, as offered for cloning.
@@ -281,6 +350,23 @@ pub struct GithubRepository {
 enum GhError {
     Missing,
     Failed(String),
+}
+
+/// Runs `command` with `input` on its standard input, closing it so the child can finish.
+fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process::Output> {
+    use std::io::Write;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.spawn().and_then(|mut child| {
+        let sent = {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(input.as_bytes())
+        };
+        let output = child.wait_with_output();
+        sent.and(output)
+    })
 }
 
 /// How `gh` is found: the process PATH plus Homebrew's, unless a search path
@@ -330,6 +416,25 @@ impl Gh {
     }
 
     fn run(&self, cwd: &Path, args: &[&str]) -> std::result::Result<String, GhError> {
+        self.run_with_input(cwd, args, None)
+    }
+
+    /// Runs `gh` with `input` as its standard input, for JSON bodies that arguments can't carry.
+    fn run_with_stdin(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: &str,
+    ) -> std::result::Result<String, GhError> {
+        self.run_with_input(cwd, args, Some(input))
+    }
+
+    fn run_with_input(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: Option<&str>,
+    ) -> std::result::Result<String, GhError> {
         let path = self.path_var();
         #[cfg(windows)]
         let mut child_path = path.clone();
@@ -372,15 +477,19 @@ impl Gh {
         #[cfg(windows)]
         let mut args = args.to_vec();
         #[cfg(windows)]
-        let body = args.iter().position(|arg| *arg == "--body").and_then(|at| {
-            let body = *args.get(at + 1)?;
-            if !body.contains(['\r', '\n']) {
-                return None;
-            }
-            args[at] = "--body-file";
-            args[at + 1] = "-";
-            Some(body)
-        });
+        let body = if input.is_some() {
+            None
+        } else {
+            args.iter().position(|arg| *arg == "--body").and_then(|at| {
+                let body = *args.get(at + 1)?;
+                if !body.contains(['\r', '\n']) {
+                    return None;
+                }
+                args[at] = "--body-file";
+                args[at + 1] = "-";
+                Some(body)
+            })
+        };
         command
             .args(args)
             .current_dir(cwd)
@@ -388,23 +497,19 @@ impl Gh {
             .env("GH_PROMPT_DISABLED", "1")
             .env("NO_COLOR", "1")
             .stdin(Stdio::null());
-        #[cfg(windows)]
-        let output = if let Some(body) = body {
-            use std::io::Write;
-            command
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            command.spawn().and_then(|mut child| {
-                let sent = child.stdin.take().unwrap().write_all(body.as_bytes());
-                let output = child.wait_with_output();
-                sent.and(output)
-            })
-        } else {
-            command.output()
+        let output = match input {
+            Some(input) => pipe_stdin(command, input),
+            None => {
+                #[cfg(windows)]
+                let output = match body {
+                    Some(body) => pipe_stdin(command, body),
+                    None => command.output(),
+                };
+                #[cfg(not(windows))]
+                let output = command.output();
+                output
+            }
         };
-        #[cfg(not(windows))]
-        let output = command.output();
         let output = output.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => GhError::Missing,
             _ => GhError::Failed(format!("could not run gh: {e}")),
@@ -783,6 +888,23 @@ fn current_branch(cwd: &Path) -> Result<String> {
 /// request. The caller holds the checkout's Git lock.
 pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Result<PullRequest> {
     gh.require_ready(cwd)?;
+    let check_dossier_head = || -> Result<()> {
+        if input.dossier_section.is_some() {
+            let expected = input.dossier_head_sha.as_deref().ok_or_else(|| {
+                Error::Github(
+                    "A published Dossier section must include the commit its preview was computed from. Refresh the preview before creating the pull request.".into(),
+                )
+            })?;
+            if git::head(cwd).as_deref() != Some(expected) {
+                return Err(Error::Github(
+                    "The branch moved after the Dossier preview. Refresh the preview before creating the pull request."
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    };
+    check_dossier_head()?;
     let status = git::status(cwd)?;
     let branch = current_branch(cwd)?;
     if status.protected {
@@ -800,9 +922,15 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
             "Choose a base branch other than the current one.".into(),
         ));
     }
+    if git::commits_beyond(cwd, base) == Some(0) {
+        return Err(Error::Github(format!(
+            "`{branch}` has no commits beyond `{base}`, so there is nothing to compare. Commit your changes first."
+        )));
+    }
     if status.ahead > 0 || status.unpublished {
         git::push(cwd, false)?;
     }
+    check_dossier_head()?;
     let mut args = vec![
         "pr",
         "create",
@@ -823,6 +951,25 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
         .ok_or_else(|| Error::Github("The pull request was created but could not be read.".into()))
 }
 
+/// Who can read the repository, as GitHub reports it.
+pub fn repository_visibility(gh: &Gh, cwd: &Path) -> Result<crate::RepositoryVisibility> {
+    use crate::RepositoryVisibility as V;
+    gh.require_ready(cwd)?;
+    let repo = parse(&gh.run(cwd, &["repo", "view", "--json", "visibility"])?)?;
+    Ok(
+        match repo["visibility"]
+            .as_str()
+            .map(str::to_ascii_uppercase)
+            .as_deref()
+        {
+            Some("PUBLIC") => V::Public,
+            Some("PRIVATE") => V::Private,
+            Some("INTERNAL") => V::Internal,
+            _ => V::Unknown,
+        },
+    )
+}
+
 /// The URL of the branch's open pull request.
 pub fn pull_request_url(gh: &Gh, cwd: &Path) -> Result<String> {
     gh.require_ready(cwd)?;
@@ -836,6 +983,84 @@ pub fn pull_request_url(gh: &Gh, cwd: &Path) -> Result<String> {
         )));
     }
     Ok(pr.url)
+}
+
+/// The body of the branch's open pull request, when it has one. A repository with no GitHub remote
+/// has no published Dossier to update; failures to use GitHub are errors so the push can report
+/// that the Dossier could not be updated.
+pub fn current_pull_request_body(
+    gh: &Gh,
+    cwd: &Path,
+) -> Result<Option<(u32, String, String, String)>> {
+    gh.require_ready(cwd)?;
+    let json = match gh.run(
+        cwd,
+        &["pr", "view", "--json", "number,body,state,headRefOid,url"],
+    ) {
+        Ok(json) => json,
+        Err(GhError::Failed(message))
+            if message.contains("no pull requests found")
+                || message.contains("no git remotes")
+                || message.contains("none of the git remotes") =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let value = parse(&json)?;
+    if value["state"].as_str() != Some("OPEN") {
+        return Ok(None);
+    }
+    let url = text(&value["url"]);
+    if !url.starts_with("https://") {
+        return Err(Error::Github(
+            "GitHub did not report a valid pull request URL.".into(),
+        ));
+    }
+    Ok(Some((
+        value["number"].as_u64().unwrap_or_default() as u32,
+        text(&value["body"]),
+        text(&value["headRefOid"]),
+        url,
+    )))
+}
+
+/// One pull request's body and the commit its head points at.
+pub fn pull_request_body_and_head(
+    gh: &Gh,
+    cwd: &Path,
+    number: u32,
+) -> Result<(String, String, String)> {
+    gh.require_ready(cwd)?;
+    let json = gh.run(
+        cwd,
+        &[
+            "pr",
+            "view",
+            &number.to_string(),
+            "--json",
+            "body,headRefOid,url",
+        ],
+    )?;
+    let value = parse(&json)?;
+    let url = text(&value["url"]);
+    if !url.starts_with("https://") {
+        return Err(Error::Github(
+            "GitHub did not report a valid pull request URL.".into(),
+        ));
+    }
+    Ok((text(&value["body"]), text(&value["headRefOid"]), url))
+}
+
+/// Replaces a pull request's body, leaving its other fields alone.
+pub fn edit_pull_request_body(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Result<()> {
+    gh.require_ready(cwd)?;
+    gh.run_with_stdin(
+        cwd,
+        &["pr", "edit", &number.to_string(), "--body-file", "-"],
+        body,
+    )?;
+    Ok(())
 }
 
 /// Open pull requests of the repository, optionally only the user's own and
@@ -884,13 +1109,12 @@ pub fn merged_head(gh: &Gh, cwd: &Path, number: u32) -> Result<Option<(String, O
         .map(|head| (head.to_string(), merged_at)))
 }
 
-/// The pull request of `branch`, whatever its state: an open one if there is one, else the
-/// latest, with its merge time (ISO 8601, UTC) when merged. `None` when the branch has none.
-pub fn branch_pull_request(
+/// The pull request of `branch` GitHub should show: an open one if there is one, else the latest.
+fn branch_pull_request_value(
     gh: &Gh,
     cwd: &Path,
     branch: &str,
-) -> Result<Option<(BranchPullRequest, Option<String>)>> {
+) -> Result<Option<serde_json::Value>> {
     gh.require_ready(cwd)?;
     let fields = format!("{PR_FIELDS},statusCheckRollup");
     let list = parse(&gh.run(
@@ -901,15 +1125,25 @@ pub fn branch_pull_request(
     )?)?;
     let prs = list.as_array().cloned().unwrap_or_default();
     let open = |v: &&serde_json::Value| v["state"].as_str() == Some("OPEN");
-    let Some(v) = prs
+    Ok(prs
         .iter()
         .filter(open)
         .max_by_key(|v| v["number"].as_u64())
         .or_else(|| prs.iter().max_by_key(|v| v["number"].as_u64()))
-    else {
+        .cloned())
+}
+
+/// The pull request of `branch`, whatever its state: an open one if there is one, else the
+/// latest, with its merge time (ISO 8601, UTC) when merged. `None` when the branch has none.
+pub fn branch_pull_request(
+    gh: &Gh,
+    cwd: &Path,
+    branch: &str,
+) -> Result<Option<(BranchPullRequest, Option<String>)>> {
+    let Some(v) = branch_pull_request_value(gh, cwd, branch)? else {
         return Ok(None);
     };
-    let phase = phase_from(v);
+    let phase = phase_from(&v);
     let mut tally = [0u32; 3];
     for check in v["statusCheckRollup"].as_array().into_iter().flatten() {
         tally[match check_from(check).state {
@@ -932,13 +1166,110 @@ pub fn branch_pull_request(
     )))
 }
 
+/// The pull request of `branch` with its checks, for the Dossier. Same pull request choice as
+/// [`branch_pull_request`], but with each check GitHub reports instead of a tally.
+pub fn branch_pull_request_checks(
+    gh: &Gh,
+    cwd: &Path,
+    branch: &str,
+) -> Result<Option<BranchPullRequestChecks>> {
+    let Some(v) = branch_pull_request_value(gh, cwd, branch)? else {
+        return Ok(None);
+    };
+    let number = v["number"].as_u64().unwrap_or(0) as u32;
+    let required = required_check_names(gh, cwd, number);
+    let checks = v["statusCheckRollup"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| {
+            let mut check = check_from(v);
+            check.required = required.contains(&check.name);
+            check
+        })
+        .collect();
+    Ok(Some(BranchPullRequestChecks {
+        number,
+        url: text(&v["url"]),
+        checks,
+    }))
+}
+
+/// The inline review threads of a pull request, as GitHub shows them on its diff.
+pub fn review_threads(gh: &Gh, cwd: &Path, number: u32) -> Result<Vec<PullRequestReviewThread>> {
+    gh.require_ready(cwd)?;
+    let query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){\
+        pullRequest(number:$number){reviewThreads(first:100){nodes{\
+        id isResolved isOutdated path line originalLine diffSide \
+        comments(first:100){nodes{author{login} body createdAt diffHunk}}}}}}}";
+    let number = format!("number={number}");
+    let query = format!("query={query}");
+    let nodes = parse(&gh.run(
+        cwd,
+        &[
+            "api",
+            "graphql",
+            "-F",
+            "owner={owner}",
+            "-F",
+            "name={repo}",
+            "-F",
+            &number,
+            "-f",
+            &query,
+            "--jq",
+            ".data.repository.pullRequest.reviewThreads.nodes",
+        ],
+    )?)?;
+    Ok(nodes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(review_thread_from)
+        .collect())
+}
+
+fn review_thread_from(v: &serde_json::Value) -> PullRequestReviewThread {
+    let comments: Vec<&serde_json::Value> = v["comments"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .collect();
+    PullRequestReviewThread {
+        id: text(&v["id"]),
+        path: text(&v["path"]),
+        line: v["line"].as_u64().map(|n| n as u32),
+        original_line: v["originalLine"].as_u64().map(|n| n as u32),
+        side: match v["diffSide"].as_str() {
+            Some("LEFT") => Some(CommentSide::Old),
+            Some("RIGHT") => Some(CommentSide::New),
+            _ => None,
+        },
+        resolved: v["isResolved"].as_bool().unwrap_or(false),
+        outdated: v["isOutdated"].as_bool().unwrap_or(false),
+        // The hunk lives on the comments; the first one wrote the thread's opening line.
+        diff_hunk: comments
+            .first()
+            .map(|c| text(&c["diffHunk"]))
+            .unwrap_or_default(),
+        comments: comments
+            .into_iter()
+            .map(|c| ReviewThreadComment {
+                author: text(&c["author"]["login"]),
+                body: text(&c["body"]),
+                created_at: text(&c["createdAt"]),
+            })
+            .collect(),
+    }
+}
+
 /// One pull request with its description, checks, conversation, the merge
 /// methods the repository allows and its changed files.
 pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
     let fields = format!(
-        "{PR_FIELDS},body,comments,reviews,latestReviews,reviewRequests,assignees,labels,\
+        "{PR_FIELDS},body,headRefOid,comments,reviews,latestReviews,reviewRequests,assignees,labels,\
          additions,deletions,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
     );
     // Independent round trips to GitHub: run them side by side.
@@ -972,6 +1303,8 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
     Ok(PullRequestDetail {
         phase: phase_from(&v),
         body: text(&v["body"]),
+        head_sha: text(&v["headRefOid"]),
+        dossier_out_of_date: false,
         checks: list("statusCheckRollup")
             .iter()
             .map(|v| {
@@ -1152,6 +1485,46 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     }
     gh.require_ready(cwd)?;
     gh.run(cwd, &["pr", "comment", &number.to_string(), "--body", body])?;
+    Ok(())
+}
+
+/// Submits every draft as one review, with the reviewer's decision and summary.
+pub fn submit_review(
+    gh: &Gh,
+    cwd: &Path,
+    number: u32,
+    verdict: ReviewVerdict,
+    summary: &str,
+    comments: &[PullRequestLineComment],
+) -> Result<()> {
+    gh.require_ready(cwd)?;
+    let comments: Vec<serde_json::Value> = comments
+        .iter()
+        .map(|comment| {
+            serde_json::json!({
+                "path": comment.path,
+                "line": comment.line,
+                "side": match comment.side {
+                    CommentSide::Old => "LEFT",
+                    CommentSide::New => "RIGHT",
+                },
+                "body": comment.body,
+            })
+        })
+        .collect();
+    let input = serde_json::to_string(&serde_json::json!({
+        "body": summary.trim(),
+        "event": verdict.event(),
+        "comments": comments,
+    }))
+    .map_err(|e| Error::Github(format!("could not encode the review: {e}")))?;
+    // The latest commit is the one the reviewer read; GitHub picks it when none is given.
+    let path = format!("repos/{{owner}}/{{repo}}/pulls/{number}/reviews");
+    gh.run_with_stdin(
+        cwd,
+        &["api", &path, "--method", "POST", "--input", "-"],
+        &input,
+    )?;
     Ok(())
 }
 

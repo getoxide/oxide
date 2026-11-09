@@ -1,7 +1,7 @@
 # ACP as the single Provider protocol
 
 **Research date:** 2026-10-21  
-**Ticket:** [#5](https://github.com/cavallinilorenzo/oxide/issues/5)
+**Ticket:** [#5](https://github.com/getoxide/oxide/issues/5)
 
 ## Recommendation
 

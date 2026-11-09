@@ -27,6 +27,8 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     },
     phase: "open",
     body: "Bumps react-virtual.\n\nUpdates from 3.14.21 to 3.14.22",
+    headSha: "abc123",
+    dossierOutOfDate: false,
     checks: [
       { name: "web", state: "failure", url: "https://github.com/me/oxide/actions/runs/1", required: true },
       { name: "rust", state: "success", url: null, required: false },
@@ -63,6 +65,7 @@ beforeEach(() => {
       protected: true, unpublished: false, pickerDisabledReason: null },
   });
   vi.spyOn(commands, "pullRequestDetail").mockResolvedValue({ status: "ok", data: detail() });
+  vi.spyOn(commands, "pullRequestReviewThreads").mockResolvedValue({ status: "ok", data: [] });
 });
 afterEach(async () => {
   await act(() => root.unmount());
@@ -83,6 +86,18 @@ const button = (name: string | RegExp) =>
     typeof name === "string" ? b.textContent?.trim() === name || b.getAttribute("aria-label") === name : name.test(`${b.textContent} ${b.getAttribute("aria-label")}`),
   )!;
 const click = (el: HTMLElement) => act(async () => el.click());
+
+it("renders a cached pull request at once on remount without asking GitHub again while fresh", async () => {
+  await render();
+  expect(host.textContent).toContain("chore(deps): bump react-virtual");
+  await act(() => root.unmount());
+
+  root = createRoot(host);
+  await render();
+  expect(host.querySelector(".skeleton")).toBeNull();
+  expect(host.textContent).toContain("chore(deps): bump react-virtual");
+  expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
+});
 
 it("requests a fix with the PR link, conflicts and every failed check, including optional checks", async () => {
   vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({
@@ -117,7 +132,7 @@ it("can fix conflicts without failed checks, including in a draft", async () => 
   await render();
   expect(button("Ready for review").nextElementSibling).toBe(button("Fix PR"));
   await click(button("Fix PR"));
-  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Resolve merge conflicts"));
+  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Resolve merge conflicts"), null, false);
 });
 
 it.each(["clean", "blocked", "behind", "unknown"] as const)("does not offer a repair for %s with passing or running checks", async (mergeState) => {
@@ -134,7 +149,7 @@ it("places Fix PR beside Squash and merge for failing CI", async () => {
   await render();
   expect(button(/Squash and merge/).nextElementSibling).toBe(button("Fix PR"));
   await click(button("Fix PR"));
-  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Fix failing CI check: web"));
+  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Fix failing CI check: web"), null, false);
 });
 
 it("offers Fix PR beside the merge action when only an optional check fails", async () => {
@@ -145,7 +160,7 @@ it("offers Fix PR beside the merge action when only an optional check fails", as
   await render();
   expect(button(/Squash and merge/).nextElementSibling).toBe(button("Fix PR"));
   await click(button("Fix PR"));
-  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Fix failing CI check: optional"));
+  expect(onFixPullRequest).toHaveBeenCalledWith(expect.stringContaining("Fix failing CI check: optional"), null, false);
 });
 
 it("still offers Fix PR in the footer when the repository allows no merge method", async () => {

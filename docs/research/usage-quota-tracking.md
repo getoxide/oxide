@@ -32,23 +32,23 @@ Orca polls each provider on a timer, with no dependence on a running agent turn.
 
 ## Oxide today
 
-The `UsageLimits` model is in [oxide-core/src/usage.rs](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-core/src/usage.rs): a 5-hour and a weekly window per provider, persisted to SQLite. The model and merge logic are sound. The gap is acquisition, which is purely passive and **provider-pushed**.
+The `UsageLimits` model is in [oxide-core/src/usage.rs](https://github.com/getoxide/oxide/blob/main/crates/oxide-core/src/usage.rs): a 5-hour and a weekly window per provider, persisted to SQLite. The model and merge logic are sound. The gap is acquisition, which is purely passive and **provider-pushed**.
 
 | Provider | Mechanism today | Source |
 |---|---|---|
-| Claude | Only parses the stream-json `rate_limit_event` seen during a turn | [claude.rs L566-L570, L718-L745](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-provider/src/claude.rs#L566-L745) |
-| Codex | `account/rateLimits/updated` notifications, plus `account/rateLimits/read` once per start/turn | [codex.rs L113-L147, L380-L390, L974-L983, L1264, L1303](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-provider/src/codex.rs#L113-L1303) |
-| Antigravity | Nothing: `reports_usage_limits: false` | [agy.rs L680](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-provider/src/agy.rs#L680) |
+| Claude | Only parses the stream-json `rate_limit_event` seen during a turn | [claude.rs L566-L570, L718-L745](https://github.com/getoxide/oxide/blob/main/crates/oxide-provider/src/claude.rs#L566-L745) |
+| Codex | `account/rateLimits/updated` notifications, plus `account/rateLimits/read` once per start/turn | [codex.rs L113-L147, L380-L390, L974-L983, L1264, L1303](https://github.com/getoxide/oxide/blob/main/crates/oxide-provider/src/codex.rs#L113-L1303) |
+| Antigravity | Nothing: `reports_usage_limits: false` | [agy.rs L680](https://github.com/getoxide/oxide/blob/main/crates/oxide-provider/src/agy.rs#L680) |
 
 ### Why it likely fails
 
 1. **Claude is reactive only.**
    - `rate_limit_event` is emitted only inside a turn. Typically it appears only when the status changes or is near a limit, and it may carry no `utilization`, so the ring is empty or stale until the user has already spent quota.
    - There is no polling and no call to the OAuth usage endpoint, so there is no initial value after a restart unless one was persisted.
-   - The parser also does `utilization * 100` ([claude.rs L735-L738](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-provider/src/claude.rs#L735)), assuming a fraction. Orca's OAuth endpoint reports a 0-100 percent, and Orca treats `utilization` as one ([claude-usage-window.ts L60-L70](https://github.com/stablyai/orca/blob/main/src/main/rate-limits/claude-usage-window.ts#L60-L70)). If the stream event also uses percent, values would display 100x too large. I did not verify the stream-json unit. Check it against a live capture.
+   - The parser also does `utilization * 100` ([claude.rs L735-L738](https://github.com/getoxide/oxide/blob/main/crates/oxide-provider/src/claude.rs#L735)), assuming a fraction. Orca's OAuth endpoint reports a 0-100 percent, and Orca treats `utilization` as one ([claude-usage-window.ts L60-L70](https://github.com/stablyai/orca/blob/main/src/main/rate-limits/claude-usage-window.ts#L60-L70)). If the stream event also uses percent, values would display 100x too large. I did not verify the stream-json unit. Check it against a live capture.
    - Only exact `five_hour` and `seven_day` types are kept. Any other `rateLimitType` is silently dropped.
 2. **Codex relies on the shared app-server and on exact window durations.**
-   - `parse_rate_limits` drops any window whose `windowDurationMins` is not exactly 300 or 10080, and drops a window with a null or missing duration or percent ([codex.rs L121-L126](https://github.com/cavallinilorenzo/oxide/blob/main/crates/oxide-provider/src/codex.rs#L121)). Orca falls back to default minutes and to the HTTP backend ([codex-backend-usage-client.ts L50-L58, L105-L135](https://github.com/stablyai/orca/blob/main/src/main/rate-limits/codex-backend-usage-client.ts#L50-L135)). Free and some plans may report a single window or `null` duration.
+   - `parse_rate_limits` drops any window whose `windowDurationMins` is not exactly 300 or 10080, and drops a window with a null or missing duration or percent ([codex.rs L121-L126](https://github.com/getoxide/oxide/blob/main/crates/oxide-provider/src/codex.rs#L121)). Orca falls back to default minutes and to the HTTP backend ([codex-backend-usage-client.ts L50-L58, L105-L135](https://github.com/stablyai/orca/blob/main/src/main/rate-limits/codex-backend-usage-client.ts#L50-L135)). Free and some plans may report a single window or `null` duration.
    - The read is a best-effort thread whose errors are swallowed (`if let Ok`), and it runs only at start and turn end. There is no periodic refresh and no auth-header fallback.
    - The read fails when the app-server is not yet initialised or the user is not logged in with ChatGPT. API-key logins have no rate limits.
 3. **Antigravity is not implemented.** The flag is false and there is no `/usage` call.

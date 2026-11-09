@@ -3,11 +3,11 @@ import {
   FileDiffIcon,
   GitPullRequestIcon,
   PlusIcon,
-  ProjectIcon,
   RepoIcon,
 } from "@primer/octicons-react";
 import type { Project, Thread } from "./bindings";
 import { ReviewLedgerSummary } from "./ReviewLedgerSummary";
+import { RuleSuggestions } from "./RuleSuggestions";
 import { relativeAge, threadTitle } from "./threadList";
 
 export function ProjectOverview({
@@ -15,7 +15,7 @@ export function ProjectOverview({
   threads,
   onNewThread,
   onOpenThread,
-  onOpenBoard,
+  onSuggestionAccepted,
   onOpenDiff,
   onOpenPullRequest,
 }: {
@@ -23,7 +23,7 @@ export function ProjectOverview({
   threads: Thread[];
   onNewThread: () => void;
   onOpenThread: (id: number) => void;
-  onOpenBoard: () => void;
+  onSuggestionAccepted: (thread: Thread) => void;
   onOpenDiff: () => void;
   onOpenPullRequest: () => void;
 }) {
@@ -51,9 +51,6 @@ export function ProjectOverview({
             onClick={onNewThread}
           >
             <PlusIcon size={16} /> New Thread
-          </button>
-          <button className="btn" onClick={onOpenBoard}>
-            <ProjectIcon size={16} /> Thread Board
           </button>
         </div>
         {project.missing && (
@@ -84,6 +81,7 @@ export function ProjectOverview({
             </ul>
           </section>
         )}
+        <RuleSuggestions key={project.id} projectId={project.id} onAccepted={onSuggestionAccepted} />
         <ReviewLedgerSummary key={project.id} projectId={project.id} />
         <nav className="project-overview-links" aria-label="Project tools">
           <button onClick={onOpenDiff}>

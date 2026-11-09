@@ -7,6 +7,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ChevronDownIcon,
+  CommentDiscussionIcon,
   CommentIcon,
   FileDiffIcon,
   GitMergeIcon,
@@ -15,6 +16,7 @@ import {
   GitPullRequestIcon,
   MarkGithubIcon,
   SearchIcon,
+  SyncIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
@@ -26,16 +28,20 @@ import {
   type PullRequestComment,
   type PullRequestDetail,
   type PullRequestEdit,
+  type PullRequestReviewThread,
+  type Thread,
 } from "./bindings";
 import { Avatar } from "./Avatar";
-import { invalidateQueries, updateQueries, useQuery, type QueryResult } from "./queryCache";
+import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
 import { Checks } from "./PullRequestChecks";
 import { Markdown } from "./PullRequestMarkdown";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
-import { defaultMergeMethod, mergeRequirements, readiness, relativeTime } from "./pullRequestReview";
+import { defaultMergeMethod, mergeRequirements, readiness, relativeTime, unresolvedReviewThreads } from "./pullRequestReview";
 import { pullRequestFixPrompt } from "./fixPullRequest";
+import { reviewThreadsPrefix } from "./reviewKeys";
+import { threadLine } from "./reviewThreadPlacement";
 
 interface PullRequestBrowserProps {
   projectId: number;
@@ -43,13 +49,15 @@ interface PullRequestBrowserProps {
   projectName: string;
   /** The Thread whose checkout a new pull request is opened from. */
   threadId: number | null;
+  /** The Project's Threads: the one whose branch is this pull request's head owns it. */
+  threads?: Thread[];
   /** Changes after the user's own Git changes, which reload the list. */
   refreshKey: number;
   /** Called after a checkout or merge, so other Git views reload. */
   onChanged: () => void;
   /** Shows the pull request's changed files in the Diff Surface. */
   onReviewFiles: (number: number) => void;
-  onFixPullRequest: (prompt: string) => Promise<void>;
+  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
   createRequest?: number;
   onCreateHandled?: () => void;
 }
@@ -63,6 +71,13 @@ export function PullRequestStateIcon({ draft, size = 16 }: { draft: boolean; siz
   );
 }
 
+/** Where the list's summary of a pull request is cached. The detail query has a different shape
+ *  (`PullRequestDetail` plus the checkout's Git status), so a summary is never written there:
+ *  the review reads this key for an instant hero and lets the detail fetch fill in the rest. */
+export function pullRequestPreviewKey(projectId: number, number: number): string {
+  return `p${projectId}:prs:preview:${number}`;
+}
+
 function Branches({ head, base }: { head: string; base: string }) {
   return (
     <span className="pr-branches" title={`${head} → ${base}`}>
@@ -74,7 +89,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, projectName, threadId, refreshKey, onChanged, onReviewFiles, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, projectName, threadId, threads, refreshKey, onChanged, onReviewFiles, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
   // The form belongs to the checkout it was opened for: another selection dismisses it unsubmitted.
   const [creatingFor, setCreatingFor] = useState<{ threadId: number | null } | null>(createRequest > 0 ? { threadId } : null);
   const creating = creatingFor !== null && creatingFor.threadId === threadId;
@@ -95,6 +110,7 @@ export function PullRequestBrowser({ projectId, projectName, threadId, refreshKe
     `p${projectId}:prs:list:${mine}:${search}`,
     () => commands.listPullRequests(projectId, mine, search),
     refreshKey + manual,
+    { staleMs: QUERY_STALE_MS },
   );
   // Where branch actions land, shown beside the repository-wide list.
   const branch = useQuery(
@@ -114,6 +130,7 @@ export function PullRequestBrowser({ projectId, projectName, threadId, refreshKe
   }, [outcome]);
 
   if (creating) return <PullRequestCreate projectId={projectId} threadId={threadId} onCancel={() => setCreating(false)} onCreated={(pr) => {
+    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
     setCreating(false); setOpened(pr.number); onChanged();
   }} />;
 
@@ -132,6 +149,7 @@ export function PullRequestBrowser({ projectId, projectName, threadId, refreshKe
         onChanged={onChanged}
         onReviewFiles={onReviewFiles}
         onFixPullRequest={onFixPullRequest}
+        threads={threads}
       />
     );
   }
@@ -192,7 +210,15 @@ export function PullRequestBrowser({ projectId, projectName, threadId, refreshKe
           <ul className="pr-list" aria-label="Open pull requests">
             {list.data.map((pr) => (
               <li key={pr.number}>
-                <button className="pr-row" onClick={() => setOpened(pr.number)}>
+                <button
+                  className="pr-row"
+                  onClick={() => {
+                    // The list already knows this pull request's summary: hand it to the review
+                    // so the hero paints before the much slower detail call returns.
+                    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
+                    setOpened(pr.number);
+                  }}
+                >
                   <PullRequestStateIcon draft={pr.draft} />
                   <span className="pr-row-body">
                     <span className="pr-row-title">{pr.title}</span>
@@ -230,12 +256,14 @@ interface PullRequestReviewProps {
   projectId: number;
   /** The Thread whose checkout "Check out" changes; the remote review itself belongs to none. */
   threadId: number | null;
+  /** The Project's Threads, to find the one that owns this pull request's branch. */
+  threads?: Thread[];
   number: number;
   refreshKey: number;
   onBack: (done?: "merged" | "closed") => void;
   onChanged: () => void;
   onReviewFiles: (number: number) => void;
-  onFixPullRequest: (prompt: string) => Promise<void>;
+  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
 }
 
 /** How often an open pull request reloads while some of its checks are still running. */
@@ -246,6 +274,7 @@ type Result = { status: "ok" } | { status: "error"; error: { message: string } }
 export function PullRequestReview({
   projectId,
   threadId,
+  threads = [],
   number,
   refreshKey,
   onBack,
@@ -266,8 +295,21 @@ export function PullRequestReview({
       return { status: "ok", data: { detail: detail.data, git: git?.status === "ok" ? git.data : null, gitError: git?.status === "error" ? git.error.message : null } };
     },
     refreshKey + reload,
+    { staleMs: QUERY_STALE_MS },
   );
   const loaded: Loaded = query.state === "ready" ? { state: "ready", ...query.data } : query;
+  // Review threads load beside the pull request, so a GitHub failure only hides their picker.
+  const reviewThreadsQuery = useQuery(
+    `${reviewThreadsPrefix(projectId)}pr:${number}`,
+    (): Promise<QueryResult<PullRequestReviewThread[]>> => commands.pullRequestReviewThreads(projectId, number),
+    refreshKey + reload,
+    { staleMs: QUERY_STALE_MS },
+  );
+  const openReviewThreads = reviewThreadsQuery.state === "ready"
+    ? unresolvedReviewThreads(reviewThreadsQuery.data)
+    : [];
+  // Nothing is preselected: the user decides which reviewer comments to send.
+  const [pickedReviewThreads, setPickedReviewThreads] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [fixing, setFixing] = useState(false);
@@ -298,17 +340,21 @@ export function PullRequestReview({
     if (result.status === "error") setError(result.error.message);
   }
 
-  const loadedPr = loaded.state === "ready" ? loaded.detail.pullRequest : null;
+  // What the repository list already told us, if this pull request came from there. It only has
+  // the summary fields, so it paints the hero while the detail query supplies checks, diff and
+  // comments; it is never written into the detail query's own key.
+  const preview = getQueryData<PullRequest>(pullRequestPreviewKey(projectId, number));
+  const shownPr = loaded.state === "ready" ? loaded.detail.pullRequest : (preview ?? null);
   const nav = (
     <div className="pr-nav">
       <button className="pr-back" onClick={() => onBack()}>
         <ArrowLeftIcon size={14} /> Pull requests
       </button>
       <span className="grow" />
-      {loadedPr && (
+      {shownPr && (
         <button
           className="pr-github"
-          onClick={() => void openLink(loadedPr.url)}
+          onClick={() => void openLink(shownPr.url)}
           title="Open this pull request on GitHub"
           aria-label="Open on GitHub"
         >
@@ -321,6 +367,7 @@ export function PullRequestReview({
     return (
       <div className="pr-review" aria-busy>
         {nav}
+        {preview && <PreviewHeader pr={preview} />}
         <Skeleton kind="detail" label="Loading pull request…" />
       </div>
     );
@@ -340,7 +387,14 @@ export function PullRequestReview({
   const pr = detail.pullRequest;
   const phase = merged ? "merged" : detail.phase;
   const live = phase === "open" || phase === "draft";
-  const fixPrompt = live ? pullRequestFixPrompt(detail) : null;
+  const selectedReviewThreads = openReviewThreads.filter((thread) => pickedReviewThreads.has(thread.id));
+  const fixPrompt = live ? pullRequestFixPrompt(detail, selectedReviewThreads) : null;
+  // A Board Thread records its branch; a chat Thread's worktree branch is only in its checkout,
+  // so the selected one counts when it is checked out on the pull request's head.
+  const ownerThread = live
+    ? threads.find((thread) => thread.branch === pr.head)
+      ?? (git?.branch === pr.head ? threads.find((thread) => thread.id === threadId) ?? null : null)
+    : null;
   const inputs = { phase, checks: detail.checks, mergeState: detail.mergeState, reviewDecision: detail.reviewDecision ?? null };
   const status = readiness(inputs);
   const requirements = live ? mergeRequirements(inputs) : [];
@@ -405,7 +459,8 @@ export function PullRequestReview({
     setFixing(true);
     setError(null);
     try {
-      await onFixPullRequest(fixPrompt);
+      await onFixPullRequest(fixPrompt, ownerThread?.id ?? null, selectedReviewThreads.length > 0);
+      setPickedReviewThreads(new Set());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -419,6 +474,20 @@ export function PullRequestReview({
     return ok;
   }
 
+  const refreshDossier = (owner: number) =>
+    change("dossier", () => commands.refreshPullRequestDossier(projectId, owner, number));
+  const pullAndRefreshDossier = (owner: number) =>
+    change("dossier", async () => {
+      const pulled = await commands.pullPullRequestBranch(
+        projectId,
+        owner,
+        pr.head,
+        detail.headSha,
+      );
+      if (pulled.status === "error") return pulled;
+      onChanged();
+      return commands.refreshPullRequestDossier(projectId, owner, number);
+    });
   const setDraft = (draft: boolean) => change("ready", () => commands.setPullRequestDraft(projectId, number, draft));
   const edit = (partial: Partial<PullRequestEdit>) =>
     change("edit", () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
@@ -426,7 +495,7 @@ export function PullRequestReview({
     <button
       className={fixing ? "pending" : undefined}
       disabled={busy}
-      title="Fix failing checks and merge conflicts in a new Thread with your default agent"
+      title="Fix failing checks, conflicts and selected review threads, in the branch's Thread or a new one"
       onClick={() => void fixPullRequest()}
     >
       <Working on={fixing} label="Starting fix…">
@@ -494,6 +563,40 @@ export function PullRequestReview({
         {live && git === null && <p className="pr-note">{gitError ? `The selected Thread's checkout is unavailable: ${gitError}` : "Select a Thread to check this branch out in its checkout."} Reviewing files needs no checkout.</p>}
         {live && git?.pickerDisabledReason && <p className="pr-note">{git.pickerDisabledReason}</p>}
 
+        {live && detail.dossierOutOfDate && (
+          <div className="pr-dossier-stale" role="status">
+            <span>
+              The Dossier in this description may not describe this branch's latest commit.
+              {ownerThread
+                ? " Refresh it with the evidence Oxide has now."
+                : " Open the Thread that owns this branch to refresh it."}
+            </span>
+            {ownerThread && (
+              <>
+                <button
+                  className={pending === "dossier" ? "pending" : undefined}
+                  disabled={busy}
+                  title={`Recompute the Dossier from Thread #${ownerThread.id} and replace only the marked section`}
+                  onClick={() => void refreshDossier(ownerThread.id)}
+                >
+                  <Working on={pending === "dossier"} label="Refreshing…">
+                    <SyncIcon size={14} /> Refresh Dossier
+                  </Working>
+                </button>
+                <button
+                  className={pending === "dossier" ? "pending" : undefined}
+                  disabled={busy}
+                  title={`Fast-forward Thread #${ownerThread.id}'s checkout, then refresh only the marked Dossier section`}
+                  onClick={() => void pullAndRefreshDossier(ownerThread.id)}
+                >
+                  <Working on={pending === "dossier"} label="Pulling and refreshing…">
+                    <SyncIcon size={14} /> Pull &amp; Refresh
+                  </Working>
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {detail.body.trim() && <Description body={detail.body} />}
         {live && <MergeStatus
             requirements={requirements}
@@ -502,6 +605,55 @@ export function PullRequestReview({
             onUpdateBranch={() => void change("update", () => commands.updatePullRequestBranch(projectId, number))}
           />}
         <Checks checks={detail.checks} onOpen={(url) => void openLink(url)} />
+        {live && openReviewThreads.length > 0 && (
+          <section className="pr-section pr-review-select" aria-label="Review threads to send">
+            <h4>
+              <CommentDiscussionIcon size={14} /> Review threads
+              <span className="pr-count">{openReviewThreads.length}</span>
+            </h4>
+            <p className="pr-note">Select review threads to send with the fix, alongside failing checks and conflicts.</p>
+            <ul className="pr-review-select-list">
+              {openReviewThreads.map((thread) => {
+                const line = threadLine(thread);
+                return (
+                  <li key={thread.id} className={`pr-review-select-item${thread.outdated ? " outdated" : ""}`}>
+                    <label className="pr-review-select-row">
+                      <input
+                        type="checkbox"
+                        checked={pickedReviewThreads.has(thread.id)}
+                        onChange={() =>
+                          setPickedReviewThreads((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(thread.id)) next.delete(thread.id);
+                            else next.add(thread.id);
+                            return next;
+                          })
+                        }
+                      />
+                      <span className="pr-review-select-head">
+                        <span className="mono">{thread.path}{line !== null ? `:${line}` : ""}</span>
+                        {thread.side === "old" && <span className="chip">removed line</span>}
+                        {thread.outdated && (
+                          <span className="chip warn" title="This line has changed since the thread was written.">
+                            Outdated
+                          </span>
+                        )}
+                      </span>
+                      <span className="pr-review-select-comments">
+                        {thread.comments.map((comment, index) => (
+                          <span key={`${thread.id}:${index}`} className="pr-review-select-comment">
+                            <span className="review-thread-author">@{comment.author || "ghost"}</span>
+                            <span className="review-thread-body">{comment.body}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         <PullRequestPeople
           projectId={projectId}
           detail={detail}
@@ -592,6 +744,29 @@ export function PullRequestReview({
         </footer>
       )}
     </div>
+  );
+}
+
+/** The header the list's summary can already paint: title, number, state, author and branches. */
+function PreviewHeader({ pr }: { pr: PullRequest }) {
+  return (
+    <header className="pr-hero">
+      <h3 className="pr-title">
+        {pr.title} <span className="pr-number">#{pr.number}</span>
+      </h3>
+      <div className="pr-hero-meta">
+        <span className={`pr-status ${pr.draft ? "draft" : "open"}`}>
+          <PullRequestStateIcon draft={pr.draft} size={14} />
+          {pr.draft ? "Draft" : "Open"}
+        </span>
+        <Avatar login={pr.author} size={20} />
+        <span className="pr-row-author">
+          <strong>{pr.author}</strong>
+          {pr.createdAt && <> opened {relativeTime(pr.createdAt)} ago</>}
+        </span>
+      </div>
+      <Branches head={pr.head} base={pr.base} />
+    </header>
   );
 }
 

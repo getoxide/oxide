@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use oxide_core::{Core, DispatchRequest, MergeMethod, ReviewLedger};
+use oxide_core::{
+    CommentScope, CommentSide, Core, DispatchRequest, MergeMethod, NewLineComment, ReviewLedger,
+    ReviewSizeBand,
+};
 use tempfile::TempDir;
 
 const FAKE_GH_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh");
@@ -26,6 +29,7 @@ struct Fixture {
     _tmp: TempDir,
     core: Core,
     project: u32,
+    work: PathBuf,
     gh_dir: PathBuf,
 }
 
@@ -50,6 +54,7 @@ fn fixture() -> Fixture {
         _tmp: tmp,
         core,
         project,
+        work,
         gh_dir,
     }
 }
@@ -61,6 +66,16 @@ impl Fixture {
 
     /// A Board Thread whose first Turn has finished.
     fn finished_thread(&self, prompt: &str) -> oxide_core::thread::ThreadSummary {
+        self.finished_thread_with(prompt, None, Vec::new())
+    }
+
+    /// A finished Board Thread, linked to an issue with `labels` when one is given.
+    fn finished_thread_with(
+        &self,
+        prompt: &str,
+        issue_number: Option<u32>,
+        issue_labels: Vec<String>,
+    ) -> oxide_core::thread::ThreadSummary {
         let thread = self
             .core
             .dispatch_thread(DispatchRequest {
@@ -71,8 +86,11 @@ impl Fixture {
                 effort: None,
                 permission_mode: None,
                 base_branch: Some("main".into()),
-                issue_number: None,
-                issue_title: None,
+                issue_number,
+                issue_title: issue_number.map(|n| format!("Issue {n}")),
+                issue_url: issue_number
+                    .map(|n| format!("https://github.com/example/oxide/issues/{n}")),
+                issue_labels,
             })
             .unwrap();
         // The Turn itself must be stored as completed, not just the Thread's status shown so.
@@ -91,6 +109,31 @@ impl Fixture {
 
     fn ledger(&self) -> ReviewLedger {
         self.core.review_ledger(self.project).unwrap()
+    }
+
+    /// Writes an untracked file into the Thread's worktree, the change a review round sees.
+    fn write_change(&self, thread: &oxide_core::thread::ThreadSummary, path: &str, content: &str) {
+        let root = PathBuf::from(
+            thread
+                .worktree_path
+                .as_ref()
+                .expect("a Board Thread worktree"),
+        );
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, content).unwrap();
+    }
+
+    /// Waits until the Thread's Turn has finished, so another review round can be sent.
+    fn wait_completed(&self, thread_id: u32) {
+        wait_until(|| {
+            self.core
+                .list_threads(self.project)
+                .unwrap()
+                .into_iter()
+                .find(|thread| thread.id == thread_id)
+                .is_some_and(|thread| thread.status == oxide_core::ThreadStatus::Completed)
+        });
     }
 }
 
@@ -114,11 +157,19 @@ const LATER: &str = "2099-01-01T00:00:00Z";
 
 /// A Thread with a merged pull request on its branch, seen by opening the Board.
 fn merged_thread(f: &Fixture, prompt: &str) -> oxide_core::thread::ThreadSummary {
+    merged_thread_at(f, prompt, LATER)
+}
+
+fn merged_thread_at(
+    f: &Fixture,
+    prompt: &str,
+    merged_at: &str,
+) -> oxide_core::thread::ThreadSummary {
     let thread = f.finished_thread(prompt);
     let branch = thread.branch.clone().unwrap();
     f.set_gh(serde_json::json!({
         "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some(LATER)) },
+        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some(merged_at)) },
     }));
     let _board = f.core.subscribe_board(f.project).unwrap();
     wait_until(|| !f.ledger().entries.is_empty());
@@ -239,4 +290,266 @@ fn clearing_removes_every_entry() {
     let ledger = f.ledger();
     assert!(ledger.entries.is_empty());
     assert_eq!(ledger.median_secs, None);
+}
+
+fn comment(path: &str, code: &str, body: &str) -> NewLineComment {
+    NewLineComment {
+        scope: CommentScope::Uncommitted,
+        path: path.into(),
+        side: CommentSide::New,
+        line: 1,
+        code: code.into(),
+        body: body.into(),
+    }
+}
+
+#[test]
+fn each_send_of_line_comments_counts_a_round_by_provider_model_and_kind() {
+    let f = fixture();
+    let thread = f.finished_thread_with(
+        "Add the secret search feature",
+        Some(7),
+        vec!["backend".into(), "bug".into(), "backend".into()],
+    );
+    f.write_change(&thread, "src/search.rs", "pub fn search() {}\n");
+    f.write_change(
+        &thread,
+        "web/src/search.ts",
+        "export const search = () => null;\n",
+    );
+
+    f.core
+        .add_line_comment(
+            thread.id,
+            comment("src/search.rs", "pub fn search() {}", "secret review text"),
+        )
+        .unwrap();
+    f.core.send_line_comments(thread.id).unwrap();
+    f.wait_completed(thread.id);
+
+    f.core
+        .add_line_comment(
+            thread.id,
+            comment(
+                "web/src/search.ts",
+                "export const search = () => null;",
+                "again",
+            ),
+        )
+        .unwrap();
+    f.core.send_line_comments(thread.id).unwrap();
+
+    let ledger = f.ledger();
+    assert_eq!(ledger.rounds.len(), 1);
+    let group = &ledger.rounds[0];
+    assert_eq!(group.provider, "fake");
+    assert_eq!(group.model.as_deref(), Some("fake-model"));
+    assert_eq!(group.kind.languages, ["rust", "typescript"]);
+    assert_eq!(group.kind.size_band, ReviewSizeBand::Small);
+    assert_eq!(group.kind.issue_labels, ["backend", "bug"]);
+    assert_eq!(group.sample_size, 2);
+    let serialized = serde_json::to_string(&ledger).unwrap();
+    assert!(!serialized.contains("secret review text"), "{serialized}");
+    assert!(!serialized.contains("search.rs"), "{serialized}");
+}
+
+#[test]
+fn sending_reviewer_comments_counts_a_round_without_their_text() {
+    let f = fixture();
+    let thread = f.finished_thread("Add search");
+    f.write_change(&thread, "src/search.rs", "pub fn search() {}\n");
+
+    f.core
+        .send_reviewer_comments(thread.id, "Reviewer text that must not be stored.")
+        .unwrap();
+
+    let ledger = f.ledger();
+    assert_eq!(ledger.rounds.len(), 1);
+    assert_eq!(ledger.rounds[0].sample_size, 1);
+    assert_eq!(ledger.rounds[0].kind.languages, ["rust"]);
+    assert_eq!(ledger.rounds[0].sample_size, 1);
+    let serialized = serde_json::to_string(&ledger).unwrap();
+    assert!(!serialized.contains("Reviewer text"), "{serialized}");
+}
+
+#[test]
+fn review_rounds_are_grouped_by_kind_of_work() {
+    let f = fixture();
+    let rust = f.finished_thread("Add the Rust search");
+    f.write_change(&rust, "src/search.rs", "pub fn search() {}\n");
+    f.core
+        .add_line_comment(rust.id, comment("src/search.rs", "pub fn search() {}", "x"))
+        .unwrap();
+    f.core.send_line_comments(rust.id).unwrap();
+
+    let typescript = f.finished_thread("Add the web search");
+    f.write_change(
+        &typescript,
+        "web/src/search.ts",
+        "export const search = () => null;\n",
+    );
+    f.core
+        .add_line_comment(
+            typescript.id,
+            comment(
+                "web/src/search.ts",
+                "export const search = () => null;",
+                "x",
+            ),
+        )
+        .unwrap();
+    f.core.send_line_comments(typescript.id).unwrap();
+
+    let ledger = f.ledger();
+    assert_eq!(ledger.rounds.len(), 2);
+    assert!(ledger.rounds.iter().all(|group| group.sample_size == 1));
+    assert!(
+        ledger
+            .rounds
+            .iter()
+            .any(|group| group.kind.languages == ["rust"])
+    );
+    assert!(
+        ledger
+            .rounds
+            .iter()
+            .any(|group| group.kind.languages == ["typescript"])
+    );
+}
+
+#[test]
+fn review_rounds_survive_deleting_the_thread_and_clearing_removes_them() {
+    let f = fixture();
+    let thread = f.finished_thread("Add search");
+    f.write_change(&thread, "src/search.rs", "pub fn search() {}\n");
+    f.core
+        .add_line_comment(
+            thread.id,
+            comment("src/search.rs", "pub fn search() {}", "x"),
+        )
+        .unwrap();
+    f.core.send_line_comments(thread.id).unwrap();
+    let before = f.ledger();
+    assert_eq!(
+        before
+            .rounds
+            .iter()
+            .map(|group| group.sample_size)
+            .sum::<u32>(),
+        1
+    );
+
+    f.core.delete_thread(thread.id, true).unwrap();
+
+    assert_eq!(f.ledger(), before);
+    f.core.clear_review_ledger().unwrap();
+    let after = f.ledger();
+    assert!(after.rounds.is_empty());
+}
+
+#[test]
+fn fetch_detects_reverts_of_tracked_merge_within_30_days_from_default_branch() {
+    let f = fixture();
+    let thread = f.finished_thread("Implement feature");
+    let turns = f.core.list_turns(thread.id, 0, 10).unwrap();
+    let turn_completed_at = turns.turns[0].completed_at.as_ref().unwrap();
+
+    let branch = thread.branch.clone().unwrap();
+    f.set_gh(serde_json::json!({
+        "auth": "ok",
+        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some(turn_completed_at)) },
+    }));
+    let _board = f.core.subscribe_board(f.project).unwrap();
+    wait_until(|| !f.ledger().entries.is_empty());
+
+    // Commit a revert of PR #4 on main
+    git(
+        &f.work,
+        &[
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "Revert \"feat: feature (#4)\"",
+        ],
+    );
+
+    // Background fetch triggers revert detection
+    let fetched = f.core.fetch_project(f.project).unwrap();
+    assert!(fetched);
+
+    let ledger = f.ledger();
+    assert_eq!(ledger.reverts.len(), 1);
+    let rev = &ledger.reverts[0];
+    assert_eq!(rev.pull_request, 4);
+    assert!(rev.commit_subject.contains("Revert"));
+}
+
+#[test]
+fn fetch_detects_candidate_follow_up_fixes_using_the_four_heuristics() {
+    let f = fixture();
+    let thread = f.finished_thread("Fix billing calculations");
+    let turns = f.core.list_turns(thread.id, 0, 10).unwrap();
+    let turn_completed_at = turns.turns[0].completed_at.as_ref().unwrap();
+    let branch = thread.branch.clone().unwrap();
+
+    // The PR touched a source file and a boilerplate file
+    let wt = PathBuf::from(thread.worktree_path.as_ref().unwrap());
+    std::fs::create_dir_all(wt.join("src")).unwrap();
+    std::fs::write(wt.join("src/billing.rs"), "pub fn calc() -> u32 { 1 }\n").unwrap();
+    std::fs::write(wt.join("README.md"), "# Project\n").unwrap();
+    git(&wt, &["add", "."]);
+    git(&wt, &["commit", "-qm", "feat: billing (#10)"]);
+
+    // Push and merge PR #10
+    f.set_gh(serde_json::json!({
+        "auth": "ok",
+        "prs": { branch.clone(): pr(&branch, 10, "MERGED", Some(turn_completed_at)) },
+    }));
+    let _board = f.core.subscribe_board(f.project).unwrap();
+    wait_until(|| !f.ledger().entries.is_empty());
+
+    // Commit on main modifying the co-modified non-boilerplate file src/billing.rs
+    std::fs::create_dir_all(f.work.join("src")).unwrap();
+    std::fs::write(
+        f.work.join("src/billing.rs"),
+        "pub fn calc() -> u32 { 2 }\n",
+    )
+    .unwrap();
+    git(&f.work, &["add", "src/billing.rs"]);
+    git(&f.work, &["commit", "-qm", "fix: fix edge case in billing"]);
+
+    // Also a commit modifying ONLY boilerplate file README.md (should NOT match)
+    std::fs::write(f.work.join("README.md"), "# Updated README\n").unwrap();
+    git(&f.work, &["add", "README.md"]);
+    git(&f.work, &["commit", "-qm", "docs: update readme"]);
+
+    // Fetch on main
+    assert!(f.core.fetch_project(f.project).unwrap());
+
+    let ledger = f.ledger();
+    assert_eq!(ledger.follow_ups.len(), 1);
+    let fu = &ledger.follow_ups[0];
+    assert_eq!(fu.pull_request, 10);
+    assert_eq!(fu.status, oxide_core::FollowUpStatus::Candidate);
+    assert_eq!(fu.co_modified_files, vec!["src/billing.rs"]);
+
+    // Confirm candidate
+    f.core
+        .confirm_follow_up(f.project, 10, &fu.commit_sha)
+        .unwrap();
+    let ledger = f.ledger();
+    assert_eq!(
+        ledger.follow_ups[0].status,
+        oxide_core::FollowUpStatus::Confirmed
+    );
+
+    // Dismiss candidate
+    f.core
+        .dismiss_follow_up(f.project, 10, &fu.commit_sha)
+        .unwrap();
+    let ledger = f.ledger();
+    assert_eq!(
+        ledger.follow_ups[0].status,
+        oxide_core::FollowUpStatus::Dismissed
+    );
 }

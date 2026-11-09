@@ -26,7 +26,7 @@ The full tier installs the web dependencies from the lockfile, then runs formatt
 
 The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it once with `cargo install --locked cargo-nextest`. Every Rust check also builds the dictation engine, which needs CMake, a C/C++ compiler and libclang (see [docs/dictation.md](docs/dictation.md)).
 
-On Windows the full tier also packages the Vulkan and CUDA dictation workers, as CI does: install the pinned Vulkan SDK and CUDA Toolkit once with `node tools/dictation-package.mjs setup` (elevated), then run the checks from a new prompt; staging loads the Visual Studio x64 environment itself. [Packaging and distribution](docs/dictation.md#packaging-and-distribution) lists each package check and the failure it prevents.
+On Windows the full tier also builds the Vulkan and CUDA dictation workers and packages them as downloadable runtimes, as CI does: install the pinned Vulkan SDK and CUDA Toolkit once with `node tools/dictation-package.mjs setup` (elevated), then run the checks from a new prompt; staging loads the Visual Studio x64 environment itself. [Packaging and distribution](docs/dictation.md#packaging-and-distribution) lists each package check and the failure it prevents.
 
 Every job, why it exists and its local command are in [docs/devops.md](docs/devops.md#ci-jobs).
 
@@ -97,7 +97,7 @@ cargo test -p oxide-provider --test agy_live_smoke -- --ignored
 
 ## Issues and triage
 
-Use the issue forms ([bug report](https://github.com/cavallinilorenzo/oxide/issues/new?template=bug_report.yml), [feature request](https://github.com/cavallinilorenzo/oxide/issues/new?template=feature_request.yml)). New issues get `needs-triage`, and the maintainer moves them on to `needs-info`, `ready-for-agent`, `ready-for-human` or `wontfix` (see [docs/agents/triage-labels.md](docs/agents/triage-labels.md)). Report security problems privately as described in [SECURITY.md](SECURITY.md), not in an issue.
+Use the issue forms ([bug report](https://github.com/getoxide/oxide/issues/new?template=bug_report.yml), [feature request](https://github.com/getoxide/oxide/issues/new?template=feature_request.yml)). New issues get `needs-triage`, and the maintainer moves them on to `needs-info`, `ready-for-agent`, `ready-for-human` or `wontfix` (see [docs/agents/triage-labels.md](docs/agents/triage-labels.md)). Report security problems privately as described in [SECURITY.md](SECURITY.md), not in an issue.
 
 ## Dependencies and supply-chain policy
 

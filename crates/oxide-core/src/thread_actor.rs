@@ -12,7 +12,7 @@ use crate::activity::Activity;
 use crate::checkpoint::{self, Phase};
 use crate::clock::{Clock, PROVIDER_IDLE_TIMEOUT};
 use crate::error::{Error, Result};
-use crate::storage_actor::StorageHandle;
+use crate::storage_actor::{NewItem, StorageHandle};
 use crate::thread::{
     DebugSequencedThreadEvent, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
     ThreadSnapshot, ThreadStatus, TurnError,
@@ -379,6 +379,7 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
             let turn_index = state.next_turn_index;
             state.next_turn_index += 1;
             state.dropped_items.clear();
+            let head_before = crate::git::head(&state.checkout);
             checkpoint::take(&state.checkout, state.thread_id, turn_index, Phase::Start);
             let segments = state
                 .pending_segments
@@ -386,6 +387,7 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
                 .unwrap_or_else(|| vec![PromptSegment::text(prompt.clone())]);
             let prompt = crate::attachments::render(&segments);
             let (mut model, mut effort) = (None, None);
+            let mut permission_mode = None;
             let mut id = None;
             let mut new_title = None;
             if let Ok(started) = storage.write_turn_started(
@@ -393,10 +395,12 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
                 turn_index,
                 prompt.clone(),
                 segments.clone(),
+                head_before,
             ) {
                 id = Some(started.id);
                 model = started.model;
                 effort = started.effort;
+                permission_mode = started.permission_mode;
                 new_title = started.thread_title;
             }
             state.current_turn = Some(CurrentTurn {
@@ -411,6 +415,7 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
                     prompt,
                     model,
                     effort,
+                    permission_mode,
                     segments,
                 },
                 raw,
@@ -456,6 +461,7 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
             content,
             parent_item_index,
             category,
+            command,
         } => {
             if kind == ItemKind::Reasoning && !state.capabilities.supports_reasoning {
                 state.dropped_items.insert(item_index);
@@ -463,14 +469,15 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
             }
             state.flush_pending_deltas();
             if let Some(turn_id) = state.current_turn_id() {
-                let _ = storage.write_item_completed(
+                let _ = storage.write_item_completed(NewItem {
                     turn_id,
                     item_index,
                     kind,
-                    content.clone(),
+                    content: content.clone(),
                     parent_item_index,
                     category,
-                );
+                    command: command.clone(),
+                });
             }
             state.broadcast_with_raw(
                 ThreadEvent::ItemCompleted {
@@ -479,6 +486,7 @@ fn handle_provider_event(evt: ProviderEvent, state: &mut ActorState, storage: &S
                     content,
                     parent_item_index,
                     category,
+                    command,
                 },
                 raw,
             );
@@ -594,10 +602,23 @@ fn finish_turn(
             stderr_tail,
         }
     });
-    if let Some(turn_id) = turn.id {
-        let _ = storage.update_turn_completed(turn_id, status, error.clone());
-    }
+    let recorded = if let Some(turn_id) = turn.id {
+        let head_after = crate::git::head(&state.checkout);
+        match storage.update_turn_completed(turn_id, status, error.clone(), head_after) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("could not record Turn {turn_id} as {status:?}: {error:?}");
+                false
+            }
+        }
+    } else {
+        // The Turn never reached the Transcript: its insert failed when it started.
+        false
+    };
     let final_thread_status = match status {
+        // A Thread whose Turn is not in the Transcript would open with an empty
+        // conversation: say it went wrong instead of calling it completed.
+        TurnStatus::Completed if !recorded => ThreadStatus::Error,
         TurnStatus::Completed => ThreadStatus::Completed,
         TurnStatus::Interrupted => ThreadStatus::Interrupted,
         TurnStatus::Error => ThreadStatus::Error,
@@ -759,7 +780,14 @@ fn run_thread_actor(
                         }
                         state.idle_since = None;
                         state.pending_segments = Some(segments.clone());
-                        let sent = provider.send_prompt_with_segments(&segments);
+                        // The agent is told about a restore on the next prompt; the
+                        // Transcript keeps the user's own prompt. The notice goes away
+                        // only once the provider has the prompt.
+                        let notice = storage.restore_notice(state.thread_id);
+                        let sent = provider.send_prompt_with_segments(&with_notice(
+                            segments,
+                            notice.clone(),
+                        ));
                         let p_res = sent.map_err(|e| {
                             if has_attachments {
                                 // Say why the Attachments were refused, not where.
@@ -779,6 +807,9 @@ fn run_thread_actor(
                             if state.current_turn.is_none() {
                                 state.idle_since = Some(state.clock.now());
                             }
+                        } else if notice.is_some() {
+                            // The agent has the notice now; it does not need it again.
+                            storage.take_restore_notice(state.thread_id);
                         }
                         let _ = reply.send(p_res);
                     }
@@ -1048,4 +1079,15 @@ fn oxide_run_command(text: &str) -> Option<&'static str> {
     ["model", "effort", "clear", "permissions"]
         .into_iter()
         .find(|name| *name == word)
+}
+
+/// The prompt the agent gets, with the notice of a restore in front of it.
+fn with_notice(segments: Vec<PromptSegment>, notice: Option<String>) -> Vec<PromptSegment> {
+    let Some(notice) = notice else {
+        return segments;
+    };
+    let mut all = Vec::with_capacity(segments.len() + 1);
+    all.push(PromptSegment::text(notice));
+    all.extend(segments);
+    all
 }
