@@ -3261,6 +3261,14 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppErr
     git_blocking(&core, move |core| core.open_link(&url)).await
 }
 
+/// Opens a localhost URL detected in a Project Service's log in the system browser. Only
+/// loopback `http` addresses are accepted; the webview never opens pages itself.
+#[tauri::command]
+#[specta::specta]
+fn open_local_url(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppError> {
+    Ok(core.open_local_url(&url)?)
+}
+
 /// Moves a pull request out of draft (`draft` false), or back into it.
 #[tauri::command]
 #[specta::specta]
@@ -4367,6 +4375,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         close_pull_request,
         checkout_pull_request,
         open_link,
+        open_local_url,
         set_pull_request_draft,
         update_pull_request_branch,
         pull_request_candidates,

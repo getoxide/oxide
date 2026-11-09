@@ -1868,3 +1868,27 @@ section.terminal.terminal-hidden { display: none; }
 .dictation-runtimes { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 .dictation-runtimes:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 4px; }
 .link-action { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
+
+/* ── Project Service log tabs in the Terminal Surface ── */
+.terminal-tab.service-tab .terminal-tab-service-icon { flex: none; color: var(--acc2); }
+.terminal-tab-port { flex: none; padding: 0 5px; border-radius: 8px; background: var(--bg4); color: var(--dim); font: 10px var(--mono); }
+.service-log-panel { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.service-log-panel[hidden] { display: none; }
+.service-log-header { display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; padding: 7px 10px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+.service-log-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--fg); }
+.service-status { flex: none; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.service-status.running { color: var(--green); background: color-mix(in srgb, var(--green) 16%, transparent); }
+.service-status.stopped { color: var(--dim); background: var(--bg4); }
+.service-status.failed { color: var(--red); background: color-mix(in srgb, var(--red) 16%, transparent); }
+.service-log-cwd { margin-left: auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11px; }
+.service-log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: none; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+.service-log-actions .btn { gap: 4px; }
+.service-open-url { margin-right: auto; max-width: 100%; color: var(--acc2); font-family: var(--mono); }
+.service-open-url > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-log-error { margin: 0; padding: 6px 10px; font-size: 12px; color: var(--red); background: var(--bg2); }
+.service-log-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; background: var(--bg); }
+.service-log-output { margin: 0; font: 11.5px/1.5 var(--mono); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.service-log-line { display: block; }
+.service-log-line.stderr { color: var(--red); }
+.service-log-empty { margin: 0; color: var(--faint); font-size: 12px; }
+.service-log-jump { position: absolute; right: 12px; bottom: 12px; box-shadow: 0 2px 8px #0004; }

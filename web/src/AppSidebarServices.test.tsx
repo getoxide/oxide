@@ -9,7 +9,15 @@ import { App } from "./App";
 vi.mock("./ThreadView", () => ({ ThreadView: () => <div data-thread-view /> }));
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
-vi.mock("./TerminalSurface", () => ({ TerminalSurface: () => null }));
+vi.mock("./TerminalSurface", () => ({
+  TerminalSurface: ({ terminals }: { terminals: { tabs: { id: number; kind: string; serviceId?: number }[] } }) => (
+    <div data-terminal-surface>
+      {terminals.tabs.filter((tab) => tab.kind === "service").map((tab) => (
+        <span key={tab.id} data-service-tab={tab.serviceId} />
+      ))}
+    </div>
+  ),
+}));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 
 Object.assign(globalThis, {
@@ -47,6 +55,7 @@ beforeEach(() => {
       case "get_settings": return { settings: { defaultProvider: "claude", providers: {} }, errors: [] };
       case "subscribe_board": return [];
       case "list_project_services": return [service];
+      case "project_service": return service;
       case "plugin:event|listen": return 1;
       case "remember_selection": return null;
       default: return null;
@@ -77,4 +86,16 @@ it("pins the Project Services widget above the Settings button in the sidebar", 
   // The widget sits between the scroll area and Settings, so it stays pinned.
   expect(widget!.compareDocumentPosition(footer!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(sidebar.querySelector(".sidebar-scroll")!.compareDocumentPosition(widget!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("opens the clicked service's log tab in the Terminal Surface", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+
+  const row = host.querySelector<HTMLButtonElement>(".service-open");
+  expect(row).not.toBeNull();
+  await act(async () => { row!.click(); });
+  await settle();
+
+  expect(host.querySelector('[data-service-tab="9"]')).not.toBeNull();
 });

@@ -785,6 +785,36 @@ fn parse_port(raw: &str) -> Option<u16> {
     (1..=65_535).contains(&value).then_some(value as u16)
 }
 
+/// A link a Project Service's log output may hand to the system browser: `http` on the
+/// loopback host only. Anything else is refused, so arbitrary log text cannot open a page.
+pub fn checked_local_url(url: &str) -> Result<&str> {
+    if url
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(Error::ProjectService(format!("Unexpected link: {url}")));
+    }
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| Error::ProjectService(format!("Unexpected link: {url}")))?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    if authority.contains('@') {
+        return Err(Error::ProjectService(format!("Unexpected link: {url}")));
+    }
+    let host = if let Some(after_bracket) = authority.strip_prefix('[') {
+        after_bracket
+            .split_once(']')
+            .map(|(host, _)| format!("[{host}]"))
+    } else {
+        Some(authority.split(':').next().unwrap_or_default().to_string())
+    };
+    match host.as_deref() {
+        Some("localhost" | "127.0.0.1" | "[::1]") => Ok(url),
+        _ => Err(Error::ProjectService(format!("Unexpected link: {url}"))),
+    }
+}
+
 fn url_for_port(text: &str, port: u16) -> String {
     for scheme in ["http://", "https://"] {
         for host in ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"] {
@@ -836,5 +866,33 @@ mod tests {
             "http://localhost:3000"
         );
         assert_eq!(url_for_port("bare :3000", 3000), "http://localhost:3000");
+    }
+
+    #[test]
+    fn only_loopback_http_links_reach_the_browser() {
+        for url in [
+            "http://localhost:3000",
+            "http://localhost:3000/app?x=1",
+            "http://127.0.0.1:8080",
+            "http://[::1]:5173/path",
+            "http://localhost",
+        ] {
+            assert_eq!(checked_local_url(url).unwrap(), url, "{url}");
+        }
+        for url in [
+            "https://localhost:3000",
+            "http://example.com",
+            "http://localhost.example.com:3000",
+            "http://user@localhost:3000",
+            "http://localhost:3000@evil.example",
+            "http://[::1]@evil.example",
+            "http://127.0.0.1.evil.test",
+            "http://localhost:3000\nhttps://example.com",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "http:///path",
+        ] {
+            assert!(checked_local_url(url).is_err(), "{url} should be rejected");
+        }
     }
 }

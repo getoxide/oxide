@@ -36,15 +36,14 @@ import { isBoardThread } from "./dispatch";
 import { DiffOpenContext } from "./diffOpen";
 import { defaultDiffScope, type PanelScope } from "./diffScope";
 import {
-  allTabsOfThread, closeTab, describeAffectedTabs, emptyTerminals, focusCheckoutTab, openTab, removeThreadTabsEverywhere, selectTab, setRunning,
-  type TerminalsByProject,
+  allTabsOfThread, closeTab, describeAffectedTabs, emptyTerminals, focusCheckoutTab, openServiceTab, openTab, removeThreadTabsEverywhere, selectTab, setRunning,
+  type TerminalCheckout, type TerminalsByProject,
 } from "./terminalTabs";
 import { performThreadDelete, selectionAfterDelete, threadsAfterDelete } from "./deleteThread";
 import { GitHeader } from "./GitHeader";
 import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
 import { ProjectServices } from "./ProjectServices";
-import type { OpenServiceRequest } from "./serviceOpen";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
 import { SettingsView } from "./SettingsView";
@@ -136,9 +135,6 @@ export function App() {
   const [threadReload, setThreadReload] = useState(0);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { contextKey: string }) | null>(null);
   const codeSequence = useRef(0);
-  // One-shot navigation requested by the sidebar's Project Services rows; #406 opens the log tab.
-  const [openServiceRequest, setOpenServiceRequest] = useState<OpenServiceRequest | null>(null);
-  const openServiceSequence = useRef(0);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
   // A New Thread request that reopened an empty Thread: the selection may not change, so
   // ThreadView gets a one-shot request to focus the composer and show a cue.
@@ -217,12 +213,29 @@ export function App() {
       setTerminals((previous) => (previous[workbenchContext.projectId]?.tabs.length ?? 0) > 0 ? previous : openTab(previous, workbenchContext.projectId, workbenchContext));
     }
   }, [setActiveTool, workbenchContext]);
-  /** A sidebar service row reveals the Terminal Surface and leaves a request for #406's log tab. */
-  const openService = useCallback((serviceId: number) => {
-    if (!selected) return;
-    selectSurface("Terminal");
-    setOpenServiceRequest({ projectId: selected.id, serviceId, token: ++openServiceSequence.current });
-  }, [selected, selectSurface]);
+  /** A sidebar service row reveals the Terminal Surface and opens or focuses that service's log tab. */
+  const openService = useCallback(async (serviceId: number) => {
+    setActiveTool("Terminal");
+    setShowTools(true); setShowSettings(false); setRegionPriority("tools");
+    try {
+      const result = await commands.projectService(serviceId);
+      if (result.status === "error") { setOpenError(result.error.message); return; }
+      if (!result.data) { setOpenError("That Project Service no longer exists."); return; }
+      const service = result.data;
+      const threadId = service.threadId ?? null;
+      // A worktree service keeps its Thread's checkout key; the main checkout shares "main".
+      const worktree = threadId !== null && (service.projectId !== selected?.id || service.checkout !== selected.path);
+      const checkout: TerminalCheckout = {
+        key: `${service.projectId}:${worktree ? threadId : "main"}`,
+        threadId,
+        rootPath: service.checkout,
+      };
+      setOpenError(null);
+      setTerminals((previous) => openServiceTab(previous, service.projectId, checkout, serviceId));
+    } catch (cause) {
+      setOpenError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [selected, setActiveTool]);
   // A Project's shells stay mounted while hidden; the selected Project shows the empty state once visited.
   const terminalSurfaces: TerminalsByProject = Object.fromEntries(
     Object.entries(terminals).filter(([, state]) => state.tabs.length > 0)
@@ -1194,7 +1207,6 @@ export function App() {
               const projectId = Number(id); const isSelectedProject = projectId === selected?.id;
               return <Suspense key={id} fallback={isSelectedProject && dockVisible && activeTool === "Terminal" ? <Skeleton kind="code" label="Loading Terminalâ€¦" /> : null}>
                 <TerminalSurface projectId={projectId} terminals={state} checkout={isSelectedProject ? workbenchContext : null}
-                  openServiceRequest={openServiceRequest?.projectId === projectId ? openServiceRequest : null}
                   visible={isSelectedProject && dockVisible && activeTool === "Terminal"}
                   queuedCommand={isSelectedProject ? installCommand : null} onCommandConsumed={() => setInstallCommand(null)}
                   onOpenTab={openTerminalTab}

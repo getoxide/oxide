@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  closeTab, focusCheckoutTab, describeAffectedTabs, isMismatched, openTab, removeThreadTabs, selectTab, setRunning, tabsOfThread,
-  type TerminalCheckout, type TerminalsByProject,
+  closeTab, focusCheckoutTab, describeAffectedTabs, isMismatched, openServiceTab, openTab, removeThreadTabs, selectTab, setRunning, tabsOfThread,
+  type ServiceTab, type TerminalCheckout, type TerminalsByProject,
 } from "./terminalTabs";
 
 const main: TerminalCheckout = { key: "1:main", threadId: null, rootPath: "/repo" };
@@ -81,5 +81,55 @@ describe("Project terminal tabs", () => {
       "Running “npm run dev” in /repo-wt/a",
       "Idle shell in /repo-wt/a",
     ]);
+  });
+});
+
+describe("Project Service log tabs", () => {
+  it("opens one service tab per service in the service's checkout", () => {
+    const state = openServiceTab({}, 1, main, 9);
+    expect(state[1].tabs).toHaveLength(1);
+    const tab = state[1].tabs[0] as ServiceTab;
+    expect(tab).toMatchObject({ kind: "service", serviceId: 9, key: "1:main", threadId: null, rootPath: "/repo" });
+    expect(state[1].selectedId).toBe(tab.id);
+  });
+
+  it("switches to the existing tab when the same service is opened again", () => {
+    let state = openServiceTab(openTab({}, 1, main), 1, main, 9);
+    const service = state[1].tabs.find((tab) => tab.kind === "service") as ServiceTab;
+    state = selectTab(state, 1, state[1].tabs[0].id);
+    state = openServiceTab(state, 1, featureA, 9);
+    expect(state[1].tabs.filter((tab) => tab.kind === "service")).toHaveLength(1);
+    expect(state[1].selectedId).toBe(service.id);
+  });
+
+  it("keeps a service tab readable while its shell sibling closes separately", () => {
+    let state = openServiceTab(openTab({}, 1, main), 1, main, 9);
+    const shell = state[1].tabs.find((tab) => tab.kind === "shell")!;
+    const service = state[1].tabs.find((tab) => tab.kind === "service")!;
+    state = closeTab(state, 1, service.id);
+    expect(state[1].tabs.map((tab) => tab.id)).toEqual([shell.id]);
+    expect(state[1].selectedId).toBe(shell.id);
+  });
+
+  it("never marks a service tab as running a shell command", () => {
+    const state = openServiceTab({}, 1, main, 9);
+    const id = state[1].tabs[0].id;
+    expect(setRunning(state, 1, id, "npm run dev")).toBe(state);
+    expect(state[1].tabs[0]).not.toHaveProperty("running");
+  });
+
+  it("opens a shell even when a service tab is selected in the same checkout", () => {
+    const state = focusCheckoutTab(openServiceTab({}, 1, main, 9), 1, main);
+    expect(state[1].tabs.map((tab) => tab.kind)).toEqual(["service", "shell"]);
+  });
+
+  it("closes a deleted worktree's service log tab without shutting the service down", () => {
+    const state = removeThreadTabs(openServiceTab(openServiceTab(opened(main, featureA), 1, featureA, 9), 1, featureA, 10), 1, 5);
+    expect(state[1].tabs.map((tab) => tab.key)).toEqual(["1:main"]);
+  });
+
+  it("does not describe service log tabs as shells when a worktree is deleted", () => {
+    const state = openServiceTab(opened(featureA), 1, featureA, 9);
+    expect(describeAffectedTabs(tabsOfThread(state, 1, 5))).toEqual(["Idle shell in /repo-wt/a"]);
   });
 });
