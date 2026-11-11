@@ -105,6 +105,12 @@ elif "tools_test" in prompt:
     replay("turn_tools.jsonl")
 elif "service_test" in prompt:
     replay("turn_services.jsonl")
+elif "usage_gemini_test" in prompt:
+    replay("turn_usage_gemini.jsonl")
+elif "usage_wrapped_test" in prompt:
+    replay("turn_usage_wrapped.jsonl")
+elif "usage_third_party_test" in prompt:
+    replay("turn_usage_third_party.jsonl")
 elif "commands_contract" in prompt:
     replay("turn_commands.jsonl")
 elif "error_test" in prompt:

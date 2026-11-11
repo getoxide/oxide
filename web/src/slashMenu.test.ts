@@ -42,6 +42,16 @@ describe("filterSlashCommands", () => {
   it("matches aliases once per command", () => {
     expect(filterSlashCommands(cmds, "res").map((c) => c.name)).toEqual(["clear"]);
   });
+  it("does not suggest the retired /effort command", () => {
+    const catalog = [
+      cmd("model", { argumentHint: "<model>", route: "oxide" }),
+      cmd("effort", { argumentHint: "<level>", route: "oxide" }),
+      cmd("clear", { route: "oxide" }),
+    ];
+    expect(filterSlashCommands(catalog, "").map((c) => c.name)).toEqual(["model", "clear"]);
+    expect(filterSlashCommands(catalog, "eff")).toEqual([]);
+    expect(filterSlashCommands([cmd("Effort")], "")).toEqual([]);
+  });
 });
 
 describe("pickSlashCommand", () => {

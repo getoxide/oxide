@@ -1,5 +1,11 @@
 import type { SlashCommand } from "./bindings";
 
+/**
+ * Commands the `/` menu never suggests: Effort is configured through `/model` and the
+ * Model & Effort picker. A manually typed `/effort <level>` still works.
+ */
+const RETIRED_COMMANDS = new Set(["effort"]);
+
 /** The `/` menu is open while the composer holds a single `/word` with no space yet. */
 export function slashQuery(input: string): string | null {
   const m = /^\/([^\s/]*)$/.exec(input);
@@ -12,9 +18,10 @@ export function slashQuery(input: string): string | null {
  */
 export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   const q = query.toLowerCase();
+  const visible = commands.filter((c) => !RETIRED_COMMANDS.has(c.name.toLowerCase()));
   const names = (c: SlashCommand) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
-  const starts = commands.filter((c) => names(c).some((n) => n.startsWith(q)));
-  const contains = commands.filter(
+  const starts = visible.filter((c) => names(c).some((n) => n.startsWith(q)));
+  const contains = visible.filter(
     (c) => !names(c).some((n) => n.startsWith(q)) && names(c).some((n) => n.includes(q)),
   );
   return [...starts, ...contains];

@@ -6,11 +6,12 @@
 //! offered (ADR-0004), and Oxide never touches `agy`'s settings file.
 
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
+use crate::time::parse_rfc3339;
 use crate::{
     ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, Detection, ItemKind,
     ModelInfo, PermissionMode, PromptSegment, Provider, ProviderCapabilities, ProviderError,
-    ProviderEvent, SlashCommandInfo, SlashRoute, StartContext, TurnStatus,
-    attachment_path_reference, is_background_command,
+    ProviderEvent, SlashCommandInfo, SlashRoute, StartContext, TurnStatus, UsageStatus,
+    UsageWindow, UsageWindowKind, attachment_path_reference, is_background_command,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
@@ -19,7 +20,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_AGY_COMMAND: &str = "agy";
 
@@ -122,6 +123,186 @@ const HEADLINE_PARAMS: &[&str] = &[
     "Url",
     "url",
 ];
+
+/// statusLine `quota` buckets for the Gemini pool.
+const GEMINI_FIVE_HOUR_KEYS: &[&str] = &["gemini-5h"];
+const GEMINI_WEEKLY_KEYS: &[&str] = &["gemini-weekly"];
+const GEMINI_ARGON_WEEKLY_KEYS: &[&str] = &["gemini-argon-wtu-weekly"];
+/// statusLine `quota` buckets for third-party Models (Claude, GPT) routed through Antigravity.
+const THIRD_PARTY_FIVE_HOUR_KEYS: &[&str] = &["3p-5h"];
+const THIRD_PARTY_WEEKLY_KEYS: &[&str] = &["3p-weekly"];
+
+/// The quota pool the Model in use draws from; Antigravity reports a separate pool per family.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuotaPool {
+    Gemini,
+    GeminiArgon,
+    ThirdParty,
+}
+
+/// Maps a statusLine JSON payload (or any stream object carrying `quota`) to a `UsageLimits`
+/// event. Agy reports a Gemini pool and a third-party pool; only the pool the active Model draws
+/// from is reported, so the ring reflects the limit that applies to the Thread's Model.
+/// `now_unix` is the observation time, used to turn `reset_in_seconds` into a timestamp.
+pub fn parse_statusline_quota(payload: &Value, now_unix: i64) -> Option<ProviderEvent> {
+    let quota = payload.get("quota")?.as_object()?;
+    let model = payload
+        .pointer("/model/id")
+        .or_else(|| payload.pointer("/model/display_name"))
+        .and_then(Value::as_str);
+    let pool = active_pool(model).or_else(|| unambiguous_pool(quota))?;
+    let weekly_keys = match pool {
+        QuotaPool::Gemini => GEMINI_WEEKLY_KEYS,
+        QuotaPool::GeminiArgon => {
+            if has_any_key(quota, GEMINI_ARGON_WEEKLY_KEYS) {
+                GEMINI_ARGON_WEEKLY_KEYS
+            } else {
+                GEMINI_WEEKLY_KEYS
+            }
+        }
+        QuotaPool::ThirdParty => THIRD_PARTY_WEEKLY_KEYS,
+    };
+    let mut windows = Vec::new();
+    for (kind, keys) in [
+        (
+            UsageWindowKind::FiveHour,
+            match pool {
+                QuotaPool::Gemini | QuotaPool::GeminiArgon => GEMINI_FIVE_HOUR_KEYS,
+                QuotaPool::ThirdParty => THIRD_PARTY_FIVE_HOUR_KEYS,
+            },
+        ),
+        (UsageWindowKind::Weekly, weekly_keys),
+    ] {
+        if let Some(window) = quota_window(quota, kind, keys, now_unix) {
+            windows.push(window);
+        }
+    }
+    if windows.is_empty() {
+        None
+    } else {
+        Some(ProviderEvent::UsageLimits { windows })
+    }
+}
+
+fn has_any_key(quota: &serde_json::Map<String, Value>, keys: &[&str]) -> bool {
+    keys.iter().any(|key| quota.contains_key(*key))
+}
+
+/// Gemini-family Model names contain `gemini`, `flash`, or `learnlm`; third-party Models are
+/// Claude (`claude`, `sonnet`, `opus`) or GPT (`gpt`, `o1`, `o3`, `o4`).
+fn active_pool(model: Option<&str>) -> Option<QuotaPool> {
+    let lower = model?.to_ascii_lowercase();
+    if lower.contains("argon") {
+        Some(QuotaPool::GeminiArgon)
+    } else if lower.contains("gemini") || lower.contains("flash") || lower.contains("learnlm") {
+        Some(QuotaPool::Gemini)
+    } else if lower.contains("claude")
+        || lower.contains("sonnet")
+        || lower.contains("opus")
+        || lower.contains("gpt")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
+    {
+        Some(QuotaPool::ThirdParty)
+    } else {
+        None
+    }
+}
+
+/// When the Model is unknown, a payload with only one pool present is unambiguous.
+fn unambiguous_pool(quota: &serde_json::Map<String, Value>) -> Option<QuotaPool> {
+    let gemini =
+        has_any_key(quota, GEMINI_FIVE_HOUR_KEYS) || has_any_key(quota, GEMINI_WEEKLY_KEYS);
+    let argon = has_any_key(quota, GEMINI_ARGON_WEEKLY_KEYS);
+    let third_party = has_any_key(quota, THIRD_PARTY_FIVE_HOUR_KEYS)
+        || has_any_key(quota, THIRD_PARTY_WEEKLY_KEYS);
+    match (gemini, argon, third_party) {
+        (true, _, false) => Some(QuotaPool::Gemini),
+        (false, true, false) => Some(QuotaPool::GeminiArgon),
+        (false, false, true) => Some(QuotaPool::ThirdParty),
+        _ => None,
+    }
+}
+
+/// One window from the most-used of `keys`. A bucket can be disabled or only partly reported;
+/// such a bucket is skipped rather than reported as zero used.
+fn quota_window(
+    quota: &serde_json::Map<String, Value>,
+    kind: UsageWindowKind,
+    keys: &[&str],
+    now_unix: i64,
+) -> Option<UsageWindow> {
+    let mut most_used: Option<(f64, &Value)> = None;
+    for key in keys {
+        let Some(bucket) = quota.get(*key) else {
+            continue;
+        };
+        let Some(remaining) = remaining_fraction(bucket) else {
+            continue;
+        };
+        if most_used.is_none_or(|(current, _)| remaining < current) {
+            most_used = Some((remaining, bucket));
+        }
+    }
+    let (remaining, bucket) = most_used?;
+    let used = ((1.0 - remaining) * 100.0).clamp(0.0, 100.0);
+    Some(UsageWindow {
+        kind,
+        percent_used: Some(used),
+        resets_at: reset_at(bucket, now_unix),
+        status: usage_status(used),
+    })
+}
+
+/// Remaining allowance as a `0..=1` fraction. The key names the scale: `remaining_percent` of
+/// `1.0` means 1% left, not a full pool.
+fn remaining_fraction(bucket: &Value) -> Option<f64> {
+    if bucket.get("disabled").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let raw = bucket
+        .get("remaining_fraction")
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            bucket
+                .get("remaining_percent")
+                .and_then(Value::as_f64)
+                .map(|percent| percent / 100.0)
+        })?;
+    raw.is_finite().then(|| raw.clamp(0.0, 1.0))
+}
+
+fn reset_at(bucket: &Value, now_unix: i64) -> Option<i64> {
+    bucket
+        .get("reset_time")
+        .and_then(Value::as_str)
+        .and_then(parse_rfc3339)
+        .or_else(|| {
+            bucket
+                .get("reset_in_seconds")
+                .and_then(Value::as_i64)
+                .filter(|seconds| *seconds >= 0)
+                .map(|seconds| now_unix.saturating_add(seconds))
+        })
+}
+
+fn usage_status(percent: f64) -> UsageStatus {
+    if percent >= 100.0 {
+        UsageStatus::Limited
+    } else if percent >= 80.0 {
+        UsageStatus::Warning
+    } else {
+        UsageStatus::Ok
+    }
+}
+
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 /// One entry of `agy models`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -678,7 +859,7 @@ impl Provider for AgyProvider {
             supports_reasoning: false,
             native_attachment_kinds: Vec::new(),
             mid_thread_model_switch: true,
-            reports_usage_limits: false,
+            reports_usage_limits: true,
         }
     }
 }
@@ -756,6 +937,19 @@ impl TurnRun {
                 let _ = self.tx.send(ProviderEvent::Unknown { raw: line });
                 continue;
             };
+            // A statusLine snapshot arrives as a bare payload (or, if agy ever streams it, under a
+            // status_line event). It is not a Turn event, so it must not fall through to Unknown.
+            let is_statusline = value.get("quota").is_some()
+                && matches!(
+                    value.get("event").and_then(Value::as_str),
+                    None | Some("status_line" | "statusline")
+                );
+            if is_statusline {
+                if let Some(event) = parse_statusline_quota(&value, now_unix()) {
+                    let _ = self.tx.send(event);
+                }
+                continue;
+            }
             match value.get("event").and_then(Value::as_str) {
                 Some("init") => {
                     if let Some(id) = value.get("conversation_id").and_then(Value::as_str) {

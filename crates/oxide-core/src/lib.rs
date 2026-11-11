@@ -29,7 +29,7 @@ mod restore;
 mod review_ledger;
 mod rule_suggestions;
 mod settings;
-mod slash_catalog;
+pub mod slash_catalog;
 mod storage_actor;
 mod terminal;
 mod terminal_completion;

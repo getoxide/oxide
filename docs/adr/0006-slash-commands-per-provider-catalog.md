@@ -23,3 +23,7 @@ A passthrough or native Slash command is a Turn, because the Provider treats it 
 - Whether Claude Code passes Slash commands through no longer depends on the skills customization: built-ins run in `--safe-mode` too.
 
 Oxide caches provider catalogs locally by provider and the Thread’s working directory. It refreshes on opening a Thread and on `/reload-cache`; the command is intercepted by Oxide. For a draft without a Thread, the Project directory is used. A dispatched Thread uses its worktree. The cache is stored under Oxide’s local data directory, not in a Project.
+
+## Amendment: `/effort` retires from the catalog
+
+The original decision above lists `/effort` among Oxide's commands. Model and Effort are now chosen together through the Model Picker, so `/effort` is retired from the active catalog in favour of `/model`. A manually typed `/effort <level>` remains an intercepted compatibility route. A Provider that still reports an `effort` command has it suppressed from autocomplete, so it never appears as a suggested Slash command.

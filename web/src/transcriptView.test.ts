@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ItemSnapshot } from "./bindings";
+import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { formatElapsed, liveStatus, STATUS_PHRASES, statusPhrase, summaryText, type Activity } from "./activity";
 import { groupTurnItems, splitHeadline, formatTime, modelEffortLabel } from "./transcriptView";
 
@@ -177,10 +177,54 @@ describe("splitHeadline", () => {
 });
 
 describe("labels", () => {
+  const catalog: ModelInfo[] = [
+    { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", description: null, supportedEfforts: [], defaultEffort: null, isLegacy: false },
+    { id: "claude-opus-5-5", name: "Opus 5.5", description: null, supportedEfforts: [], defaultEffort: null, isLegacy: false },
+  ];
+
   it("formats Model · Effort, omitting what is unknown", () => {
-    expect(modelEffortLabel("Opus 5.5", "high")).toBe("Opus 5.5 · high");
+    expect(modelEffortLabel("Opus 5.5", "high")).toBe("Opus 5.5 · High");
     expect(modelEffortLabel("Opus 5.5", null)).toBe("Opus 5.5");
     expect(modelEffortLabel(null, null)).toBe("default model");
+  });
+
+  it("uses the catalog's name for the Model", () => {
+    expect(modelEffortLabel("claude-opus-5-5", "high", catalog)).toBe("Opus 5.5 · High");
+  });
+
+  it("humanizes a raw slug when the catalog does not know the Model", () => {
+    expect(modelEffortLabel("gemini-3.8-flash-low", "low", null)).toBe("Gemini 3.8 Flash · Low");
+    expect(modelEffortLabel("claude-future-9", null, null)).toBe("Claude Future 9");
+  });
+
+  it("keeps the Effort the Model carries when the Turn has no separate value", () => {
+    expect(modelEffortLabel("gemini-3.8-flash-low", null, null)).toBe("Gemini 3.8 Flash · Low");
+    expect(modelEffortLabel("gpt-5-1-codex-high", null, null)).toBe("GPT 5.1 Codex · High");
+    expect(modelEffortLabel("gemini-3.8-flash-high", null, catalog)).toBe("Gemini 3.8 Flash · High");
+    expect(
+      modelEffortLabel("gemini-3.8-flash", null, [
+        { ...catalog[0]!, id: "gemini-3.8-flash", name: "Gemini 3.8 Flash (XHigh)" },
+      ]),
+    ).toBe("Gemini 3.8 Flash · Extra High");
+    expect(
+      modelEffortLabel("claude-opus-5-5", null, [
+        { ...catalog[1]!, name: "Opus 5.5 · max" },
+      ]),
+    ).toBe("Opus 5.5 · Max");
+  });
+
+  it("never repeats the Effort the Model name carries", () => {
+    expect(modelEffortLabel("gemini-3.8-flash-low", "low", catalog)).toBe("Gemini 3.8 Flash · Low");
+    expect(modelEffortLabel("gemini-3.8-flash-high", "high", [{ ...catalog[0]!, id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash - High" }])).toBe(
+      "Gemini 3.8 Flash · High",
+    );
+  });
+
+  it("capitalizes every Effort level", () => {
+    expect(modelEffortLabel("Opus 5.5", "low")).toBe("Opus 5.5 · Low");
+    expect(modelEffortLabel("Opus 5.5", "medium")).toBe("Opus 5.5 · Medium");
+    expect(modelEffortLabel("Opus 5.5", "high")).toBe("Opus 5.5 · High");
+    expect(modelEffortLabel("Opus 5.5", "max")).toBe("Opus 5.5 · Max");
   });
 
   it("formats an ISO time as HH:MM", () => {

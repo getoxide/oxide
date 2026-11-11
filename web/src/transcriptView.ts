@@ -1,5 +1,6 @@
-import type { ItemSnapshot } from "./bindings";
+import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { buildActivity, type Activity } from "./activity";
+import { effortFromModel, effortLabel, readableModel } from "./headerLines";
 
 export type Block =
   | { type: "activity"; activity: Activity }
@@ -51,9 +52,32 @@ export function splitHeadline(content: string): { headline: string; detail: stri
   return { headline: content.slice(0, nl), detail: content.slice(nl + 1) };
 }
 
-export function modelEffortLabel(model: string | null, effort: string | null): string {
-  if (!model) return "default model";
-  return effort ? `${model} · ${effort}` : model;
+export interface ModelEffortParts {
+  model: string;
+  effort: string | null;
+}
+
+/** The Model and Effort as a Turn header draws them, with no Effort repeated in the Model name. */
+export function modelEffortParts(
+  model: string | null,
+  effort: string | null,
+  catalog: ModelInfo[] | null = null,
+): ModelEffortParts {
+  if (!model) return { model: "default model", effort: null };
+  const level = effort?.trim() ? effort : effortFromModel(model, catalog);
+  return {
+    model: readableModel(model, catalog),
+    effort: level ? effortLabel(level) : null,
+  };
+}
+
+export function modelEffortLabel(
+  model: string | null,
+  effort: string | null,
+  catalog: ModelInfo[] | null = null,
+): string {
+  const parts = modelEffortParts(model, effort, catalog);
+  return parts.effort ? `${parts.model} · ${parts.effort}` : parts.model;
 }
 
 export function formatTime(iso: string): string {

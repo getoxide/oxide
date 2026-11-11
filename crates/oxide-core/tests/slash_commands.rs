@@ -15,7 +15,6 @@ fn a_provider_with_no_commands_still_lists_oxides_once_each() {
         [
             "clear",
             "diff",
-            "effort",
             "model",
             "permissions",
             "reload-cache",
