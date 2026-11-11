@@ -121,3 +121,133 @@ fn codex_unknown_durations_and_null_windows_are_dropped() {
     assert_eq!(oxide_provider::codex::parse_rate_limits(&params), None);
     assert_eq!(oxide_provider::codex::parse_rate_limits(&json!({})), None);
 }
+
+fn agy_windows(payload: &serde_json::Value) -> Vec<UsageWindow> {
+    windows(oxide_provider::agy::parse_statusline_quota(payload, 1_000))
+}
+
+#[test]
+fn agy_gemini_model_reports_the_gemini_pool() {
+    let payload = json!({
+        "model": {"id": "Gemini 3.8 Flash (High)", "display_name": "Gemini 3.8 Flash (High)"},
+        "quota": {
+            "gemini-5h": {"remaining_fraction": 0.75, "reset_time": "2026-11-11T12:00:00Z"},
+            "gemini-weekly": {"remaining_fraction": 0.55, "reset_in_seconds": 3600},
+            "3p-5h": {"remaining_fraction": 0.1},
+            "3p-weekly": {"remaining_fraction": 0.1}
+        }
+    });
+    let w = agy_windows(&payload);
+    assert_eq!(w.len(), 2);
+    assert_eq!(w[0].kind, UsageWindowKind::FiveHour);
+    assert!((w[0].percent_used.unwrap() - 25.0).abs() < 1e-9);
+    assert_eq!(w[0].resets_at, Some(1_794_398_400));
+    assert_eq!(w[0].status, UsageStatus::Ok);
+    assert_eq!(w[1].kind, UsageWindowKind::Weekly);
+    assert!((w[1].percent_used.unwrap() - 45.0).abs() < 1e-9);
+    assert_eq!(w[1].resets_at, Some(4_600));
+}
+
+#[test]
+fn agy_third_party_model_reports_the_third_party_pool() {
+    let payload = json!({
+        "model": {"id": "Claude Sonnet 4.6", "display_name": "Claude Sonnet 4.6"},
+        "quota": {
+            "gemini-5h": {"remaining_fraction": 0.0, "reset_in_seconds": 100},
+            "gemini-weekly": {"remaining_fraction": 0.0, "reset_in_seconds": 100},
+            "3p-5h": {"remaining_fraction": 0.8, "reset_in_seconds": 5000},
+            "3p-weekly": {"remaining_fraction": 0.6, "reset_in_seconds": 90000}
+        }
+    });
+    let w = agy_windows(&payload);
+    assert_eq!(w.len(), 2);
+    assert!((w[0].percent_used.unwrap() - 20.0).abs() < 1e-9);
+    assert_eq!(w[0].resets_at, Some(6_000));
+    assert!((w[1].percent_used.unwrap() - 40.0).abs() < 1e-9);
+    assert_eq!(w[1].resets_at, Some(91_000));
+}
+
+#[test]
+fn agy_argon_model_prefers_its_own_weekly_bucket() {
+    let payload = json!({
+        "model": {"id": "Gemini 4 Argon (High)"},
+        "quota": {
+            "gemini-5h": {"remaining_fraction": 1.0},
+            "gemini-weekly": {"remaining_fraction": 0.9},
+            "gemini-argon-wtu-weekly": {"remaining_fraction": 0.5, "reset_in_seconds": 60},
+            "3p-5h": {"remaining_fraction": 0.0},
+            "3p-weekly": {"remaining_fraction": 0.0}
+        }
+    });
+    let w = agy_windows(&payload);
+    assert_eq!(w.len(), 2);
+    assert_eq!(w[0].percent_used, Some(0.0));
+    assert!((w[1].percent_used.unwrap() - 50.0).abs() < 1e-9);
+    assert_eq!(w[1].resets_at, Some(1_060));
+}
+
+#[test]
+fn agy_accepts_remaining_percent_and_skips_disabled_buckets() {
+    let percent = agy_windows(&json!({
+        "model": {"id": "Gemini 3.8 Flash"},
+        "quota": {"gemini-5h": {"remaining_percent": 40.0}}
+    }));
+    assert_eq!(percent.len(), 1);
+    assert!((percent[0].percent_used.unwrap() - 60.0).abs() < 1e-9);
+
+    let disabled = agy_windows(&json!({
+        "model": {"id": "Gemini 3.8 Flash"},
+        "quota": {
+            "gemini-5h": {"remaining_fraction": 0.1, "disabled": true},
+            "gemini-weekly": {"remaining_fraction": 0.9}
+        }
+    }));
+    assert_eq!(disabled.len(), 1);
+    assert_eq!(disabled[0].kind, UsageWindowKind::Weekly);
+}
+
+#[test]
+fn agy_exhausted_bucket_is_limited() {
+    let w = agy_windows(&json!({
+        "model": {"id": "Gemini 3.8 Flash"},
+        "quota": {"gemini-5h": {"remaining_fraction": 0.0}}
+    }));
+    assert_eq!(w[0].percent_used, Some(100.0));
+    assert_eq!(w[0].status, UsageStatus::Limited);
+}
+
+#[test]
+fn agy_unknown_model_does_not_mix_pools() {
+    let ambiguous = json!({
+        "model": {"id": "Future Model XYZ"},
+        "quota": {
+            "gemini-5h": {"remaining_fraction": 0.9},
+            "3p-5h": {"remaining_fraction": 0.3}
+        }
+    });
+    assert_eq!(
+        oxide_provider::agy::parse_statusline_quota(&ambiguous, 0),
+        None
+    );
+
+    let unambiguous = agy_windows(&json!({
+        "quota": {"3p-5h": {"remaining_fraction": 0.3}}
+    }));
+    assert_eq!(unambiguous.len(), 1);
+    assert_eq!(unambiguous[0].kind, UsageWindowKind::FiveHour);
+}
+
+#[test]
+fn agy_payload_without_quota_or_windows_yields_nothing() {
+    assert_eq!(
+        oxide_provider::agy::parse_statusline_quota(&json!({"model": {"id": "Gemini"}}), 0),
+        None
+    );
+    assert_eq!(
+        oxide_provider::agy::parse_statusline_quota(
+            &json!({"quota": {"gemini-5h": {"remaining_fraction": "half"}}}),
+            0
+        ),
+        None
+    );
+}

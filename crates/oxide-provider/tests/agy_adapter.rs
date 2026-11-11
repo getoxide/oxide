@@ -117,6 +117,65 @@ fn agy_offers_only_the_modes_it_can_honour_and_no_attachments() {
     );
     assert!(!caps.interactive_approvals);
     assert!(caps.native_attachment_kinds.is_empty());
+    assert!(caps.reports_usage_limits);
+}
+
+fn usage_windows(events: &[ProviderEvent]) -> Vec<oxide_provider::UsageWindow> {
+    events
+        .iter()
+        .find_map(|event| match event {
+            ProviderEvent::UsageLimits { windows } => Some(windows.clone()),
+            _ => None,
+        })
+        .expect("expected a UsageLimits event")
+}
+
+#[test]
+fn gemini_statusline_quota_becomes_usage_limits() {
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("usage_gemini_test").unwrap();
+    let windows = usage_windows(&collect_turn(&rx));
+
+    assert_eq!(windows.len(), 2);
+    let five = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
+        .unwrap();
+    let week = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
+        .unwrap();
+    assert!((five.percent_used.unwrap() - 25.0).abs() < 1e-9);
+    assert_eq!(five.resets_at, Some(1_794_398_400));
+    assert!((week.percent_used.unwrap() - 45.0).abs() < 1e-9);
+    assert_eq!(week.resets_at, Some(1_794_484_800));
+    provider.shutdown().unwrap();
+}
+
+#[test]
+fn third_party_statusline_quota_becomes_usage_limits() {
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("usage_third_party_test").unwrap();
+    let windows = usage_windows(&collect_turn(&rx));
+
+    assert_eq!(windows.len(), 2);
+    let five = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
+        .unwrap();
+    let week = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
+        .unwrap();
+    assert!((five.percent_used.unwrap() - 20.0).abs() < 1e-9);
+    assert_eq!(five.resets_at, Some(1_794_402_000));
+    assert!((week.percent_used.unwrap() - 40.0).abs() < 1e-9);
+    assert_eq!(week.resets_at, Some(1_794_571_200));
+    provider.shutdown().unwrap();
 }
 
 #[test]
