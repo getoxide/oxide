@@ -8,6 +8,7 @@ pub mod command;
 pub mod contract_suite;
 pub mod process;
 pub mod service_command;
+pub mod time;
 
 pub use service_command::{
     is_background_command, is_explicit_background, port_in_command, service_notice, service_url,

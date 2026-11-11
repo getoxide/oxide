@@ -6,6 +6,7 @@
 //! offered (ADR-0004), and Oxide never touches `agy`'s settings file.
 
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
+use crate::time::parse_rfc3339;
 use crate::{
     ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, Detection, ItemKind,
     ModelInfo, PermissionMode, PromptSegment, Provider, ProviderCapabilities, ProviderError,
@@ -294,38 +295,6 @@ fn usage_status(percent: f64) -> UsageStatus {
     } else {
         UsageStatus::Ok
     }
-}
-
-/// RFC 3339 UTC timestamp (`2026-01-02T03:04:05[.fff]Z` or `+00:00`) to Unix seconds.
-fn parse_rfc3339(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let (date, rest) = s.split_once('T')?;
-    let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
-    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
-    let time: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == ':')
-        .collect();
-    let mut t = time.split(':').map(|p| p.parse::<i64>().ok());
-    let (h, mi, sec) = (t.next()??, t.next()??, t.next().flatten().unwrap_or(0));
-    let tail = &rest[time.len()..];
-    let tail = tail.trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
-    let offset = match tail.chars().next() {
-        Some(sign @ ('+' | '-')) => {
-            let (oh, om) = tail[1..].split_once(':').unwrap_or((&tail[1..], "0"));
-            let secs = oh.parse::<i64>().ok()? * 3600 + om.parse::<i64>().ok()? * 60;
-            if sign == '+' { secs } else { -secs }
-        }
-        _ => 0,
-    };
-    // Days from civil (Howard Hinnant).
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(days * 86_400 + h * 3600 + mi * 60 + sec - offset)
 }
 
 fn now_unix() -> i64 {
