@@ -1519,8 +1519,7 @@ section.terminal.terminal-hidden { display: none; }
   .branch-button .branch-name { max-width: 120px; }
 }
 @container (max-width: 360px) {
-  .tools .tab { padding: 0 8px; }
-  .tools .tab:not([aria-selected="true"]) .tool-tab-label { display: none; }
+  .tools .tab { padding: 0 6px; }
 }
 
 /* The hit area overlaps the existing seam, so resizing adds no layout gutter. */

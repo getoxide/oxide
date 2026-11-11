@@ -28,6 +28,7 @@ Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: 
 
 let host: HTMLDivElement;
 let root: Root;
+let scrolledIntoView: Element[] = [];
 const project = { id: 1, name: "Oxide", path: "/repo", hidden: false, open: true, missing: false };
 const thread = (id: number, title: string) => ({
   id, projectId: 1, provider: "claude", title, status: "completed", updatedAt: "2026-01-01T00:00:00Z",
@@ -37,6 +38,11 @@ const threads = [thread(2, "Alpha work"), thread(3, "Beta work")];
 
 beforeEach(() => {
   Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
+  // jsdom has no scrolling; record the calls so tab focus can be proven to reveal its tab.
+  scrolledIntoView = [];
+  HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+    scrolledIntoView.push(this);
+  };
   clearQueryCache();
   host = document.createElement("div");
   document.body.append(host);
@@ -141,6 +147,99 @@ it("cycles through dock tabs and restores focus deliberately when collapsing/res
   await press("\\", { ctrlKey: true });
   await settle();
   expect(document.activeElement?.getAttribute("role")).toBe("tab");
+});
+
+it("shows every Surface tab's icon and label inside a strip that leaves the utility controls pinned", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Toggle tools panel"]')!.click());
+  await settle();
+
+  const nav = host.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"]')!;
+  // The strip is the single region the tabs live in; everything else in the header is utility chrome.
+  const regionOf = (node: Element) => {
+    let region = node as HTMLElement;
+    while (region.parentElement && region.parentElement !== nav) region = region.parentElement!;
+    return region;
+  };
+  const diffTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!;
+  const strip = regionOf(diffTab);
+  expect(strip).not.toBe(nav);
+
+  // Labels never depend on whether the tab is active: both states keep icon + label.
+  for (const name of ["Diff", "Files", "Terminal", "Pull request", "Issues"]) {
+    const tab = host.querySelector<HTMLButtonElement>(`[role="tab"][aria-label="${name}"]`)!;
+    expect(tab).not.toBeNull();
+    expect(strip.contains(tab)).toBe(true);
+    expect(tab.querySelector("svg.octicon")).not.toBeNull();
+    expect(tab.textContent?.trim()).toBe(name);
+    expect(tab.querySelector<HTMLElement>("[hidden]")).toBeNull();
+  }
+
+  // Maximize/Restore and Close sit after the scrolling strip, not inside it, so they stay reachable.
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!.click());
+  await settle();
+  // The previously active tab keeps its label once it goes inactive.
+  expect(diffTab.getAttribute("aria-selected")).toBe("false");
+  expect(diffTab.textContent?.trim()).toBe("Diff");
+  const close = host.querySelector<HTMLButtonElement>('button[aria-label="Close tools panel"]')!;
+  const maximize = host.querySelector<HTMLButtonElement>('button[aria-label="Maximize Surface"]')!;
+  const actions = regionOf(close);
+  expect(actions).not.toBe(strip);
+  expect(strip.contains(close)).toBe(false);
+  expect(strip.contains(maximize)).toBe(false);
+  expect(actions).toBe(regionOf(maximize));
+  expect([...nav.children].indexOf(actions)).toBeGreaterThan([...nav.children].indexOf(strip));
+});
+
+it("scrolls the focused tab into view for every roving keyboard move", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Toggle tools panel"]')!.click());
+  await settle();
+
+  const nav = host.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"]')!;
+  const diffTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!;
+  diffTab.focus();
+
+  const focusAndDispatch = async (key: string) => {
+    scrolledIntoView = [];
+    await act(async () => {
+      nav.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+    await settle();
+    return nav.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+  };
+
+  const filesTab = await focusAndDispatch("ArrowRight");
+  expect(filesTab.getAttribute("aria-label")).toBe("Files");
+  expect(document.activeElement).toBe(filesTab);
+  expect(scrolledIntoView).toContain(filesTab);
+
+  const issuesTab = await focusAndDispatch("End");
+  expect(issuesTab.getAttribute("aria-label")).toBe("Issues");
+  expect(scrolledIntoView).toContain(issuesTab);
+
+  const firstTab = await focusAndDispatch("Home");
+  expect(firstTab.getAttribute("aria-label")).toBe("Diff");
+  expect(scrolledIntoView).toContain(firstTab);
+});
+
+it("scrolls a Surface selected by its shortcut accelerator into view", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Toggle tools panel"]')!.click());
+  await settle();
+
+  // Pull request is the far end of the strip, so selecting it by accelerator must reveal it.
+  scrolledIntoView = [];
+  await press("P", { ctrlKey: true, shiftKey: true });
+  await settle();
+
+  const pullRequestTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Pull request"]')!;
+  expect(pullRequestTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(pullRequestTab);
+  expect(scrolledIntoView).toContain(pullRequestTab);
 });
 
 it("handles Escape hierarchy: closes topmost overlay, else restores maximization", async () => {

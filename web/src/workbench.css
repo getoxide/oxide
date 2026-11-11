@@ -871,12 +871,23 @@
 .tools > .code-workbench, .tools > .terminal-workbench { flex: 1; min-height: 0; min-width: 0; }
 .thread-restore-handle { flex: none; width: 32px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--bg2); color: var(--dim); display: flex; align-items: center; justify-content: center; }
 .surface-empty { flex: 1; }
-.tools > .tabs { flex: none; min-width: 0; }
-.tools > .tabs .tab { min-width: 28px; padding: 0 7px; white-space: nowrap; }
-.tools > .tabs > .icon-btn { flex: none; }
-@container (max-width: 560px) {
-  .tools > .tabs .tab:not([aria-selected="true"]) .tool-tab-label { display: none; }
+/* Surface tabs never drop their labels: the strip scrolls sideways instead, and the utility
+   controls stay pinned outside the scroll area so Maximize/Restore and Close remain reachable. */
+.tools-tabs { flex: none; min-width: 0; gap: 0; padding: 0; }
+.tools-tab-strip {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
 }
+.tools-tab-strip::-webkit-scrollbar { display: none; }
+.tools-tab-actions { display: flex; align-items: center; flex: none; gap: 2px; padding: 0 8px 0 4px; }
+.tools-tab-actions .icon-btn { flex: none; }
+.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; }
 .window.windows .header { display: flex; }
 .window.windows .header-project { flex: 1; justify-content: flex-start; }
 .header > .icon-btn { flex: none; min-width: 28px; }
