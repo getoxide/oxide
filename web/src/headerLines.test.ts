@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelInfo } from "./bindings";
-import { displayPath, middleEllipsis, threadHeaderLines } from "./headerLines";
+import { displayPath, middleEllipsis, readableModel, threadHeaderLines } from "./headerLines";
 
 const model = (id: string, name: string): ModelInfo => ({
   id,
@@ -56,9 +56,9 @@ describe("threadHeaderLines", () => {
     expect(threadHeaderLines(base).modelLine).toBe("Opus 5.5 · high");
   });
 
-  it("falls back to the raw Model id when the catalog does not know it", () => {
-    expect(threadHeaderLines({ ...base, model: "claude-future-9" }).modelLine).toBe("claude-future-9 · high");
-    expect(threadHeaderLines({ ...base, catalog: null }).modelLine).toBe("claude-opus-5-5 · high");
+  it("falls back to a humanized Model id when the catalog does not know it", () => {
+    expect(threadHeaderLines({ ...base, model: "claude-future-9" }).modelLine).toBe("Claude Future 9 · high");
+    expect(threadHeaderLines({ ...base, catalog: null }).modelLine).toBe("Claude Opus 5.5 · high");
   });
 
   it("leaves the Effort out when there is none", () => {
@@ -103,6 +103,11 @@ describe("threadHeaderLines", () => {
       catalog: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)")],
     });
     expect(lines.modelLine).toBe("Claude Sonnet 4.6 (Thinking)");
+  });
+
+  it("drops an effort the Model slug carries, even without a catalog", () => {
+    expect(readableModel("gemini-3.8-flash-low", null)).toBe("Gemini 3.8 Flash");
+    expect(readableModel("gpt-5-1-codex-high", null)).toBe("GPT 5.1 Codex");
   });
 
   it("shows the Project path for an ordinary Thread", () => {

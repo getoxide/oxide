@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { HistoryIcon, PersonIcon } from "@primer/octicons-react";
-import type { ApprovalDecision, ApprovalSnapshot } from "./bindings";
+import type { ApprovalDecision, ApprovalSnapshot, ModelInfo } from "./bindings";
 import { AttachmentChip } from "./AttachmentChip";
 import { plainText } from "./attachments";
 import { CopyButton } from "./CopyButton";
@@ -27,7 +27,7 @@ function SentComments({ text }: { text: string }) {
 }
 import { liveStatus } from "./activity";
 import type { TranscriptTurn } from "./transcript";
-import { formatTime, groupTurnItems, modelEffortLabel, type Block } from "./transcriptView";
+import { formatTime, groupTurnItems, modelEffortParts, type Block } from "./transcriptView";
 
 function BlockView({ block }: { block: Block }) {
   switch (block.type) {
@@ -161,12 +161,15 @@ const JUST_SENT_MS = 1500;
 export const TurnView = memo(function TurnView({
   turn,
   provider,
+  catalog = null,
   onRespond,
   isWorking,
   instant = false,
 }: {
   turn: TranscriptTurn;
   provider: string;
+  /** The Provider's Model catalog, so the header can name the Model the way the picker does. */
+  catalog?: ModelInfo[] | null;
   onRespond: (approvalId: string, decision: ApprovalDecision) => void;
   isWorking: boolean;
   /** Skips the send animation: the prompt is already on screen as the outgoing Turn. */
@@ -175,6 +178,7 @@ export const TurnView = memo(function TurnView({
   const [justSent] = useState(
     () => !instant && turn.status === "running" && Date.now() - Date.parse(turn.startedAt) < JUST_SENT_MS
   );
+  const model = modelEffortParts(turn.model ?? null, turn.effort ?? null, catalog);
   const blocks = groupTurnItems(turn.items);
   const promptText = turn.segments.length > 0 ? plainText(turn.segments) : turn.prompt;
   const approvals = turn.approvals ?? [];
@@ -210,7 +214,16 @@ export const TurnView = memo(function TurnView({
         <div className="agent-turn">
           <div className="agent-header">
             <ProviderMark provider={provider} />
-            <span>{modelEffortLabel(turn.model ?? null, turn.effort ?? null)}</span>
+            <span className="model-name">{model.model}</span>
+            {model.effort && (
+              <>
+                <span className="model-effort-separator" aria-hidden="true">·</span>
+                <span className="effort-badge">
+                  <span className="sr-only">Effort: </span>
+                  {model.effort}
+                </span>
+              </>
+            )}
           </div>
           {(activity || live || waitingOnApproval) && (
             <ActivityView
