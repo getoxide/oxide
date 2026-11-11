@@ -234,7 +234,7 @@ export const TurnView = memo(function TurnView({
               workedMs={workedMs}
             />
           )}
-          {turn.status === "running" && !hasContent && <ResponseLoading />}
+          {turn.status === "running" && !waitingOnApproval && !hasContent && <ResponseLoading />}
           {blocks.map((block, i) => (
             <BlockView key={i} block={block} />
           ))}

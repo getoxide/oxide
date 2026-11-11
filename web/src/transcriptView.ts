@@ -1,6 +1,6 @@
 import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { buildActivity, type Activity } from "./activity";
-import { effortLabel, readableModel } from "./headerLines";
+import { effortFromModel, effortLabel, readableModel } from "./headerLines";
 
 export type Block =
   | { type: "activity"; activity: Activity }
@@ -64,9 +64,10 @@ export function modelEffortParts(
   catalog: ModelInfo[] | null = null,
 ): ModelEffortParts {
   if (!model) return { model: "default model", effort: null };
+  const level = effort?.trim() ? effort : effortFromModel(model, catalog);
   return {
     model: readableModel(model, catalog),
-    effort: effort?.trim() ? effortLabel(effort) : null,
+    effort: level ? effortLabel(level) : null,
   };
 }
 

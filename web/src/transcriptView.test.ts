@@ -194,7 +194,23 @@ describe("labels", () => {
 
   it("humanizes a raw slug when the catalog does not know the Model", () => {
     expect(modelEffortLabel("gemini-3.8-flash-low", "low", null)).toBe("Gemini 3.8 Flash · Low");
-    expect(modelEffortLabel("gpt-5-1-codex-high", null, null)).toBe("GPT 5.1 Codex");
+    expect(modelEffortLabel("claude-future-9", null, null)).toBe("Claude Future 9");
+  });
+
+  it("keeps the Effort the Model carries when the Turn has no separate value", () => {
+    expect(modelEffortLabel("gemini-3.8-flash-low", null, null)).toBe("Gemini 3.8 Flash · Low");
+    expect(modelEffortLabel("gpt-5-1-codex-high", null, null)).toBe("GPT 5.1 Codex · High");
+    expect(modelEffortLabel("gemini-3.8-flash-high", null, catalog)).toBe("Gemini 3.8 Flash · High");
+    expect(
+      modelEffortLabel("gemini-3.8-flash", null, [
+        { ...catalog[0]!, id: "gemini-3.8-flash", name: "Gemini 3.8 Flash (XHigh)" },
+      ]),
+    ).toBe("Gemini 3.8 Flash · Extra High");
+    expect(
+      modelEffortLabel("claude-opus-5-5", null, [
+        { ...catalog[1]!, name: "Opus 5.5 · max" },
+      ]),
+    ).toBe("Opus 5.5 · Max");
   });
 
   it("never repeats the Effort the Model name carries", () => {

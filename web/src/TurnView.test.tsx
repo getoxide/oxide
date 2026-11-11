@@ -84,6 +84,13 @@ it("shows the Effort on its own when the catalog has no name for the Model", asy
   expect(header.querySelector(".effort-badge")?.textContent).toBe("Effort: High");
 });
 
+it("keeps the Effort the Model carries when the Turn has no separate value", async () => {
+  await render(turn({ model: "gemini-3.8-flash-low", effort: null, items: [item(0, "agent_message", "hi")] }), null);
+  const header = container.querySelector(".agent-header")!;
+  expect(header.querySelector(".model-name")?.textContent).toBe("Gemini 3.8 Flash");
+  expect(header.querySelector(".effort-badge")?.textContent).toBe("Effort: Low");
+});
+
 it("shows sent Line comments as formatted text with the quoted code, not as raw markdown", async () => {
   const text = "I reviewed your changes and left 1 comment. Please address each one.\n\n### src/a.ts:2\n```\nconst x = 1;\n```\nWhy this value?\n";
   await render(turn({ segments: [{ kind: "text", text }] }));
@@ -182,6 +189,19 @@ it("shows no live line while waiting on an Approval", async () => {
     }),
   );
   expect(container.querySelector(".activity-live-timer")).toBeNull();
+  expect(container.textContent).toContain("Waiting for your approval");
+});
+
+it("shows no generating indicator while an Approval is pending", async () => {
+  await render(
+    turn({
+      status: "running",
+      completedAt: null,
+      startedAt: new Date().toISOString(),
+      approvals: [{ id: 1, turnId: 1, approvalId: "a", kind: "command", summary: "rm", options: [], decision: null, createdAt: "", decidedAt: null }],
+    }),
+  );
+  expect(generating()).toBeNull();
   expect(container.textContent).toContain("Waiting for your approval");
 });
 

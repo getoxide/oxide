@@ -56,7 +56,13 @@ export interface ThreadHeaderLines {
 }
 
 /** A catalog name can spell out the Effort, "Gemini 3.8 Flash (High)" or "Gemini 3.8 Flash - High". */
-const EFFORT_SUFFIX = /\s*(?:[(·-]\s*|\s+)(?:low|medium|high|xhigh|max)\)?\s*$/i;
+const EFFORT_SUFFIX = /\s*(?:[(·-]\s*|\s+)(low|medium|high|xhigh|max)\)?\s*$/i;
+
+/** The Effort level a Model id or name ends with, lowercased, if any. */
+export function effortSuffix(name: string): string | null {
+  const match = EFFORT_SUFFIX.exec(name.trim());
+  return match ? match[1].toLowerCase() : null;
+}
 
 /** Drops an Effort the Model's name already carries, since the header shows the Effort on its own. */
 export function stripEffortSuffix(name: string): string {
@@ -101,11 +107,24 @@ export function readableModel(model: string, catalog: ModelInfo[] | null): strin
   return stripEffortSuffix(name ?? humanizeModelId(model));
 }
 
+/** The Effort a Model id or catalog name carries, for a Thread that has no separate value. */
+export function effortFromModel(model: string, catalog: ModelInfo[] | null): string | null {
+  const exact = catalog?.find((m) => m.id === model);
+  const family = modelFamilyId(model);
+  const familyName = catalog?.find((m) => modelFamilyId(m.id) === family)?.name;
+  return (
+    effortSuffix(model) ??
+    (exact ? effortSuffix(exact.name) : null) ??
+    (familyName ? effortSuffix(familyName) : null)
+  );
+}
+
 export function threadHeaderLines(input: ThreadHeaderInput): ThreadHeaderLines {
   const name = input.model ? readableModel(input.model, input.catalog) : providerName(input.provider);
   const path = input.thread?.worktreePath ?? input.projectPath;
+  const effort = input.effort || (input.model ? effortFromModel(input.model, input.catalog) : null);
   return {
-    modelLine: input.effort ? `${name} · ${input.effort}` : name,
+    modelLine: effort ? `${name} · ${effort}` : name,
     folder: {
       path: readablePath(path),
       text: middleEllipsis(displayPath(path), FOLDER_MAX),

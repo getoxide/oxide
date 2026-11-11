@@ -110,6 +110,21 @@ describe("threadHeaderLines", () => {
     expect(readableModel("gpt-5-1-codex-high", null)).toBe("GPT 5.1 Codex");
   });
 
+  it("keeps an Effort the Model carries when the Thread has no separate value", () => {
+    expect(
+      threadHeaderLines({ ...base, provider: "antigravity", model: "gemini-3.8-flash-low", effort: null, catalog: null })
+        .modelLine,
+    ).toBe("Gemini 3.8 Flash · low");
+    expect(
+      threadHeaderLines({
+        ...base,
+        model: "gemini-3.8-flash",
+        effort: null,
+        catalog: [model("gemini-3.8-flash", "Gemini 3.8 Flash (High)")],
+      }).modelLine,
+    ).toBe("Gemini 3.8 Flash · high");
+  });
+
   it("shows the Project path for an ordinary Thread", () => {
     expect(threadHeaderLines(base).folder).toEqual({
       path: "/Users/lorenzo/Developer/project/oxide",
