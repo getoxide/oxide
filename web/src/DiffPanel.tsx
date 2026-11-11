@@ -15,6 +15,7 @@ import { PullRequestReviewDrafts } from "./PullRequestReviewDrafts";
 import { reviewThreadsPrefix } from "./reviewKeys";
 import { ReviewThreads } from "./ReviewThreads";
 import { VerificationDossier } from "./VerificationDossier";
+import { Dropdown } from "./Dropdown";
 
 interface DiffPanelProps {
   projectId: number;
@@ -300,7 +301,7 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
 
   return (
     <section className="diff" aria-label="Diff">
-      <div className="surface-bar">
+      <div className="surface-toolbar">
         <div className="seg" role="tablist" aria-label="Diff scope">
           {(reviewedPr === null ? SCOPES : [...SCOPES, { scope: "pr" as const, label: `PR #${reviewedPr}` }]).map((s) => (
             <button
@@ -314,40 +315,14 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
           ))}
         </div>
         {scope === "turn" && turns.length > 0 && turn !== null && (
-          <select
-            className="turn-pick"
-            aria-label="Turn"
-            value={turn.turnIndex}
-            onChange={(e) => setChosenTurn({ threadId, turnIndex: Number(e.target.value) })}
-          >
-            {turns.map((t) => (
-              <option key={t.turnIndex} value={t.turnIndex}>
-                {turnLabel(t)}
-              </option>
-            ))}
-          </select>
-        )}
-        {canRestore && (
-          <button
-            type="button"
-            className="btn"
-            aria-label={`Restore the files to before Turn ${turn.turnIndex + 1}`}
-            disabled={restoring}
-            onClick={() => void askRestore()}
-          >
-            <HistoryIcon size={14} /> Restore
-          </button>
-        )}
-        {pendingRestore && threadId !== null && !checkoutBusy && (
-          <button
-            type="button"
-            className="btn"
-            aria-label="Undo the restore"
-            disabled={restoring}
-            onClick={() => void doUndoRestore()}
-          >
-            <UndoIcon size={14} /> Undo restore
-          </button>
+          <Dropdown
+            label="Turn"
+            triggerClassName="turn-pick"
+            minMenuWidth={240}
+            value={String(turn.turnIndex)}
+            options={turns.map((t) => ({ value: String(t.turnIndex), label: turnLabel(t) }))}
+            onChange={(value) => setChosenTurn({ threadId, turnIndex: Number(value) })}
+          />
         )}
         {(scope === "branch" || scope === "pr") && loaded.state === "ready" && loaded.diff.base && (
           <span className="diff-base mono">vs {loaded.diff.base}</span>
@@ -356,11 +331,36 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
         {files.length > 0 && (
           <button
             type="button"
-            className="btn"
+            className="btn sm"
             aria-label="Blind review"
+            title="Blind review"
             onClick={() => void openBlindReview()}
           >
-            <EyeIcon size={14} /> Blind review
+            <EyeIcon size={14} /> <span className="diff-toolbar-label">Blind review</span>
+          </button>
+        )}
+        {canRestore && (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label={`Restore the files to before Turn ${turn.turnIndex + 1}`}
+            title={`Restore the files to before Turn ${turn.turnIndex + 1}`}
+            disabled={restoring}
+            onClick={() => void askRestore()}
+          >
+            <HistoryIcon size={14} /> <span className="diff-toolbar-label">Restore</span>
+          </button>
+        )}
+        {pendingRestore && threadId !== null && !checkoutBusy && (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Undo the restore"
+            title="Undo the restore"
+            disabled={restoring}
+            onClick={() => void doUndoRestore()}
+          >
+            <UndoIcon size={14} /> <span className="diff-toolbar-label">Undo restore</span>
           </button>
         )}
         {files.length > 0 && (

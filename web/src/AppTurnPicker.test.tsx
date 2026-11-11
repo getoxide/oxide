@@ -57,15 +57,19 @@ it("inspects an earlier Turn from the Turn scope, defaulting to the latest", asy
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Toggle tools panel"]')!.click());
   await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!.click());
 
-  await vi.waitFor(() => expect(host.querySelector('select[aria-label="Turn"]')).not.toBeNull());
-  const picker = host.querySelector<HTMLSelectElement>('select[aria-label="Turn"]')!;
-  expect(picker.value).toBe("1");
+  const trigger = await vi.waitFor(() => {
+    const el = host.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"][aria-label^="Turn: "]');
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  // The latest Turn is the default.
+  expect(trigger.getAttribute("aria-label")).toBe("Turn: Turn 2 · Rename it");
   expect(host.textContent).toContain("turn1.rs");
 
-  await act(async () => {
-    picker.value = "0";
-    picker.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  const options = () => Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Turn"] [role="option"]'));
+  await act(async () => trigger.click());
+  expect(options().map((o) => o.textContent)).toEqual(["Turn 1 · Add the parser", "Turn 2 · Rename it"]);
+  await act(async () => options()[0].click());
   expect(calls.filter(({ command }) => command === "git_turn_diff").at(-1)?.args).toEqual({ threadId: 2, turnIndex: 0 });
   expect(host.textContent).toContain("turn0.rs");
 });
