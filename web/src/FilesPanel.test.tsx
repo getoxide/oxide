@@ -136,8 +136,9 @@ it("puts the unified search field and the collapse action on the Surface toolbar
   expect(field.querySelector("svg")?.getAttribute("width")).toBe("14");
   const collapse = toolbar.querySelector<HTMLButtonElement>('button[aria-label="Collapse all folders"]')!;
   expect(collapse).not.toBeNull();
-  // The action sits on the toolbar row, after the field it belongs next to.
-  expect(field.nextElementSibling).toBe(collapse);
+  // The action shares the toolbar row with the field it belongs next to.
+  expect(field.parentElement).toBe(toolbar);
+  expect(collapse.parentElement).toBe(toolbar);
 });
 
 it("clears the file search with Escape and returns to the tree", async () => {

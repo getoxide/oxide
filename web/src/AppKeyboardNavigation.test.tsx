@@ -113,7 +113,7 @@ it("cycles major visible regions with F6 and Shift+F6 in visual order", async ()
   expect(document.activeElement?.closest("#workspace-sidebar")).not.toBeNull();
 });
 
-it("cycles through dock tabs and restores focus deliberately when collapsing/restoring", async () => {
+it("cycles through the dock's Surfaces and restores focus deliberately when collapsing/restoring", async () => {
   await act(async () => root.render(<App />));
   await settle();
 
@@ -127,7 +127,7 @@ it("cycles through dock tabs and restores focus deliberately when collapsing/res
   expect(diffTab.getAttribute("aria-selected")).toBe("true");
   expect(diffTab.getAttribute("tabindex")).toBe("0");
 
-  // Surface tabs roving focus with ArrowRight
+  // Surface headers rove focus with ArrowRight
   diffTab.focus();
   const tabsNav = host.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"]')!;
   await act(async () => {
@@ -149,7 +149,7 @@ it("cycles through dock tabs and restores focus deliberately when collapsing/res
   expect(document.activeElement?.getAttribute("role")).toBe("tab");
 });
 
-it("shows every Surface tab's icon and label inside a strip that leaves the utility controls pinned", async () => {
+it("shows every Surface's icon and label inside a strip that leaves the utility controls pinned", async () => {
   await act(async () => root.render(<App />));
   await settle();
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Toggle tools panel"]')!.click());
@@ -173,7 +173,10 @@ it("shows every Surface tab's icon and label inside a strip that leaves the util
     expect(strip.contains(tab)).toBe(true);
     expect(tab.querySelector("svg.octicon")).not.toBeNull();
     expect(tab.textContent?.trim()).toBe(name);
-    expect(tab.querySelector<HTMLElement>("[hidden]")).toBeNull();
+    // The label is its own element and carries the Surface name, so dropping it fails here.
+    const label = tab.querySelector<HTMLElement>(".tool-tab-label")!;
+    expect(label).not.toBeNull();
+    expect(label.textContent).toBe(name);
   }
 
   // Maximize/Restore and Close sit after the scrolling strip, not inside it, so they stay reachable.

@@ -299,6 +299,37 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
       return next;
     });
 
+  const base = loaded.state === "ready" ? loaded.diff.base : null;
+  // The empty state explains why there is no diff; nothing can be created from it, so it has no
+  // action button. Only the reason changes with the scope.
+  const emptyDiff =
+    scope === "branch" && !base
+      ? {
+          title: "No base branch found.",
+          description: "Branch scope compares against the remote's default branch, and this checkout has none.",
+        }
+      : scope === "turn" && threadId === null
+        ? {
+            title: "Select a Thread to see its Turn.",
+            description: "Turn scope compares the files between two Checkpoints of the selected Thread.",
+          }
+        : noCheckpoints
+          ? {
+              title: "This Turn has no Checkpoints, so there is no diff to show.",
+              description: "Oxide takes a Checkpoint when a Turn starts and when it ends; this Turn made none, so there is nothing to compare.",
+            }
+          : {
+              title: "No changes.",
+              description:
+                scope === "uncommitted"
+                  ? "The working tree matches the last commit."
+                  : scope === "branch"
+                    ? "The branch has no commits beyond its base."
+                    : scope === "pr"
+                      ? "The pull request changes nothing against its base."
+                      : "The Turn's Checkpoints are identical.",
+            };
+
   return (
     <section className="diff" aria-label="Diff">
       <div className="surface-toolbar">
@@ -324,8 +355,8 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
             onChange={(value) => setChosenTurn({ threadId, turnIndex: Number(value) })}
           />
         )}
-        {(scope === "branch" || scope === "pr") && loaded.state === "ready" && loaded.diff.base && (
-          <span className="diff-base mono">vs {loaded.diff.base}</span>
+        {(scope === "branch" || scope === "pr") && base && (
+          <span className="diff-base mono">vs {base}</span>
         )}
         <span className="grow" />
         {files.length > 0 && (
@@ -506,15 +537,8 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
       {loaded.state === "ready" && files.length === 0 && (
         <div className="surface-empty">
           <CheckCircleIcon size={32} aria-hidden="true" />
-          <p className="surface-empty-title">
-            {scope === "branch" && !loaded.diff.base
-              ? "No base branch found."
-              : scope === "turn" && threadId === null
-                ? "Select a Thread to see its Turn."
-                : noCheckpoints
-                  ? "This Turn has no Checkpoints, so there is no diff to show."
-                  : "No changes."}
-          </p>
+          <p className="surface-empty-title">{emptyDiff.title}</p>
+          <p className="surface-empty-description">{emptyDiff.description}</p>
         </div>
       )}
       {files.length > 0 && (

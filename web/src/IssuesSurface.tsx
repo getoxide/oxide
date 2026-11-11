@@ -1,5 +1,6 @@
 import { Skeleton } from "./Skeleton";
-import { CommentIcon, IssueOpenedIcon, PlusIcon, SearchIcon } from "@primer/octicons-react";
+import { SurfaceSearch } from "./SurfaceSearch";
+import { CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
@@ -135,23 +136,15 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
   return (
     <div className="pr-browser">
       <div className="surface-toolbar">
-        <form className="pr-search" role="search" onSubmit={(e) => e.preventDefault()}>
-          <label className="search-field">
-            <SearchIcon size={14} />
-            <input
-              aria-label="Search issues"
-              placeholder="Search issues"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Escape") return;
-                e.preventDefault();
-                setQuery("");
-                setSearch("");
-              }}
-            />
-          </label>
-        </form>
+        <SurfaceSearch
+          label="Search issues"
+          value={query}
+          onChange={setQuery}
+          onClear={() => {
+            setQuery("");
+            setSearch("");
+          }}
+        />
         <button className="btn sm primary" onClick={onCreate}>
           <PlusIcon size={14} /> New issue
         </button>

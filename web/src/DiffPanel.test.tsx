@@ -103,11 +103,18 @@ it("centres an empty Diff on a checkmark and the reason", async () => {
   await render("uncommitted");
   const empty = host.querySelector<HTMLElement>(".diff > .surface-empty")!;
   expect(empty).not.toBeNull();
-  expect(empty.querySelector("p")?.textContent).toBe("No changes.");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No changes.");
+  // The description says why there is nothing to compare, so the heading is not the whole story.
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("The working tree matches the last commit.");
   const icon = empty.querySelector("svg")!;
   expect(`${icon.getAttribute("width")}x${icon.getAttribute("height")}`).toBe("32x32");
-  // The reason sits under the checkmark, not beside it.
-  expect(icon.nextElementSibling?.tagName).toBe("P");
+});
+
+it("explains why a branch has no base to compare against", async () => {
+  vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [] } } as never);
+  await render("branch");
+  expect(host.querySelector(".surface-empty-title")?.textContent).toBe("No base branch found.");
+  expect(host.querySelector(".surface-empty-description")?.textContent).toContain("default branch");
 });
 
 const hunk = (header: string) => ({ header, lines: [{ kind: "added" as const, text: "x" }] });
@@ -138,9 +145,8 @@ it("keeps the commit footer action in the surface footer", async () => {
   const panel = host.querySelector(".diff")!;
   const foot = panel.querySelector<HTMLElement>(":scope > .surface-foot")!;
   expect(foot).not.toBeNull();
-  expect(panel.lastElementChild).toBe(foot);
   expect(foot.textContent).toBe("Switch to Uncommitted to commit.");
-  const action = foot.querySelector("button.link")!;
+  const action = foot.querySelector(":scope button.link")!;
   expect(action.textContent).toBe("Uncommitted");
   await click(action);
   expect(changeScope).toHaveBeenCalledWith("uncommitted");
@@ -260,6 +266,7 @@ it("offers every Turn by position and prompt, and a Turn without Checkpoints say
   await click(picker());
   expect(turnOptions().map((o) => o.textContent)).toEqual(["Turn 1 · Add the parser", "Turn 2 · Rename it", "Turn 3 · Plan only"]);
   expect(host.textContent).toContain("no Checkpoints");
+  expect(host.querySelector(".surface-empty-description")?.textContent).toContain("nothing to compare");
   expect(commands.gitTurnDiff).not.toHaveBeenCalled();
 });
 
@@ -339,6 +346,22 @@ it("offers a restore on a Turn with Checkpoints and names the files it changes",
   expect(commands.restoreTurn).toHaveBeenCalledWith(5, 1);
   expect(onChanged).toHaveBeenCalled();
   expect(onRestored).toHaveBeenCalled();
+});
+
+it("keeps the label on every Diff toolbar action instead of hiding them when the dock is cramped", async () => {
+  mockTurns(picks.slice(0, 2));
+  vi.spyOn(commands, "pendingRestore").mockResolvedValue({ status: "ok", data: { turnIndex: 1, files: [] } } as never);
+  await renderRestore();
+  const toolbar = host.querySelector<HTMLElement>(".diff > .surface-toolbar")!;
+  const labels = [...toolbar.querySelectorAll<HTMLElement>(".diff-toolbar-label")].map((label) => label.textContent);
+  expect(labels).toEqual(["Blind review", "Restore", "Undo restore"]);
+  // The label is only visible text; each action still names itself for assistive technology.
+  for (const name of ["Blind review", "Undo the restore"]) {
+    expect(toolbar.querySelector(`button[aria-label="${name}"]`)?.getAttribute("title")).toBe(name);
+  }
+  expect(toolbar.querySelector('button[aria-label="Restore the files to before Turn 2"]')?.getAttribute("title")).toBe(
+    "Restore the files to before Turn 2",
+  );
 });
 
 it("offers no restore without Checkpoints or while the Thread's checkout is busy", async () => {

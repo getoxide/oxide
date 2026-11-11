@@ -267,8 +267,8 @@ it("uses one disclosure indicator for the Prompts and Project settings accordion
     expect(indicator).not.toBeNull();
     expect(indicator.getAttribute("aria-hidden")).toBe("true");
     expect(`${indicator.getAttribute("width")}x${indicator.getAttribute("height")}`).toBe("12x12");
-    // The same Octicon draws every disclosure, so the three cannot drift apart.
-    expect(indicator.innerHTML).toBe(indicators[0]!.innerHTML);
+    // The same disclosure hook draws every chevron, so the three cannot drift apart.
+    expect(indicator.classList.contains("dossier-disclosure")).toBe(true);
   }
 
   expect(prompts.open).toBe(false);

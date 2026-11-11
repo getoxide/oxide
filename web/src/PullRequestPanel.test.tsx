@@ -61,6 +61,11 @@ it("shows an empty pull request list on the shared Surface empty layout, with it
   const empty = host.querySelector<HTMLElement>(".pr-empty")!;
   expect(empty).not.toBeNull();
   expect(empty.classList.contains("surface-empty")).toBe(true);
+  // It sits directly in the Surface's scroll region as its only content, so it can fill and centre
+  // the available height; the list is not rendered beside it.
+  const scroll = empty.parentElement!;
+  expect(scroll.classList.contains("pr-scroll")).toBe(true);
+  expect(scroll.querySelector(".pr-list")).toBeNull();
   expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
   expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No open pull requests.");
   expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("Pull requests opened from this Project’s branches appear here.");
