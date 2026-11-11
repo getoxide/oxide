@@ -8,3 +8,7 @@ re-record it once quota allows.
 
 `turn_skill.jsonl` reproduces the event shapes and response of a successful workspace skill
 invocation observed with `agy` 1.4.7; IDs and token counts are fixture values.
+
+`turn_usage_gemini.jsonl` and `turn_usage_third_party.jsonl` carry a statusLine payload with a
+`quota` map (shapes recorded from the statusLine docs and public captures) so the adapter's
+`UsageLimits` emission can be tested for both the Gemini and third-party quota pools.
