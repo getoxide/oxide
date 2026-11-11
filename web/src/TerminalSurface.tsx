@@ -66,7 +66,7 @@ export function TerminalSurface({
   const selectedTab = tabs.find((tab) => tab.id === selectedId);
   return (
     <div className="terminal-surface" hidden={!visible} aria-label="Terminal tabs">
-      <div className="terminal-tabbar">
+      <div className="terminal-tabbar surface-toolbar">
         <div className="terminal-tab-strip" role="tablist" aria-label="Project terminals" ref={strip} onKeyDown={onKeyDown}>
           {tabs.map((tab) => <TabButton key={tab.id} tab={tab} selected={tab.id === selectedId}
             service={tab.kind === "service" ? serviceInfo[tab.serviceId] : undefined}
@@ -79,10 +79,13 @@ export function TerminalSurface({
       </div>
       {!checkout && tabs.length > 0 && selectedTab?.kind !== "service" && <p className="surface-note" role="status">{NO_CHECKOUT}</p>}
       {tabs.length === 0 && (
-        <section className="empty-state surface-empty">
-          <TerminalIcon size={24} />
-          <p>{checkout ? "Open a terminal in the selected Thread’s checkout." : NO_CHECKOUT}</p>
-          <button className="btn" disabled={!checkout} onClick={onOpenTab}>Open terminal</button>
+        <section className="surface-empty">
+          <TerminalIcon size={32} />
+          <p className="surface-empty-title">No terminal open.</p>
+          <p className="surface-empty-description">
+            {checkout ? "Open a terminal in the selected Thread’s checkout." : NO_CHECKOUT}
+          </p>
+          <button className="btn primary" disabled={!checkout} onClick={onOpenTab}>Open terminal</button>
         </section>
       )}
       {tabs.map((tab) => (

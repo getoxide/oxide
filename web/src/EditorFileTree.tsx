@@ -16,6 +16,7 @@ export function EditorFileTree({
   onKeep,
   revision,
   collapseToken,
+  empty,
 }: {
   projectId: number;
   threadId: number | null;
@@ -27,6 +28,8 @@ export function EditorFileTree({
   revision: number;
   /** A new value folds every directory back to the checkout root. */
   collapseToken?: number;
+  /** Rendered in place of the tree when the checkout root holds no entries. */
+  empty?: React.ReactNode;
 }) {
   const [directories, setDirectories] = useState<Record<string, FileEntry[]>>(
     {},
@@ -146,6 +149,9 @@ export function EditorFileTree({
       </div>
     ));
   }
+  const root = directories[""];
+  // Keep the fetch alive while empty: `revision` can bring files back, and the tree must remount then.
+  if (empty && root && root.length === 0) return <>{empty}</>;
   return (
     <div className="editor-file-tree" role="tree" aria-label="Project files">
       {error && (

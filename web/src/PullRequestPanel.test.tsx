@@ -53,6 +53,25 @@ it("shows the open pull requests without a branch tab or a manual reload button"
   expect(host.querySelector('[aria-label="Reload from GitHub"]')).toBeNull();
 });
 
+it("shows an empty pull request list on the shared Surface empty layout, with its primary action", async () => {
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "", body: "", base: "main", head: "topic" } });
+  vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
+  await render();
+
+  const empty = host.querySelector<HTMLElement>(".pr-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.classList.contains("surface-empty")).toBe(true);
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No open pull requests.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("Pull requests opened from this Project’s branches appear here.");
+
+  const create = [...empty.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New pull request")!;
+  expect(create).toBeDefined();
+  expect(create.classList.contains("primary")).toBe(true);
+  await act(async () => create.click());
+  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
+});
+
 const gitStatus = (branch: string) => ({
   branch,
   upstream: null,

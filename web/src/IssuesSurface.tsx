@@ -1,5 +1,5 @@
 import { Skeleton } from "./Skeleton";
-import { CommentIcon, PlusIcon, SearchIcon } from "@primer/octicons-react";
+import { CommentIcon, IssueOpenedIcon, PlusIcon, SearchIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
@@ -185,9 +185,20 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
           </p>
         )}
         {list.state === "ready" && list.data.length === 0 && (
-          <p className="pr-empty">
-            {filtered ? "No issues match." : closed ? "No closed issues." : "No open issues."}
-          </p>
+          <div className="pr-empty surface-empty">
+            <IssueOpenedIcon size={32} />
+            <p className="surface-empty-title">
+              {filtered ? "No issues match." : closed ? "No closed issues." : "No open issues."}
+            </p>
+            <p className="surface-empty-description">
+              {filtered
+                ? "Nothing in this Project’s repository matches these filters."
+                : closed
+                  ? "Closed issues of this Project’s repository appear here."
+                  : "Issues opened in this Project’s repository appear here."}
+            </p>
+            <button className="btn sm primary" onClick={onCreate}><PlusIcon size={14} /> New issue</button>
+          </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
           <ul className="pr-list" aria-label={closed ? "Closed issues" : "Open issues"}>

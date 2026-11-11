@@ -1268,8 +1268,22 @@ export function App() {
                   onServiceConflict={showServiceConflict} />
               </Suspense>;
             })}
-            {selected && currentThreadId === null && activeTool === "Files" && <section className="empty-state surface-empty"><p>Select a Thread to open files in its checkout.</p><button className="btn primary" onClick={() => void startNewThread()}>New Thread</button></section>}
-            {!selected && <section className="empty-state surface-empty"><p>Open a Project to use its tools.</p><button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button></section>}
+            {selected && currentThreadId === null && activeTool === "Files" && (
+              <section className="surface-empty">
+                <FileIcon size={32} />
+                <p className="surface-empty-title">Select a Thread to browse files.</p>
+                <p className="surface-empty-description">The Files Surface shows the selected Thread’s checkout.</p>
+                <button className="btn primary" onClick={() => void startNewThread()}>New Thread</button>
+              </section>
+            )}
+            {!selected && (
+              <section className="surface-empty">
+                <RepoIcon size={32} />
+                <p className="surface-empty-title">Open a Project to use its tools.</p>
+                <p className="surface-empty-description">The Surfaces dock shows Diff, Files, Terminal and repository tools for the selected Project.</p>
+                <button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button>
+              </section>
+            )}
             {selected && visitedTools[`${selected.id}:Issues`] && (
               <div className="surface-content" hidden={activeTool !== "Issues"}><Suspense fallback={<Skeleton kind="list" label="Loading issuesâ€¦" />}>
                 <IssuesSurface

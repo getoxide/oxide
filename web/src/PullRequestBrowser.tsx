@@ -212,7 +212,16 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
           <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(`p${projectId}:`); setManual((v) => v + 1); }} />
         )}
         {list.state === "ready" && list.data.length === 0 && (
-          <p className="pr-empty">{search || mine ? "No pull requests match." : "No open pull requests."}</p>
+          <div className="pr-empty surface-empty">
+            <GitPullRequestIcon size={32} />
+            <p className="surface-empty-title">{search || mine ? "No pull requests match." : "No open pull requests."}</p>
+            <p className="surface-empty-description">
+              {search || mine
+                ? "Nothing in this Project’s repository matches these filters."
+                : "Pull requests opened from this Project’s branches appear here."}
+            </p>
+            <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+          </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
           <ul className="pr-list" aria-label="Open pull requests">
