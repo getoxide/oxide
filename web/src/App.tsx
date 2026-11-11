@@ -52,8 +52,9 @@ import { ResizeHandle } from "./ResizeHandle";
 import { workspaceLayout } from "./panelLayout";
 import { useElementSize, usePanelSize } from "./usePanelSize";
 import { displayPath, middleEllipsis, readablePath } from "./headerLines";
-import { actionForKey, adjacentThreadId, ATTENTION_SHORTCUT, formatAccelerator, matchesAccelerator, type ShortcutAction } from "./shortcuts";
+import { actionForKey, adjacentThreadId, ATTENTION_SHORTCUT, formatAccelerator, matchesAccelerator, modelDigitShortcut, type ShortcutAction } from "./shortcuts";
 import { useShortcuts } from "./useShortcuts";
+import { useModifierHeld } from "./useModifierHeld";
 import { getDraft, isUnusedThread, setDraft } from "./threadDrafts";
 import { createDefaultThread } from "./createDefaultThread";
 import { filterThreads, relativeAge, sidebarProjects, threadTitle } from "./threadList";
@@ -103,6 +104,7 @@ export function App() {
   const installSequence = useRef(0);
   const shortcuts = useShortcuts();
   const keys = (action: ShortcutAction) => formatAccelerator(shortcuts[action]);
+  const modifierHeld = useModifierHeld();
   const [showTools, setShowTools] = useState(false);
   const [fallbackTool, setFallbackTool] = useState<string>("Diff");
   const [activeToolsByProject, setActiveToolsByProject] = useState<Record<number, string>>({});
@@ -138,6 +140,7 @@ export function App() {
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { contextKey: string }) | null>(null);
   const codeSequence = useRef(0);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
+  const [threadQuery, setThreadQuery] = useState("");
   // A New Thread request that reopened an empty Thread: the selection may not change, so
   // ThreadView gets a one-shot request to focus the composer and show a cue.
   const [newThreadFocus, setNewThreadFocus] = useState<{ threadId: number; id: number } | null>(null);
@@ -179,6 +182,7 @@ export function App() {
   const currentThreadId = threads?.some((thread) => thread.id === selectedThreadId)
     ? selectedThreadId
     : null;
+  const sidebarThreads = useMemo(() => filterThreads(threads ?? [], threadQuery), [threads, threadQuery]);
   const selectedThread = threads?.find((thread) => thread.id === currentThreadId);
   const workbenchContext = useMemo<WorkbenchContext | null>(() => selected && currentThreadId !== null ? {
     key: `${selected.id}:${selectedThread?.worktreePath ? currentThreadId : "main"}`,
@@ -812,6 +816,24 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [shortcuts, selected, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
 
+  // ⌘1..9 (Ctrl+1..9 elsewhere) picks the nth visible sidebar Thread. Capture runs before the
+  // Thread's own digit shortcuts, but an open picker or dialog keeps those digits for itself.
+  useEffect(() => {
+    const onDigit = (event: KeyboardEvent) => {
+      const index = modelDigitShortcut(event);
+      if (index === null || selected === null || document.querySelector('[role="dialog"]')) return;
+      const target = sidebarThreads[index - 1];
+      if (!target) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setShowSettings(false);
+      setMaximized(false);
+      selectThread(target.id);
+    };
+    window.addEventListener("keydown", onDigit, true);
+    return () => window.removeEventListener("keydown", onDigit, true);
+  }, [selected, sidebarThreads, selectThread]);
+
   // Listen for low-rate thread status changes from backend
   useEffect(() => {
     const unlisten = listen<{ threadId: number; status: ThreadStatus }>(
@@ -1006,6 +1028,9 @@ export function App() {
             onServiceConflict={showServiceConflict}
             onOpenSettings={() => { setSettingsSection(null); setShowSettings(true); }}
             settingsOpen={showSettings}
+            modifierHeld={modifierHeld}
+            threadQuery={threadQuery}
+            onThreadQueryChange={setThreadQuery}
           />
           <ResizeHandle label="Resize sidebar" controls="workspace-sidebar" axis="x" edge="end"
             {...layout.sidebar} onResize={sidebarSize.resize} onCommit={sidebarSize.commit} onReset={sidebarSize.reset} onCancel={sidebarSize.cancel} />
@@ -1304,6 +1329,11 @@ interface SidebarProps {
   onServiceConflict: (conflict: ProjectServiceConflict) => void;
   onOpenSettings: () => void;
   settingsOpen: boolean;
+  /** The primary modifier is held, so inline shortcut badges show. */
+  modifierHeld: boolean;
+  /** The sidebar's Thread filter, shared so ⌘1..9 follows the visible list. */
+  threadQuery: string;
+  onThreadQueryChange: (query: string) => void;
 }
 
 /** Open Projects, each with its Threads. Scanned repositories stay out until opened from âŒ˜â‡§N. */
@@ -1323,10 +1353,12 @@ function Sidebar({
   onServiceConflict,
   onOpenSettings,
   settingsOpen,
+  modifierHeld,
+  threadQuery,
+  onThreadQueryChange,
 }: SidebarProps) {
   const shortcuts = useShortcuts();
   const keys = (action: ShortcutAction) => formatAccelerator(shortcuts[action]);
-  const [threadQuery, setThreadQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
   const [editingThreadId, setEditingThreadId] = useState<number | null>(null);
@@ -1360,7 +1392,7 @@ function Sidebar({
   const activeThreads = filterThreads(threads ?? [], threadQuery);
   const now = new Date();
 
-  const renderThread = (t: Thread) => (
+  const renderThread = (t: Thread, index: number) => (
     <li key={t.id} className="thread-row">
       {editingThreadId === t.id ? (
         <input
@@ -1399,7 +1431,11 @@ function Sidebar({
               <GitBranchIcon size={12} />
             </span>
           )}
-          <span className="thread-item-age">{relativeAge(t.updatedAt, now)}</span>
+          {modifierHeld && index < 9 ? (
+            <span className="shortcut-badge">{formatAccelerator(`Mod+${index + 1}`)}</span>
+          ) : (
+            <span className="thread-item-age">{relativeAge(t.updatedAt, now)}</span>
+          )}
         </button>
       )}
       <button
@@ -1417,10 +1453,10 @@ function Sidebar({
     <nav className="sidebar" aria-label="Projects">
       <div className="sidebar-actions">
         <button className="btn grow" onClick={onNewThread} disabled={!selected} title={`New Thread in this Project (${keys("newThread")})`}>
-          <PlusIcon size={14} /> New Thread <kbd>{keys("newThread")}</kbd>
+          <PlusIcon size={14} /> New Thread {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("newThread")}</kbd>}
         </button>
         <button className="btn" onClick={onOpenPalette} title={`Open a Project, or a new Thread in another one (${keys("openProject")})`} aria-label="Open a Project">
-          <RepoIcon size={14} />
+          <RepoIcon size={14} /> {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("openProject")}</kbd>}
         </button>
       </div>
       {selected && (
@@ -1431,7 +1467,7 @@ function Sidebar({
             placeholder="Search Threads"
             aria-label="Search Threads by title"
             value={threadQuery}
-            onChange={(e) => setThreadQuery(e.target.value)}
+            onChange={(e) => onThreadQueryChange(e.target.value)}
           />
         </label>
       )}
@@ -1445,7 +1481,7 @@ function Sidebar({
               <p className="sidebar-empty-hint">Open a project to see its Threads here.</p>
             </div>
             <button className="btn primary sidebar-empty-action" onClick={onOpenPalette} title={`Open a Project (${keys("openProject")})`}>
-              <RepoIcon size={14} /> Open a Project <kbd>{keys("openProject")}</kbd>
+              <RepoIcon size={14} /> Open a Project {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("openProject")}</kbd>}
             </button>
           </div>
         )}
@@ -1470,7 +1506,7 @@ function Sidebar({
                     {threads && activeThreads.length === 0 && (
                       <li className="sidebar-note">{threads.length === 0 ? "No Threads yet" : "No matching Threads"}</li>
                     )}
-                    {activeThreads.map((t) => renderThread(t))}
+                    {activeThreads.map((t, index) => renderThread(t, index))}
                   </ul>
                 )}
               </li>

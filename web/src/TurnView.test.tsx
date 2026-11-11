@@ -56,6 +56,7 @@ const click = async (el: Element | null | undefined) => {
 const buttonWith = (text: string) => [...container.querySelectorAll("button")].find((b) => b.textContent?.includes(text));
 const phase = (label: string) =>
   [...container.querySelectorAll<HTMLElement>(".activity-phase-toggle")].find((b) => b.textContent?.startsWith(label));
+const generating = () => container.querySelector('[role="status"][aria-label="Generating response…"]');
 
 const worked = [
   item(0, "tool_call", "Read src/a.ts\nconst a = 1;", "explore"),
@@ -137,6 +138,41 @@ it("shows a live line while running, ponders when idle, and drops it when the Tu
   expect(buttonWith("Ran 1 command")).toBeTruthy();
 });
 
+it("shows a generating indicator while running before any content arrives", async () => {
+  await render(turn({ status: "running", completedAt: null, startedAt: new Date().toISOString() }));
+  expect(generating()).toBeTruthy();
+});
+
+it("keeps the generating indicator while only Activity has arrived", async () => {
+  await render(
+    turn({
+      status: "running",
+      completedAt: null,
+      startedAt: new Date().toISOString(),
+      items: [item(0, "tool_call", "Read src/a.ts", "explore")],
+    }),
+  );
+  expect(generating()).toBeTruthy();
+});
+
+it("drops the generating indicator once a message block streams in", async () => {
+  await render(
+    turn({
+      status: "running",
+      completedAt: null,
+      startedAt: new Date().toISOString(),
+      items: [item(0, "agent_message", "Here is the answer.")],
+    }),
+  );
+  expect(generating()).toBeNull();
+  expect(container.textContent).toContain("Here is the answer.");
+});
+
+it("shows no generating indicator on a Turn that is not running", async () => {
+  await render(turn({ status: "completed" }));
+  expect(generating()).toBeNull();
+});
+
 it("shows no live line while waiting on an Approval", async () => {
   await render(
     turn({
@@ -163,6 +199,30 @@ it("keeps the Activity open while new Items stream in", async () => {
   expect(buttonWith("Explored 1 file · Ran 1 command")?.getAttribute("aria-expanded")).toBe("true");
 });
 
+
+it("copies the prompt text and the response markdown", async () => {
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  await render(turn({
+    prompt: "Compare [a.png] with the spec",
+    segments: [
+      { kind: "text", text: "Compare " },
+      { kind: "attachment", id: "id-a", name: "a.png", attachmentKind: "image", mediaType: "image/png", sizeBytes: 2048, path: "/h/a.png" },
+      { kind: "text", text: " with the spec" },
+    ],
+    items: [item(0, "agent_message", "Here is **the answer**.")],
+  }));
+
+  const promptCopy = container.querySelector('[aria-label="Copy prompt"]');
+  expect(promptCopy).toBeTruthy();
+  await act(async () => (promptCopy as HTMLElement).click());
+  expect(writeText).toHaveBeenLastCalledWith("Compare [a.png] with the spec");
+
+  const responseCopy = container.querySelector('[aria-label="Copy response"]');
+  expect(responseCopy).toBeTruthy();
+  await act(async () => (responseCopy as HTMLElement).click());
+  expect(writeText).toHaveBeenLastCalledWith("Here is **the answer**.");
+});
 
 it("draws Attachments as chips between the words of the prompt, the same for every Provider", async () => {
   const attachment = (name: string, attachmentKind: "image" | "pdf" | "text" | "other") => ({

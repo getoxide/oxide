@@ -2,6 +2,8 @@ import { memo, useState } from "react";
 import { HistoryIcon, PersonIcon } from "@primer/octicons-react";
 import type { ApprovalDecision, ApprovalSnapshot, ModelInfo } from "./bindings";
 import { AttachmentChip } from "./AttachmentChip";
+import { plainText } from "./attachments";
+import { CopyButton } from "./CopyButton";
 import { ItemContent } from "./ItemContent";
 import { ProviderMark } from "./ProviderMark";
 import { ActivityView } from "./ActivityView";
@@ -32,6 +34,7 @@ function BlockView({ block }: { block: Block }) {
     case "message":
       return (
         <div className={block.final ? "agent-message final" : "agent-message"}>
+          <CopyButton text={block.item.content} label="response" className="message-copy" />
           <ItemContent content={block.item.content} markdown />
         </div>
       );
@@ -138,6 +141,20 @@ export const ApprovalView = memo(function ApprovalView({
   );
 });
 
+/** Three dots and a faint accent shimmer while the Turn has nothing to show yet. */
+function ResponseLoading() {
+  return (
+    <div className="response-loading" role="status" aria-label="Generating response…">
+      <span className="response-loading-dots" aria-hidden="true">
+        <span className="response-loading-dot" />
+        <span className="response-loading-dot" />
+        <span className="response-loading-dot" />
+      </span>
+      <span className="response-loading-shimmer" aria-hidden="true" />
+    </div>
+  );
+}
+
 /** A Turn sent this moment, as opposed to one scrolled back into view. */
 const JUST_SENT_MS = 1500;
 
@@ -163,10 +180,12 @@ export const TurnView = memo(function TurnView({
   );
   const model = modelEffortParts(turn.model ?? null, turn.effort ?? null, catalog);
   const blocks = groupTurnItems(turn.items);
+  const promptText = turn.segments.length > 0 ? plainText(turn.segments) : turn.prompt;
   const approvals = turn.approvals ?? [];
   const activityBlock = blocks.find((b) => b.type === "activity");
   const activity = activityBlock?.type === "activity" ? activityBlock.activity : null;
   const waitingOnApproval = approvals.some((a) => !a.decision);
+  const hasContent = blocks.some((b) => b.type !== "activity");
   const live = turn.status === "running" && !waitingOnApproval ? liveStatus(activity) : null;
   const ended = turn.completedAt ? Date.parse(turn.completedAt) - Date.parse(turn.startedAt) : NaN;
   const workedMs = turn.status !== "running" && !Number.isNaN(ended) ? ended : null;
@@ -175,6 +194,7 @@ export const TurnView = memo(function TurnView({
       <div className={justSent ? "user-message just-sent" : "user-message"}>
         <div className="user-meta">
           <PersonIcon size={12} /> You · {formatTime(turn.startedAt)}
+          <CopyButton text={promptText} label="prompt" className="prompt-copy" />
         </div>
         <div className="user-bubble">
           {turn.segments.map((segment, i) =>
@@ -214,6 +234,7 @@ export const TurnView = memo(function TurnView({
               workedMs={workedMs}
             />
           )}
+          {turn.status === "running" && !hasContent && <ResponseLoading />}
           {blocks.map((block, i) => (
             <BlockView key={i} block={block} />
           ))}
