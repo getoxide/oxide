@@ -53,6 +53,74 @@ it("shows the open pull requests without a branch tab or a manual reload button"
   expect(host.querySelector('[aria-label="Reload from GitHub"]')).toBeNull();
 });
 
+const gitStatus = (branch: string) => ({
+  branch,
+  upstream: null,
+  ahead: 0,
+  behind: 0,
+  added: 0,
+  removed: 0,
+  changedFiles: 0,
+  protected: false,
+  unpublished: false,
+  pickerDisabledReason: null,
+});
+
+it("puts search and Mine in the Surface toolbar, with New pull request at the right", async () => {
+  vi.spyOn(commands, "gitStatus").mockResolvedValue({ status: "ok", data: gitStatus("topic") });
+  await render();
+  const toolbar = host.querySelector(".surface-toolbar")!;
+  expect(toolbar).not.toBeNull();
+  expect(toolbar.querySelector('input[aria-label="Search pull requests"]')).not.toBeNull();
+  const mine = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Mine")!;
+  expect(mine).toBeDefined();
+  expect(mine.getAttribute("aria-pressed")).toBe("false");
+  const create = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("New pull request"))!;
+  expect(create).toBeDefined();
+  expect(create.disabled).toBe(false);
+
+  // The branch context is a compact secondary row, not part of the toolbar.
+  const branch = host.querySelector('[aria-label="Branch actions"]')!;
+  expect(branch).not.toBeNull();
+  expect(toolbar.contains(branch)).toBe(false);
+  expect(branch.textContent).toContain("topic");
+});
+
+it("clears the pull request search with Escape and restores the unfiltered list", async () => {
+  vi.mocked(commands.listPullRequests).mockImplementation(async (_projectId, _mine, search) => ({
+    status: "ok",
+    data: search ? [] : [pr(1, "First PR")],
+  }));
+  await render();
+  expect(host.textContent).toContain("First PR");
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Search pull requests"]')!;
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    set.call(input, "parser");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(host.textContent).not.toContain("First PR");
+  expect(host.textContent).toContain("No pull requests match.");
+
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(input.value).toBe("");
+  expect(host.textContent).toContain("First PR");
+});
+
+it("opens the pull request form from New pull request", async () => {
+  vi.spyOn(commands, "gitStatus").mockResolvedValue({ status: "ok", data: gitStatus("topic") });
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
+    status: "ok",
+    data: { title: "Topic", body: "", base: "main", head: "topic" },
+  });
+  vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
+  await render();
+  const create = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("New pull request"))!;
+  await act(async () => create.click());
+  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
+});
+
 it("reloads when the window regains focus", async () => {
   await render();
   const calls = listCalls();

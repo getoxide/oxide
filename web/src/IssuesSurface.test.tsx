@@ -67,6 +67,59 @@ it("lists issues with a full-width search and New issue, and no Refresh or Searc
   expect(host.textContent).toContain("bug");
 });
 
+it("puts search in the Surface toolbar and state with Mine on the secondary row", async () => {
+  await render();
+  const toolbar = host.querySelector(".surface-toolbar")!;
+  expect(toolbar).not.toBeNull();
+  expect(toolbar.querySelector('input[aria-label="Search issues"]')).not.toBeNull();
+  const create = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New issue")!;
+  expect(create).toBeDefined();
+
+  // Open | Closed and Mine share the secondary row, under the standard segmented control.
+  const state = host.querySelector('[role="group"][aria-label="State"]')!;
+  expect(state).not.toBeNull();
+  expect(state.classList.contains("seg")).toBe(true);
+  expect([...state.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual(["Open", "Closed"]);
+  const mine = button("Mine");
+  expect(mine).toBeDefined();
+  expect(mine.parentElement).toBe(state.parentElement);
+  expect(toolbar.contains(state)).toBe(false);
+  expect(toolbar.contains(mine)).toBe(false);
+});
+
+it("clears the issue search with Escape and restores the unfiltered list", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.listIssues).mockImplementation(async (_projectId, _closed, _mine, search) => ({
+      status: "ok",
+      data: search ? [] : [summary()],
+    }));
+    await render();
+    expect(host.textContent).toContain("Crash on startup");
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search issues"]')!;
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(input, "parser");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => void vi.advanceTimersByTime(500));
+    expect(host.textContent).not.toContain("Crash on startup");
+
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await act(async () => void vi.advanceTimersByTime(500));
+    expect(input.value).toBe("");
+    expect(host.textContent).toContain("Crash on startup");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("opens the issue form from New issue", async () => {
+  await render();
+  await act(async () => button("New issue").click());
+  await vi.waitFor(() => expect(host.querySelector(".issue-create h3")?.textContent).toBe("New issue"));
+});
+
 it("reloads by itself on focus and on a timer while visible", async () => {
   vi.useFakeTimers();
   try {

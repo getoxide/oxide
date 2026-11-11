@@ -134,24 +134,30 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
   const filtered = search !== "" || mine;
   return (
     <div className="pr-browser">
-      <form className="pr-search issue-search" role="search" onSubmit={(e) => e.preventDefault()}>
-        <label className="pr-search-field">
-          <SearchIcon size={14} />
-          <input
-            aria-label="Search issues"
-            placeholder="Search issues"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-      </form>
-      <div className="issue-new">
-        <button className="primary" onClick={onCreate}>
-          <PlusIcon size={16} /> New issue
+      <div className="surface-toolbar">
+        <form className="pr-search" role="search" onSubmit={(e) => e.preventDefault()}>
+          <label className="search-field">
+            <SearchIcon size={14} />
+            <input
+              aria-label="Search issues"
+              placeholder="Search issues"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                e.preventDefault();
+                setQuery("");
+                setSearch("");
+              }}
+            />
+          </label>
+        </form>
+        <button className="btn sm primary" onClick={onCreate}>
+          <PlusIcon size={14} /> New issue
         </button>
       </div>
-      <div className="issue-filters">
-        <div className="pr-seg" role="group" aria-label="State">
+      <div className="surface-secondary">
+        <div className="seg" role="group" aria-label="State">
           <button aria-pressed={!closed} onClick={() => setClosed(false)}>
             Open
           </button>
