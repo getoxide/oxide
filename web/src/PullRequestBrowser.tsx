@@ -156,41 +156,49 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
 
   return (
     <div className="pr-browser">
-      <div className="pr-new">
-        <button className="btn primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+      <div className="surface-toolbar">
+        <form
+          className="pr-search"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setSearch(query.trim());
+          }}
+        >
+          <label className="search-field">
+            <SearchIcon size={14} />
+            <input
+              aria-label="Search pull requests"
+              placeholder="Search pull requests"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                e.preventDefault();
+                setQuery("");
+                setSearch("");
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="pr-chip"
+            aria-pressed={mine}
+            title={`Only pull requests you opened`}
+            onClick={() => setMine((m) => !m)}
+          >
+            Mine
+          </button>
+        </form>
+        <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+      </div>
+      <div className="surface-secondary">
         <p className="pr-scope" aria-label="Branch actions">
           {threadId === null ? "Select a Thread to open a pull request from its branch." : branchName === null
             ? (branch.state === "error" ? `The Thread's checkout is unavailable: ${branch.message}` : "Reading the Thread's branch…")
             : <>From <span className="pr-branch" title={branchName}>{branchName}</span> in the selected Thread's checkout</>}
         </p>
       </div>
-      <form
-        className="pr-search"
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setSearch(query.trim());
-        }}
-      >
-        <label className="pr-search-field">
-          <SearchIcon size={14} />
-          <input
-            aria-label="Search pull requests"
-            placeholder="Search pull requests"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className="pr-chip"
-          aria-pressed={mine}
-          title={`Only pull requests you opened`}
-          onClick={() => setMine((m) => !m)}
-        >
-          Mine
-        </button>
-      </form>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
         {outcome && (
