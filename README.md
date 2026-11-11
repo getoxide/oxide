@@ -30,9 +30,16 @@
   <img alt="Oxide: a Thread with Claude Code in the centre, the Project's Threads on the left and the Diff Surface on the right" src="assets/screenshots/oxide-thread.png" width="900" />
 </p>
 
+<!-- The invisible site markers in this README delimit content that the Oxide website
+     (getoxide/website) extracts during its content sync. Do not remove or rename a marker. -->
+
 ## What is Oxide?
 
+<!-- site:definition -->
+
 Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+
+<!-- /site:definition -->
 
 Oxide is not a coding agent: it doesn't ship an agent of its own. It drives the agent CLIs you already have installed and logged in, and it puts Git, GitHub, a code editor and a terminal around the conversation.
 
@@ -42,6 +49,8 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 > **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon** and **Windows x64**. Expect rough edges and breaking changes between versions.
 
 ## Features
+
+<!-- site:features -->
 
 ### One app, every agent CLI
 
@@ -69,20 +78,28 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 - **Local dictation.** Speak into the composer or terminal with on-device Whisper models, on CPU or GPU. Audio never leaves your machine.
 - **Keyboard first.** Full keyboard navigation, themes and reduced-motion support.
 
+<!-- /site:features -->
+
 ## Install
 
 Download the installer for your platform from [GitHub Releases](https://github.com/getoxide/oxide/releases):
+
+<!-- site:install -->
 
 | Platform | File | Notes |
 | --- | --- | --- |
 | macOS (Apple Silicon) | `Oxide_<version>_aarch64.dmg` | Drag `Oxide.app` into `/Applications`. |
 | Windows 10/11 (x64) | `Oxide_<version>_x64-setup.exe` | Includes CPU and GPU (Vulkan, CUDA) dictation. |
 
+<!-- /site:install -->
+
 Until the first stable release is published, [build from source](#build-from-source). Pre-release (`-rc`) builds are for testing and never reach the in-app updater.
 
 ### Requirements
 
 At least one **Provider installed and logged in** before you launch Oxide:
+
+<!-- site:requirements -->
 
 | Provider | Command | Install |
 | --- | --- | --- |
@@ -91,6 +108,8 @@ At least one **Provider installed and logged in** before you launch Oxide:
 | Antigravity CLI | `agy` | Google Antigravity |
 
 `git` is required. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and enables the pull request and Issues features.
+
+<!-- /site:requirements -->
 
 ### Updates
 
@@ -122,11 +141,15 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 
 ## Quick start
 
+<!-- site:quick-start -->
+
 1. Install and log in to at least one Provider (for example, run `claude` once in a terminal).
 2. Launch Oxide and press **⌘⇧N** (Ctrl+Shift+N on Windows) to open the Project palette: pick a folder, create one with `git init`, or clone a repository.
 3. Start a Thread, choose the Provider, Model and Permission mode, and write your prompt.
 4. When the Turn finishes, open the **Diff** Surface: review the Turn, read the Dossier, leave Line comments or revert what you don't want.
 5. **Commit & Push**, then open the pull request from the **Pull request** Surface.
+
+<!-- /site:quick-start -->
 
 ## How it works
 
@@ -212,6 +235,8 @@ cargo test -p oxide-provider --test agy_live_smoke -- --ignored
 
 ## FAQ
 
+<!-- site:faq -->
+
 **What is Oxide?**
 Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
 
@@ -231,6 +256,8 @@ Official builds target macOS on Apple Silicon and Windows x64. Linux isn't packa
 
 **Is it free?**
 Yes. Oxide is open source under the [MIT License](LICENSE).
+
+<!-- /site:faq -->
 
 ## Contributing
 
