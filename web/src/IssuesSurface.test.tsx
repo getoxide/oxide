@@ -87,6 +87,24 @@ it("puts search in the Surface toolbar and state with Mine on the secondary row"
   expect(toolbar.contains(mine)).toBe(false);
 });
 
+it("shows an empty issue list on the shared Surface empty layout, with its primary action", async () => {
+  vi.mocked(commands.listIssues).mockResolvedValue({ status: "ok", data: [] });
+  await render();
+
+  const empty = host.querySelector<HTMLElement>(".pr-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.classList.contains("surface-empty")).toBe(true);
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No open issues.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("Issues opened in this Project’s repository appear here.");
+
+  const create = [...empty.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New issue")!;
+  expect(create).toBeDefined();
+  expect(create.classList.contains("primary")).toBe(true);
+  await act(async () => create.click());
+  expect(host.querySelector('section[aria-label="Details"]')).not.toBeNull();
+});
+
 it("clears the issue search with Escape and restores the unfiltered list", async () => {
   vi.useFakeTimers();
   try {

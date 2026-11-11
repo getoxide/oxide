@@ -776,11 +776,13 @@ section.terminal.terminal-hidden { display: none; }
 .tools { position: relative; width: var(--tools-width, clamp(496px, 32vw, 600px)); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); container-type: inline-size; }
 .tools > section, .tools > .pr-views, .tools > .issues-surface { flex: 1; min-height: 0; }
 .surface-note { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); background: var(--bg2); }
-/* Shared by every Surface: one centred Octicon, one sentence, and an optional action. Files and
-   Terminal keep their own markup; this is the contract #437 generalises. */
+/* Shared by every Surface: one centred 32px Octicon, a 14px heading, a 12px description and the
+   Surface's primary action. Diff keeps only the heading when the reason is the whole message. */
 .surface-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 32px 16px; color: var(--dim); text-align: center; margin: 0; }
-.surface-empty svg { flex: none; color: var(--faint); }
-.surface-empty-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-bright); }
+.surface-empty svg { flex: none; color: var(--dim); }
+.surface-empty p { margin: 0; }
+.surface-empty-title { font-size: 14px; font-weight: 600; color: var(--fg-bright); }
+.surface-empty-description { max-width: 46ch; font-size: 12px; color: var(--dim); }
 .surface-empty.error { color: var(--red); }
 /* The footer closes the Surface: one bar between the content and the panel's bottom edge, so the
    commit hint reads as part of the Diff rather than as detached text. */
@@ -879,26 +881,23 @@ details[open] > .dossier-summary .dossier-disclosure { transform: rotate(90deg);
 .files { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; font-size: 12.5px; }
 .files.files-navigation { display: flex; flex-direction: column; overflow: hidden; }
 .files-navigation .files-tree { border: 0; flex: 1; min-height: 0; }
-.files-toolbar { display: flex; align-items: center; gap: 4px; flex: none; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-.files-search { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 0 8px; color: var(--faint); background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; }
-.files-search:focus-within { border-color: var(--acc2); }
-.files-search input { flex: 1; min-width: 0; min-height: 26px; padding: 0; border: 0; background: none; font-size: 12px; }
-.files-search input:focus { box-shadow: none; }
+/* The Files toolbar is the shared one; only its result list and the tree live below it. */
 .files-search-results { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
 .files-search-results .files-row { padding-left: 8px; padding-right: 8px; }
 .diff-split.diff-navigation { display: flex; flex-direction: column; }
 .diff-navigation .diff-files { flex: 1; border: 0; }
-.files-tree { overflow: auto; padding: 6px 0; border-right: 1px solid var(--line); }
+.files-tree { display: flex; flex-direction: column; overflow: auto; padding: 6px 0; border-right: 1px solid var(--line); }
+.files-tree > .editor-file-tree { min-height: 0; }
+/* Tree rows share the PR/Issue list rhythm: one 32px row, a rounded hover wash, the same selection. */
 .files-row {
   display: flex;
   width: 100%;
-  gap: 4px;
-  padding-top: 3px;
-  padding-bottom: 3px;
-  padding-right: 8px;
+  min-height: 32px;
+  gap: 6px;
+  padding: 0 8px;
   background: none;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-control);
   justify-content: flex-start;
 }
 .files-row:hover { background: var(--bg3); }
@@ -1046,7 +1045,7 @@ details[open] > .dossier-summary .dossier-disclosure { transform: rotate(90deg);
 .pr-views .pr-browser, .pr-views .pr-review { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; align-content: normal; }
 .pr-views .pr-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--space-3) var(--pr-pad) var(--space-4); display: grid; gap: var(--space-4); align-content: start; grid-template-columns: minmax(0, 1fr); }
 .pr-views .pr-browser > .pr-scroll { gap: 0; padding-top: var(--space-2); }
-.pr-views .pr-empty { color: var(--dim); text-align: center; padding: 32px 16px; margin: 0; }
+.pr-views .pr-empty { color: var(--dim); }
 .pr-views .pr-empty.error { color: var(--red); }
 .pr-views .pr-notice { color: var(--dim); font-size: 12px; margin: 0; padding: 6px 12px; }
 .pr-views .pr-note { margin: 0; color: var(--dim); font-size: 12px; }

@@ -895,14 +895,19 @@
 /* Project terminal tabs: one strip, scrolling sideways so many shells never displace the Surface tabs. */
 .terminal-surface { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .terminal-surface[hidden], .terminal-tab-panel[hidden] { display: none; }
-.terminal-tabbar { display: flex; align-items: center; gap: 4px; flex: none; min-width: 0; padding: 0 6px; border-bottom: 1px solid var(--line); background: var(--bg2); }
-.terminal-tab-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
-.terminal-tab { display: flex; align-items: center; flex: none; max-width: 220px; border-bottom: 2px solid transparent; color: var(--dim); }
+/* The shell strip is a Surface toolbar: `.surface-toolbar` gives it the shared 36px height, `--bg2`
+   background and bottom `--line`; the tabs stretch to that height so the active underline meets the
+   border exactly like the dock's own tabs. */
+.terminal-tabbar { min-width: 0; }
+.terminal-tab-strip { display: flex; align-items: stretch; flex: 1; min-width: 0; height: 100%; overflow-x: auto; scrollbar-width: thin; }
+.terminal-tab { display: flex; align-items: stretch; flex: none; max-width: 220px; border-bottom: 2px solid transparent; color: var(--dim); }
 .terminal-tab.active { border-bottom-color: var(--acc2); color: var(--fg); }
-.terminal-tab > [role="tab"] { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 7px 4px 7px 8px; background: none; border: 0; color: inherit; font-size: 12px; cursor: pointer; }
+.terminal-tab > [role="tab"] { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 4px 0 8px; background: none; border: 0; border-radius: 0; color: inherit; font-size: 12px; cursor: pointer; }
 .terminal-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .terminal-tab-running { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--acc2); }
-.terminal-tab-mismatch { flex: none; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; font-size: 10px; color: var(--yellow); }
+/* A shell in another checkout is a hazard, not a footnote: filled warning pill and a tinted name. */
+.terminal-tab-mismatch { flex: none; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--yellow) 40%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--yellow) 18%, transparent); color: var(--yellow-on-tint); font-size: 10px; font-weight: 600; }
+.terminal-tab[data-mismatch] .terminal-tab-name { color: var(--yellow-on-tint); }
 .terminal-tab-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .delete-shells { margin: 0 0 8px; padding-left: 18px; font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
 
