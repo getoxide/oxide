@@ -140,6 +140,26 @@ it("ignores shortcuts and non-printable keys", async () => {
   expect(editor().textContent).toBe("");
 });
 
+it("does not steal typing from an open popover dialog", async () => {
+  setup();
+  await render();
+  await flush();
+  const dialog = document.createElement("div");
+  dialog.setAttribute("data-typing-fixture", "");
+  dialog.className = "pr-popover";
+  dialog.setAttribute("role", "dialog");
+  const button = document.createElement("button");
+  dialog.append(button);
+  document.body.append(dialog);
+  button.focus();
+
+  await press("x");
+  await flush();
+
+  expect(document.activeElement).toBe(button);
+  expect(editor().textContent).toBe("");
+});
+
 it("does not steal typing from an open modal dialog", async () => {
   setup();
   await render();

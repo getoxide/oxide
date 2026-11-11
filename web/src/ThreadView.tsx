@@ -1,4 +1,5 @@
 import { toggleDictation, useDictationState } from "./dictation";
+import { hasOpenDialog, isTypingTarget } from "./keyboardScope";
 import { Skeleton } from "./Skeleton";
 import { LruCache } from "./lru";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -81,19 +82,6 @@ import {
 const STICK_TO_BOTTOM = 48;
 /** How long (ms) the visible range must hold still before paging older Turns in. */
 const PAGE_LOAD_DELAY = 80;
-/** Focus here already owns the keystrokes: an input, a code editor, or any editable surface. */
-const TYPING_TARGETS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .monaco-editor, .xterm, .terminal';
-/** An open modal or overlay owns the interaction, so typing must not reach behind it. */
-const OPEN_DIALOGS = '[aria-modal="true"], [role="alertdialog"], .modal-backdrop, .palette';
-
-function isTypingTarget(target: Element | null): boolean {
-  return Boolean(target?.closest(TYPING_TARGETS));
-}
-
-function hasOpenDialog(): boolean {
-  return Boolean(document.querySelector(OPEN_DIALOGS));
-}
-
 interface ThreadViewProps {
   visible?: boolean;
   onOpenDefaultDiff?: () => void;

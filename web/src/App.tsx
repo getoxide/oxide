@@ -52,6 +52,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { workspaceLayout } from "./panelLayout";
 import { useElementSize, usePanelSize } from "./usePanelSize";
 import { displayPath, middleEllipsis, readablePath } from "./headerLines";
+import { hasOpenDialog } from "./keyboardScope";
 import { actionForKey, adjacentThreadId, ATTENTION_SHORTCUT, formatAccelerator, matchesAccelerator, modelDigitShortcut, type ShortcutAction } from "./shortcuts";
 import { useShortcuts } from "./useShortcuts";
 import { useModifierHeld } from "./useModifierHeld";
@@ -821,7 +822,7 @@ export function App() {
   useEffect(() => {
     const onDigit = (event: KeyboardEvent) => {
       const index = modelDigitShortcut(event);
-      if (index === null || selected === null || document.querySelector('[role="dialog"]')) return;
+      if (index === null || selected === null || hasOpenDialog()) return;
       const target = sidebarThreads[index - 1];
       if (!target) return;
       event.preventDefault();
@@ -1011,7 +1012,8 @@ export function App() {
               setThreads(null);
               setSelectedThreadId(null);
             }}
-            threads={threads}
+            threads={threads === null ? null : sidebarThreads}
+            threadCount={threads?.length ?? 0}
             selectedThreadId={selectedThreadId}
             onSelectThread={(threadId) => {
               setMaximized(false);
@@ -1316,7 +1318,10 @@ interface SidebarProps {
   selected: Project | null;
   onCloseProject: (projectId: number) => Promise<string | null>;
   onSelect: (p: Project) => void;
+  /** The selected Project's Threads for the sidebar, already filtered and ordered like ⌘1..9. */
   threads: Thread[] | null;
+  /** The Thread count before filtering, to distinguish "none" from "no match". */
+  threadCount: number;
   selectedThreadId: number | null;
   onSelectThread: (threadId: number) => void;
   onDeleteThread: (threadId: number) => void;
@@ -1343,6 +1348,7 @@ function Sidebar({
   onCloseProject,
   onSelect,
   threads,
+  threadCount,
   selectedThreadId,
   onSelectThread,
   onDeleteThread,
@@ -1389,7 +1395,6 @@ function Sidebar({
   // The selected Project always shows, even before the Core has marked it open.
   const listed = sidebarProjects(projects ?? []);
   const shown = selected && !listed.some((p) => p.id === selected.id) ? [selected, ...listed] : listed;
-  const activeThreads = filterThreads(threads ?? [], threadQuery);
   const now = new Date();
 
   const renderThread = (t: Thread, index: number) => (
@@ -1453,10 +1458,12 @@ function Sidebar({
     <nav className="sidebar" aria-label="Projects">
       <div className="sidebar-actions">
         <button className="btn grow" onClick={onNewThread} disabled={!selected} title={`New Thread in this Project (${keys("newThread")})`}>
-          <PlusIcon size={14} /> New Thread {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("newThread")}</kbd>}
+          <PlusIcon size={14} /> New Thread{" "}
+          <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("newThread")}</kbd>
         </button>
         <button className="btn" onClick={onOpenPalette} title={`Open a Project, or a new Thread in another one (${keys("openProject")})`} aria-label="Open a Project">
-          <RepoIcon size={14} /> {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("openProject")}</kbd>}
+          <RepoIcon size={14} />{" "}
+          <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("openProject")}</kbd>
         </button>
       </div>
       {selected && (
@@ -1481,7 +1488,8 @@ function Sidebar({
               <p className="sidebar-empty-hint">Open a project to see its Threads here.</p>
             </div>
             <button className="btn primary sidebar-empty-action" onClick={onOpenPalette} title={`Open a Project (${keys("openProject")})`}>
-              <RepoIcon size={14} /> Open a Project {modifierHeld && <kbd className="inline-shortcut-kbd">{keys("openProject")}</kbd>}
+              <RepoIcon size={14} /> Open a Project{" "}
+              <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("openProject")}</kbd>
             </button>
           </div>
         )}
@@ -1503,10 +1511,10 @@ function Sidebar({
                 </div>
                 {isSelected && (
                   <ul className="thread-list" aria-label="Thread list">
-                    {threads && activeThreads.length === 0 && (
-                      <li className="sidebar-note">{threads.length === 0 ? "No Threads yet" : "No matching Threads"}</li>
+                    {threads && threads.length === 0 && (
+                      <li className="sidebar-note">{threadCount === 0 ? "No Threads yet" : "No matching Threads"}</li>
                     )}
-                    {activeThreads.map((t, index) => renderThread(t, index))}
+                    {threads?.map((t, index) => renderThread(t, index))}
                   </ul>
                 )}
               </li>

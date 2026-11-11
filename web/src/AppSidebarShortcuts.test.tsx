@@ -103,12 +103,15 @@ it("switches to the numbered thread with the primary modifier plus a digit", asy
   expect(host.querySelector('[data-thread="3"]')).not.toBeNull();
 });
 
-it("reveals inline badges on primary actions only while the primary modifier is held", async () => {
+it("keeps inline shortcut hints visible and highlights them while the primary modifier is held", async () => {
   await act(async () => root.render(<App />));
   await settle();
   const newThread = () => host.querySelector<HTMLButtonElement>(".sidebar-actions .btn.grow")!;
   const openProject = () => host.querySelector<HTMLButtonElement>('.sidebar-actions button[aria-label="Open a Project"]')!;
+  expect(newThread().querySelector("kbd")?.textContent).toBe(label("N"));
+  expect(openProject().querySelector("kbd")?.textContent).toBe(isMac ? "⌘⇧N" : "Ctrl+Shift+N");
   expect(newThread().querySelector(".inline-shortcut-kbd")).toBeNull();
+  expect(openProject().querySelector(".inline-shortcut-kbd")).toBeNull();
 
   await holdPrimary();
   expect(newThread().querySelector(".inline-shortcut-kbd")?.textContent).toBe(label("N"));
@@ -117,6 +120,27 @@ it("reveals inline badges on primary actions only while the primary modifier is 
   await key("keyup", primaryKey, primary);
   expect(newThread().querySelector(".inline-shortcut-kbd")).toBeNull();
   expect(openProject().querySelector(".inline-shortcut-kbd")).toBeNull();
+  expect(newThread().querySelector("kbd")).not.toBeNull();
+  expect(openProject().querySelector("kbd")).not.toBeNull();
+});
+
+it("leaves the digits to an open dialog or model picker", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+  expect(host.querySelector('.thread-item[aria-current="true"]')?.textContent).toContain("Alpha work");
+
+  const dialog = document.createElement("div");
+  dialog.setAttribute("data-test-dialog", "");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-label", "Model Selector");
+  document.body.append(dialog);
+
+  await key("keydown", "2", { code: "Digit2", ...primary });
+  await settle();
+
+  expect(host.querySelector('.thread-item[aria-current="true"]')?.textContent).toContain("Alpha work");
+  expect(host.querySelector('[data-thread="3"]')).toBeNull();
+  dialog.remove();
 });
 
 it("resets the modifier state on Escape and window blur", async () => {
@@ -147,6 +171,11 @@ it("numbers the visible, filtered thread list", async () => {
 
   await holdPrimary();
   expect(badges()).toEqual([label("1")]);
+
+  const filteredRows = Array.from(host.querySelectorAll(".thread-row"));
+  expect(filteredRows).toHaveLength(1);
+  expect(filteredRows[0]?.querySelector(".shortcut-badge")?.textContent).toBe(label("1"));
+  expect(filteredRows[0]?.textContent).toContain("Beta work");
 
   await key("keydown", "1", { code: "Digit1", ...primary });
   await settle();
