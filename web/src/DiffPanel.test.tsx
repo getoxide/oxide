@@ -98,6 +98,18 @@ it("keeps the Diff toolbar on the shared surface contract, with subtle badges an
   expect(toolbar.querySelector('button[aria-label="Blind review"]')!.className.split(" ").sort()).toEqual(["btn", "sm"]);
 });
 
+it("centres an empty Diff on a checkmark and the reason", async () => {
+  vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [] } } as never);
+  await render("uncommitted");
+  const empty = host.querySelector<HTMLElement>(".diff > .surface-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.querySelector("p")?.textContent).toBe("No changes.");
+  const icon = empty.querySelector("svg")!;
+  expect(`${icon.getAttribute("width")}x${icon.getAttribute("height")}`).toBe("32x32");
+  // The reason sits under the checkmark, not beside it.
+  expect(icon.nextElementSibling?.tagName).toBe("P");
+});
+
 const hunk = (header: string) => ({ header, lines: [{ kind: "added" as const, text: "x" }] });
 const fileOf = (path: string, status: "modified" | "added" | "untracked", hunks = [hunk("@@ -1 +1 @@")]) => ({
   path, oldPath: null, status, added: 1, removed: 0, binary: false, hunks,
@@ -115,6 +127,24 @@ function renderRevert(
 }
 
 const click = (el: Element | null) => act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+it("keeps the commit footer action in the surface footer", async () => {
+  const changeScope = vi.fn();
+  await act(async () =>
+    root.render(
+      <DiffPanel projectId={1} onOpenFile={() => {}} threadId={null} board={false} worktree={false} scope="branch" reviewedPr={null} onScopeChange={changeScope} focus={null} refreshKey="" onChanged={() => {}} onOpenPullRequest={() => {}} />,
+    ),
+  );
+  const panel = host.querySelector(".diff")!;
+  const foot = panel.querySelector<HTMLElement>(":scope > .surface-foot")!;
+  expect(foot).not.toBeNull();
+  expect(panel.lastElementChild).toBe(foot);
+  expect(foot.textContent).toBe("Switch to Uncommitted to commit.");
+  const action = foot.querySelector("button.link")!;
+  expect(action.textContent).toBe("Uncommitted");
+  await click(action);
+  expect(changeScope).toHaveBeenCalledWith("uncommitted");
+});
 
 it("reverts a file from the Diff and refreshes it", async () => {
   vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [fileOf("src/a.rs", "modified")] } } as never);
