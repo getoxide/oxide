@@ -2,6 +2,8 @@ import { memo, useState } from "react";
 import { HistoryIcon, PersonIcon } from "@primer/octicons-react";
 import type { ApprovalDecision, ApprovalSnapshot } from "./bindings";
 import { AttachmentChip } from "./AttachmentChip";
+import { plainText } from "./attachments";
+import { CopyButton } from "./CopyButton";
 import { ItemContent } from "./ItemContent";
 import { ProviderMark } from "./ProviderMark";
 import { ActivityView } from "./ActivityView";
@@ -32,6 +34,7 @@ function BlockView({ block }: { block: Block }) {
     case "message":
       return (
         <div className={block.final ? "agent-message final" : "agent-message"}>
+          <CopyButton text={block.item.content} label="response" className="message-copy" />
           <ItemContent content={block.item.content} markdown />
         </div>
       );
@@ -173,6 +176,7 @@ export const TurnView = memo(function TurnView({
     () => !instant && turn.status === "running" && Date.now() - Date.parse(turn.startedAt) < JUST_SENT_MS
   );
   const blocks = groupTurnItems(turn.items);
+  const promptText = turn.segments.length > 0 ? plainText(turn.segments) : turn.prompt;
   const approvals = turn.approvals ?? [];
   const activityBlock = blocks.find((b) => b.type === "activity");
   const activity = activityBlock?.type === "activity" ? activityBlock.activity : null;
@@ -186,6 +190,7 @@ export const TurnView = memo(function TurnView({
       <div className={justSent ? "user-message just-sent" : "user-message"}>
         <div className="user-meta">
           <PersonIcon size={12} /> You · {formatTime(turn.startedAt)}
+          <CopyButton text={promptText} label="prompt" className="prompt-copy" />
         </div>
         <div className="user-bubble">
           {turn.segments.map((segment, i) =>
