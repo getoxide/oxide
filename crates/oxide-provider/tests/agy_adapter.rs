@@ -155,6 +155,30 @@ fn gemini_statusline_quota_becomes_usage_limits() {
 }
 
 #[test]
+fn wrapped_status_line_event_becomes_usage_limits() {
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("usage_wrapped_test").unwrap();
+    let windows = usage_windows(&collect_turn(&rx));
+
+    assert_eq!(windows.len(), 2);
+    let five = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
+        .unwrap();
+    let week = windows
+        .iter()
+        .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
+        .unwrap();
+    assert!((five.percent_used.unwrap() - 30.0).abs() < 1e-9);
+    assert_eq!(five.resets_at, Some(1_794_398_400));
+    assert!((week.percent_used.unwrap() - 60.0).abs() < 1e-9);
+    assert_eq!(week.resets_at, Some(1_794_484_800));
+    provider.shutdown().unwrap();
+}
+
+#[test]
 fn third_party_statusline_quota_becomes_usage_limits() {
     let fake = fake_agy();
     let mut provider = AgyProvider::with_command(fake.command());
