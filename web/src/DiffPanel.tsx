@@ -505,14 +505,16 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
       )}
       {loaded.state === "ready" && files.length === 0 && (
         <div className="surface-empty">
-          <CheckCircleIcon size={20} />
-          {scope === "branch" && !loaded.diff.base
-            ? "No base branch found."
-            : scope === "turn" && threadId === null
-              ? "Select a Thread to see its Turn."
-              : noCheckpoints
-                ? "This Turn has no Checkpoints, so there is no diff to show."
-                : "No changes."}
+          <CheckCircleIcon size={32} aria-hidden="true" />
+          <p className="surface-empty-title">
+            {scope === "branch" && !loaded.diff.base
+              ? "No base branch found."
+              : scope === "turn" && threadId === null
+                ? "Select a Thread to see its Turn."
+                : noCheckpoints
+                  ? "This Turn has no Checkpoints, so there is no diff to show."
+                  : "No changes."}
+          </p>
         </div>
       )}
       {files.length > 0 && (

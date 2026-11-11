@@ -221,6 +221,63 @@ it("shows what was asked and keeps the agent's claim apart from the computed che
   expect(checks.textContent).not.toContain("All 12 tests pass.");
 });
 
+it("gives every Dossier section the same section heading", async () => {
+  await openDiff();
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Agent claim"]')).not.toBeNull());
+  const headings = Array.from(host.querySelectorAll<HTMLHeadingElement>(".dossier h3"));
+  expect(headings.map((heading) => heading.textContent)).toEqual([
+    "Intent",
+    "Blind review",
+    "Verification",
+    "Risk signals",
+    "Agent claim",
+  ]);
+  // One typography hook, so the four named titles cannot drift apart again.
+  expect(new Set(headings.map((heading) => heading.className))).toEqual(new Set(["dossier-title"]));
+});
+
+it("presents the Agent claim as a titled card above the agent's own words", async () => {
+  await openDiff();
+  const claim = await vi.waitFor(() => {
+    const section = host.querySelector<HTMLElement>('[aria-label="Agent claim"]');
+    expect(section).not.toBeNull();
+    return section!;
+  });
+  const title = claim.querySelector("h3")!;
+  expect(title.textContent).toBe("Agent claim");
+  // The note that this is unchecked stays beside the claim, not buried in it.
+  expect(claim.textContent).toContain("The agent's own words, not checked by Oxide.");
+  const body = claim.querySelector("p.dossier-claim-text")!;
+  expect(body.textContent).toBe("All 12 tests pass.");
+});
+
+it("uses one disclosure indicator for the Prompts and Project settings accordions", async () => {
+  await openDiff();
+  const prompts = await vi.waitFor(() => {
+    const details = host.querySelector<HTMLDetailsElement>("details.dossier-prompts");
+    expect(details).not.toBeNull();
+    return details!;
+  });
+  const settings = Array.from(host.querySelectorAll<HTMLDetailsElement>("details.dossier-commands"));
+  expect(settings).toHaveLength(2);
+
+  const summaries = [prompts, ...settings].map((details) => details.querySelector("summary")!);
+  const indicators = summaries.map((summary) => summary.querySelector("svg")!);
+  for (const indicator of indicators) {
+    expect(indicator).not.toBeNull();
+    expect(indicator.getAttribute("aria-hidden")).toBe("true");
+    expect(`${indicator.getAttribute("width")}x${indicator.getAttribute("height")}`).toBe("12x12");
+    // The same Octicon draws every disclosure, so the three cannot drift apart.
+    expect(indicator.innerHTML).toBe(indicators[0]!.innerHTML);
+  }
+
+  expect(prompts.open).toBe(false);
+  await act(async () => summaries[0]!.click());
+  expect(prompts.open).toBe(true);
+  await act(async () => summaries[0]!.click());
+  expect(prompts.open).toBe(false);
+});
+
 it("adds a Project Verification command and asks for the Dossier again", async () => {
   await openDiff();
   await vi.waitFor(() =>
