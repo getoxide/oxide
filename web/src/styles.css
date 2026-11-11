@@ -589,6 +589,29 @@ html.macos .header,
   .activity-live-dot { animation: none; }
   .activity-live-phrase { animation: none; color: var(--fg); background: none; }
 }
+/* Response loading: a three-dot wave with a faint accent shimmer until content streams in. */
+.response-loading { display: flex; align-items: center; gap: 10px; margin-left: 32px; min-height: 24px; }
+.response-loading-dots { display: inline-flex; align-items: center; gap: 5px; }
+.response-loading-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--acc2); animation: response-dot-wave 1.2s ease-in-out infinite; }
+.response-loading-dot:nth-child(2) { animation-delay: 140ms; }
+.response-loading-dot:nth-child(3) { animation-delay: 280ms; }
+.response-loading-shimmer {
+  flex: 1;
+  max-width: 220px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acc2) 40%, transparent), transparent) 0 0 / 200% 100%;
+  animation: response-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes response-dot-wave {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes response-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .response-loading-dot { animation: none; opacity: 0.5; }
+  .response-loading-shimmer { animation: none; background: color-mix(in srgb, var(--acc2) 16%, transparent); }
+}
 .activity-summary-toggle, .activity-phase-toggle, .activity-item {
   width: 100%;
   justify-content: flex-start;

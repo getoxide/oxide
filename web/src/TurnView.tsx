@@ -138,6 +138,20 @@ export const ApprovalView = memo(function ApprovalView({
   );
 });
 
+/** Three dots and a faint accent shimmer while the Turn has nothing to show yet. */
+function ResponseLoading() {
+  return (
+    <div className="response-loading" role="status" aria-label="Generating response…">
+      <span className="response-loading-dots" aria-hidden="true">
+        <span className="response-loading-dot" />
+        <span className="response-loading-dot" />
+        <span className="response-loading-dot" />
+      </span>
+      <span className="response-loading-shimmer" aria-hidden="true" />
+    </div>
+  );
+}
+
 /** A Turn sent this moment, as opposed to one scrolled back into view. */
 const JUST_SENT_MS = 1500;
 
@@ -163,6 +177,7 @@ export const TurnView = memo(function TurnView({
   const activityBlock = blocks.find((b) => b.type === "activity");
   const activity = activityBlock?.type === "activity" ? activityBlock.activity : null;
   const waitingOnApproval = approvals.some((a) => !a.decision);
+  const hasContent = blocks.some((b) => b.type !== "activity");
   const live = turn.status === "running" && !waitingOnApproval ? liveStatus(activity) : null;
   const ended = turn.completedAt ? Date.parse(turn.completedAt) - Date.parse(turn.startedAt) : NaN;
   const workedMs = turn.status !== "running" && !Number.isNaN(ended) ? ended : null;
@@ -201,6 +216,7 @@ export const TurnView = memo(function TurnView({
               workedMs={workedMs}
             />
           )}
+          {turn.status === "running" && !hasContent && <ResponseLoading />}
           {blocks.map((block, i) => (
             <BlockView key={i} block={block} />
           ))}
