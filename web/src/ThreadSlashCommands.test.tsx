@@ -243,6 +243,26 @@ it("opens the Model picker on the first Enter from the slash menu", async () => 
   expect(container.querySelector('[role="dialog"][aria-label="Model Selector"]')).not.toBeNull();
 });
 
+it("does not suggest the retired /effort command while keeping the rest", async () => {
+  setupSlash();
+  await renderSlash("/");
+  await flush();
+  const names = options().map((option) => option.querySelector(".n")!.textContent);
+  expect(names).not.toContain("/effort");
+  expect(names).toContain("/model");
+  expect(names).toContain("/clear");
+});
+
+it("still applies a manually typed /effort level without a menu suggestion", async () => {
+  const calls = setupSlash();
+  await renderSlash("/effort low");
+  await flush();
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await flush();
+  expect(setModelCalls(calls)).toEqual([{ threadId: 7, model: "opus", effort: "low" }]);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("resolves /model <name> against the active Provider's catalog", async () => {
   const calls = setupSlash();
   await renderSlash("/model sonnet");

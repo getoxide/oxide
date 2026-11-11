@@ -16,7 +16,6 @@ fn oxide_commands() -> Vec<SlashCommandInfo> {
     vec![
         own("clear", "Start a new conversation", None, &["reset", "new"]),
         own("diff", "Open the Diff Surface", None, &[]),
-        own("effort", "Set the Effort", Some("<level>"), &[]),
         own("model", "Set the Model", Some("<model>"), &[]),
         own(
             "permissions",
@@ -89,7 +88,6 @@ mod tests {
                 ),
                 ("context", SlashRoute::Passthrough, vec!["ctx".to_string()]),
                 ("diff", SlashRoute::Oxide, vec![]),
-                ("effort", SlashRoute::Oxide, vec![]),
                 ("model", SlashRoute::Oxide, vec![]),
                 ("permissions", SlashRoute::Oxide, vec![]),
                 ("reload-cache", SlashRoute::Oxide, vec![]),
@@ -106,12 +104,18 @@ mod tests {
             [
                 "clear",
                 "diff",
-                "effort",
                 "model",
                 "permissions",
                 "reload-cache",
                 "rename"
             ]
         );
+    }
+
+    #[test]
+    fn effort_is_not_an_oxide_command() {
+        let names: Vec<_> = merge(Vec::new()).into_iter().map(|c| c.name).collect();
+        assert!(!names.iter().any(|name| name == "effort"));
+        assert!(names.iter().any(|name| name == "model"));
     }
 }
