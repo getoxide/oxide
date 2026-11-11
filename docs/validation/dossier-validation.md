@@ -1,4 +1,4 @@
-# Validation kit: the Verification Dossier with senior engineers
+# Validation kit: the Verification Dossier with developers who own merges
 
 Status: **ready for the maintainers to run**. This document is the protocol and the decision
 record for [#336]; it is not evidence by itself. The observations and the ledger figures the
@@ -12,7 +12,7 @@ maintainers collect are the evidence.
 
 ## What is being tested
 
-The hypothesis, from ADR-0010 and the parent spec: a senior engineer deciding what enters `main`
+The hypothesis, from ADR-0010 and the parent spec: a developer who owns the merge deciding what enters `main`
 opens the Dossier unprompted, and it changes what they check before merging.
 
 The validation answers two questions, and keeps them apart:
@@ -135,11 +135,11 @@ Run this first, so the sessions happen on a build and a workflow the maintainers
 Guidance, not an acceptance threshold: a median over fewer than about ten in-window merges is weak
 evidence. If the window yields fewer, extend it or say so in the decision.
 
-## Part B - 5-8 senior engineer sessions
+## Part B - 5-8 developer sessions
 
 ### Participants
 
-- 5-8 senior engineers who own merges. Experience with coding agents is common but not required;
+- 5-8 developers who own merges. Experience with coding agents is common but not required;
   requiring it would narrow the sample beyond what [#336] asks. A mix of Oxide users and people who
   have never used Oxide is more informative than Oxide enthusiasts only.
 - Each session uses a real pull request the participant would actually review. Prefer one from
@@ -229,7 +229,7 @@ afterwards. The leaving-Oxide tally is a baseline finding, not a pass/fail bar.
 Apply the rows in order: any Stop condition wins, then any Change condition, then Continue. This
 keeps a weak result from being rounded up.
 
-The parent spec's own rule is stricter than a score: if senior engineers do not open the Dossier
+The parent spec's own rule is stricter than a score: if developers who own merges do not open the Dossier
 unprompted, **or** it does not change what they check, the direction must be revisited. Treat
 "continue" as requiring both halves.
 
@@ -247,7 +247,7 @@ all-history median was <duration>. Review-round groups: <n>. Missing merges: <n>
 **Leaving Oxide.** <n> of <n> eligible merges involved leaving Oxide before the decision. Reasons:
 <...>.
 
-**Sessions.** <n> counted senior engineers (plus <n> recorded but not counted) on <n> real pull
+**Sessions.** <n> counted developers who own merges (plus <n> recorded but not counted) on <n> real pull
 requests. Unprompted engagement: <n>. Changed what they checked: <n>. Still checked by hand:
 <list>. Recurring confusion: <list>.
 
@@ -277,7 +277,7 @@ Only then close [#336]; the issue's own acceptance criteria require it. If the d
 | Acceptance criterion | Where it is satisfied |
 | --- | --- |
 | Two weeks of Review ledger data and how often the maintainers left Oxide | Part A and the [tally template](review-ledger-tally.md) |
-| 5-8 senior engineers use the Dossier on a real pull request, without being asked to open it | Part B, with the operational definition of unprompted engagement above |
+| 5-8 developers who own merges use the Dossier on a real pull request, without being asked to open it | Part B, with the operational definition of unprompted engagement above |
 | Per session: opened unprompted, what they still checked by hand, whether it changed what they checked | Gate fields in the [session notes template](dossier-session-notes.md) |
 | Findings and a decision posted on #336 and the parent spec | Part C decision comment, posted on both issues |
 | If change or stop, blocked tickets updated or closed first | Part C end, with the exact ticket list |

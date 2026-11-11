@@ -1,8 +1,8 @@
 # Features are prioritized by the path to a confident merge
 
-Oxide is for senior engineers who drive coding agents and stay personally responsible for what enters `main`. A feature is prioritized by whether it shortens the path from a finished agent Turn to a confident merge. Generating a change is cheap; deciding whether it can be trusted is not, and that decision is where Oxide aims to save time. Running more agents in parallel is not the goal: other tools already sell that, and "GitHub integration" or "no VS Code" are no longer reasons to choose Oxide.
+Oxide is for developers who can write code themselves and have AI write it with a clear purpose: they know what the agent is producing, review it, and stay personally responsible for what enters `main`. A feature is prioritized by whether it shortens the path from a finished agent Turn to a confident merge. Generating a change is cheap; deciding whether it can be trusted is not, and that decision is where Oxide aims to save time. Running more agents in parallel is not the goal: other tools already sell that, and "GitHub integration" or "no VS Code" are no longer reasons to choose Oxide.
 
-This is a hypothesis, not a finding. No users have been interviewed yet. The Verification Dossier is validated with 5-8 senior engineers on real pull requests before Blind review or Dossier publishing is built on it. If they do not open the Dossier unprompted, or it does not change what they check, this ADR should be revisited.
+This is a hypothesis, not a finding. No users have been interviewed yet. The Verification Dossier is validated with 5-8 developers who own merges on real pull requests before Blind review or Dossier publishing is built on it. If they do not open the Dossier unprompted, or it does not change what they check, this ADR should be revisited.
 
 ## Consequences
 

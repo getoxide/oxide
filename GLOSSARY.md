@@ -1,6 +1,6 @@
 # Oxide
 
-A desktop app for agentic engineering: you open a Project and drive coding agents from a chat, switching between the agent CLIs already installed on your machine, with Git and GitHub at hand.
+A desktop app for agentic coding: you open a Project and drive coding agents from a chat, switching between the agent CLIs already installed on your machine, with Git and GitHub at hand.
 
 ## Language
 
@@ -76,6 +76,10 @@ A Thread dispatched from an Issue, or any Thread that works in a git worktree of
 _Avoid_: Background agent, background task
 
 ## Review
+
+**Confident merge**:
+A merge where the person responsible has seen what the agent changed, what was actually checked and what stayed unverified. See the **Verification Dossier**.
+_Avoid_: Safe merge, trusted merge
 
 **Line comment**:
 A draft on one line of a Diff, with the quoted code, written by the user or by a reviewing Provider. It stays a draft until sent, and is then delivered to a Thread as part of one prompt, or to GitHub as part of a review.

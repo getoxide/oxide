@@ -1,16 +1,18 @@
 # Oxide
 
-Oxide is a desktop app for agentic engineering. Developers open a local Project,
+Oxide is a desktop app for agentic coding. Developers open a local Project,
 work with installed coding Providers through Threads, and use Git and GitHub from
 the same window. Project and Thread terminology is defined in GLOSSARY.md.
 
 ## Who it is for
 
-Oxide is for senior engineers who use coding agents and remain personally
-responsible for what enters `main`. It optimizes the path from a finished agent
-Turn to a confident merge: seeing what changed, what was actually checked, what
-stayed unverified, and sending feedback or undoing work without leaving the app.
-It does not optimize for running the most agents at once. See ADR-0010.
+Oxide is for developers who can write code themselves and have AI write it with a
+clear purpose: they know what the agent is producing, review it, and stay
+personally responsible for what enters `main`. It optimizes the path from a
+finished agent Turn to a confident merge: seeing what changed, what was actually
+checked, what stayed unverified, and sending feedback or undoing work without
+leaving the app. It does not optimize for running the most agents at once. See
+ADR-0010.
 
 ## Platform
 
