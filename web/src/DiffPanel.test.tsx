@@ -82,6 +82,41 @@ it("remembers each scope's own diff", async () => {
   expect(host.textContent).toContain("first.rs");
 });
 
+it("keeps the Diff toolbar on the shared surface contract, with subtle badges and no primary action", async () => {
+  vi.spyOn(commands, "gitDiff").mockResolvedValue({
+    status: "ok",
+    data: { base: "main", files: [fileOf("src/a.rs", "modified"), fileOf("src/b.rs", "added")] },
+  } as never);
+  await render("branch");
+  const toolbar = host.querySelector(".diff > .surface-toolbar")!;
+  expect(toolbar).not.toBeNull();
+  expect(toolbar.querySelector('[role="tablist"][aria-label="Diff scope"]')?.textContent).toBe("TurnUncommittedBranch");
+  expect(toolbar.textContent).toContain("vs main");
+  expect(toolbar.textContent).toContain("2 files +2 −0");
+  // The toolbar holds no primary action: Commit & Push stays the panel's first one.
+  expect(toolbar.querySelector(".primary")).toBeNull();
+  expect(toolbar.querySelector('button[aria-label="Blind review"]')!.className.split(" ").sort()).toEqual(["btn", "sm"]);
+});
+
+it("centres an empty Diff on a checkmark and the reason", async () => {
+  vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [] } } as never);
+  await render("uncommitted");
+  const empty = host.querySelector<HTMLElement>(".diff > .surface-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No changes.");
+  // The description says why there is nothing to compare, so the heading is not the whole story.
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("The working tree matches the last commit.");
+  const icon = empty.querySelector("svg")!;
+  expect(`${icon.getAttribute("width")}x${icon.getAttribute("height")}`).toBe("32x32");
+});
+
+it("explains why a branch has no base to compare against", async () => {
+  vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [] } } as never);
+  await render("branch");
+  expect(host.querySelector(".surface-empty-title")?.textContent).toBe("No base branch found.");
+  expect(host.querySelector(".surface-empty-description")?.textContent).toContain("default branch");
+});
+
 const hunk = (header: string) => ({ header, lines: [{ kind: "added" as const, text: "x" }] });
 const fileOf = (path: string, status: "modified" | "added" | "untracked", hunks = [hunk("@@ -1 +1 @@")]) => ({
   path, oldPath: null, status, added: 1, removed: 0, binary: false, hunks,
@@ -99,6 +134,23 @@ function renderRevert(
 }
 
 const click = (el: Element | null) => act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+it("keeps the commit footer action in the surface footer", async () => {
+  const changeScope = vi.fn();
+  await act(async () =>
+    root.render(
+      <DiffPanel projectId={1} onOpenFile={() => {}} threadId={null} board={false} worktree={false} scope="branch" reviewedPr={null} onScopeChange={changeScope} focus={null} refreshKey="" onChanged={() => {}} onOpenPullRequest={() => {}} />,
+    ),
+  );
+  const panel = host.querySelector(".diff")!;
+  const foot = panel.querySelector<HTMLElement>(":scope > .surface-foot")!;
+  expect(foot).not.toBeNull();
+  expect(foot.textContent).toBe("Switch to Uncommitted to commit.");
+  const action = foot.querySelector(":scope button.link")!;
+  expect(action.textContent).toBe("Uncommitted");
+  await click(action);
+  expect(changeScope).toHaveBeenCalledWith("uncommitted");
+});
 
 it("reverts a file from the Diff and refreshes it", async () => {
   vi.spyOn(commands, "gitDiff").mockResolvedValue({ status: "ok", data: { base: null, files: [fileOf("src/a.rs", "modified")] } } as never);
@@ -194,12 +246,14 @@ const renderTurn = (threadId: number | null, scope: "turn" | "uncommitted" = "tu
       <DiffPanel projectId={1} onOpenFile={() => {}} threadId={threadId} board={false} worktree={false} scope={scope} reviewedPr={null} onScopeChange={() => {}} focus={null} refreshKey="" onChanged={() => {}} onOpenPullRequest={() => {}} />,
     ),
   );
-const picker = () => host.querySelector<HTMLSelectElement>('select[aria-label="Turn"]')!;
-const choose = (value: string) =>
-  act(async () => {
-    picker().value = value;
-    picker().dispatchEvent(new Event("change", { bubbles: true }));
-  });
+const picker = () => host.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')!;
+// The Turn menu is portaled to the body, so its options are outside the host.
+const turnMenu = () => document.querySelector<HTMLElement>('[role="listbox"][aria-label="Turn"]');
+const turnOptions = () => Array.from(turnMenu()?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+const choose = async (value: string) => {
+  await click(picker());
+  await click(turnOptions().find((option) => option.textContent?.startsWith(`Turn ${Number(value) + 1} · `)) ?? null);
+};
 const mockTurns = (data: typeof picks) => {
   vi.spyOn(commands, "listTurnPicks").mockResolvedValue({ status: "ok", data } as never);
   vi.spyOn(commands, "gitTurnDiff").mockImplementation((_t, turn) => Promise.resolve({ status: "ok", data: diffOf(`turn${turn}.rs`) }) as never);
@@ -208,10 +262,28 @@ const mockTurns = (data: typeof picks) => {
 it("offers every Turn by position and prompt, and a Turn without Checkpoints says it has no diff", async () => {
   mockTurns(picks);
   await renderTurn(5);
-  expect([...picker().options].map((o) => o.textContent)).toEqual(["Turn 1 · Add the parser", "Turn 2 · Rename it", "Turn 3 · Plan only"]);
-  expect(picker().value).toBe("2");
+  expect(picker().getAttribute("aria-label")).toBe("Turn: Turn 3 · Plan only");
+  await click(picker());
+  expect(turnOptions().map((o) => o.textContent)).toEqual(["Turn 1 · Add the parser", "Turn 2 · Rename it", "Turn 3 · Plan only"]);
   expect(host.textContent).toContain("no Checkpoints");
+  expect(host.querySelector(".surface-empty-description")?.textContent).toContain("nothing to compare");
   expect(commands.gitTurnDiff).not.toHaveBeenCalled();
+});
+
+it("selects an earlier Turn with the keyboard", async () => {
+  mockTurns(picks.slice(0, 2));
+  await renderTurn(5);
+  const trigger = picker();
+  await act(async () => {
+    trigger.focus();
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  // Opening focuses the selected Turn, the latest.
+  expect(document.activeElement).toBe(turnOptions()[1]);
+  await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(commands.gitTurnDiff).toHaveBeenLastCalledWith(5, 0);
+  expect(host.textContent).toContain("turn0.rs");
 });
 
 it("shows the diff between the chosen Turn's Checkpoints and leaves other scopes alone", async () => {
@@ -225,7 +297,7 @@ it("shows the diff between the chosen Turn's Checkpoints and leaves other scopes
 
   await renderTurn(5, "uncommitted");
   expect(commands.gitDiff).toHaveBeenLastCalledWith(1, 5, "uncommitted");
-  expect(host.querySelector('select[aria-label="Turn"]')).toBeNull();
+  expect(host.querySelector('button[aria-haspopup="listbox"]')).toBeNull();
 });
 
 it("falls back to the latest Turn when the Thread changes", async () => {
@@ -233,7 +305,7 @@ it("falls back to the latest Turn when the Thread changes", async () => {
   await renderTurn(5);
   await choose("0");
   await renderTurn(6);
-  expect(picker().value).toBe("1");
+  expect(picker().getAttribute("aria-label")).toBe("Turn: Turn 2 · Rename it");
   expect(commands.gitTurnDiff).toHaveBeenLastCalledWith(6, 1);
 });
 
@@ -274,6 +346,22 @@ it("offers a restore on a Turn with Checkpoints and names the files it changes",
   expect(commands.restoreTurn).toHaveBeenCalledWith(5, 1);
   expect(onChanged).toHaveBeenCalled();
   expect(onRestored).toHaveBeenCalled();
+});
+
+it("keeps the label on every Diff toolbar action instead of hiding them when the dock is cramped", async () => {
+  mockTurns(picks.slice(0, 2));
+  vi.spyOn(commands, "pendingRestore").mockResolvedValue({ status: "ok", data: { turnIndex: 1, files: [] } } as never);
+  await renderRestore();
+  const toolbar = host.querySelector<HTMLElement>(".diff > .surface-toolbar")!;
+  const labels = [...toolbar.querySelectorAll<HTMLElement>(".diff-toolbar-label")].map((label) => label.textContent);
+  expect(labels).toEqual(["Blind review", "Restore", "Undo restore"]);
+  // The label is only visible text; each action still names itself for assistive technology.
+  for (const name of ["Blind review", "Undo the restore"]) {
+    expect(toolbar.querySelector(`button[aria-label="${name}"]`)?.getAttribute("title")).toBe(name);
+  }
+  expect(toolbar.querySelector('button[aria-label="Restore the files to before Turn 2"]')?.getAttribute("title")).toBe(
+    "Restore the files to before Turn 2",
+  );
 });
 
 it("offers no restore without Checkpoints or while the Thread's checkout is busy", async () => {

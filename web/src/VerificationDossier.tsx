@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { ChevronRightIcon } from "@primer/octicons-react";
 import {
   commands,
   type DossierIssue,
@@ -84,7 +85,7 @@ export function VerificationDossier({
       {query.state === "ready" && (issue || prompts.length > 0) && (
         <section className="dossier-intent" aria-label="Intent">
           <div className="dossier-head">
-            <span className="dossier-title">Intent</span>
+            <h3 className="dossier-title">Intent</h3>
             {issue && <span className="dossier-count">Issue #{issue.number}</span>}
           </div>
           {issue && (
@@ -114,7 +115,7 @@ export function VerificationDossier({
           {linkError && <p className="dossier-note error">{linkError}</p>}
           {prompts.length > 0 && (
             <details className="dossier-prompts">
-              <summary>Prompts ({prompts.length})</summary>
+              <DossierSummary>Prompts ({prompts.length})</DossierSummary>
               <ol>
                 {prompts.map((prompt, index) => (
                   <li key={index} className="dossier-prompt">
@@ -129,7 +130,7 @@ export function VerificationDossier({
       {query.state === "ready" && blindReviews.length > 0 && (
         <section className="dossier-blind-reviews" aria-label="Blind reviews">
           <div className="dossier-head">
-            <span className="dossier-title">Blind review</span>
+            <h3 className="dossier-title">Blind review</h3>
             <span className="dossier-count">
               {blindReviews.length} review{blindReviews.length === 1 ? "" : "s"}
             </span>
@@ -151,7 +152,7 @@ export function VerificationDossier({
         </section>
       )}
       <div className="dossier-head">
-        <span className="dossier-title">Verification</span>
+        <h3 className="dossier-title">Verification</h3>
         {entries.length > 0 && (
           <span className="dossier-count">
             {entries.length} command{entries.length === 1 ? "" : "s"}
@@ -186,7 +187,7 @@ export function VerificationDossier({
       )}
       {query.state === "ready" && (
         <div className="dossier-signals-block">
-          <span className="dossier-title">Risk signals</span>
+          <h3 className="dossier-title">Risk signals</h3>
           {signals.length === 0 ? (
             <p className="dossier-note">No risk signal.</p>
           ) : (
@@ -222,12 +223,11 @@ export function VerificationDossier({
       {claim && (
         <section className="dossier-claim" aria-label="Agent claim">
           <div className="dossier-head">
-            <span className="dossier-title">Agent claim</span>
-            <span className="dossier-count">
-              Turn {claim.turnIndex + 1} · the agent's own words, not checked by Oxide
-            </span>
+            <h3 className="dossier-title">Agent claim</h3>
+            <span className="dossier-count">Turn {claim.turnIndex + 1}</span>
           </div>
           <p className="dossier-claim-text">{claim.text}</p>
+          <p className="dossier-claim-note">The agent's own words, not checked by Oxide.</p>
         </section>
       )}
       {scope === "branch" && dossier !== null && <BranchEvidence dossier={dossier} />}
@@ -314,6 +314,17 @@ function issueLabel(issue: DossierIssue): string {
   return issue.title ? `#${issue.number} ${issue.title}` : `#${issue.number}`;
 }
 
+/** The one disclosure control shared by Prompts and the two Project settings. The native marker is
+ *  removed in CSS; the chevron turns a quarter turn when the section opens. */
+function DossierSummary({ children }: { children: ReactNode }) {
+  return (
+    <summary className="dossier-summary">
+      <ChevronRightIcon size={12} className="dossier-disclosure" aria-hidden="true" />
+      <span>{children}</span>
+    </summary>
+  );
+}
+
 interface ProjectListEditorProps {
   title: string;
   hint: string;
@@ -375,9 +386,9 @@ function ProjectListEditor({ title, hint, placeholder, load, save, onSaved }: Pr
 
   return (
     <details className="dossier-commands">
-      <summary>
+      <DossierSummary>
         {title} ({saved.length})
-      </summary>
+      </DossierSummary>
       <p className="hint">{hint}</p>
       <textarea
         aria-label={title}

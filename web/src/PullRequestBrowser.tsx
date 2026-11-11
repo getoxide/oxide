@@ -1,4 +1,5 @@
 import { Skeleton } from "./Skeleton";
+import { SurfaceSearch } from "./SurfaceSearch";
 import { shortcutLabel } from "./shortcuts";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { PullRequestCreate } from "./PullRequestCreate";
@@ -15,7 +16,6 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   MarkGithubIcon,
-  SearchIcon,
   SyncIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
@@ -156,41 +156,36 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
 
   return (
     <div className="pr-browser">
-      <div className="pr-new">
-        <button className="btn primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+      <div className="surface-toolbar">
+        <SurfaceSearch
+          label="Search pull requests"
+          value={query}
+          onChange={setQuery}
+          onClear={() => {
+            setQuery("");
+            setSearch("");
+          }}
+          onSubmit={() => setSearch(query.trim())}
+        >
+          <button
+            type="button"
+            className="pr-chip"
+            aria-pressed={mine}
+            title={`Only pull requests you opened`}
+            onClick={() => setMine((m) => !m)}
+          >
+            Mine
+          </button>
+        </SurfaceSearch>
+        <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+      </div>
+      <div className="surface-secondary">
         <p className="pr-scope" aria-label="Branch actions">
           {threadId === null ? "Select a Thread to open a pull request from its branch." : branchName === null
             ? (branch.state === "error" ? `The Thread's checkout is unavailable: ${branch.message}` : "Reading the Thread's branch…")
             : <>From <span className="pr-branch" title={branchName}>{branchName}</span> in the selected Thread's checkout</>}
         </p>
       </div>
-      <form
-        className="pr-search"
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setSearch(query.trim());
-        }}
-      >
-        <label className="pr-search-field">
-          <SearchIcon size={14} />
-          <input
-            aria-label="Search pull requests"
-            placeholder="Search pull requests"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className="pr-chip"
-          aria-pressed={mine}
-          title={`Only pull requests you opened`}
-          onClick={() => setMine((m) => !m)}
-        >
-          Mine
-        </button>
-      </form>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
         {outcome && (
@@ -204,7 +199,16 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
           <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(`p${projectId}:`); setManual((v) => v + 1); }} />
         )}
         {list.state === "ready" && list.data.length === 0 && (
-          <p className="pr-empty">{search || mine ? "No pull requests match." : "No open pull requests."}</p>
+          <div className="pr-empty surface-empty">
+            <GitPullRequestIcon size={32} />
+            <p className="surface-empty-title">{search || mine ? "No pull requests match." : "No open pull requests."}</p>
+            <p className="surface-empty-description">
+              {search || mine
+                ? "Nothing in this Project’s repository matches these filters."
+                : "Pull requests opened from this Project’s branches appear here."}
+            </p>
+            <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
+          </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
           <ul className="pr-list" aria-label="Open pull requests">

@@ -279,3 +279,20 @@ it("keeps the remote review readable when the Thread's checkout cannot be read",
   expect((byText("Check out") as HTMLButtonElement).disabled).toBe(true);
   expect(byText("Review files")).toBeTruthy();
 });
+
+it("gives the dock's missing-Thread Files state the shared empty layout", async () => {
+  selection = { projectId: 1, threadId: null };
+  await act(async () => root.render(<App />));
+  await settle();
+  await click(host.querySelector('[aria-label="Toggle tools panel"]'));
+  await click(host.querySelector('[role="tab"][aria-label="Files"]'));
+  await vi.waitFor(() => expect(host.querySelector(".tools > .surface-empty")).not.toBeNull());
+
+  const empty = host.querySelector<HTMLElement>(".tools > .surface-empty")!;
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("Select a Thread to browse files.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("The Files Surface shows the selected Thread’s checkout.");
+  const action = [...empty.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New Thread")!;
+  expect(action).toBeDefined();
+  expect(action.classList.contains("primary")).toBe(true);
+});

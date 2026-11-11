@@ -15,6 +15,7 @@ import { PullRequestReviewDrafts } from "./PullRequestReviewDrafts";
 import { reviewThreadsPrefix } from "./reviewKeys";
 import { ReviewThreads } from "./ReviewThreads";
 import { VerificationDossier } from "./VerificationDossier";
+import { Dropdown } from "./Dropdown";
 
 interface DiffPanelProps {
   projectId: number;
@@ -298,9 +299,40 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
       return next;
     });
 
+  const base = loaded.state === "ready" ? loaded.diff.base : null;
+  // The empty state explains why there is no diff; nothing can be created from it, so it has no
+  // action button. Only the reason changes with the scope.
+  const emptyDiff =
+    scope === "branch" && !base
+      ? {
+          title: "No base branch found.",
+          description: "Branch scope compares against the remote's default branch, and this checkout has none.",
+        }
+      : scope === "turn" && threadId === null
+        ? {
+            title: "Select a Thread to see its Turn.",
+            description: "Turn scope compares the files between two Checkpoints of the selected Thread.",
+          }
+        : noCheckpoints
+          ? {
+              title: "This Turn has no Checkpoints, so there is no diff to show.",
+              description: "Oxide takes a Checkpoint when a Turn starts and when it ends; this Turn made none, so there is nothing to compare.",
+            }
+          : {
+              title: "No changes.",
+              description:
+                scope === "uncommitted"
+                  ? "The working tree matches the last commit."
+                  : scope === "branch"
+                    ? "The branch has no commits beyond its base."
+                    : scope === "pr"
+                      ? "The pull request changes nothing against its base."
+                      : "The Turn's Checkpoints are identical.",
+            };
+
   return (
     <section className="diff" aria-label="Diff">
-      <div className="surface-bar">
+      <div className="surface-toolbar">
         <div className="seg" role="tablist" aria-label="Diff scope">
           {(reviewedPr === null ? SCOPES : [...SCOPES, { scope: "pr" as const, label: `PR #${reviewedPr}` }]).map((s) => (
             <button
@@ -314,53 +346,52 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
           ))}
         </div>
         {scope === "turn" && turns.length > 0 && turn !== null && (
-          <select
-            className="turn-pick"
-            aria-label="Turn"
-            value={turn.turnIndex}
-            onChange={(e) => setChosenTurn({ threadId, turnIndex: Number(e.target.value) })}
-          >
-            {turns.map((t) => (
-              <option key={t.turnIndex} value={t.turnIndex}>
-                {turnLabel(t)}
-              </option>
-            ))}
-          </select>
+          <Dropdown
+            label="Turn"
+            triggerClassName="turn-pick"
+            minMenuWidth={240}
+            value={String(turn.turnIndex)}
+            options={turns.map((t) => ({ value: String(t.turnIndex), label: turnLabel(t) }))}
+            onChange={(value) => setChosenTurn({ threadId, turnIndex: Number(value) })}
+          />
         )}
-        {canRestore && (
-          <button
-            type="button"
-            className="btn"
-            aria-label={`Restore the files to before Turn ${turn.turnIndex + 1}`}
-            disabled={restoring}
-            onClick={() => void askRestore()}
-          >
-            <HistoryIcon size={14} /> Restore
-          </button>
-        )}
-        {pendingRestore && threadId !== null && !checkoutBusy && (
-          <button
-            type="button"
-            className="btn"
-            aria-label="Undo the restore"
-            disabled={restoring}
-            onClick={() => void doUndoRestore()}
-          >
-            <UndoIcon size={14} /> Undo restore
-          </button>
-        )}
-        {(scope === "branch" || scope === "pr") && loaded.state === "ready" && loaded.diff.base && (
-          <span className="diff-base mono">vs {loaded.diff.base}</span>
+        {(scope === "branch" || scope === "pr") && base && (
+          <span className="diff-base mono">vs {base}</span>
         )}
         <span className="grow" />
         {files.length > 0 && (
           <button
             type="button"
-            className="btn"
+            className="btn sm"
             aria-label="Blind review"
+            title="Blind review"
             onClick={() => void openBlindReview()}
           >
-            <EyeIcon size={14} /> Blind review
+            <EyeIcon size={14} /> <span className="diff-toolbar-label">Blind review</span>
+          </button>
+        )}
+        {canRestore && (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label={`Restore the files to before Turn ${turn.turnIndex + 1}`}
+            title={`Restore the files to before Turn ${turn.turnIndex + 1}`}
+            disabled={restoring}
+            onClick={() => void askRestore()}
+          >
+            <HistoryIcon size={14} /> <span className="diff-toolbar-label">Restore</span>
+          </button>
+        )}
+        {pendingRestore && threadId !== null && !checkoutBusy && (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Undo the restore"
+            title="Undo the restore"
+            disabled={restoring}
+            onClick={() => void doUndoRestore()}
+          >
+            <UndoIcon size={14} /> <span className="diff-toolbar-label">Undo restore</span>
           </button>
         )}
         {files.length > 0 && (
@@ -505,14 +536,9 @@ function DiffBody({ projectId, threadId, threadProvider, threadIssue, onThreadCr
       )}
       {loaded.state === "ready" && files.length === 0 && (
         <div className="surface-empty">
-          <CheckCircleIcon size={20} />
-          {scope === "branch" && !loaded.diff.base
-            ? "No base branch found."
-            : scope === "turn" && threadId === null
-              ? "Select a Thread to see its Turn."
-              : noCheckpoints
-                ? "This Turn has no Checkpoints, so there is no diff to show."
-                : "No changes."}
+          <CheckCircleIcon size={32} aria-hidden="true" />
+          <p className="surface-empty-title">{emptyDiff.title}</p>
+          <p className="surface-empty-description">{emptyDiff.description}</p>
         </div>
       )}
       {files.length > 0 && (

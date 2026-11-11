@@ -1,5 +1,6 @@
 import { Skeleton } from "./Skeleton";
-import { CommentIcon, PlusIcon, SearchIcon } from "@primer/octicons-react";
+import { SurfaceSearch } from "./SurfaceSearch";
+import { CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
@@ -134,24 +135,22 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
   const filtered = search !== "" || mine;
   return (
     <div className="pr-browser">
-      <form className="pr-search issue-search" role="search" onSubmit={(e) => e.preventDefault()}>
-        <label className="pr-search-field">
-          <SearchIcon size={14} />
-          <input
-            aria-label="Search issues"
-            placeholder="Search issues"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-      </form>
-      <div className="issue-new">
-        <button className="primary" onClick={onCreate}>
-          <PlusIcon size={16} /> New issue
+      <div className="surface-toolbar">
+        <SurfaceSearch
+          label="Search issues"
+          value={query}
+          onChange={setQuery}
+          onClear={() => {
+            setQuery("");
+            setSearch("");
+          }}
+        />
+        <button className="btn sm primary" onClick={onCreate}>
+          <PlusIcon size={14} /> New issue
         </button>
       </div>
-      <div className="issue-filters">
-        <div className="pr-seg" role="group" aria-label="State">
+      <div className="surface-secondary">
+        <div className="seg" role="group" aria-label="State">
           <button aria-pressed={!closed} onClick={() => setClosed(false)}>
             Open
           </button>
@@ -179,9 +178,20 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
           </p>
         )}
         {list.state === "ready" && list.data.length === 0 && (
-          <p className="pr-empty">
-            {filtered ? "No issues match." : closed ? "No closed issues." : "No open issues."}
-          </p>
+          <div className="pr-empty surface-empty">
+            <IssueOpenedIcon size={32} />
+            <p className="surface-empty-title">
+              {filtered ? "No issues match." : closed ? "No closed issues." : "No open issues."}
+            </p>
+            <p className="surface-empty-description">
+              {filtered
+                ? "Nothing in this Project’s repository matches these filters."
+                : closed
+                  ? "Closed issues of this Project’s repository appear here."
+                  : "Issues opened in this Project’s repository appear here."}
+            </p>
+            <button className="btn sm primary" onClick={onCreate}><PlusIcon size={14} /> New issue</button>
+          </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
           <ul className="pr-list" aria-label={closed ? "Closed issues" : "Open issues"}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileIcon, FoldIcon, SearchIcon } from "@primer/octicons-react";
+import { FileDirectoryIcon, FileIcon, FoldIcon, SearchIcon } from "@primer/octicons-react";
 import { commands } from "./bindings";
 import { EditorFileTree } from "./EditorFileTree";
 
@@ -56,9 +56,9 @@ function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanel
 
   return (
     <section className="files files-navigation" aria-label="Files">
-      <div className="files-toolbar">
-        <label className="files-search">
-          <SearchIcon size={12} />
+      <div className="surface-toolbar">
+        <label className="search-field">
+          <SearchIcon size={14} />
           <input
             type="search"
             placeholder="Search files"
@@ -118,6 +118,13 @@ function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanel
             onKeep={onOpenFile}
             collapseToken={collapseToken}
             revision={revision}
+            empty={(
+              <section className="surface-empty">
+                <FileDirectoryIcon size={32} />
+                <p className="surface-empty-title">No files.</p>
+                <p className="surface-empty-description">This checkout does not have any files yet.</p>
+              </section>
+            )}
           />
         </div>
       )}

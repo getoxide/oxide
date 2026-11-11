@@ -120,3 +120,58 @@ it("collapses every expanded folder with one control", async () => {
   expect(buttonWith("app.ts")).toBeUndefined();
   expect(buttonWith("src")).toBeTruthy();
 });
+
+it("puts the unified search field and the collapse action on the Surface toolbar", async () => {
+  treeIpc();
+  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await settle();
+
+  const toolbar = host.querySelector<HTMLElement>('section[aria-label="Files"] > .surface-toolbar')!;
+  expect(toolbar).not.toBeNull();
+  const field = toolbar.querySelector<HTMLElement>(".search-field")!;
+  expect(field).not.toBeNull();
+  const search = field.querySelector<HTMLInputElement>('input[aria-label="Search files"]')!;
+  expect(search).not.toBeNull();
+  // The shared search field uses the 14px SearchIcon, not a smaller one of its own.
+  expect(field.querySelector("svg")?.getAttribute("width")).toBe("14");
+  const collapse = toolbar.querySelector<HTMLButtonElement>('button[aria-label="Collapse all folders"]')!;
+  expect(collapse).not.toBeNull();
+  // The action shares the toolbar row with the field it belongs next to.
+  expect(field.parentElement).toBe(toolbar);
+  expect(collapse.parentElement).toBe(toolbar);
+});
+
+it("clears the file search with Escape and returns to the tree", async () => {
+  treeIpc();
+  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await settle();
+
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search files"]')!;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(search, "app");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle(150);
+  expect(host.querySelectorAll('[role="option"]')).toHaveLength(2);
+
+  await act(async () => {
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  expect(search.value).toBe("");
+  expect(host.querySelector('[role="tree"]')).not.toBeNull();
+  expect(buttonWith("src")).toBeTruthy();
+});
+
+it("explains an empty checkout with the shared Surface empty layout", async () => {
+  mockIPC((command) => (command === "list_dir" ? [] : null));
+  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await settle();
+
+  const empty = host.querySelector<HTMLElement>('section[aria-label="Files"] .surface-empty')!;
+  expect(empty).not.toBeNull();
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No files.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("This checkout does not have any files yet.");
+  expect(host.querySelector(".files-tree")).not.toBeNull();
+});

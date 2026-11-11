@@ -98,6 +98,38 @@ it("disables new tabs with an explanation when no Thread checkout is selected", 
   expect(started()).toHaveLength(0);
 });
 
+it("puts the shell strip and the new-tab action on the Surface toolbar", async () => {
+  const initial = openTab({}, 1, main);
+  await act(async () => root.render(<Harness initial={initial} checkout={main} />));
+  await settle();
+
+  const strip = container.querySelector<HTMLElement>('[role="tablist"][aria-label="Project terminals"]')!;
+  const toolbar = strip.closest<HTMLElement>(".surface-toolbar")!;
+  expect(toolbar).not.toBeNull();
+  const newTab = toolbar.querySelector('[aria-label="New terminal tab"]');
+  expect(newTab).not.toBeNull();
+  // The strip and the action share the toolbar row; the action is not inside the strip.
+  expect(strip.parentElement).toBe(toolbar);
+  expect(newTab!.parentElement).toBe(toolbar);
+});
+
+it("centres the no-shell state on the shared Surface empty contract", async () => {
+  await act(async () => root.render(<Harness initial={{}} checkout={main} />));
+  await settle();
+
+  const empty = container.querySelector<HTMLElement>(".terminal-surface > .surface-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No terminal open.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("Open a terminal in the selected Thread’s checkout.");
+  const action = empty.querySelector<HTMLButtonElement>("button")!;
+  expect(action.textContent).toBe("Open terminal");
+  expect(action.classList.contains("primary")).toBe(true);
+  await click(action);
+  await settle();
+  expect(started()).toHaveLength(1);
+});
+
 it("keeps a tab's shell and flags it when another Thread's checkout is selected", async () => {
   const initial = openTab({}, 1, feature);
   await act(async () => root.render(<Harness initial={initial} checkout={feature} />));
@@ -109,6 +141,9 @@ it("keeps a tab's shell and flags it when another Thread's checkout is selected"
   await act(async () => root.render(<Harness initial={initial} checkout={main} />));
   await settle();
   expect(container.querySelector(".terminal-tab-mismatch")?.textContent).toBe("other checkout");
+  // The badge is wired to the tab's own marker so the whole tab can carry the warning treatment.
+  const mismatchTab = container.querySelector<HTMLElement>(".terminal-tab-mismatch")!.closest<HTMLElement>(".terminal-tab")!;
+  expect(mismatchTab.hasAttribute("data-mismatch")).toBe(true);
   // Selecting another Thread neither restarted nor closed the shell.
   expect(started()).toHaveLength(1);
   expect(closed()).toEqual([]);
