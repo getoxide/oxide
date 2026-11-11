@@ -33,8 +33,13 @@ fn oxide_commands() -> Vec<SlashCommandInfo> {
     ]
 }
 
+/// Commands retired from the active catalog. A Provider that still reports one does not surface
+/// it: Effort is configured through `/model`. A manually typed `/effort` remains an intercepted
+/// compatibility route.
+const RETIRED_COMMANDS: &[&str] = &["effort"];
+
 /// Oxide's commands plus the Provider's. An Oxide command wins over a Provider command of the
-/// same name, aliases included. Sorted by name.
+/// same name, aliases included. Retired commands never surface. Sorted by name.
 pub fn merge(provider: Vec<SlashCommandInfo>) -> Vec<SlashCommandInfo> {
     let mut catalog = oxide_commands();
     let taken: Vec<String> = catalog
@@ -42,7 +47,7 @@ pub fn merge(provider: Vec<SlashCommandInfo>) -> Vec<SlashCommandInfo> {
         .flat_map(|c| std::iter::once(c.name.clone()).chain(c.aliases.clone()))
         .collect();
     for mut cmd in provider {
-        if taken.contains(&cmd.name) {
+        if taken.contains(&cmd.name) || RETIRED_COMMANDS.contains(&cmd.name.as_str()) {
             continue;
         }
         cmd.aliases.retain(|a| !taken.contains(a));
