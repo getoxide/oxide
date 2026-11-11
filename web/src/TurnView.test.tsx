@@ -56,6 +56,7 @@ const click = async (el: Element | null | undefined) => {
 const buttonWith = (text: string) => [...container.querySelectorAll("button")].find((b) => b.textContent?.includes(text));
 const phase = (label: string) =>
   [...container.querySelectorAll<HTMLElement>(".activity-phase-toggle")].find((b) => b.textContent?.startsWith(label));
+const generating = () => container.querySelector('[role="status"][aria-label="Generating response…"]');
 
 const worked = [
   item(0, "tool_call", "Read src/a.ts\nconst a = 1;", "explore"),
@@ -116,6 +117,41 @@ it("shows a live line while running, ponders when idle, and drops it when the Tu
   await render({ ...running, status: "completed", completedAt: new Date().toISOString(), items: [item(0, "tool_call", "Run cargo test", "run")] });
   expect(container.querySelector(".activity-live")).toBeNull();
   expect(buttonWith("Ran 1 command")).toBeTruthy();
+});
+
+it("shows a generating indicator while running before any content arrives", async () => {
+  await render(turn({ status: "running", completedAt: null, startedAt: new Date().toISOString() }));
+  expect(generating()).toBeTruthy();
+});
+
+it("keeps the generating indicator while only Activity has arrived", async () => {
+  await render(
+    turn({
+      status: "running",
+      completedAt: null,
+      startedAt: new Date().toISOString(),
+      items: [item(0, "tool_call", "Read src/a.ts", "explore")],
+    }),
+  );
+  expect(generating()).toBeTruthy();
+});
+
+it("drops the generating indicator once a message block streams in", async () => {
+  await render(
+    turn({
+      status: "running",
+      completedAt: null,
+      startedAt: new Date().toISOString(),
+      items: [item(0, "agent_message", "Here is the answer.")],
+    }),
+  );
+  expect(generating()).toBeNull();
+  expect(container.textContent).toContain("Here is the answer.");
+});
+
+it("shows no generating indicator on a Turn that is not running", async () => {
+  await render(turn({ status: "completed" }));
+  expect(generating()).toBeNull();
 });
 
 it("shows no live line while waiting on an Approval", async () => {
