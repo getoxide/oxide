@@ -5,8 +5,8 @@
 <h1 align="center">Oxide</h1>
 
 <p align="center">
-  <strong>The open-source desktop app for reviewing and merging what your coding agents write.</strong><br />
-  Drive Claude Code, Codex and Antigravity CLI from one window, see exactly what changed and what was checked, then commit, push and open the pull request.
+  <strong>The complete desktop app for agentic coding.</strong><br />
+  Prompt, review, pull request and merge, with Claude Code, Codex and Antigravity CLI.
 </p>
 
 <p align="center">
@@ -32,9 +32,11 @@
 
 ## What is Oxide?
 
-Oxide is a free, open-source **desktop GUI for AI coding agents**, built with Rust and [Tauri](https://tauri.app). It doesn't ship an agent of its own: it drives the agent CLIs you already have installed and logged in (**Claude Code**, **OpenAI Codex** and **Antigravity CLI**) and puts Git, GitHub, a code editor and a terminal around the conversation.
+Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
 
-Most agent tools optimize for starting more agents. Oxide optimizes for the other end: the path from a finished agent Turn to a **confident merge**. For every change it shows what the agent touched, which checks actually ran, what stayed unverified, and lets you send line-level feedback or undo the work without leaving the app. It is built for engineers who use coding agents and stay responsible for what lands in `main` ([ADR-0010](docs/adr/0010-prioritize-the-path-to-a-confident-merge.md)).
+Oxide is not a coding agent: it doesn't ship an agent of its own. It drives the agent CLIs you already have installed and logged in, and it puts Git, GitHub, a code editor and a terminal around the conversation.
+
+Most agent tools optimize for starting more agents. Oxide optimizes for the other end: the path from a finished agent Turn to a **confident merge**. For every change it shows what the agent touched, which checks actually ran, what stayed unverified, and lets you send line-level feedback or undo the work without leaving the app. It is built for developers who can write code themselves and have AI write it with a clear purpose: they know what the agent is producing, review it, and stay responsible for what lands in `main` ([ADR-0010](docs/adr/0010-prioritize-the-path-to-a-confident-merge.md)).
 
 > [!NOTE]
 > **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon** and **Windows x64**. Expect rough edges and breaking changes between versions.
@@ -57,10 +59,11 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 - **Blind review.** Have a second Provider review the change seeing only the diff and the issue, never the original conversation. Its findings become Line comments you keep or dismiss.
 - **Revert and Restore.** Take out one file or hunk, or put a Thread's files back to how they were before any Turn. Both are undoable.
 - **Rule suggestions.** Feedback you keep giving turns into a proposed rule for the Project's `AGENTS.md`.
+- **Pull requests, from review to merge.** Open the pull request from the Pull request Surface and submit Line comments to GitHub as a review. **Fix** sends failing checks, conflicts and the review threads you select back to the agent, in the branch's Thread or a new one. Merge, squash or rebase when GitHub says it's ready, or turn on auto-merge while checks run.
 
 ### A full workspace around the conversation
 
-- **Git and GitHub.** Branches, commit and push, pull requests with checks and inline review threads, and Issues, through `git` and the [GitHub CLI](https://cli.github.com).
+- **Git and GitHub.** Branches, commit and push, and Issues, through `git` and the [GitHub CLI](https://cli.github.com). Pull requests have their own section above.
 - **Code editor.** Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
 - **Terminal.** Per-Project terminal tabs with Command blocks, kept alive while you switch Threads.
 - **Local dictation.** Speak into the composer or terminal with on-device Whisper models, on CPU or GPU. Audio never leaves your machine.
@@ -209,8 +212,10 @@ cargo test -p oxide-provider --test agy_live_smoke -- --ignored
 
 ## FAQ
 
-**Is Oxide an AI coding agent?**
-No. Oxide is a desktop client for the coding agents you already use. Claude Code, Codex and Antigravity CLI do the work; Oxide gives you one interface to drive them, review their changes and ship them through Git and GitHub.
+**What is Oxide?**
+Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+
+Oxide is not a coding agent: it is a desktop GUI that drives the agent CLIs you already have installed and logged in. Oxide is not affiliated with Oxide Computer Company.
 
 **Do I need an API key?**
 No separate key for Oxide. Each Provider uses its own login and its own subscription or API billing, exactly as it does in the terminal.
@@ -241,4 +246,4 @@ Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnera
 
 ## License
 
-Oxide is released under the [MIT License](LICENSE). Claude Code, Codex and Antigravity are trademarks of their respective owners; Oxide is an independent project, not affiliated with or endorsed by Anthropic, OpenAI or Google.
+Oxide is released under the [MIT License](LICENSE). Claude Code, Codex and Antigravity are trademarks of their respective owners; Oxide is an independent project, not affiliated with or endorsed by Anthropic, OpenAI or Google. It is also not affiliated with Oxide Computer Company.

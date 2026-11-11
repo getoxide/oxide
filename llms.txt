@@ -1,11 +1,15 @@
 # Oxide
 
-> Oxide is a free, open-source (MIT) desktop app for agentic engineering, built with Rust and Tauri 2, for macOS (Apple Silicon) and Windows x64. It is a GUI for the coding agent CLIs already installed on the user's machine (Claude Code, OpenAI Codex and Antigravity CLI): it does not ship its own agent. It focuses on the path from a finished agent Turn to a confident merge: per-Turn diffs from Checkpoints, a Verification Dossier computed without an LLM, Line comments sent back to the agent or to GitHub, Blind review by a second Provider, Restore to before any Turn, Git worktrees per Thread, and GitHub pull requests and Issues. It has no telemetry; prompts go only to the chosen Provider.
+> Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+
+This file is contributor-facing: architecture, ADRs, and the CI and release process. User-facing docs (install, quick start, concepts, FAQ) live in the website's [llms.txt](https://oxide.cavallinilorenzo.com/llms.txt).
+
+Oxide is a GUI for the coding agent CLIs already installed on the user's machine (Claude Code, OpenAI Codex and Antigravity CLI): it does not ship its own agent. It focuses on the path from a finished agent Turn to a confident merge: per-Turn diffs from Checkpoints, a Verification Dossier computed without an LLM, Line comments sent back to the agent or to GitHub, Blind review by a second Provider, Restore to before any Turn, Git worktrees per Thread, and GitHub pull requests and Issues. It has no telemetry; prompts go only to the chosen Provider. It is built with Rust and Tauri 2, for macOS (Apple Silicon) and Windows x64.
 
 Key facts:
 
 - Repository: https://github.com/getoxide/oxide
-- Status: pre-release (version 0.x). Downloads: https://github.com/getoxide/oxide/releases
+- License: MIT. Status: pre-release (version 0.x). Downloads: https://github.com/getoxide/oxide/releases
 - Stack: Rust core (`crates/oxide-core`), Provider adapters (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage, local Whisper dictation.
 - Requirements: at least one Provider CLI (`claude`, `codex` or `agy`) installed and logged in; `git`; optionally the GitHub CLI `gh`.
 
