@@ -775,11 +775,33 @@ section.terminal.terminal-hidden { display: none; }
 /* ── Tools panel and its Surfaces ─────────────────────────── */
 .tools { position: relative; width: var(--tools-width, clamp(496px, 32vw, 600px)); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); container-type: inline-size; }
 .tools > section, .tools > .pr-views, .tools > .issues-surface { flex: 1; min-height: 0; }
-/* Diff toolbar: the shared .surface-toolbar contract, scoped here until #434 lands its base rule. */
-.diff > .surface-toolbar { display: flex; align-items: center; gap: 8px; height: 36px; flex: none; padding: 0 12px; background: var(--bg2); border-bottom: 1px solid var(--line); }
 .surface-note { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); background: var(--bg2); }
 .surface-empty { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 28px 16px; color: var(--dim); text-align: center; margin: 0; }
 .surface-foot { flex: none; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12px; }
+
+/* ── Surface toolbar contract ─────────────────────────────────
+   Every Surface starts with one 36px `.surface-toolbar`: `var(--bg2)` over a
+   `var(--line)` bottom border, `padding: 0 12px`, search/filters on the left and
+   the primary action on the right. `.surface-secondary` is the compact
+   context/status row below it (branch actions, issue state). Search inputs use
+   `.search-field`: 28px tall, 14px SearchIcon, `var(--gh-field)` on
+   `var(--gh-border)`, Escape clears.
+   Toolbar controls share that 28px height: `--control-sm` is re-declared inside
+   the toolbar so `.btn.sm` / `.btn.sm.primary` / `.seg` keep one rhythm with the
+   search field. Consumers (#435 Diff, #437 Files/Terminal) adopt these rules;
+   don't redefine them. */
+.surface-toolbar { --control-sm: 28px; display: flex; align-items: center; gap: var(--space-2); height: 36px; padding: 0 var(--space-3); background: var(--bg2); border-bottom: 1px solid var(--line); flex: none; }
+.surface-toolbar > :first-child { flex: 1 1 auto; min-width: 0; }
+.surface-toolbar > .btn, .surface-toolbar > button { flex: none; }
+.surface-secondary { display: flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: 0 var(--space-3); background: var(--bg2); border-bottom: 1px solid var(--line); flex: none; color: var(--dim); font-size: 12px; }
+.search-field { flex: 1 1 auto; display: flex; align-items: center; gap: var(--space-2); height: 28px; min-width: 0; padding: 0 10px; border: 1px solid var(--gh-border); border-radius: var(--radius-control); background: var(--gh-field); color: var(--faint); }
+.search-field:focus-within { border-color: var(--gh-blue); box-shadow: inset 0 0 0 1px var(--gh-blue); color: var(--fg); }
+.search-field input { flex: 1; min-width: 0; min-height: 0; border: 0; background: none; padding: 0; outline: none; box-shadow: none; }
+.pr-chip { min-height: 28px; padding: 0 var(--space-3); border-radius: 99px; background: none; border-color: var(--gh-border); color: var(--dim); font-size: 12px; }
+.pr-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--acc) 15%, transparent); border-color: var(--acc2); color: var(--acc2); }
+.surface-secondary .seg button { min-height: 22px; }
+.surface-secondary .pr-scope { display: flex; align-items: baseline; gap: 4px; min-width: 0; margin: 0; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+.surface-secondary .pr-scope .pr-branch { max-width: 60%; }
 /* Verification Dossier: a section of the Diff Surface, above the files it describes. */
 .dossier { flex: none; display: grid; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .dossier-head { display: flex; align-items: baseline; gap: 8px; }
@@ -896,7 +918,8 @@ section.terminal.terminal-hidden { display: none; }
 .diff-base, .diff-total { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg3); color: var(--dim); font-size: 11px; line-height: 16px; white-space: nowrap; }
 .diff-base { color: var(--faint); }
 .diff-total { font-variant-numeric: tabular-nums; }
-/* The Turn picker is a Dropdown: size the wrapper, compact its trigger (the menu itself is portaled). */
+/* The Diff toolbar takes the shared .surface-toolbar contract; these are its own pieces. The Turn
+   picker is a Dropdown: size the wrapper, compact its trigger (the menu itself is portaled). */
 .diff > .surface-toolbar > .seg { flex: none; }
 .diff > .surface-toolbar > .dropdown { flex: 0 1 260px; min-width: 0; }
 .dropdown-trigger.turn-pick { min-height: var(--control-sm); padding: 0 8px; border-color: var(--line-strong); background: var(--bg3); font-size: 12px; }
@@ -970,8 +993,7 @@ section.terminal.terminal-hidden { display: none; }
 .pr-card-meta { display: flex; align-items: center; gap: 8px; }
 .pr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pr-browser, .pr-review { display: grid; gap: 8px; align-content: start; }
-.pr-search { display: flex; align-items: center; gap: 6px; }
-.pr-search input[type="text"], .pr-search input:not([type]) { flex: 1; min-width: 0; }
+.pr-search { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
 .pr-list, .issues-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .pr-row, .issue-row {
   display: grid;
@@ -1055,12 +1077,6 @@ section.terminal.terminal-hidden { display: none; }
 }
 
 /* List */
-.pr-views .pr-search { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--pr-pad); border-bottom: 1px solid var(--line); }
-.pr-views .pr-search-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 12px; border: 1px solid var(--gh-border); border-radius: 6px; background: var(--gh-field); color: var(--faint); }
-.pr-views .pr-search-field:focus-within { border-color: var(--gh-blue); box-shadow: inset 0 0 0 1px var(--gh-blue); color: var(--fg); }
-.pr-views .pr-search-field input { flex: 1; min-width: 0; min-height: 0; border: 0; background: none; padding: 0; outline: none; box-shadow: none; }
-.pr-views .pr-chip { border-radius: 99px; padding: 0 var(--space-3); background: none; border-color: var(--gh-border); color: var(--dim); }
-.pr-views .pr-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--acc) 15%, transparent); border-color: var(--acc2); color: var(--acc2); }
 .pr-views .pr-list { gap: 0; }
 .pr-views .pr-list li + li { border-top: 1px solid var(--line); }
 .pr-views .pr-row { display: flex; align-items: flex-start; gap: 10px; border: 0; border-radius: var(--radius-control); background: none; padding: 10px var(--space-2); margin: 0 calc(var(--space-2) * -1); width: calc(100% + var(--space-4)); }
@@ -1601,10 +1617,6 @@ section.terminal.terminal-hidden { display: none; }
 .project-overview-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
 .project-overview-links button { background: none; border: 0; color: var(--acc2); padding: 0 4px; }
 .provider-tab:disabled { opacity: .4; background: transparent; border-color: transparent; cursor: not-allowed; }
-.pr-new { padding: 12px var(--pr-pad); border-bottom: 1px solid var(--line); }
-.pr-new button { width: 100%; justify-content: center; }
-.pr-new .pr-scope { display: flex; align-items: baseline; gap: 4px; min-width: 0; margin: 8px 0 0; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
-.pr-new .pr-scope .pr-branch { max-width: 60%; }
 .pr-views .pr-scope-title { display: flex; gap: 4px; min-width: 0; margin: 0; padding: 10px var(--pr-pad) 4px; font-size: 12px; font-weight: 500; color: var(--dim); }
 .pr-views .pr-scope-title span { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pr-create { padding: 16px var(--pr-pad); overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 18px; }
@@ -1656,15 +1668,7 @@ section.terminal.terminal-hidden { display: none; }
 .window-resize-southeast { bottom: 0; right: 0; cursor: nwse-resize; }
 .window-resize-southwest { bottom: 0; left: 0; cursor: nesw-resize; }
 
-/* Issues: the Pull request tab's layout, with a full-width search and New issue. */
-.pr-views .issue-search { border-bottom: 0; padding-bottom: 0; }
-.pr-views .issue-new { padding: var(--space-2) var(--pr-pad) 0; }
-.pr-views .issue-new .primary { width: 100%; height: 36px; justify-content: center; font-size: 14px; gap: var(--space-2); }
-.pr-views .issue-filters { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--pr-pad); border-bottom: 1px solid var(--line); }
-.pr-views .pr-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius-control); overflow: hidden; }
-.pr-views .pr-seg > button { border: 0; border-radius: 0; background: none; color: var(--dim); min-height: var(--control-sm); padding: 0 var(--space-3); }
-.pr-views .pr-seg > button + button { border-left: 1px solid var(--line-strong); }
-.pr-views .pr-seg > button[aria-pressed="true"] { background: var(--bg4); color: var(--fg-bright); }
+/* Issues. */
 .pr-views .issue-state-open { color: var(--green); }
 .pr-views .issue-state-completed { color: var(--purple); }
 .pr-views .issue-state-notPlanned { color: var(--faint); }
@@ -1699,14 +1703,6 @@ section.terminal.terminal-hidden { display: none; }
 .pr-views .issue-option input { width: auto; min-height: 0; margin: 0; }
 /* Shortcut chip on a button, as GitHub draws it. */
 .kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: #0000002e; font: inherit; font-size: 12px; font-weight: 500; }
-
-.pr-views .issue-new .primary { height: 36px; }
-.pr-views .pr-chip { border-color: var(--gh-border); min-height: 32px; font-size: 14px; }
-.pr-views .pr-seg { border-color: var(--gh-border); border-radius: 6px; }
-.pr-views .pr-seg > button { background: var(--gh-btn); min-height: 30px; padding: 0 12px; font-size: 14px; font-weight: 500; color: var(--fg-bright); border-radius: 0; }
-.pr-views .pr-seg > button + button { border-left: 1px solid var(--gh-border); }
-.pr-views .pr-seg > button:hover:not(:disabled) { background: var(--gh-btn-hover); border-color: transparent; }
-.pr-views .pr-seg > button[aria-pressed="true"] { background: var(--gh-btn-active); }
 
 .pr-views .pr-create-field > label { font-size: 14px; font-weight: 600; }
 .pr-views .required { margin-left: 2px; color: var(--red); }
