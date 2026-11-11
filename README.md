@@ -111,7 +111,7 @@ On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with t
 
 Each release says whether it is code-signed on your platform.
 
-**macOS.** Until Oxide has an Apple Developer ID, releases are **ad-hoc signed and not notarized**, and Gatekeeper blocks them on first launch. To open one:
+**macOS.** Oxide does not join the Apple Developer Program, so its releases are **ad-hoc signed and not notarized**, and Gatekeeper blocks them on first launch. To open one:
 
 1. Drag `Oxide.app` from the `.dmg` into `/Applications` and try to open it once.
 2. Open **System Settings → Privacy & Security**, scroll to the message about Oxide, and click **Open Anyway**.
