@@ -55,14 +55,50 @@ export interface ThreadHeaderLines {
   };
 }
 
-/** A catalog name can spell out the Effort, "Gemini 3.8 Flash (High)"; the Effort has its own place. */
-const EFFORT_SUFFIX = /\s*\((low|medium|high|xhigh|max)\)$/i;
+/** A catalog name can spell out the Effort, "Gemini 3.8 Flash (High)" or "Gemini 3.8 Flash - High". */
+const EFFORT_SUFFIX = /\s*(?:[(·-]\s*|\s+)(?:low|medium|high|xhigh|max)\)?\s*$/i;
+
+/** Drops an Effort the Model's name already carries, since the header shows the Effort on its own. */
+export function stripEffortSuffix(name: string): string {
+  return name.replace(EFFORT_SUFFIX, "").trim();
+}
+
+const ACRONYMS = new Set(["ai", "api", "cli", "gpt", "llm", "ui"]);
+
+function capitalizeWord(word: string): string {
+  const lower = word.toLowerCase();
+  if (ACRONYMS.has(lower)) return lower.toUpperCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** `gemini-3.8-flash-low` → `Gemini 3.8 Flash`: the last resort when the catalog has no name. */
+export function humanizeModelId(model: string): string {
+  const words = stripEffortSuffix(model).split(/[-_\s]+/).filter(Boolean);
+  const parts: string[] = [];
+  for (const word of words) {
+    const previous = parts[parts.length - 1];
+    if (/^\d+$/.test(word) && previous !== undefined && /^\d+$/.test(previous)) {
+      parts[parts.length - 1] = `${previous}.${word}`;
+    } else {
+      parts.push(capitalizeWord(word));
+    }
+  }
+  return parts.join(" ");
+}
+
+/** How an Effort reads in a header: "Low", "Medium", "High", "Max". */
+export function effortLabel(effort: string): string {
+  const level = effort.trim().toLowerCase();
+  if (!level) return "";
+  if (level === "xhigh") return "Extra High";
+  return level.charAt(0).toUpperCase() + level.slice(1);
+}
 
 export function readableModel(model: string, catalog: ModelInfo[] | null): string {
   const exact = catalog?.find((m) => m.id === model);
   const family = modelFamilyId(model);
-  const name = exact?.name ?? catalog?.find((m) => modelFamilyId(m.id) === family)?.name ?? model;
-  return name.replace(EFFORT_SUFFIX, "");
+  const name = exact?.name ?? catalog?.find((m) => modelFamilyId(m.id) === family)?.name;
+  return stripEffortSuffix(name ?? humanizeModelId(model));
 }
 
 export function threadHeaderLines(input: ThreadHeaderInput): ThreadHeaderLines {

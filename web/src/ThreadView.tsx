@@ -1215,6 +1215,7 @@ export function ThreadView({
                         outgoing?.threadId === threadId && row.index === outgoing.baseCount
                       }
                       provider={transcript.thread?.provider ?? draftProvider}
+                      catalog={catalogModels}
                       onRespond={handleRespond}
                       isWorking={isTurnActive}
                     />
@@ -1231,6 +1232,7 @@ export function ThreadView({
             <TurnView
               turn={outgoingTurn}
               provider={transcript.thread?.provider ?? draftProvider}
+              catalog={catalogModels}
               onRespond={handleRespond}
               isWorking
             />

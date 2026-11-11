@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ItemSnapshot } from "./bindings";
+import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { DiffOpenContext } from "./diffOpen";
 import type { TranscriptTurn } from "./transcript";
 import { TurnView } from "./TurnView";
@@ -38,11 +38,11 @@ const turn = (over: Partial<TranscriptTurn>): TranscriptTurn => ({
   ...over,
 });
 
-async function render(t: TranscriptTurn, openDiff = vi.fn()) {
+async function render(t: TranscriptTurn, catalog: ModelInfo[] | null = null, openDiff = vi.fn()) {
   await act(async () =>
     root.render(
       <DiffOpenContext.Provider value={openDiff}>
-        <TurnView turn={t} provider="claude" onRespond={vi.fn()} isWorking={t.status === "running"} instant />
+        <TurnView turn={t} provider="claude" catalog={catalog} onRespond={vi.fn()} isWorking={t.status === "running"} instant />
       </DiffOpenContext.Provider>,
     ),
   );
@@ -63,6 +63,25 @@ const worked = [
   item(2, "tool_call", "Run cargo test\n1 passed", "run"),
   item(3, "agent_message", "All done."),
 ];
+
+it("humanizes the Model and capitalizes the Effort in the Turn header, without repeating it", async () => {
+  const catalog: ModelInfo[] = [
+    { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", description: null, supportedEfforts: [], defaultEffort: null, isLegacy: false },
+  ];
+  await render(turn({ model: "gemini-3.8-flash-low", effort: "low", items: [item(0, "agent_message", "hi")] }), catalog);
+  const header = container.querySelector(".agent-header")!;
+  expect(header.querySelector(".model-name")?.textContent).toBe("Gemini 3.8 Flash");
+  expect(header.querySelector(".effort-badge")?.textContent).toBe("Effort: Low");
+  expect(header.textContent).not.toContain("gemini-3.8-flash-low");
+  expect(header.textContent).not.toContain("· low");
+});
+
+it("shows the Effort on its own when the catalog has no name for the Model", async () => {
+  await render(turn({ model: "claude-opus-5-5", effort: "high", items: [item(0, "agent_message", "hi")] }), null);
+  const header = container.querySelector(".agent-header")!;
+  expect(header.querySelector(".model-name")?.textContent).toBe("Claude Opus 5.5");
+  expect(header.querySelector(".effort-badge")?.textContent).toBe("Effort: High");
+});
 
 it("shows sent Line comments as formatted text with the quoted code, not as raw markdown", async () => {
   const text = "I reviewed your changes and left 1 comment. Please address each one.\n\n### src/a.ts:2\n```\nconst x = 1;\n```\nWhy this value?\n";
