@@ -1,4 +1,5 @@
 import { Skeleton } from "./Skeleton";
+import { SurfaceSearch } from "./SurfaceSearch";
 import { shortcutLabel } from "./shortcuts";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { PullRequestCreate } from "./PullRequestCreate";
@@ -15,7 +16,6 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   MarkGithubIcon,
-  SearchIcon,
   SyncIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
@@ -157,29 +157,16 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
   return (
     <div className="pr-browser">
       <div className="surface-toolbar">
-        <form
-          className="pr-search"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSearch(query.trim());
+        <SurfaceSearch
+          label="Search pull requests"
+          value={query}
+          onChange={setQuery}
+          onClear={() => {
+            setQuery("");
+            setSearch("");
           }}
+          onSubmit={() => setSearch(query.trim())}
         >
-          <label className="search-field">
-            <SearchIcon size={14} />
-            <input
-              aria-label="Search pull requests"
-              placeholder="Search pull requests"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Escape") return;
-                e.preventDefault();
-                setQuery("");
-                setSearch("");
-              }}
-            />
-          </label>
           <button
             type="button"
             className="pr-chip"
@@ -189,7 +176,7 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
           >
             Mine
           </button>
-        </form>
+        </SurfaceSearch>
         <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
       </div>
       <div className="surface-secondary">

@@ -1280,7 +1280,7 @@ export function App() {
               <section className="surface-empty">
                 <RepoIcon size={32} />
                 <p className="surface-empty-title">Open a Project to use its tools.</p>
-                <p className="surface-empty-description">The Surfaces dock shows Diff, Files, Terminal and repository tools for the selected Project.</p>
+                <p className="surface-empty-description">The right dock holds five Surfaces for the selected Project: Diff, Files, Terminal, Pull request and Issues.</p>
                 <button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button>
               </section>
             )}

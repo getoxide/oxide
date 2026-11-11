@@ -106,9 +106,11 @@ it("puts the shell strip and the new-tab action on the Surface toolbar", async (
   const strip = container.querySelector<HTMLElement>('[role="tablist"][aria-label="Project terminals"]')!;
   const toolbar = strip.closest<HTMLElement>(".surface-toolbar")!;
   expect(toolbar).not.toBeNull();
-  expect(toolbar.querySelector('[aria-label="New terminal tab"]')).not.toBeNull();
-  // The strip is the flexible left side; the action is the pinned right side.
-  expect(toolbar.firstElementChild).toBe(strip);
+  const newTab = toolbar.querySelector('[aria-label="New terminal tab"]');
+  expect(newTab).not.toBeNull();
+  // The strip and the action share the toolbar row; the action is not inside the strip.
+  expect(strip.parentElement).toBe(toolbar);
+  expect(newTab!.parentElement).toBe(toolbar);
 });
 
 it("centres the no-shell state on the shared Surface empty contract", async () => {
