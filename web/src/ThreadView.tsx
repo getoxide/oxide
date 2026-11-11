@@ -81,6 +81,18 @@ import {
 const STICK_TO_BOTTOM = 48;
 /** How long (ms) the visible range must hold still before paging older Turns in. */
 const PAGE_LOAD_DELAY = 80;
+/** Focus here already owns the keystrokes: an input, a code editor, or any editable surface. */
+const TYPING_TARGETS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .monaco-editor, .xterm, .terminal';
+/** An open modal or overlay owns the interaction, so typing must not reach behind it. */
+const OPEN_DIALOGS = '[aria-modal="true"], [role="alertdialog"], .modal-backdrop, .palette';
+
+function isTypingTarget(target: Element | null): boolean {
+  return Boolean(target?.closest(TYPING_TARGETS));
+}
+
+function hasOpenDialog(): boolean {
+  return Boolean(document.querySelector(OPEN_DIALOGS));
+}
 
 interface ThreadViewProps {
   visible?: boolean;
@@ -632,6 +644,24 @@ export function ThreadView({
     const timer = window.setTimeout(() => setComposerFocusCue(false), 600);
     return () => window.clearTimeout(timer);
   }, [composerFocusCue]);
+
+  // Typing while the Thread has focus anywhere else lands in the composer, first keystroke included.
+  // Inputs, editors, and open dialogs keep their own keys, and shortcuts or non-printables pass through.
+  useEffect(() => {
+    if (!visible) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1 || isTypingTarget(document.activeElement) || hasOpenDialog()) return;
+      const composer = composerRef.current;
+      if (!composer) return;
+      e.preventDefault();
+      const at = composer.caret() ?? undefined;
+      composer.insert([{ kind: "text", text: e.key }], at);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [visible]);
 
   const turnCount = transcript.turnOffset + transcript.turns.length;
   // Until the real Turn arrives, the sent prompt stands in for it.
