@@ -534,6 +534,18 @@ html.macos .header,
 .command-output { margin-left: 32px; border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px 12px; font: 12px/1.55 var(--mono); color: var(--dim); overflow-x: auto; white-space: pre; }
 .command-output .message-content { white-space: pre; }
 .agent-message .message-content { white-space: normal; }
+.agent-message { position: relative; padding-right: 28px; }
+/* The copy control stays out of the way until the message is hovered or the button itself is focused. */
+.agent-message > .message-copy { position: absolute; top: -2px; right: 0; background: var(--bg); opacity: 0; }
+.agent-message:hover > .message-copy, .agent-message:focus-within > .message-copy { opacity: 1; }
+@media (hover: none) { .agent-message > .message-copy { opacity: 1; } }
+.copy-btn { gap: 4px; color: var(--faint); }
+.copy-btn:hover:not(:disabled), .copy-btn:focus-visible { color: var(--fg); }
+.copy-btn:focus-visible { outline: 2px solid var(--gh-blue); outline-offset: 2px; }
+.copy-btn.copied { min-width: auto; padding: 0 var(--space-2); color: var(--acc2); }
+.copy-btn .copy-btn-label { font-size: 11px; line-height: 1; }
+.prompt-copy { opacity: .75; }
+.prompt-copy:hover, .prompt-copy:focus-visible { opacity: 1; }
 .chat-md { display: grid; gap: 10px; min-width: 0; }
 .chat-md > *, .chat-md li > div > * { margin: 0; min-width: 0; }
 .chat-md p { white-space: pre-wrap; }

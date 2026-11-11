@@ -145,6 +145,30 @@ it("keeps the Activity open while new Items stream in", async () => {
 });
 
 
+it("copies the prompt text and the response markdown", async () => {
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  await render(turn({
+    prompt: "Compare [a.png] with the spec",
+    segments: [
+      { kind: "text", text: "Compare " },
+      { kind: "attachment", id: "id-a", name: "a.png", attachmentKind: "image", mediaType: "image/png", sizeBytes: 2048, path: "/h/a.png" },
+      { kind: "text", text: " with the spec" },
+    ],
+    items: [item(0, "agent_message", "Here is **the answer**.")],
+  }));
+
+  const promptCopy = container.querySelector('[aria-label="Copy prompt"]');
+  expect(promptCopy).toBeTruthy();
+  await act(async () => (promptCopy as HTMLElement).click());
+  expect(writeText).toHaveBeenLastCalledWith("Compare [a.png] with the spec");
+
+  const responseCopy = container.querySelector('[aria-label="Copy response"]');
+  expect(responseCopy).toBeTruthy();
+  await act(async () => (responseCopy as HTMLElement).click());
+  expect(writeText).toHaveBeenLastCalledWith("Here is **the answer**.");
+});
+
 it("draws Attachments as chips between the words of the prompt, the same for every Provider", async () => {
   const attachment = (name: string, attachmentKind: "image" | "pdf" | "text" | "other") => ({
     kind: "attachment" as const, id: `id-${name}`, name, attachmentKind, mediaType: "x/y", sizeBytes: 2048, path: `/h/attachments/id-${name}/${name}`,
