@@ -26,6 +26,7 @@
   .icon-btn, .btn, .tab, .seg > button {
     transition: background-color 100ms ease-out, color 100ms ease-out, border-color 100ms ease-out, transform 100ms ease-out;
   }
+  .tools-tab-strip { scroll-behavior: smooth; }
   .icon-btn:active, .btn:active { transform: scale(.97); }
   .activity-phase > summary svg, .files-chevron svg { transition: transform 120ms ease-out; }
 }

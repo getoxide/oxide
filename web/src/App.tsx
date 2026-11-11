@@ -655,7 +655,10 @@ export function App() {
           '[role="tablist"][aria-label="Surfaces"] [role="tab"][aria-selected="true"]'
         );
         const firstTab = dock.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"] [role="tab"]');
-        (activeTab ?? firstTab)?.focus();
+        const target = activeTab ?? firstTab;
+        target?.focus();
+        // Shortcuts can select a tab outside the visible strip; reveal it without moving the page.
+        target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
       } else {
         const handle = document.querySelector<HTMLElement>('button[aria-label="Toggle tools panel"]');
         handle?.focus();
@@ -1150,35 +1153,39 @@ export function App() {
           <aside className="tools" aria-label="Tools panel" id="workspace-tools" hidden={!dockVisible}>
             {!maximized && <ResizeHandle label="Resize Tools" controls="workspace-tools" axis="x" edge="start" direction={-1}
               {...layout.tools} onResize={toolsSize.resize} onCommit={toolsSize.commit} onReset={toolsSize.reset} onCancel={toolsSize.cancel} />}
-            <nav className="tabs" role="tablist" aria-label="Surfaces" ref={surfaceTabsRef} onKeyDown={onSurfaceTabsKeyDown}>
-              {TOOL_TABS.map(({ name, Icon }) => (
-                <button
-                  key={name}
-                  role="tab"
-                  className="tab"
-                  aria-label={name}
-                  title={`${name} (${keys(TOOL_TAB_ACTION[name])})`}
-                  aria-selected={activeTool === name}
-                  tabIndex={activeTool === name ? 0 : -1}
-                  onClick={() => selectSurface(name)}
-                >
-                  <Icon size={14} /> <span className="tool-tab-label">{name}</span>
+            <nav className="tabs tools-tabs" role="tablist" aria-label="Surfaces" ref={surfaceTabsRef} onKeyDown={onSurfaceTabsKeyDown}>
+              {/* The strip scrolls on its own so labels never shed text; utility actions stay pinned. */}
+              <div className="tools-tab-strip" role="presentation">
+                {TOOL_TABS.map(({ name, Icon }) => (
+                  <button
+                    key={name}
+                    role="tab"
+                    className="tab"
+                    aria-label={name}
+                    title={`${name} (${keys(TOOL_TAB_ACTION[name])})`}
+                    aria-selected={activeTool === name}
+                    tabIndex={activeTool === name ? 0 : -1}
+                    onClick={() => selectSurface(name)}
+                  >
+                    <Icon size={14} /> <span className="tool-tab-label">{name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="tools-tab-actions">
+                {canMaximize && <button className="icon-btn sm" title={`${maximized ? "Restore Surface" : "Maximize Surface"} (${keys("maximizeSurface")})`} aria-label={maximized ? "Restore Surface" : "Maximize Surface"} onClick={() => {
+                  const next = !maximized;
+                  setMaximized(next);
+                  requestAnimationFrame(() => focusRegion(next ? "dock" : "centre"));
+                }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}</button>}
+                <button className="icon-btn sm" title={`Close panel (${keys("toggleTools")})`} aria-label="Close tools panel" onClick={() => {
+                  setShowTools(false);
+                  requestAnimationFrame(() => {
+                    document.querySelector<HTMLElement>('button[aria-label="Toggle tools panel"]')?.focus();
+                  });
+                }}>
+                  <XIcon size={14} />
                 </button>
-              ))}
-              <span className="grow" />
-              {canMaximize && <button className="icon-btn sm" title={`${maximized ? "Restore Surface" : "Maximize Surface"} (${keys("maximizeSurface")})`} aria-label={maximized ? "Restore Surface" : "Maximize Surface"} onClick={() => {
-                const next = !maximized;
-                setMaximized(next);
-                requestAnimationFrame(() => focusRegion(next ? "dock" : "centre"));
-              }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}</button>}
-              <button className="icon-btn sm" title={`Close panel (${keys("toggleTools")})`} aria-label="Close tools panel" onClick={() => {
-                setShowTools(false);
-                requestAnimationFrame(() => {
-                  document.querySelector<HTMLElement>('button[aria-label="Toggle tools panel"]')?.focus();
-                });
-              }}>
-                <XIcon size={14} />
-              </button>
+              </div>
             </nav>
             {selected && visitedTools[`${selected.id}:Diff`] && (
               <div className="surface-content" hidden={activeTool !== "Diff"}><Suspense fallback={<Skeleton kind="diff" label="Loading changesâ€¦" />}>
