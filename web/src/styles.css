@@ -401,6 +401,7 @@ html.macos .header,
 .thread-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .thread-item-branch { display: inline-flex; color: var(--faint); }
 .thread-item-age { flex: none; min-width: 24px; text-align: right; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--faint); }
+.shortcut-badge { flex: none; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg3); color: var(--dim); font: 10.5px var(--mono); line-height: 16px; }
 .thread-row:is(:hover, :focus-within) .thread-item-age { visibility: hidden; }
 .thread-row .row-action { position: absolute; right: 4px; }
 .thread-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
