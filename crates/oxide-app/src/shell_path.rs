@@ -41,7 +41,6 @@ pub fn parse_marked_path(output: &str) -> Option<&str> {
 }
 
 /// Merges the login shell's `PATH` into this process's. Call once, before any thread starts.
-#[cfg(target_os = "macos")]
 pub fn inherit_login_shell_path() {
     let current = std::env::var("PATH").unwrap_or_default();
     let login = login_shell_path().unwrap_or_default();
@@ -51,7 +50,6 @@ pub fn inherit_login_shell_path() {
     unsafe { std::env::set_var("PATH", merged) };
 }
 
-#[cfg(target_os = "macos")]
 fn login_shell_path() -> Option<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};

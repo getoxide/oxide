@@ -1,6 +1,7 @@
 //! The App shell: a thin Tauri layer that exposes [`oxide_core::Core`] to the webview.
 //! The webview talks only to the TypeScript bindings generated from here.
 
+#[cfg(target_os = "macos")]
 mod shell_path;
 mod system;
 mod updates;
