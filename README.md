@@ -183,7 +183,9 @@ cd oxide
 pnpm --dir web install
 
 # Run the app in development mode (hot-reloading frontend), from the repository root.
-web/node_modules/.bin/tauri dev
+# The dev config names it "Oxide Dev" and gives it the icon with the amber band,
+# so it is never mistaken for an installed release.
+web/node_modules/.bin/tauri dev --config crates/oxide-app/tauri.dev.conf.json
 
 # Build the app bundle and .dmg into target/release/bundle/
 pnpm --dir web build:app

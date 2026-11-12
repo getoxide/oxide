@@ -25,7 +25,7 @@ afterEach(async () => {
 
 const render = () =>
   act(async () =>
-    root.render(<PullRequestPanel projectId={1} projectName="Oxide" threadId={7} refreshKey={0} onChanged={() => {}} onFixPullRequest={async () => {}} />),
+    root.render(<PullRequestPanel projectId={1} threadId={7} refreshKey={0} onChanged={() => {}} onFixPullRequest={async () => {}} />),
   );
 const listCalls = () => vi.mocked(commands.listPullRequests).mock.calls.length;
 
@@ -34,7 +34,7 @@ it("opens creation from the Git header and keeps the form open after consuming i
   vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "Topic", body: "", base: "main", head: "topic" } });
   vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
   const handled = vi.fn();
-  const view = (request: number) => <PullRequestPanel projectId={1} projectName="Oxide" threadId={7} refreshKey={0} createRequest={request} onCreateHandled={handled} onChanged={() => {}} onFixPullRequest={async () => {}} />;
+  const view = (request: number) => <PullRequestPanel projectId={1} threadId={7} refreshKey={0} createRequest={request} onCreateHandled={handled} onChanged={() => {}} onFixPullRequest={async () => {}} />;
   await act(async () => root.render(view(1)));
   expect(handled).toHaveBeenCalled();
   expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
@@ -103,11 +103,8 @@ it("puts search and Mine in the Surface toolbar, with New pull request at the ri
   expect(create).toBeDefined();
   expect(create.disabled).toBe(false);
 
-  // The branch context is a compact secondary row, not part of the toolbar.
-  const branch = host.querySelector('[aria-label="Branch actions"]')!;
-  expect(branch).not.toBeNull();
-  expect(toolbar.contains(branch)).toBe(false);
-  expect(branch.textContent).toContain("topic");
+  // No branch context row: the list is repository-wide.
+  expect(host.querySelector('[aria-label="Branch actions"]')).toBeNull();
 });
 
 it("clears the pull request search with Escape and restores the unfiltered list", async () => {

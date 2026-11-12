@@ -52,6 +52,8 @@ describe("lanesFor", () => {
 
   test("a Tauri config change turns on bundle and rust", () => {
     assert.deepEqual(lanesFor(["crates/oxide-app/tauri.conf.json"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
+    assert.deepEqual(lanesFor(["crates/oxide-app/icons-dev/icon.png"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
+    assert.deepEqual(lanesFor(["crates/oxide-app/tauri.dev.conf.json"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
   });
 
   test("a bundled licence file under docs turns on bundle", () => {

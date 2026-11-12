@@ -18,7 +18,6 @@ import { GithubSetup } from "./GithubSetup";
 export interface IssuesSurfaceProps {
   projectId: number;
   /** Names the repository whose issues are listed. */
-  projectName?: string;
   /** Changes after the user's own actions that should reload the surface. */
   refreshKey?: number;
   /** Called after issue mutations (create/close/comment), so parent views can react if needed. */
@@ -37,7 +36,7 @@ export function IssuesSurface(props: IssuesSurfaceProps) {
   return <IssuesViews key={props.projectId} {...props} />;
 }
 
-function IssuesViews({ projectId, projectName, refreshKey = 0, onChanged, onDispatched }: IssuesSurfaceProps) {
+function IssuesViews({ projectId, refreshKey = 0, onChanged, onDispatched }: IssuesSurfaceProps) {
   const tick = useAutoRefresh();
   const reload = refreshKey + tick;
   const availability = useQuery(`p${projectId}:issues:state`, () => commands.issuesState(projectId), reload, { staleMs: QUERY_STALE_MS });
@@ -90,7 +89,6 @@ function IssuesViews({ projectId, projectName, refreshKey = 0, onChanged, onDisp
     content = (
       <IssueList
         projectId={projectId}
-        projectName={projectName}
         refreshKey={reload + listRevision}
         onOpen={setOpened}
         onCreate={() => setCreating(true)}
@@ -109,20 +107,17 @@ function IssuesViews({ projectId, projectName, refreshKey = 0, onChanged, onDisp
 
 interface IssueListProps {
   projectId: number;
-  projectName?: string;
   refreshKey: number;
   onOpen: (number: number) => void;
   onCreate: () => void;
 }
 
-function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: IssueListProps) {
+function IssueList({ projectId, refreshKey, onOpen, onCreate }: IssueListProps) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
-  const [closed, setClosed] = useState(false);
-  const [mine, setMine] = useState(false);
   const list = useQuery(
-    `p${projectId}:issues:list:${closed}:${mine}:${search}`,
-    () => commands.listIssues(projectId, closed, mine, search),
+    `p${projectId}:issues:list:${search}`,
+    () => commands.listIssues(projectId, false, false, search),
     refreshKey,
     { staleMs: QUERY_STALE_MS },
   );
@@ -132,7 +127,7 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
     return () => clearTimeout(timer);
   }, [query]);
 
-  const filtered = search !== "" || mine;
+  const filtered = search !== "";
   return (
     <div className="pr-browser">
       <div className="surface-toolbar">
@@ -149,28 +144,8 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
           <PlusIcon size={14} /> New issue
         </button>
       </div>
-      <div className="surface-secondary">
-        <div className="seg" role="group" aria-label="State">
-          <button aria-pressed={!closed} onClick={() => setClosed(false)}>
-            Open
-          </button>
-          <button aria-pressed={closed} onClick={() => setClosed(true)}>
-            Closed
-          </button>
-        </div>
-        <button
-          type="button"
-          className="pr-chip"
-          aria-pressed={mine}
-          title="Only issues you opened"
-          onClick={() => setMine((m) => !m)}
-        >
-          Mine
-        </button>
-      </div>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
-        {projectName && <h3 className="pr-scope-title" title={`${closed ? "Closed" : "Open"} issues of ${projectName}'s repository`}>{closed ? "Closed" : "Open"} issues · <span>{projectName}</span></h3>}
         {list.state === "loading" && <Skeleton label="Loading issues…" />}
         {list.state === "error" && (
           <p role="alert" className="pr-empty error">
@@ -181,20 +156,18 @@ function IssueList({ projectId, projectName, refreshKey, onOpen, onCreate }: Iss
           <div className="pr-empty surface-empty">
             <IssueOpenedIcon size={32} />
             <p className="surface-empty-title">
-              {filtered ? "No issues match." : closed ? "No closed issues." : "No open issues."}
+              {filtered ? "No issues match." : "No open issues."}
             </p>
             <p className="surface-empty-description">
               {filtered
                 ? "Nothing in this Project’s repository matches these filters."
-                : closed
-                  ? "Closed issues of this Project’s repository appear here."
-                  : "Issues opened in this Project’s repository appear here."}
+                : "Issues opened in this Project’s repository appear here."}
             </p>
             <button className="btn sm primary" onClick={onCreate}><PlusIcon size={14} /> New issue</button>
           </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
-          <ul className="pr-list" aria-label={closed ? "Closed issues" : "Open issues"}>
+          <ul className="pr-list" aria-label="Open issues">
             {list.data.map((issue) => (
               <li key={issue.number}>
                 <button className="pr-row" onClick={() => onOpen(issue.number)}>

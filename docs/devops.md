@@ -129,7 +129,7 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 
 - **What:** call the shared [`build.yml`](../.github/workflows/build.yml) with `release: false`: an unsigned release-profile `tauri build` (macOS `.app` + `.dmg`; Windows NSIS, CPU only), then the dictation package checks: macOS verifies the app; Windows builds the Vulkan and CUDA workers once, packages them as runtime zips and probes them, then installs the setup silently into a scratch folder, verifies it has no worker and starts the app with no SDK on `PATH`. The runtime zips are kept 7 days with the installer. The artifact is kept 7 days.
 - **Why:** a debug `cargo test` never runs `tauri build`. This catches config, capability, icon, resource and frontend-embedding breakage, and a package that would need a developer SDK or crash without a GPU driver. Each check and the failure it prevents are in [docs/dictation.md](dictation.md#checks-and-what-each-prevents). The runners have no GPU, so this is not hardware validation.
-- **When / where:** `bundle` lane on PRs (Tauri config or capabilities, icons, bundle resources, manifests and lockfiles, build scripts, the build workflow); **always** on `main` and `release/**`, so no commit is released without a proven bundle.
+- **When / where:** `bundle` lane on PRs (Tauri config or capabilities, icons (release and dev), bundle resources, manifests and lockfiles, build scripts, the build workflow); **always** on `main` and `release/**`, so no commit is released without a proven bundle.
 - **Local:** `node tools/check.mjs` builds your OS's bundle and runs its package checks; on Windows it first builds and packages the GPU workers (`node tools/dictation-package.mjs stage` and `node tools/dictation-runtimes.mjs package`, which need the Vulkan SDK and CUDA Toolkit from `node tools/dictation-package.mjs setup` and loads the Visual Studio x64 environment itself). It reports the other OS's bundle, and the silent install that only CI does, as skipped.
 
 ### `gate`
@@ -148,7 +148,7 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 | --- | --- |
 | `rust` | crates, Cargo manifests or lock, the toolchain file, Cargo config, the nextest config, the shared Rust setup action, the generated bindings |
 | `web` | the web app, `.node-version` |
-| `bundle` | Tauri config or capabilities, icons, bundle resources, Cargo or web manifests and lockfiles, build scripts, the GPU worker crates and the dictation build/package/runtime scripts, the shared build workflow, `.node-version` |
+| `bundle` | Tauri config or capabilities, icons (release and dev), bundle resources, Cargo or web manifests and lockfiles, build scripts, the GPU worker crates and the dictation build/package/runtime scripts, the shared build workflow, `.node-version` |
 | `supplyChain` | any manifest or lockfile (including the GPU workers' lockfiles), `web/pnpm-workspace.yaml`, `deny.toml` |
 | `automation` | `.github/`, `tools/` |
 

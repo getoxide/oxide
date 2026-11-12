@@ -1162,7 +1162,6 @@ export function App() {
                   createRequest={createPrRequest}
                   onCreateHandled={() => setCreatePrRequest(0)}
                   projectId={selected.id}
-                  projectName={selected.name}
                   threadId={currentThreadId}
                   threads={threads ?? []}
                   refreshKey={gitRevision + turnRevision.count}
@@ -1217,7 +1216,6 @@ export function App() {
               <div className="surface-content" hidden={activeTool !== "Issues"}><Suspense fallback={<Skeleton kind="list" label="Loading issuesâ€¦" />}>
                 <IssuesSurface
                   projectId={selected.id}
-                  projectName={selected.name}
                   onDispatched={(thread) => {
                     // The Thread opens through the same dispatch/setup flow; if the
                     // user moved to another Project meanwhile, it only joins that Project's list there.

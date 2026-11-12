@@ -14,8 +14,8 @@ All SVGs use fixed HEX colours and outlined shapes, so they need no fonts or CSS
 | `oxide-mark-on-light.svg` | Mark on light backgrounds. |
 | `oxide-mark-white.svg`, `oxide-mark-black.svg` | One-colour mark for print, embossing and system template images. |
 | `oxide-logo.svg`, `oxide-logo-on-light.svg` | Horizontal mark and wordmark. The wordmark is Space Grotesk Medium, converted to outlines. |
-| `oxide-app-icon.svg` | macOS app icon: 824 plate on the 1024 canvas, transparent margin, with `plate` and `glyph` layers. |
-| `oxide-app-icon-windows.svg` | Same artwork cropped to fill the canvas, for Windows `.ico` and Linux. |
+| `oxide-app-icon.svg` | App icon for macOS, Windows and Linux: a full-bleed square with no rounded corners and no margin, with `plate` and `glyph` layers. The OS applies its own mask (macOS) or shows it as is (Windows), so never round it here. |
+| `oxide-app-icon-dev.svg` | The same icon with an amber hazard band along the bottom edge, for development builds (`Oxide Dev`). Never ships in a release. |
 | `oxide-favicon.svg` | Heavier glyph for 48 px and below, where the standard mark loses its eyes. |
 | `oxide-avatar.svg` | Opaque square for GitHub and social avatars, and Apple touch icons. |
 | `oxide-social-preview.svg` | 1280×640 source of the GitHub social preview. |
@@ -33,7 +33,7 @@ Rendered from the SVG masters with resvg.
 | `png/mark/`, `png/mark-on-light/`, `png/mark-white/`, `png/mark-black/` | 16, 32, 64, 128, 256, 512, 1024 |
 | `png/logo/`, `png/logo-on-light/` | 285×96, 570×192, 1140×384 |
 | `png/app-icon/` | 128, 256, 512, 1024 |
-| `png/app-icon-windows/` | 256, 512, 1024 |
+| `png/app-icon-dev/` | 256, 512, 1024 |
 | `png/favicon/` | 16, 32, 48, 64 |
 | `png/avatar/` | 180, 512, 1024 |
 | `png/social-preview.png` | 1280×640, for Settings → General → Social preview |

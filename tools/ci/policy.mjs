@@ -30,7 +30,7 @@ const PATH_RULES = [
   [/^web\//, ["web"]],
   [/^\.node-version$/, ["web", "bundle"]],
   // Packaging inputs: only `tauri build` can break these.
-  [/^crates\/oxide-app\/(tauri(\.[\w-]+)?\.conf\.json|Info\.plist|capabilities\/.*|icons\/.*)$/, ["bundle"]],
+  [/^crates\/oxide-app\/(tauri(\.[\w-]+)?\.conf\.json|Info\.plist|capabilities\/.*|icons(-dev)?\/.*)$/, ["bundle"]],
   [/^docs\/licenses\//, ["bundle"]], // bundled as app resources
   [/^(Cargo\.toml|Cargo\.lock|crates\/[^/]+\/Cargo\.toml|web\/package\.json|web\/pnpm-lock\.yaml)$/, ["bundle", "supplyChain"]],
   [/^(crates\/[^/]+\/build\.rs|tools\/build\.mjs|tools\/checks\/.*)$/, ["bundle"]],
