@@ -923,6 +923,7 @@ export function App() {
           }}
         >
           <SidebarExpandIcon size={16} />
+          {modifierHeld && <kbd className="shortcut-badge header-shortcut-badge">{keys("toggleTools")}</kbd>}
         </button>
         {isWindows && <WindowControls />}
         </div>
@@ -1137,6 +1138,7 @@ export function App() {
                     onClick={() => selectSurface(name)}
                   >
                     <Icon size={14} /> <span className="tool-tab-label">{name}</span>
+                    {modifierHeld && <kbd className="shortcut-badge">{keys(TOOL_TAB_ACTION[name])}</kbd>}
                   </button>
                 ))}
               </div>
@@ -1145,7 +1147,7 @@ export function App() {
                   const next = !maximized;
                   setMaximized(next);
                   requestAnimationFrame(() => focusRegion(next ? "dock" : "centre"));
-                }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}</button>}
+                }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}{modifierHeld && <kbd className="shortcut-badge">{keys("maximizeSurface")}</kbd>}</button>}
                 <button className="icon-btn sm" title={`Close panel (${keys("toggleTools")})`} aria-label="Close tools panel" onClick={() => {
                   setShowTools(false);
                   requestAnimationFrame(() => {
@@ -1379,12 +1381,12 @@ function Sidebar({
     <nav className="sidebar" aria-label="Projects">
       <div className="sidebar-actions">
         <button className="btn grow" onClick={onNewThread} disabled={!selected} title={`New Thread in this Project (${keys("newThread")})`}>
-          <PlusIcon size={14} /> New Thread{" "}
-          <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("newThread")}</kbd>
+          <PlusIcon size={14} /> New Thread
+          {modifierHeld && <kbd className="shortcut-badge">{keys("newThread")}</kbd>}
         </button>
         <button className="btn" onClick={onOpenPalette} title={`Open a Project, or a new Thread in another one (${keys("openProject")})`} aria-label="Open a Project">
-          <RepoIcon size={14} />{" "}
-          <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("openProject")}</kbd>
+          <RepoIcon size={14} />
+          {modifierHeld && <kbd className="shortcut-badge">{keys("openProject")}</kbd>}
         </button>
       </div>
       {selected && (
@@ -1409,8 +1411,8 @@ function Sidebar({
               <p className="sidebar-empty-hint">Open a project to see its Threads here.</p>
             </div>
             <button className="btn primary sidebar-empty-action" onClick={onOpenPalette} title={`Open a Project (${keys("openProject")})`}>
-              <RepoIcon size={14} /> Open a Project{" "}
-              <kbd className={modifierHeld ? "inline-shortcut-kbd" : undefined}>{keys("openProject")}</kbd>
+              <RepoIcon size={14} /> Open a Project
+              {modifierHeld && <kbd className="shortcut-badge">{keys("openProject")}</kbd>}
             </button>
           </div>
         )}
@@ -1446,6 +1448,7 @@ function Sidebar({
       {selected && <ProjectServices projectId={selected.id} onOpenService={onOpenService} onServiceConflict={onServiceConflict} />}
       <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title={`Settings (${keys("openSettings")})`}>
         <GearIcon size={14} /> Settings
+        {modifierHeld && <kbd className="shortcut-badge">{keys("openSettings")}</kbd>}
       </button>
     </nav>
   );

@@ -116,7 +116,7 @@ pub use thread::{
     ThreadCapabilities, ThreadEvent, ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError,
     TurnPage, TurnSnapshot, UnknownEventSnapshot,
 };
-pub use usage::{UsageLimitWindow, UsageLimits};
+pub use usage::{UsageLimitWindow, UsageLimits, UsagePoolLimits};
 
 const DB_FILE: &str = "oxide.db";
 const PROCESSES_FILE: &str = "processes.json";

@@ -19,12 +19,23 @@ export interface UsageWindowView {
   ariaLabel: string;
 }
 
+export interface UsagePoolView {
+  key: string;
+  label: string;
+  isActive: boolean;
+  windows: UsageWindowView[];
+}
+
 export type UsageView =
   | { kind: "hidden" }
   | {
       kind: "ready";
-      /** The 5-hour window, then the weekly one; a window never reported is empty. */
+      activePoolKey: string;
+      activePoolLabel: string;
+      /** The 5-hour window, then the weekly one for the active model; a window never reported is empty. */
       windows: UsageWindowView[];
+      /** Detailed breakdown of all available pools/categories. */
+      pools: UsagePoolView[];
       /** "Updated 3 h ago" when the figures predate this session. */
       updatedLabel: string | null;
     };
@@ -144,6 +155,71 @@ function windowView(
   };
 }
 
+/** Resolves which pool key applies to the given provider and model name. */
+export function resolveActivePoolKey(provider: string, model: string | null): string {
+  const p = (provider || "").toLowerCase();
+  const m = (model || "").toLowerCase();
+  if (p === "antigravity" || p === "agy") {
+    if (m.includes("argon")) return "gemini-argon";
+    if (
+      m.includes("claude") ||
+      m.includes("sonnet") ||
+      m.includes("opus") ||
+      m.includes("gpt") ||
+      m.startsWith("o1") ||
+      m.startsWith("o3") ||
+      m.startsWith("o4")
+    ) {
+      return "third-party";
+    }
+    return "gemini";
+  }
+  if (p === "claude") {
+    if (m.includes("opus")) return "opus";
+    if (m.includes("sonnet")) return "sonnet";
+    if (m.includes("haiku")) return "haiku";
+    return "default";
+  }
+  return "default";
+}
+
+export function poolDisplayName(key: string, provider: string): string {
+  if (key === "gemini") return "Gemini";
+  if (key === "gemini-argon") return "Gemini Argon";
+  if (key === "third-party") return "Third-party (Claude, GPT)";
+  if (key === "sonnet") return "Claude Sonnet";
+  if (key === "opus") return "Claude Opus";
+  if (key === "haiku") return "Claude Haiku";
+  if (key === "default") return provider.toLowerCase() === "claude" ? "Claude" : "General";
+  return key;
+}
+
+/** Resolves the 5-hour and weekly windows for the selected model. */
+export function resolveModelWindows(
+  limits: UsageLimits | null,
+  provider: string,
+  model: string | null,
+): {
+  fiveHour: UsageLimitWindow | null | undefined;
+  weekly: UsageLimitWindow | null | undefined;
+  poolKey: string;
+  poolLabel: string;
+} {
+  const poolKey = resolveActivePoolKey(provider, model);
+  const pools = (limits as { pools?: Record<string, { label: string; fiveHour: UsageLimitWindow | null; weekly: UsageLimitWindow | null }> })?.pools;
+  const pool = pools?.[poolKey];
+  const poolLabel = pool?.label || poolDisplayName(poolKey, provider);
+
+  // For 5-hour:
+  // If pool has fiveHour, use it. For gemini-argon, fall back to gemini's fiveHour if not directly defined.
+  // Otherwise fall back to limits?.fiveHour.
+  const fiveHour = pool?.fiveHour ?? (poolKey === "gemini-argon" ? pools?.["gemini"]?.fiveHour : undefined) ?? limits?.fiveHour;
+  // For weekly:
+  const weekly = pool?.weekly ?? limits?.weekly;
+
+  return { fiveHour, weekly, poolKey, poolLabel };
+}
+
 /**
  * What the usage rings show. `sessionStartMs` marks the start of this run of Oxide: figures
  * reported before it are labelled with their age.
@@ -153,16 +229,72 @@ export function usageView(
   reportsUsage: boolean,
   nowMs: number,
   sessionStartMs: number = nowMs,
+  provider: string = "",
+  model: string | null = null,
 ): UsageView {
   if (!reportsUsage) return { kind: "hidden" };
-  const newest = Math.max(limits?.fiveHour?.reportedAt ?? 0, limits?.weekly?.reportedAt ?? 0) * 1000;
+
+  const { fiveHour, weekly, poolKey, poolLabel } = resolveModelWindows(limits, provider, model);
+
+  let newest = Math.max(
+    fiveHour?.reportedAt ?? 0,
+    weekly?.reportedAt ?? 0,
+    limits?.fiveHour?.reportedAt ?? 0,
+    limits?.weekly?.reportedAt ?? 0,
+  );
+  const poolsObj = (limits as { pools?: Record<string, { label: string; fiveHour: UsageLimitWindow | null; weekly: UsageLimitWindow | null }> })?.pools;
+
+  const poolViews: UsagePoolView[] = [];
+  if (poolsObj && Object.keys(poolsObj).length > 0) {
+    for (const [key, poolData] of Object.entries(poolsObj)) {
+      const p5h = poolData.fiveHour?.reportedAt ?? 0;
+      const pwk = poolData.weekly?.reportedAt ?? 0;
+      if (p5h > newest) newest = p5h;
+      if (pwk > newest) newest = pwk;
+
+      const pWindows: UsageWindowView[] = [];
+      if (poolData.fiveHour) {
+        pWindows.push(windowView("five-hour", "5h", `${poolData.label || poolDisplayName(key, provider)} 5h`, poolData.fiveHour, nowMs));
+      } else if (key === "gemini-argon" && poolsObj["gemini"]?.fiveHour) {
+        pWindows.push(windowView("five-hour", "5h", `${poolData.label || poolDisplayName(key, provider)} 5h`, poolsObj["gemini"].fiveHour, nowMs));
+      }
+      if (poolData.weekly) {
+        pWindows.push(windowView("weekly", "Weekly", `${poolData.label || poolDisplayName(key, provider)} Weekly`, poolData.weekly, nowMs));
+      }
+      if (pWindows.length > 0) {
+        poolViews.push({
+          key,
+          label: poolData.label || poolDisplayName(key, provider),
+          isActive: key === poolKey,
+          windows: pWindows,
+        });
+      }
+    }
+  }
+
+  if (poolViews.length === 0 && (fiveHour || weekly)) {
+    poolViews.push({
+      key: poolKey,
+      label: poolLabel,
+      isActive: true,
+      windows: [
+        windowView("five-hour", "5h", "5-hour limit", fiveHour, nowMs),
+        windowView("weekly", "Weekly", "Weekly limit", weekly, nowMs),
+      ],
+    });
+  }
+
+  const newestMs = newest * 1000;
   return {
     kind: "ready",
+    activePoolKey: poolKey,
+    activePoolLabel: poolLabel,
     windows: [
-      windowView("five-hour", "5h", "5-hour limit", limits?.fiveHour, nowMs),
-      windowView("weekly", "Weekly", "Weekly limit", limits?.weekly, nowMs),
+      windowView("five-hour", "5h", "5-hour limit", fiveHour, nowMs),
+      windowView("weekly", "Weekly", "Weekly limit", weekly, nowMs),
     ],
+    pools: poolViews,
     updatedLabel:
-      newest > 0 && newest < sessionStartMs ? `Updated ${duration((nowMs - newest) / 1000, false)} ago` : null,
+      newestMs > 0 && newestMs < sessionStartMs ? `Updated ${duration((nowMs - newestMs) / 1000, false)} ago` : null,
   };
 }

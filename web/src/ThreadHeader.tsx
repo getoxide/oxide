@@ -9,6 +9,7 @@ interface ThreadHeaderProps {
   thread: Thread | null;
   title: string;
   provider: string;
+  model?: string | null;
   /** The Thread's Git controls: they replace the dispatch-time branch label with the live one. */
   gitControls?: ReactNode;
   reportsUsage: boolean;
@@ -29,6 +30,7 @@ export function ThreadHeader({
   thread,
   title,
   provider,
+  model,
   gitControls,
   reportsUsage,
   editing,
@@ -96,7 +98,7 @@ export function ThreadHeader({
           )
         )}
       </div>
-      <UsageRing provider={provider} reportsUsage={reportsUsage} />
+      <UsageRing provider={provider} model={model} reportsUsage={reportsUsage} />
     </div>
   );
 }

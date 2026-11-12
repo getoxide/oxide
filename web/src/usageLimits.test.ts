@@ -127,4 +127,76 @@ describe("usageView", () => {
     expect(ready(usageView(limits(), true, NOW, NOW - HOUR)).updatedLabel).toBeNull();
     expect(ready(usageView(null, true, NOW, NOW - HOUR)).updatedLabel).toBeNull();
   });
+
+  it("selects the Gemini Argon pool when using an Argon model with Antigravity", () => {
+    const limitsWithPools: UsageLimits = {
+      fiveHour: win({ percentUsed: 10 }),
+      weekly: win({ percentUsed: 20 }),
+      pools: {
+        gemini: {
+          label: "Gemini",
+          fiveHour: win({ percentUsed: 15 }),
+          weekly: win({ percentUsed: 25 }),
+        },
+        "gemini-argon": {
+          label: "Gemini Argon",
+          fiveHour: null,
+          weekly: win({ percentUsed: 75, resetsAt: secs(NOW + HOUR) }),
+        },
+        "third-party": {
+          label: "Third-party (Claude, GPT)",
+          fiveHour: win({ percentUsed: 5 }),
+          weekly: win({ percentUsed: 5 }),
+        },
+      },
+    };
+
+    const argonView = ready(usageView(limitsWithPools, true, NOW, NOW, "antigravity", "Gemini 4 Argon (High)"));
+    expect(argonView.activePoolKey).toBe("gemini-argon");
+    expect(argonView.activePoolLabel).toBe("Gemini Argon");
+    // Weekly window uses Argon's 75%
+    expect(argonView.windows[1].fraction).toBe(0.75);
+    // 5-hour window falls back to gemini's 15%
+    expect(argonView.windows[0].fraction).toBe(0.15);
+
+    const normalGeminiView = ready(usageView(limitsWithPools, true, NOW, NOW, "antigravity", "Gemini 3.8 Flash"));
+    expect(normalGeminiView.activePoolKey).toBe("gemini");
+    expect(normalGeminiView.windows[1].fraction).toBe(0.25);
+
+    const thirdPartyView = ready(usageView(limitsWithPools, true, NOW, NOW, "antigravity", "Claude Sonnet 4.6"));
+    expect(thirdPartyView.activePoolKey).toBe("third-party");
+    expect(thirdPartyView.windows[1].fraction).toBe(0.05);
+
+    // All pools are available in the pools breakdown
+    expect(argonView.pools.map((p) => p.key)).toEqual(["gemini", "gemini-argon", "third-party"]);
+    expect(argonView.pools.find((p) => p.key === "gemini-argon")?.isActive).toBe(true);
+    expect(argonView.pools.find((p) => p.key === "gemini")?.isActive).toBe(false);
+  });
+
+  it("selects model-specific pool in Claude provider (e.g. Sonnet vs Opus)", () => {
+    const claudeLimits: UsageLimits = {
+      fiveHour: win({ percentUsed: 30 }),
+      weekly: win({ percentUsed: 40 }),
+      pools: {
+        sonnet: {
+          label: "Claude Sonnet",
+          fiveHour: null,
+          weekly: win({ percentUsed: 55 }),
+        },
+        opus: {
+          label: "Claude Opus",
+          fiveHour: null,
+          weekly: win({ percentUsed: 90 }),
+        },
+      },
+    };
+
+    const sonnetView = ready(usageView(claudeLimits, true, NOW, NOW, "claude", "claude-3-7-sonnet"));
+    expect(sonnetView.activePoolKey).toBe("sonnet");
+    expect(sonnetView.windows[1].fraction).toBe(0.55);
+
+    const opusView = ready(usageView(claudeLimits, true, NOW, NOW, "claude", "claude-3-opus"));
+    expect(opusView.activePoolKey).toBe("opus");
+    expect(opusView.windows[1].fraction).toBe(0.9);
+  });
 });

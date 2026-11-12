@@ -484,6 +484,9 @@ pub struct UsageWindow {
     #[serde(default)]
     pub resets_at: Option<i64>,
     pub status: UsageStatus,
+    /// Optional pool or model scope this window applies to (e.g. "gemini", "gemini-argon", "third-party", "sonnet", "opus").
+    #[serde(default)]
+    pub pool: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

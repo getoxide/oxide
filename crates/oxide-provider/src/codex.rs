@@ -138,6 +138,7 @@ pub fn parse_rate_limits(params: &serde_json::Value) -> Option<ProviderEvent> {
                 percent_used: Some(percent),
                 resets_at: window.get("resetsAt").and_then(|v| v.as_i64()),
                 status,
+                pool: None,
             })
         })
         .collect();

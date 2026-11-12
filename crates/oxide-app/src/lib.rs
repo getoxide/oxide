@@ -776,9 +776,19 @@ pub struct UsageLimitWindow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct UsagePoolLimits {
+    pub label: String,
+    pub five_hour: Option<UsageLimitWindow>,
+    pub weekly: Option<UsageLimitWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageLimits {
     pub five_hour: Option<UsageLimitWindow>,
     pub weekly: Option<UsageLimitWindow>,
+    #[serde(default)]
+    pub pools: std::collections::HashMap<String, UsagePoolLimits>,
 }
 
 /// One merged pull request of a Thread, kept after the Thread is deleted. No Transcript text.
