@@ -1,0 +1,389 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Not production code. Companion of docs/proposals/2026-11-agent-native-direction.md -->
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PROTOTIPO · Oxide Mission control</title>
+<style>
+  :root { --bg:#f6f4f1; --card:#fff; --ink:#1f2328; --mute:#656d76; --line:#e3ded7; --accent:#0969da; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 Inter, -apple-system, Segoe UI, sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width:1180px; margin:0 auto; padding:28px 24px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 10px; } h3 { font-size:13px; margin:0 0 6px; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; }
+  .intro { color:var(--mute); max-width:900px; margin:0 0 20px; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; border:1px solid var(--line); background:#faf9f7; }
+  .grid { display:grid; grid-template-columns: 1.35fr 1fr; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { text-align:left; padding:6px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mute); font-weight:500; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .mute { color:var(--mute); }
+  button { font:inherit; font-size:13px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; margin:0 6px 6px 0; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  .tabs button.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .changed { background:#fff8c5; }
+  .log { font-size:12.5px; max-height:300px; overflow:auto; }
+  .log div { padding:3px 0; border-bottom:1px dashed var(--line); }
+  .bar { height:8px; background:#eee; border-radius:99px; overflow:hidden; display:flex; }
+  .bar span { display:block; height:100%; }
+  .oneline { font-family: "JetBrains Mono", ui-monospace, monospace; font-size:12.5px; background:#faf9f7; border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-top:4px; }
+  .inbox-item { border-left:3px solid var(--warn); padding:6px 10px; margin-bottom:8px; background:#fffbf0; }
+  .steps button { display:block; width:100%; text-align:left; }
+  .steps button.done { opacity:.5; text-decoration: line-through; }
+</style>
+</head>
+<body>
+<main>
+  <span class="tag">PROTOTIPO usa-e-getta · nessun codice di produzione</span>
+  <h1>Oxide Mission control</h1>
+  <p class="intro">
+    <b>Domanda:</b> se l'umano smette di leggere ogni diff, regge un modello in cui Oxide (codice deterministico, zero token)
+    tiene la <b>Definition of Done</b> di ogni unità di lavoro, esegue da solo i passi meccanici (push, PR, issue, Dossier),
+    richiama l'agente solo quando manca un'evidenza, e porta all'umano <b>solo le eccezioni</b>?
+    Guarda soprattutto: chi spende token, quando arriva qualcosa nella tua Inbox, e cosa viene rifiutato.
+    I numeri di token sono <i>illustrativi</i>, servono a confrontare gli ordini di grandezza.
+  </p>
+
+  <div class="grid">
+    <div>
+      <div class="card" id="mission"></div>
+      <div class="card" id="units"></div>
+      <div class="card"><h2>Registro</h2><div class="log" id="log"></div></div>
+    </div>
+    <div>
+      <div class="card" id="inbox"></div>
+      <div class="card" id="tokens"></div>
+      <div class="card">
+        <h2>Scenari guidati</h2>
+        <div class="tabs" id="tabs"></div>
+        <p id="scenario-desc" class="mute"></p>
+        <div class="steps" id="steps"></div>
+      </div>
+      <div class="card">
+        <h2>Azioni libere</h2>
+        <div id="free"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ===================== Portable logic module (pure, no DOM) ===================== */
+const Mission = (() => {
+  // Illustrative token costs. "oxide" actions are deterministic Rust code and cost nothing.
+  const COST = {
+    plan: 9000,          // Lead reads the goal + repo map and writes the work units
+    implement: { small: 18000, medium: 60000, large: 140000 },
+    nudge: 2500,         // one short targeted prompt to a worker ("run X", "you skipped Y")
+    fix: 22000,          // worker fixes a failing check
+    blindReview: { small: 6000, medium: 25000, large: 60000 },
+    report: 400,         // compact structured report a worker returns to the Lead
+    // What the same work costs when a Lead in a CLI uses in-context subagents and does chores itself
+    naiveTranscriptReturn: 0.35, // share of a subagent's work that flows back into the Lead's context
+    naiveChores: 6000,   // agent runs git push, gh pr create, writes PR body, links issue
+    naiveSummary: 5000,  // LLM-written summary/dossier for every change
+  };
+  const GATES = ["issue", "branch", "checks", "pr", "ci", "dossier", "review"];
+  const GATE_LABEL = { issue:"Issue collegata", branch:"Branch pushato", checks:"Check freschi", pr:"PR aperta", ci:"CI verde", dossier:"Dossier pubblicato", review:"Review proporzionata al rischio" };
+
+  function initial(opts = {}) {
+    return {
+      goal: opts.goal || "Rendere blu il pulsante 'Salva' e aggiungere l'export CSV degli ordini",
+      phase: "draft",              // draft → running → done
+      policy: { autoMergeLow: true, budget: opts.budget ?? 400000, maxNudges: 1, maxAutoFixes: 1 },
+      units: [],
+      inbox: [],
+      tokens: { lead: 0, workers: 0, review: 0, oxide: 0 },
+      naive: 0,
+      log: [],
+      seq: 0,
+    };
+  }
+
+  // Deterministic risk tier: the Dossier signals decide, no LLM.
+  function riskTier(u) {
+    if (!u.result) return null;
+    const r = u.result;
+    if (r.sensitive) return "high";
+    if (r.lines > 400 || r.uncoveredLang) return "medium";
+    if (!r.testChange && r.source && r.lines > 40) return "medium";
+    return "low";
+  }
+
+  function dossierLine(u) {
+    if (!u.result) return "—";
+    const r = u.result, t = riskTier(u);
+    const checks = u.gates.checks === "ok" ? "check freschi" : u.gates.checks === "missing" ? "check MAI eseguiti" : "check falliti";
+    const sig = [r.sensitive && `percorso sensibile: ${r.sensitive}`, r.uncoveredLang && `linguaggio senza check: ${r.uncoveredLang}`, r.lines > 400 && "diff grande", (!r.testChange && r.source && r.lines > 40) && "sorgente senza test"].filter(Boolean);
+    return `${t === "low" ? "✓" : t === "medium" ? "◐" : "⚠"} ${r.files} file · ${r.lines} righe · ${checks}${sig.length ? " · " + sig.join(" · ") : " · nessun segnale di rischio"}`;
+  }
+
+  const clone = (s) => JSON.parse(JSON.stringify(s));
+  const unit = (s, id) => s.units.find((u) => u.id === id);
+  const spent = (s) => s.tokens.lead + s.tokens.workers + s.tokens.review;
+  function log(s, who, text) { s.log.unshift({ n: ++s.seq, who, text }); }
+  function escalate(s, u, reason, options) {
+    if (s.inbox.some((i) => i.unit === u.id && i.reason === reason)) return;
+    s.inbox.push({ unit: u.id, title: u.title, reason, options });
+    u.status = "needs you";
+    log(s, "Oxide", `Inbox ← ${u.title}: ${reason}`);
+  }
+  function spend(s, bucket, n, u) {
+    s.tokens[bucket] += n;
+    if (u) u.tokens += n;
+    if (spent(s) > s.policy.budget && !s.inbox.some((i) => i.reason.startsWith("Budget"))) {
+      s.inbox.push({ unit: null, title: "Mission", reason: `Budget superato (${spent(s).toLocaleString()} / ${s.policy.budget.toLocaleString()} token). Nuovi Turn in pausa.`, options: ["raise-budget"] });
+      s.paused = true;
+      log(s, "Oxide", "Budget superato: nessun nuovo Turn parte finché non decidi.");
+    }
+  }
+
+  // After every worker Turn, Oxide runs the Definition of Done. Zero tokens: git, gh and the Dossier.
+  function runGates(s, u) {
+    const r = u.result;
+    // Chores are Oxide's job, never the agent's: they cost nothing and are never forgotten.
+    if (u.gates.branch !== "ok") { u.gates.branch = "ok"; log(s, "Oxide", `${u.title}: branch pushato da Oxide (0 token).`); }
+    if (u.gates.issue !== "ok") { u.gates.issue = "ok"; log(s, "Oxide", `${u.title}: issue #${100 + u.id} creata/collegata da Oxide (0 token).`); }
+    u.gates.checks = r.checksRan === "pass" ? "ok" : r.checksRan === "fail" ? "fail" : "missing";
+    if (u.gates.checks === "missing") {
+      if (u.nudges < s.policy.maxNudges) {
+        u.nudges++; u.status = "working";
+        log(s, "Oxide", `${u.title}: l'agente ha detto "fatto" senza eseguire i Verification command → prompt mirato: "esegui pnpm test e riporta l'esito".`);
+        return "nudge";
+      }
+      escalate(s, u, "L'agente non esegue i check nemmeno dopo il promemoria.", ["approve", "reject"]);
+      return "stop";
+    }
+    if (u.gates.checks === "fail") {
+      if (u.fixes < s.policy.maxAutoFixes) { u.fixes++; u.status = "working"; log(s, "Oxide", `${u.title}: check falliti → Fix automatico al worker.`); return "fix"; }
+      escalate(s, u, "Check ancora falliti dopo un Fix automatico.", ["approve", "reject"]);
+      return "stop";
+    }
+    if (u.gates.pr !== "ok") { u.gates.pr = "ok"; log(s, "Oxide", `${u.title}: PR aperta da Oxide con body + Dossier calcolato (0 token).`); }
+    if (u.gates.dossier !== "ok") { u.gates.dossier = "ok"; }
+    u.gates.ci = "pending";
+    u.status = "waiting CI";
+    const t = riskTier(u);
+    if (t === "low") u.gates.review = "not needed";
+    if (t === "medium") u.gates.review = "blind review pending";
+    if (t === "high") { u.gates.review = "human"; escalate(s, u, `Rischio alto (${r.sensitive}): serve la tua decisione, la diff è già filtrata ai file sensibili.`, ["approve", "reject"]); }
+    return "ok";
+  }
+
+  function reduce(state, action) {
+    const s = clone(state);
+    const a = action;
+    switch (a.type) {
+      case "approvePlan": {
+        if (s.phase !== "draft") { log(s, "Rifiutato", "Il piano è già stato approvato."); return s; }
+        s.phase = "running";
+        spend(s, "lead", COST.plan);
+        s.naive += COST.plan;
+        const specs = a.units || [
+          { title: "Pulsante Salva blu", size: "small" },
+          { title: "Export CSV ordini", size: "medium" },
+        ];
+        specs.forEach((sp, i) => s.units.push({
+          id: i + 1, title: sp.title, size: sp.size, model: sp.size === "small" ? "Haiku" : "Sonnet",
+          status: "queued", tokens: 0, nudges: 0, fixes: 0, result: null,
+          gates: Object.fromEntries(GATES.map((g) => [g, "—"])),
+        }));
+        log(s, "Tu", `Piano approvato: ${s.units.length} unità. Il Lead ha scelto il modello per unità in base alla dimensione.`);
+        return s;
+      }
+      case "startWorkers": {
+        if (s.paused) { log(s, "Rifiutato", "Mission in pausa per budget."); return s; }
+        s.units.filter((u) => u.status === "queued").forEach((u) => { u.status = "working"; log(s, "Oxide", `${u.title}: worker avviato (${u.model}) in worktree propria, brief di ~1k token, niente transcript del Lead.`); });
+        return s;
+      }
+      case "workerFinished": {
+        const u = unit(s, a.unit);
+        if (!u || u.status !== "working") { log(s, "Rifiutato", `Unità ${a.unit} non sta lavorando.`); return s; }
+        if (s.paused) { log(s, "Rifiutato", "Mission in pausa per budget."); return s; }
+        const first = !u.result;
+        const cost = first ? COST.implement[u.size] : (u.gates.checks === "fail" ? COST.fix : COST.nudge);
+        spend(s, "workers", cost, u);
+        spend(s, "lead", COST.report);
+        s.naive += cost + (first ? COST.implement[u.size] * COST.naiveTranscriptReturn + COST.naiveChores + COST.naiveSummary : COST.nudge);
+        u.result = { ...(u.result || {}), ...a.result };
+        log(s, u.model, `${u.title}: "Fatto." → report compatto al Lead (${COST.report} token).`);
+        runGates(s, u);
+        return s;
+      }
+      case "ci": {
+        const u = unit(s, a.unit);
+        if (!u || u.gates.ci !== "pending") { log(s, "Rifiutato", "Nessuna CI in attesa per questa unità."); return s; }
+        if (a.pass) { u.gates.ci = "ok"; log(s, "GitHub", `${u.title}: CI verde.`); }
+        else {
+          u.gates.ci = "fail";
+          if (u.fixes < s.policy.maxAutoFixes) { u.fixes++; u.status = "working"; u.result.checksRan = "fail"; u.gates.checks = "fail"; log(s, "Oxide", `${u.title}: CI rossa → log dei job falliti mandati al worker (Fix automatico).`); return s; }
+          escalate(s, u, "CI ancora rossa dopo un Fix automatico.", ["approve", "reject"]);
+          return s;
+        }
+        return settle(s, u);
+      }
+      case "blindReview": {
+        const u = unit(s, a.unit);
+        if (!u || u.gates.review !== "blind review pending") { log(s, "Rifiutato", "Blind review non richiesta: il rischio non la giustifica."); return s; }
+        spend(s, "review", COST.blindReview[u.size]);
+        s.naive += COST.blindReview[u.size];
+        if (a.findings) { u.gates.review = "findings"; escalate(s, u, `Blind review: ${a.findings} rilievi da valutare (già come Line comment).`, ["approve", "send-back", "reject"]); return s; }
+        u.gates.review = "ok";
+        log(s, "Reviewer", `${u.title}: blind review senza rilievi.`);
+        return settle(s, u);
+      }
+      case "decide": {
+        const item = s.inbox.find((i) => i.unit === a.unit);
+        if (!item) { log(s, "Rifiutato", "Niente da decidere per questa unità."); return s; }
+        s.inbox = s.inbox.filter((i) => i !== item);
+        const u = unit(s, a.unit);
+        if (a.decision === "reject") { u.status = "closed"; log(s, "Tu", `${u.title}: rifiutata, PR chiusa, worktree eliminata.`); return finish(s); }
+        if (a.decision === "send-back") { u.status = "working"; u.gates.review = "—"; u.result.checksRan = "pass"; log(s, "Tu", `${u.title}: rilievi rimandati al worker come un unico prompt.`); return s; }
+        u.humanApproved = true;
+        if (u.gates.review === "human" || u.gates.review === "findings") u.gates.review = "ok";
+        log(s, "Tu", `${u.title}: approvata da te.`);
+        if (u.gates.ci !== "pending") return settle(s, u);
+        u.status = "waiting CI";
+        return s;
+      }
+      case "merge": {
+        const u = unit(s, a.unit);
+        if (!u) return s;
+        const missing = GATES.filter((g) => !["ok", "not needed"].includes(u.gates[g]));
+        if (missing.length) { log(s, "Rifiutato", `${u.title}: merge bloccato, mancano: ${missing.map((g) => GATE_LABEL[g]).join(", ")}.`); return s; }
+        u.status = "merged"; log(s, "Tu", `${u.title}: merge manuale.`);
+        return finish(s);
+      }
+      case "raiseBudget": {
+        s.policy.budget += 300000; s.paused = false;
+        s.inbox = s.inbox.filter((i) => !i.reason.startsWith("Budget"));
+        log(s, "Tu", `Budget alzato a ${s.policy.budget.toLocaleString()} token.`);
+        return s;
+      }
+      default: return s;
+    }
+  }
+
+  function settle(s, u) {
+    const ready = GATES.every((g) => ["ok", "not needed"].includes(u.gates[g]));
+    if (!ready) { if (u.status !== "needs you") u.status = "waiting"; return s; }
+    if (riskTier(u) === "low" && s.policy.autoMergeLow) { u.status = "merged"; log(s, "Oxide", `${u.title}: rischio basso + tutti i gate verdi → auto-merge secondo la tua policy. Non ti è stato chiesto nulla.`); return finish(s); }
+    if (u.humanApproved || riskTier(u) === "medium") {
+      u.status = "ready to merge"; log(s, "Oxide", `${u.title}: pronta al merge.`);
+      if (riskTier(u) === "medium" && !u.humanApproved) escalate(s, u, "Pronta: rischio medio, merge con un clic (Dossier già sintetizzato in una riga).", ["approve"]);
+      else { u.status = "merged"; log(s, "Oxide", `${u.title}: merge dopo la tua approvazione.`); }
+    }
+    return finish(s);
+  }
+  function finish(s) {
+    if (s.units.length && s.units.every((u) => ["merged", "closed"].includes(u.status))) { s.phase = "done"; log(s, "Oxide", "Mission completata. Il Dossier di ogni PR resta come memoria permanente."); }
+    return s;
+  }
+
+  return { initial, reduce, riskTier, dossierLine, GATES, GATE_LABEL, spent };
+})();
+
+/* ===================== Throwaway page ===================== */
+let state = Mission.initial();
+let prev = state;
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Math.round(n).toLocaleString("it-IT");
+
+function dispatch(action) { prev = state; state = Mission.reduce(state, action); render(); }
+
+const RESULTS = {
+  buttonOk: { files: 1, lines: 2, source: true, testChange: false, checksRan: "pass" },
+  csvOk: { files: 4, lines: 180, source: true, testChange: true, checksRan: "pass" },
+  csvNoTests: { files: 4, lines: 180, source: true, testChange: true, checksRan: "none" },
+  csvFail: { files: 4, lines: 180, source: true, testChange: true, checksRan: "fail" },
+  migration: { files: 6, lines: 240, source: true, testChange: true, checksRan: "pass", sensitive: "db/migrate/2026_add_export_table.rb" },
+  bigUntested: { files: 14, lines: 620, source: true, testChange: false, checksRan: "pass", uncoveredLang: "Python" },
+};
+
+function gateCell(v) {
+  const cls = v === "ok" || v === "not needed" ? "ok" : v === "fail" || v === "missing" ? "bad" : v === "—" ? "mute" : "warn";
+  const txt = v === "ok" ? "✓" : v === "not needed" ? "✓ non serve" : v === "missing" ? "✗ mancanti" : v === "fail" ? "✗" : v;
+  return `<span class="${cls}">${txt}</span>`;
+}
+
+function render() {
+  const s = state;
+  const ch = (a, b) => (JSON.stringify(a) !== JSON.stringify(b) ? "changed" : "");
+  $("mission").innerHTML = `
+    <h3>Mission</h3>
+    <h2>${s.goal}</h2>
+    <table>
+      <tr><th>Fase</th><td class="${ch(s.phase, prev.phase)}">${{ draft: "Bozza: piano da approvare", running: "In corso", done: "Completata" }[s.phase]}</td></tr>
+      <tr><th>Policy</th><td>Auto-merge del rischio basso: <b>${s.policy.autoMergeLow ? "sì" : "no"}</b> · promemoria max ${s.policy.maxNudges} · Fix automatici max ${s.policy.maxAutoFixes} · budget ${fmt(s.policy.budget)} token</td></tr>
+    </table>`;
+  $("units").innerHTML = `<h3>Unità di lavoro (Worker Thread) e Definition of Done</h3>` + (s.units.length ? `
+    <table><tr><th>Unità</th><th>Stato</th>${Mission.GATES.map((g) => `<th title="${Mission.GATE_LABEL[g]}">${Mission.GATE_LABEL[g].split(" ")[0]}</th>`).join("")}</tr>
+    ${s.units.map((u) => { const p = prev.units.find((x) => x.id === u.id); return `<tr>
+      <td><b>${u.title}</b><br><span class="mute">${u.model} · ${fmt(u.tokens)} tok · rischio ${Mission.riskTier(u) || "—"}</span></td>
+      <td class="${p && p.status !== u.status ? "changed" : ""}">${u.status}</td>
+      ${Mission.GATES.map((g) => `<td class="${p && p.gates[g] !== u.gates[g] ? "changed" : ""}">${gateCell(u.gates[g])}</td>`).join("")}
+    </tr><tr><td colspan="9"><div class="oneline">Dossier: ${Mission.dossierLine(u)}</div></td></tr>`; }).join("")}</table>` : `<p class="mute">Nessuna unità: approva il piano del Lead.</p>`);
+  $("inbox").innerHTML = `<h2>La tua Inbox (solo eccezioni) <span class="tag">${s.inbox.length}</span></h2>` + (s.inbox.length ? s.inbox.map((i) => `
+    <div class="inbox-item"><b>${i.title}</b><br>${i.reason}<br>
+      ${i.options.map((o) => o === "raise-budget" ? `<button onclick="dispatch({type:'raiseBudget'})">Alza budget</button>` :
+        `<button onclick="dispatch({type:'decide',unit:${i.unit},decision:'${o}'})">${{ approve: "Approva", reject: "Rifiuta", "send-back": "Rimanda al worker" }[o]}</button>`).join("")}
+    </div>`).join("") : `<p class="mute">Niente richiede la tua attenzione.</p>`);
+  const total = Mission.spent(s), max = Math.max(total, s.naive, 1);
+  $("tokens").innerHTML = `<h2>Token</h2>
+    <table>
+      <tr><th>Lead (piano + report compatti)</th><td>${fmt(s.tokens.lead)}</td></tr>
+      <tr><th>Worker (implementazione, promemoria, Fix)</th><td>${fmt(s.tokens.workers)}</td></tr>
+      <tr><th>Review (solo se il rischio la giustifica)</th><td>${fmt(s.tokens.review)}</td></tr>
+      <tr><th>Oxide (issue, push, PR, Dossier, gate)</th><td class="ok">0</td></tr>
+      <tr><th><b>Totale Mission</b></th><td><b>${fmt(total)}</b></td></tr>
+      <tr><th class="mute">Stesso lavoro con Lead + subagent in CLI, che fa da sé le faccende e riassume via LLM</th><td class="mute">${fmt(s.naive)}</td></tr>
+    </table>
+    <p class="mute" style="margin:8px 0 4px">Oxide</p><div class="bar"><span style="width:${(total / max) * 100}%;background:var(--accent)"></span></div>
+    <p class="mute" style="margin:8px 0 4px">Approccio attuale</p><div class="bar"><span style="width:${(s.naive / max) * 100}%;background:#999"></span></div>`;
+  $("log").innerHTML = s.log.map((l) => `<div><b>${l.who}</b> · ${l.text}</div>`).join("") || `<div class="mute">Ancora niente.</div>`;
+  renderFree();
+}
+
+function renderFree() {
+  const us = state.units;
+  const b = (label, action, dis) => `<button ${dis ? "disabled" : ""} onclick='dispatch(${JSON.stringify(action)})'>${label}</button>`;
+  let h = b("Approva il piano del Lead", { type: "approvePlan" }, state.phase !== "draft") + b("Avvia i worker", { type: "startWorkers" }, !us.some((u) => u.status === "queued"));
+  us.forEach((u) => {
+    h += `<div style="margin-top:8px"><b>${u.title}</b><br>`;
+    Object.entries(RESULTS).forEach(([k, r]) => { h += b(`finisce: ${k}`, { type: "workerFinished", unit: u.id, result: r }, u.status !== "working"); });
+    h += b("CI verde", { type: "ci", unit: u.id, pass: true }, u.gates.ci !== "pending") + b("CI rossa", { type: "ci", unit: u.id, pass: false }, u.gates.ci !== "pending");
+    h += b("Blind review pulita", { type: "blindReview", unit: u.id }) + b("Blind review con 2 rilievi", { type: "blindReview", unit: u.id, findings: 2 });
+    h += b("Prova a fare merge", { type: "merge", unit: u.id }) + `</div>`;
+  });
+  $("free").innerHTML = h;
+}
+
+const SCENARIOS = [
+  { name: "Banale", desc: "Pulsante da rosso a blu + export CSV. Guarda: il pulsante va in merge da solo (rischio basso, auto-merge per policy). Nessun riassunto LLM, Dossier in una riga, zero richieste a te.",
+    steps: [["Approva il piano", { type: "approvePlan" }], ["Avvia i worker", { type: "startWorkers" }], ["Pulsante: fatto, test passati", { type: "workerFinished", unit: 1, result: RESULTS.buttonOk }], ["CI verde sul pulsante", { type: "ci", unit: 1, pass: true }], ["CSV: fatto, test passati", { type: "workerFinished", unit: 2, result: RESULTS.csvOk }], ["CI verde sul CSV", { type: "ci", unit: 2, pass: true }]] },
+  { name: "L'agente dimentica", desc: "Il worker dice 'fatto' senza eseguire i test né aprire la PR. Guarda: Oxide apre issue/branch/PR da solo (0 token) e manda UN promemoria mirato solo per i test, la cosa che solo l'agente può fare.",
+    steps: [["Approva il piano", { type: "approvePlan", units: [{ title: "Export CSV ordini", size: "medium" }] }], ["Avvia il worker", { type: "startWorkers" }], ["CSV: 'fatto' ma test mai eseguiti", { type: "workerFinished", unit: 1, result: RESULTS.csvNoTests }], ["Dopo il promemoria: test passati", { type: "workerFinished", unit: 1, result: { checksRan: "pass" } }], ["CI verde", { type: "ci", unit: 1, pass: true }]] },
+  { name: "Migrazione", desc: "Il worker tocca una migrazione. Guarda: rischio alto, arriva nella tua Inbox con il motivo. Merge senza la tua decisione = rifiutato.",
+    steps: [["Approva il piano", { type: "approvePlan", units: [{ title: "Tabella export", size: "medium" }] }], ["Avvia il worker", { type: "startWorkers" }], ["Fatto: tocca db/migrate", { type: "workerFinished", unit: 1, result: RESULTS.migration }], ["CI verde", { type: "ci", unit: 1, pass: true }], ["Prova a fare merge (deve essere rifiutato)", { type: "merge", unit: 1 }], ["Approva dalla Inbox", { type: "decide", unit: 1, decision: "approve" }]] },
+  { name: "CI rossa due volte", desc: "La CI fallisce. Guarda: un Fix automatico parte senza chiederti niente; al secondo fallimento si ferma e ti chiede.",
+    steps: [["Approva il piano", { type: "approvePlan", units: [{ title: "Export CSV ordini", size: "medium" }] }], ["Avvia il worker", { type: "startWorkers" }], ["Fatto, test locali ok", { type: "workerFinished", unit: 1, result: RESULTS.csvOk }], ["CI rossa → Fix automatico", { type: "ci", unit: 1, pass: false }], ["Worker: fix fatto", { type: "workerFinished", unit: 1, result: { checksRan: "pass" } }], ["CI di nuovo rossa → Inbox", { type: "ci", unit: 1, pass: false }]] },
+  { name: "Diff grande + budget", desc: "620 righe in Python senza check, budget stretto. Guarda: la blind review parte solo qui perché il rischio è medio, e il budget mette in pausa la Mission invece di bruciare token.",
+    init: { budget: 160000 },
+    steps: [["Approva il piano", { type: "approvePlan", units: [{ title: "Refactor importer", size: "large" }] }], ["Avvia il worker", { type: "startWorkers" }], ["Fatto: 620 righe, Python scoperto", { type: "workerFinished", unit: 1, result: RESULTS.bigUntested }], ["CI verde", { type: "ci", unit: 1, pass: true }], ["Blind review con 2 rilievi (sfora il budget)", { type: "blindReview", unit: 1, findings: 2 }], ["Alza il budget", { type: "raiseBudget" }], ["Rimanda i rilievi al worker", { type: "decide", unit: 1, decision: "send-back" }]] },
+];
+let active = 0, stepIdx = 0;
+function renderTabs() {
+  $("tabs").innerHTML = SCENARIOS.map((sc, i) => `<button class="${i === active ? "active" : ""}" onclick="startScenario(${i})">${sc.name}</button>`).join("");
+  const sc = SCENARIOS[active];
+  $("scenario-desc").textContent = sc.desc;
+  $("steps").innerHTML = sc.steps.map(([label], i) => `<button class="${i < stepIdx ? "done" : i === stepIdx ? "primary" : ""}" ${i !== stepIdx ? "disabled" : ""} onclick="step()">${i + 1}. ${label}</button>`).join("");
+}
+function startScenario(i) { active = i; stepIdx = 0; prev = state = Mission.initial(SCENARIOS[i].init); render(); renderTabs(); }
+function step() { dispatch(SCENARIOS[active].steps[stepIdx][1]); stepIdx++; renderTabs(); }
+startScenario(0);
+</script>
+</body>
+</html>
