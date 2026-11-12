@@ -27,7 +27,7 @@ runs:
     - name: Make libclang available (Windows)
       if: runner.os == 'Windows'
       shell: bash
-      # whisper.cpp's bindgen needs libclang; the image ships LLVM.
+      # Bindgen needs libclang; the image ships LLVM.
       run: |
         if [ ! -f "C:/Program Files/LLVM/bin/libclang.dll" ]; then
           echo "::error::libclang.dll not found in C:/Program Files/LLVM/bin on this runner image."
@@ -37,7 +37,7 @@ runs:
 
     - name: Assert CMake and Python are present
       shell: bash
-      # The runner images ship both; whisper.cpp's build needs them.
+      # The runner images ship both; native builds need them.
       run: |
         cmake --version
         if command -v python3 >/dev/null 2>&1; then python3 --version; else python --version; fi

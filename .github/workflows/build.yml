@@ -36,16 +36,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # Whisper's native code targets every supported CPU (and, on Windows, every CUDA
-  # GPU from compute capability 5.0), not just this runner's. See docs/dictation.md.
-  GGML_NATIVE: "OFF"
 
 jobs:
   build:
     name: build (${{ inputs.platform }})
     runs-on: ${{ inputs.platform == 'macos-aarch64' && 'macos-15' || 'windows-2025' }}
-    # Windows also compiles the CUDA kernels for every supported GPU architecture.
-    timeout-minutes: ${{ inputs.platform == 'windows-x64' && 180 || 75 }}
+    timeout-minutes: 75
     environment: ${{ inputs.release && 'release' || '' }}
     outputs:
       artifact: ${{ steps.name.outputs.artifact }}
@@ -76,17 +72,6 @@ jobs:
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing from the 'release' environment. A release without a signed updater package would break updates for every installed app."
-            exit 1
-          fi
-
-      - name: Require the runtime signing key
-        if: inputs.release && inputs.platform == 'windows-x64'
-        env:
-          RUNTIME_SIGNING_KEY: ${{ secrets.RUNTIME_SIGNING_KEY }}
-        # Without it the release would publish an unsigned index that no installed app accepts.
-        run: |
-          if [ -z "$RUNTIME_SIGNING_KEY" ]; then
-            echo "::error::RUNTIME_SIGNING_KEY is missing from the 'release' environment. Without it the GPU runtimes cannot be signed and no installed app could download them."
             exit 1
           fi
 
@@ -156,73 +141,6 @@ jobs:
           if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
           web/node_modules/.bin/tauri build --ci --bundles app,dmg "${extra[@]}" -- --locked
 
-      - name: Verify the app's dictation backends (macOS)
-        if: inputs.platform == 'macos-aarch64'
-        # System-only linkage, the embedded Metal library, the notices and the microphone description.
-        run: node tools/dictation-package.mjs verify macos-aarch64
-
-      - name: Install the GPU build SDKs (Windows)
-        if: inputs.platform == 'windows-x64'
-        # CUDA Toolkit and Vulkan SDK, pinned with SHA-256 in tools/ci/policy.mjs. Users never install them.
-        run: node tools/dictation-package.mjs setup
-
-      - name: Decide the native worker cache
-        id: worker-cache-policy
-        if: inputs.platform == 'windows-x64'
-        env:
-          PLATFORM: ${{ inputs.platform }}
-          RELEASE: ${{ inputs.release }}
-        run: node tools/ci/cli.mjs dictation-cache
-
-      - name: Restore the native worker builds
-        id: worker-cache
-        if: steps.worker-cache-policy.outputs.enabled == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          key: ${{ steps.worker-cache-policy.outputs.key }}
-          restore-keys: |
-            ${{ steps.worker-cache-policy.outputs.restoreKeys }}
-          path: |
-            target/vw
-            target/cw
-
-      - name: Build the Vulkan and CUDA workers once and stage their runtimes (Windows)
-        if: inputs.platform == 'windows-x64'
-        # stage loads the x64 MSVC environment (vcvars64.bat) itself.
-        run: node tools/dictation-package.mjs stage
-
-      - name: Package the downloadable runtimes (Windows)
-        if: inputs.platform == 'windows-x64'
-        # One flat zip per backend with its manifest. Refuses a package the app would refuse.
-        run: node tools/dictation-runtimes.mjs package
-
-      - name: Probe the staged workers (Windows)
-        if: inputs.platform == 'windows-x64'
-        # Each worker starts with no SDK on PATH and answers the probe, as on a user's machine.
-        run: node tools/dictation-package.mjs probe
-
-      # Save before the installer and smoke checks: a packaging failure should
-      # not throw away a completed CUDA compilation. Releases never use this cache.
-      - name: Save the native worker builds
-        if: steps.worker-cache-policy.outputs.enabled == 'true' && steps.worker-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          key: ${{ steps.worker-cache-policy.outputs.key }}
-          path: |
-            target/vw
-            target/cw
-
-      - name: Index and sign the runtimes (release, Windows)
-        if: inputs.release && inputs.platform == 'windows-x64'
-        env:
-          RUNTIME_SIGNING_KEY: ${{ secrets.RUNTIME_SIGNING_KEY }}
-          TAG: ${{ github.ref_name }}
-        # The index lists this release's asset URLs, so it is made here, once, from the zips just built.
-        # verify checks the result exactly as an installed app does: signature, then each zip.
-        run: |
-          node tools/dictation-runtimes.mjs index target/dictation-runtime/packages "$TAG" "$GITHUB_REPOSITORY"
-          node tools/dictation-runtimes.mjs verify target/dictation-runtime/packages "$TAG"
-
       - name: Build the Windows installer
         if: inputs.platform == 'windows-x64'
         env:
@@ -233,25 +151,6 @@ jobs:
           extra=()
           if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
           web/node_modules/.bin/tauri.cmd build --ci --bundles nsis "${extra[@]}" -- --locked
-
-      - name: Install the setup into a scratch folder (Windows)
-        if: inputs.platform == 'windows-x64'
-        shell: pwsh
-        # What a user gets, not the build tree. The runner has no GPU and no NVIDIA driver.
-        run: |
-          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          $dir = Join-Path $env:RUNNER_TEMP "oxide-installed"
-          # /D must be the last argument and unquoted.
-          $install = Start-Process -FilePath $setup.FullName -ArgumentList "/S", "/D=$dir" -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "The setup exited $($install.ExitCode)." }
-          "OXIDE_INSTALLED=$dir" >> $env:GITHUB_ENV
-
-      - name: Verify the installed CPU-only package and start the app (Windows)
-        if: inputs.platform == 'windows-x64'
-        # No worker or GPU DLL in the install; the app starts with no SDK on PATH and no runtime installed.
-        run: |
-          node tools/dictation-package.mjs verify windows-x64 "$OXIDE_INSTALLED"
-          node tools/dictation-package.mjs smoke "$OXIDE_INSTALLED" --launch
 
       - name: Name the artifact
         id: name
@@ -285,8 +184,6 @@ jobs:
           else
             cp "$bundle/nsis/Oxide_${version}_x64-setup.exe" staged/
             cp "$bundle/nsis/Oxide_${version}_x64-setup.exe.sig" staged/
-            # The signed index and the packages it lists; the app downloads them from this release.
-            cp target/dictation-runtime/packages/oxide-runtime-*.zip target/dictation-runtime/packages/runtimes-index.json target/dictation-runtime/packages/runtimes-index.json.minisig staged/
             notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against SHA256SUMS.txt."
           fi
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"
@@ -310,6 +207,5 @@ jobs:
             target/release/bundle/macos/Oxide.app
             target/release/bundle/dmg/*.dmg
             target/release/bundle/nsis/*-setup.exe
-            target/dictation-runtime/packages/*.zip
           if-no-files-found: error
           retention-days: 7

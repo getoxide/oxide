@@ -40,13 +40,12 @@ function mockSettings(settings: Settings, onSave?: (saved: Settings) => void) {
     if (command === "get_model_catalog") return [];
     if (command === "detect_provider") return { installed: false, authenticated: false, available: false };
     if (command === "plugin:event|listen") return 1;
-    if (command === "plugin:event|unlisten" || command === "dictation_cancel") return null;
+    if (command === "plugin:event|unlisten") return null;
     throw new Error(`Unexpected command ${command}`);
   });
 }
 
 const baseSettings = (): Settings => ({
-  dictation: { enabled: false, language: "auto", device: "cpu", model: "small" },
   defaultProvider: "claude", confirmQuit: true, shortcuts: DEFAULT_SHORTCUTS,
   claudeCustomizations: { claudeMd: false, skills: false, plugins: false, mcpServers: false, hooks: false },
   providers: {
@@ -56,7 +55,7 @@ const baseSettings = (): Settings => ({
   },
 });
 
-it("switches between categorized panels and saves appearance, dictation and each Provider independently", async () => {
+it("switches between categorized panels and saves appearance and each Provider independently", async () => {
   let saved: Settings | undefined;
   let pendingSave: Promise<null> | null = null;
   // Let the save lifecycle test hold the request open.
@@ -69,13 +68,13 @@ it("switches between categorized panels and saves appearance, dictation and each
     if (command === "get_model_catalog") return [];
     if (command === "detect_provider") return { installed: false, authenticated: false, available: false };
     if (command === "plugin:event|listen") return 1;
-    if (command === "plugin:event|unlisten" || command === "dictation_cancel") return null;
+    if (command === "plugin:event|unlisten") return null;
     throw new Error(`Unexpected command ${command}`);
   });
   await act(async () => root.render(<SettingsView onRunCommand={() => {}} onClose={() => {}} />));
 
   expect(Array.from(container.querySelectorAll('nav[aria-label="Settings categories"] button')).map((button) => button.textContent)).toEqual([
-    "General", "Providers", "Appearance", "Voice & Dictation", "Developer Tools", "Shortcuts", "Updates",
+    "General", "Providers", "Appearance", "Developer Tools", "Shortcuts", "Updates",
   ]);
   expect(activePanels()).toEqual(["general"]);
   expect(categoryButton("General").getAttribute("aria-current")).toBe("page");
@@ -107,12 +106,6 @@ it("switches between categorized panels and saves appearance, dictation and each
   const terminalSize = categoryPanel("appearance").querySelector<HTMLSelectElement>('select[aria-label="Terminal size"]')!;
   await act(async () => { terminalSize.value = "18"; terminalSize.dispatchEvent(new Event("change", { bubbles: true })); });
 
-  act(() => categoryButton("Voice & Dictation").click());
-  expect(activePanels()).toEqual(["dictation"]);
-  // Language tools live here, no longer behind a gear in the Files editor.
-  const dictation = categoryPanel("dictation").querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  act(() => dictation.click());
-
   act(() => categoryButton("Developer Tools").click());
   expect(activePanels()).toEqual(["developer"]);
   expect(categoryPanel("developer").querySelector("#settings-github")).not.toBeNull();
@@ -129,7 +122,6 @@ it("switches between categorized panels and saves appearance, dictation and each
 
   await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Save")!.click());
   expect(getAppearance().typography?.terminal.size).toBe(18);
-  expect(saved?.dictation).toEqual({ enabled: true, language: "auto", device: "cpu", model: "small" });
   expect(container.querySelector('[aria-label="Settings save status"]')?.textContent).toBe("Settings saved.");
   expect(saved?.providers).toEqual({
     claude: { model: null, effort: null, permissionMode: "full-access" },
@@ -142,9 +134,8 @@ it("switches between categorized panels and saves appearance, dictation and each
   const saveButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Save")!;
   await act(async () => saveButton.click());
   expect(saveButton.disabled).toBe(true);
-  // The panel is only mounted while it is the active category.
-  act(() => categoryButton("Voice & Dictation").click());
-  act(() => categoryPanel("dictation").querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+  act(() => categoryButton("General").click());
+  act(() => categoryPanel("general").querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
   expect(saveButton.disabled).toBe(true);
   await act(async () => completeSave(null));
   expect(container.querySelector('[aria-label="Settings save status"]')?.textContent).toBe("");
@@ -193,7 +184,7 @@ it("groups model effort variants while keeping the saved effort selectable", asy
     if (command === "get_model_catalog") return (args as { provider: string }).provider === "antigravity" ? variants : [];
     if (command === "detect_provider") return { installed: false, authenticated: false, available: false };
     if (command === "plugin:event|listen") return 1;
-    if (command === "plugin:event|unlisten" || command === "dictation_cancel") return null;
+    if (command === "plugin:event|unlisten") return null;
     throw new Error(`Unexpected command ${command}`);
   });
   await act(async () => root.render(<SettingsView onRunCommand={() => {}} onClose={() => {}} />));

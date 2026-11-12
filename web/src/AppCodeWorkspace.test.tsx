@@ -15,7 +15,6 @@ vi.mock("./ThreadView", () => ({
 }));
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
-vi.mock("./dictation", () => ({ DictationController: () => null }));
 // Monaco does not run in jsdom: the workbench stands in with the props the host passes it.
 vi.mock("./CodeWorkbench", () => ({
   CodeWorkbench: ({ openRequest, visible, showExplorer }: {

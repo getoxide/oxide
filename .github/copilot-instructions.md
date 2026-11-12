@@ -4,11 +4,10 @@
 
 Oxide is a Rust/Tauri desktop application with a React/Vite webview. The Rust workspace contains:
 
-- `crates/oxide-core`: headless application and domain logic. It owns Projects, Threads, Turns, persistence, Git/GitHub integration, terminals, language servers, settings, dictation, and background actors. Keep this crate independent of Tauri so its behavior can be tested headlessly.
+- `crates/oxide-core`: headless application and domain logic. It owns Projects, Threads, Turns, persistence, Git/GitHub integration, terminals, language servers, settings, and background actors. Keep this crate independent of Tauri so its behavior can be tested headlessly.
 - `crates/oxide-provider`: the Provider contract and adapters for Claude Code, Codex, and Antigravity (`agy`). Core depends on the trait/contract, not on provider-specific CLI details. The contract suite uses fake providers; live CLI smoke tests are explicitly ignored.
 - `crates/oxide-app`: the thin Tauri shell. Tauri commands adapt `oxide_core::Core` types to the webview, and `tauri-specta` generates the typed TypeScript command API.
 - `web`: the React frontend. It calls Rust only through `web/src/bindings.ts` and renders the workspace surfaces (Projects, Threads, files/diffs, terminal, pull requests, issues, board, and settings).
-- `crates/oxide-vulkan-worker` and `crates/oxide-cuda-worker`: standalone native dictation workers excluded from the Cargo workspace; Windows packaging builds and stages them separately.
 
 The normal flow is `web` UI -> generated Tauri bindings -> `oxide-app` command -> `oxide-core` -> provider/Git/filesystem/process services. Long-running or blocking work is moved off the Tauri/UI thread; per-Thread work is coordinated by Core thread actors, and external processes are tracked by the provider process registry. Core persists application state in SQLite under the Oxide home directory.
 
@@ -84,7 +83,7 @@ pnpm --dir web build:app
 web/node_modules/.bin/tauri dev
 ```
 
-On Windows, use `.\web\node_modules\.bin\tauri.cmd` for the Tauri CLI. GPU dictation packaging has additional SDK setup documented in `docs/dictation.md`.
+On Windows, use `.\web\node_modules\.bin\tauri.cmd` for the Tauri CLI.
 
 ## Codebase conventions
 

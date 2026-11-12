@@ -75,7 +75,6 @@ impl Default for Providers {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Shortcuts {
-    pub dictation: String,
     pub new_thread: String,
     pub open_project: String,
     pub model_picker: String,
@@ -96,7 +95,6 @@ impl Default for Shortcuts {
     fn default() -> Self {
         let s = |accelerator: &str| accelerator.to_string();
         Self {
-            dictation: s("Mod+Shift+R"),
             new_thread: s("Mod+N"),
             open_project: s("Mod+Shift+N"),
             model_picker: s("Mod+Shift+M"),
@@ -117,9 +115,8 @@ impl Default for Shortcuts {
 
 impl Shortcuts {
     /// Every shortcut as `(settings key, accelerator)`.
-    fn slots(&mut self) -> [(&'static str, &mut String); 15] {
+    fn slots(&mut self) -> [(&'static str, &mut String); 14] {
         [
-            ("dictation", &mut self.dictation),
             ("newThread", &mut self.new_thread),
             ("openProject", &mut self.open_project),
             ("modelPicker", &mut self.model_picker),
@@ -185,6 +182,7 @@ fn shortcuts(obj: Option<Map<String, Value>>, errors: &mut Vec<FieldError>) -> S
     let mut shortcuts = Shortcuts::default();
     // The Thread Board is gone: a file saved while it existed still carries its shortcut.
     obj.remove("toggleBoard");
+    obj.remove("dictation");
     let in_file: Vec<String> = obj.keys().cloned().collect();
     for (key, slot) in shortcuts.slots() {
         let default = slot.clone();
@@ -228,7 +226,6 @@ fn shortcuts(obj: Option<Map<String, Value>>, errors: &mut Vec<FieldError>) -> S
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub dictation: crate::dictation::DictationSettings,
     pub default_provider: Provider,
     pub providers: Providers,
     pub confirm_quit: bool,
@@ -242,7 +239,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            dictation: crate::dictation::DictationSettings::default(),
             default_provider: Provider::Claude,
             providers: Providers::default(),
             confirm_quit: true,
@@ -290,7 +286,7 @@ impl SettingsStore {
             }),
             subscribers: Mutex::new(vec![]),
         });
-        store.reload(true)?;
+        store.reload()?;
 
         let weak = Arc::downgrade(&store);
         let pending = Arc::new(AtomicBool::new(false));
@@ -315,7 +311,7 @@ impl SettingsStore {
                 std::thread::spawn(move || {
                     std::thread::sleep(RELOAD_DEBOUNCE);
                     pending.store(false, Ordering::SeqCst);
-                    let _ = store.reload(false);
+                    let _ = store.reload();
                 });
             })
             .map_err(|e| watch_error(home, e))?;
@@ -338,21 +334,12 @@ impl SettingsStore {
     }
 
     pub(crate) fn save(&self, settings: &Settings) -> Result<()> {
-        self.verify_model_selection(&self.get().settings, settings)?;
         write_file(&self.path, settings)?;
-        self.reload(false)
-    }
-
-    fn verify_model_selection(&self, previous: &Settings, next: &Settings) -> Result<()> {
-        if previous.dictation.model != next.dictation.model {
-            crate::dictation::models::ModelManager::default()
-                .acquire(self.path.parent().unwrap(), next.dictation.model)?;
-        }
-        Ok(())
+        self.reload()
     }
 
     /// Re-reads the file; notifies subscribers only if the resulting state changed.
-    fn reload(&self, restoring: bool) -> Result<()> {
+    fn reload(&self) -> Result<()> {
         if !self.path.exists() {
             // Deleted while running: recreate it from the Settings in effect.
             write_file(&self.path, &self.get().settings)?;
@@ -363,21 +350,7 @@ impl SettingsStore {
         })?;
         let next = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            let next = match parse(&text).and_then(|settings| {
-                // Restore preferences even if a disabled model was deleted or a disk is offline.
-                // New selections made while running must still be explicitly installed first.
-                if restoring {
-                    return Ok(settings);
-                }
-                self.verify_model_selection(&state.settings, &settings)
-                    .map_err(|e| {
-                        vec![FieldError {
-                            path: "dictation.model".into(),
-                            message: e.to_string(),
-                        }]
-                    })?;
-                Ok(settings)
-            }) {
+            let next = match parse(&text) {
                 Ok(settings) => SettingsState {
                     settings,
                     errors: vec![],
@@ -447,8 +420,8 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
     // Ignore them, even if malformed; the next save drops them.
     root.remove("scanRoots");
     root.remove("editor");
+    root.remove("dictation");
     let settings = Settings {
-        dictation: field(&mut root, "", "dictation", defaults.dictation, &mut errors),
         default_provider: field(
             &mut root,
             "",
@@ -494,20 +467,6 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
             )
         },
     };
-    if settings.dictation.language != "auto"
-        && (!(2..=3).contains(&settings.dictation.language.len())
-            || !settings
-                .dictation
-                .language
-                .bytes()
-                .all(|b| b.is_ascii_lowercase())
-            || whisper_rs::get_lang_id(&settings.dictation.language).is_none())
-    {
-        errors.push(FieldError {
-            path: "dictation.language".into(),
-            message: "Use auto or a supported Whisper language code (for example it or en)".into(),
-        });
-    }
     unknown_keys(&root, "", &mut errors);
     if errors.is_empty() {
         Ok(settings)
@@ -613,19 +572,12 @@ fn unknown_keys(obj: &Map<String, Value>, at: &str, errors: &mut Vec<FieldError>
 }
 
 #[cfg(test)]
-mod dictation_tests {
+mod settings_tests {
     use super::*;
     #[test]
-    fn old_settings_disable_dictation_and_language_is_validated() {
-        assert!(!parse("{}").unwrap().dictation.enabled);
-        assert_eq!(
-            parse(r#"{"dictation":{"language":"it","enabled":true,"device":"gpu"}}"#)
-                .unwrap()
-                .dictation
-                .language,
-            "it"
-        );
-        assert!(parse(r#"{"dictation":{"language":"\u0000"}}"#).is_err());
-        assert!(parse(r#"{"dictation":{"language":"zz"}}"#).is_err());
+    fn old_settings_with_dictation_are_accepted() {
+        let settings =
+            parse(r#"{"dictation":{"language":"it","enabled":true,"device":"gpu"}}"#).unwrap();
+        assert_eq!(settings.default_provider, Provider::Claude);
     }
 }

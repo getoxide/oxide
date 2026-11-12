@@ -32,7 +32,7 @@ allow = [
   # File-level copyleft: fine to link, because we never modify MPL files of
   # crates.io dependencies.
   "MPL-2.0",
-  # Public-domain style licence, needed for whisper-rs (#222).
+  # Public-domain style licence.
   "Unlicense",
 ]
 confidence-threshold = 0.9

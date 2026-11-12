@@ -24,9 +24,7 @@ node tools/check.mjs fast   # rustfmt, ESLint and TypeScript, in seconds
 
 The full tier installs the web dependencies from the lockfile, then runs formatting, ESLint, TypeScript, Vitest, the production web build, the tooling tests, the Tauri alignment check, Clippy, the Rust tests, the committed-bindings check and this OS's app bundle. It prints what it can't run here and why (for example the macOS bundle on Windows, or cargo-deny, which CI installs), and lists every failed command at the end so you can rerun it directly.
 
-The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it once with `cargo install --locked cargo-nextest`. Every Rust check also builds the dictation engine, which needs CMake, a C/C++ compiler and libclang (see [docs/dictation.md](docs/dictation.md)).
-
-On Windows the full tier also builds the Vulkan and CUDA dictation workers and packages them as downloadable runtimes, as CI does: install the pinned Vulkan SDK and CUDA Toolkit once with `node tools/dictation-package.mjs setup` (elevated), then run the checks from a new prompt; staging loads the Visual Studio x64 environment itself. [Packaging and distribution](docs/dictation.md#packaging-and-distribution) lists each package check and the failure it prevents.
+The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it once with `cargo install --locked cargo-nextest`.
 
 Every job, why it exists and its local command are in [docs/devops.md](docs/devops.md#ci-jobs).
 

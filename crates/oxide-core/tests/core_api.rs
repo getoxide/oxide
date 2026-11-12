@@ -397,7 +397,7 @@ mod settings {
 
         std::fs::write(
             tmp.path().join("settings.json"),
-            r#"{ "shortcuts": { "files": "N", "dictation": "Mod+Shift+P", "terminal": "Mod+Hyper+T",
+            r#"{ "shortcuts": { "files": "N", "openProject": "Mod+Shift+P", "terminal": "Mod+Hyper+T",
                                 "issues": "Mod+nope", "bogus": "Mod+K" } }"#,
         )
         .unwrap();
@@ -417,7 +417,7 @@ mod settings {
         assert!(
             bad.errors
                 .iter()
-                .any(|e| e.path == "shortcuts.pullRequests" && e.message.contains("dictation"))
+                .any(|e| e.path == "shortcuts.pullRequests" && e.message.contains("openProject"))
         );
     }
 

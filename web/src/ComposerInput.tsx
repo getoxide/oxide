@@ -1,4 +1,3 @@
-import { useDictationTarget } from "./dictation";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SquareFillIcon } from "@primer/octicons-react";
@@ -486,8 +485,6 @@ export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(func
     sync();
     root.current?.focus();
   };
-
-  useDictationTarget(root, insertText, !disabled);
 
   // The caret is drawn by us: the native one is as tall as the whole line and sits flush against
   // glyphs such as "/". Wherever we cannot measure it (an empty line, a selection, IME

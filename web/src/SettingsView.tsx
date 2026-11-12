@@ -1,4 +1,3 @@
-import { DictationSettings } from "./DictationSettings";
 import { collapseEffortVariants, modelFamilyId, selectedModelInfo } from "./modelPicker";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -13,7 +12,6 @@ import {
   ServerIcon,
   SyncIcon,
   ToolsIcon,
-  UnmuteIcon,
 } from "@primer/octicons-react";
 import { getAppearance, saveAppearance, validateAppearance } from "./appearance";
 import { Skeleton } from "./Skeleton";
@@ -59,7 +57,6 @@ const CATEGORY_ICONS: Record<SettingsCategoryId, typeof GearIcon> = {
   general: GearIcon,
   providers: ServerIcon,
   appearance: PaintbrushIcon,
-  dictation: UnmuteIcon,
   developer: ToolsIcon,
   shortcuts: CommandPaletteIcon,
   updates: SyncIcon,
@@ -371,9 +368,6 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
         editVersion.current++;
         setSaveStatus((status) => status === "saving" ? status : "idle");
       }} />
-    ),
-    dictation: (
-      <DictationSettings value={draft.dictation ?? { enabled: false, language: "auto", device: "cpu", model: "small" }} onChange={(dictation) => set({ dictation })} />
     ),
     developer: developerPanel,
     shortcuts: (

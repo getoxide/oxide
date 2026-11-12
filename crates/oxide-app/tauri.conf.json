@@ -37,8 +37,6 @@
   "bundle": {
     "active": true,
     "resources": {
-      "../../docs/licenses/whisper.txt": "licenses/whisper.txt",
-      "../../docs/licenses/dictation-fixture.txt": "licenses/dictation-fixture.txt",
       "../../docs/licenses/inter.txt": "licenses/inter.txt",
       "../../docs/licenses/jetbrains-mono.txt": "licenses/jetbrains-mono.txt"
     },

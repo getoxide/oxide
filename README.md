@@ -73,7 +73,6 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 - **Git and GitHub.** Branches, commit and push, and Issues, through `git` and the [GitHub CLI](https://cli.github.com). Pull requests have their own section above.
 - **Code editor.** Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
 - **Terminal.** Per-Project terminal tabs with Command blocks, kept alive while you switch Threads.
-- **Local dictation.** Speak into the composer or terminal with on-device Whisper models, on CPU or GPU. Audio never leaves your machine.
 - **Keyboard first.** Full keyboard navigation, themes and reduced-motion support.
 
 <!-- /site:features -->
@@ -87,7 +86,7 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 | Platform | File | Notes |
 | --- | --- | --- |
 | macOS (Apple Silicon) | `Oxide_<version>_aarch64.dmg` | Drag `Oxide.app` into `/Applications`. |
-| Windows 10/11 (x64) | `Oxide_<version>_x64-setup.exe` | Includes CPU and GPU (Vulkan, CUDA) dictation. |
+| Windows 10/11 (x64) | `Oxide_<version>_x64-setup.exe` | NSIS installer. |
 
 <!-- /site:install -->
 
@@ -175,7 +174,6 @@ The domain language (Project, Thread, Turn, Provider, Surface…) is defined in 
 - Xcode Command Line Tools (`xcode-select --install`)
 - [rustup](https://rustup.rs). The toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) and installed automatically.
 - Node.js 22 and pnpm via [Corepack](https://nodejs.org/api/corepack.html) (`corepack enable`). The pnpm version is pinned in `web/package.json`.
-- CMake and libclang, for the dictation engine (see [docs/dictation.md](docs/dictation.md)).
 
 ```sh
 git clone https://github.com/getoxide/oxide.git
@@ -198,7 +196,6 @@ The Tauri CLI must run from the repository root: that is where it finds `crates/
 - Windows 10 (version 1803 or later) or Windows 11. These include the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/); on older or customized installations, install the Evergreen Runtime manually.
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload.
 - [rustup](https://rustup.rs), Node.js 22 and pnpm through Corepack (`corepack enable`), as on macOS.
-- CMake and libclang, for the dictation engine.
 
 In PowerShell:
 
@@ -214,7 +211,7 @@ pnpm --dir web install
 .\web\node_modules\.bin\tauri.cmd build --bundles nsis
 ```
 
-That installer has CPU dictation only. The released installer also contains the Vulkan and CUDA dictation workers; to build it, follow [Packaging and distribution](docs/dictation.md#packaging-and-distribution). To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again.
+To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again.
 
 ### Tests and checks
 
@@ -246,7 +243,7 @@ Oxide is not a coding agent: it is a desktop GUI that drives the agent CLIs you 
 No separate key for Oxide. Each Provider uses its own login and its own subscription or API billing, exactly as it does in the terminal.
 
 **Does Oxide send my code or prompts anywhere?**
-Oxide has no telemetry and no server. Your prompts and code go only to the Provider you chose, through its own CLI. The Transcript, Checkpoints and Review ledger stay on your machine, and dictation runs fully on-device.
+Oxide has no telemetry and no server. Your prompts and code go only to the Provider you chose, through its own CLI. The Transcript, Checkpoints and Review ledger stay on your machine.
 
 **How is it different from using Claude Code or Codex in a terminal?**
 You keep the same CLIs, sessions and logins. Oxide adds Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
