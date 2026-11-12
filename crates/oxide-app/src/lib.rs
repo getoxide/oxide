@@ -1,6 +1,8 @@
 //! The App shell: a thin Tauri layer that exposes [`oxide_core::Core`] to the webview.
 //! The webview talks only to the TypeScript bindings generated from here.
 
+#[cfg(target_os = "macos")]
+mod shell_path;
 mod system;
 mod updates;
 use updates::{app_update_status, check_app_update, install_app_update};
@@ -3491,6 +3493,10 @@ pub fn export_bindings() {
 }
 
 pub fn run() {
+    // Before anything spawns a thread or a Provider CLI: a Dock launch has a bare PATH.
+    #[cfg(target_os = "macos")]
+    shell_path::inherit_login_shell_path();
+
     let builder = builder();
 
     #[cfg(debug_assertions)]
