@@ -249,3 +249,21 @@ mod tests {
         assert!(token.is_none());
     }
 }
+
+/// Shows the "Oxide Dev" icon in the Dock. `tauri dev` runs a bare binary with no bundle, so
+/// macOS would otherwise show a generic icon and the dev build could not be told from a release.
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub fn set_dev_dock_icon(png: &[u8]) {
+    use objc2::AllocAnyThread;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let Some(main) = MainThreadMarker::new() else {
+        return;
+    };
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(png));
+    if let Some(image) = image {
+        unsafe { NSApplication::sharedApplication(main).setApplicationIconImage(Some(&image)) };
+    }
+}

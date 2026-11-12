@@ -3977,6 +3977,12 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Only the dev config names the app "Oxide Dev": a release never takes this path.
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            if app.config().product_name.as_deref() == Some("Oxide Dev") {
+                system::set_dev_dock_icon(include_bytes!("../icons-dev/icon.png"));
+            }
+
             let home = app
                 .path()
                 .home_dir()
