@@ -141,8 +141,10 @@ enum QuotaPool {
 }
 
 /// Maps a statusLine JSON payload (or any stream object carrying `quota`) to a `UsageLimits`
-/// event. Agy reports a Gemini pool and a third-party pool; only the pool the active Model draws
-/// from is reported, so the ring reflects the limit that applies to the Thread's Model.
+/// event. Agy reports a Gemini pool, a Gemini Argon pool, and a third-party pool.
+/// The active Model's pool is emitted as primary windows (without a pool tag), and all
+/// available pools are also emitted with their respective pool keys so the UI can adapt when the
+/// user switches models and show a detailed breakdown.
 /// `now_unix` is the observation time, used to turn `reset_in_seconds` into a timestamp.
 pub fn parse_statusline_quota(payload: &Value, now_unix: i64) -> Option<ProviderEvent> {
     let quota = payload.get("quota")?.as_object()?;
@@ -163,6 +165,8 @@ pub fn parse_statusline_quota(payload: &Value, now_unix: i64) -> Option<Provider
         QuotaPool::ThirdParty => THIRD_PARTY_WEEKLY_KEYS,
     };
     let mut windows = Vec::new();
+
+    // 1. Primary windows for the active model's pool (pool: None for backward compatibility).
     for (kind, keys) in [
         (
             UsageWindowKind::FiveHour,
@@ -173,10 +177,77 @@ pub fn parse_statusline_quota(payload: &Value, now_unix: i64) -> Option<Provider
         ),
         (UsageWindowKind::Weekly, weekly_keys),
     ] {
-        if let Some(window) = quota_window(quota, kind, keys, now_unix) {
+        if let Some(mut window) = quota_window(quota, kind, keys, now_unix) {
+            window.pool = None;
             windows.push(window);
         }
     }
+
+    // 2. Pool-tagged windows for every pool present in the quota snapshot.
+    // Standard Gemini pool
+    if has_any_key(quota, GEMINI_FIVE_HOUR_KEYS) || has_any_key(quota, GEMINI_WEEKLY_KEYS) {
+        if let Some(mut w) = quota_window(
+            quota,
+            UsageWindowKind::FiveHour,
+            GEMINI_FIVE_HOUR_KEYS,
+            now_unix,
+        ) {
+            w.pool = Some("gemini".to_string());
+            windows.push(w);
+        }
+        if let Some(mut w) =
+            quota_window(quota, UsageWindowKind::Weekly, GEMINI_WEEKLY_KEYS, now_unix)
+        {
+            w.pool = Some("gemini".to_string());
+            windows.push(w);
+        }
+    }
+
+    // Gemini Argon pool
+    if has_any_key(quota, GEMINI_ARGON_WEEKLY_KEYS) {
+        if let Some(mut w) = quota_window(
+            quota,
+            UsageWindowKind::FiveHour,
+            GEMINI_FIVE_HOUR_KEYS,
+            now_unix,
+        ) {
+            w.pool = Some("gemini-argon".to_string());
+            windows.push(w);
+        }
+        if let Some(mut w) = quota_window(
+            quota,
+            UsageWindowKind::Weekly,
+            GEMINI_ARGON_WEEKLY_KEYS,
+            now_unix,
+        ) {
+            w.pool = Some("gemini-argon".to_string());
+            windows.push(w);
+        }
+    }
+
+    // Third-party pool (Claude, GPT)
+    if has_any_key(quota, THIRD_PARTY_FIVE_HOUR_KEYS) || has_any_key(quota, THIRD_PARTY_WEEKLY_KEYS)
+    {
+        if let Some(mut w) = quota_window(
+            quota,
+            UsageWindowKind::FiveHour,
+            THIRD_PARTY_FIVE_HOUR_KEYS,
+            now_unix,
+        ) {
+            w.pool = Some("third-party".to_string());
+            windows.push(w);
+        }
+        if let Some(mut w) = quota_window(
+            quota,
+            UsageWindowKind::Weekly,
+            THIRD_PARTY_WEEKLY_KEYS,
+            now_unix,
+        ) {
+            w.pool = Some("third-party".to_string());
+            windows.push(w);
+        }
+    }
+
     if windows.is_empty() {
         None
     } else {
@@ -252,6 +323,7 @@ fn quota_window(
         percent_used: Some(used),
         resets_at: reset_at(bucket, now_unix),
         status: usage_status(used),
+        pool: None,
     })
 }
 

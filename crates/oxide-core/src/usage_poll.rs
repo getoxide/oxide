@@ -27,35 +27,45 @@ fn status_for(percent: f64) -> UsageStatus {
     }
 }
 
-fn window(kind: UsageWindowKind, percent: f64, resets_at: Option<i64>) -> UsageWindow {
+fn window(
+    kind: UsageWindowKind,
+    percent: f64,
+    resets_at: Option<i64>,
+    pool: Option<String>,
+) -> UsageWindow {
     let percent = percent.clamp(0.0, 100.0);
     UsageWindow {
         kind,
         percent_used: Some(percent),
         resets_at,
         status: status_for(percent),
+        pool,
     }
 }
 
 // ---------- Claude ----------
 
-/// `GET /api/oauth/usage`: `utilization` is already a 0-100 percent.
+/// `GET /api/oauth/usage`: `utilization` is already a 0-100 percent. Captures overall 5h/7d
+/// as well as model-specific pools (Sonnet, Opus).
 pub(crate) fn parse_claude_usage(body: &Value) -> Vec<UsageWindow> {
-    [
-        ("five_hour", UsageWindowKind::FiveHour),
-        ("seven_day", UsageWindowKind::Weekly),
-    ]
-    .into_iter()
-    .filter_map(|(key, kind)| {
-        let w = body.get(key)?;
-        let percent = w.get("utilization")?.as_f64()?;
-        let resets = w
-            .get("resets_at")
-            .and_then(|v| v.as_str())
-            .and_then(parse_rfc3339);
-        Some(window(kind, percent, resets))
-    })
-    .collect()
+    let mut windows = Vec::new();
+    for (key, kind, pool) in [
+        ("five_hour", UsageWindowKind::FiveHour, None),
+        ("seven_day", UsageWindowKind::Weekly, None),
+        ("seven_day_sonnet", UsageWindowKind::Weekly, Some("sonnet")),
+        ("seven_day_opus", UsageWindowKind::Weekly, Some("opus")),
+    ] {
+        if let Some(w) = body.get(key)
+            && let Some(percent) = w.get("utilization").and_then(|v| v.as_f64())
+        {
+            let resets = w
+                .get("resets_at")
+                .and_then(|v| v.as_str())
+                .and_then(parse_rfc3339);
+            windows.push(window(kind, percent, resets, pool.map(String::from)));
+        }
+    }
+    windows
 }
 
 fn claude_token(user_home: &Path) -> Option<String> {
@@ -141,6 +151,7 @@ pub(crate) fn parse_codex_wham(body: &Value) -> Vec<UsageWindow> {
                 kind,
                 percent,
                 w.get("reset_at").and_then(|v| v.as_i64()),
+                None,
             ))
         })
         .collect()
@@ -197,7 +208,7 @@ pub(crate) fn parse_agy_usage(body: &Value) -> Vec<UsageWindow> {
             .get("reset_time")
             .and_then(|v| v.as_str())
             .and_then(parse_rfc3339);
-        let w = window(kind, (1.0 - remaining) * 100.0, resets);
+        let w = window(kind, (1.0 - remaining) * 100.0, resets, None);
         match out.iter_mut().find(|e| e.kind == kind) {
             Some(e) if e.percent_used < w.percent_used => *e = w,
             Some(_) => {}

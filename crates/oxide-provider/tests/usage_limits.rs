@@ -51,14 +51,41 @@ fn claude_rejected_status_is_limited() {
 }
 
 #[test]
+fn claude_model_specific_windows_are_tagged_with_pool() {
+    let sonnet = json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed",
+            "resetsAt": 1_800_000_000,
+            "rateLimitType": "seven_day_sonnet",
+            "utilization": 0.55
+        }
+    });
+    let w_sonnet = windows(oxide_provider::claude::parse_rate_limit_event(&sonnet));
+    assert_eq!(w_sonnet.len(), 1);
+    assert_eq!(w_sonnet[0].kind, UsageWindowKind::Weekly);
+    assert_eq!(w_sonnet[0].pool, Some("sonnet".to_string()));
+    assert!((w_sonnet[0].percent_used.unwrap() - 55.0).abs() < 1e-9);
+
+    let opus = json!({
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1_800_000_000,
+            "rateLimitType": "seven_day_opus",
+            "utilization": 0.85
+        }
+    });
+    let w_opus = windows(oxide_provider::claude::parse_rate_limit_event(&opus));
+    assert_eq!(w_opus.len(), 1);
+    assert_eq!(w_opus[0].kind, UsageWindowKind::Weekly);
+    assert_eq!(w_opus[0].pool, Some("opus".to_string()));
+    assert_eq!(w_opus[0].status, UsageStatus::Warning);
+}
+
+#[test]
 fn claude_other_window_types_are_dropped() {
-    for kind in [
-        "seven_day_opus",
-        "seven_day_sonnet",
-        "seven_day_overage_included",
-        "overage",
-        "mystery",
-    ] {
+    for kind in ["seven_day_overage_included", "overage", "mystery"] {
         let line = json!({
             "type": "rate_limit_event",
             "rate_limit_info": {"status": "allowed", "rateLimitType": kind, "utilization": 0.9}
@@ -138,14 +165,27 @@ fn agy_gemini_model_reports_the_gemini_pool() {
         }
     });
     let w = agy_windows(&payload);
-    assert_eq!(w.len(), 2);
-    assert_eq!(w[0].kind, UsageWindowKind::FiveHour);
-    assert!((w[0].percent_used.unwrap() - 25.0).abs() < 1e-9);
-    assert_eq!(w[0].resets_at, Some(1_794_398_400));
-    assert_eq!(w[0].status, UsageStatus::Ok);
-    assert_eq!(w[1].kind, UsageWindowKind::Weekly);
-    assert!((w[1].percent_used.unwrap() - 45.0).abs() < 1e-9);
-    assert_eq!(w[1].resets_at, Some(4_600));
+    let primary: Vec<_> = w.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    assert_eq!(primary[0].kind, UsageWindowKind::FiveHour);
+    assert!((primary[0].percent_used.unwrap() - 25.0).abs() < 1e-9);
+    assert_eq!(primary[0].resets_at, Some(1_794_398_400));
+    assert_eq!(primary[0].status, UsageStatus::Ok);
+    assert_eq!(primary[1].kind, UsageWindowKind::Weekly);
+    assert!((primary[1].percent_used.unwrap() - 45.0).abs() < 1e-9);
+    assert_eq!(primary[1].resets_at, Some(4_600));
+
+    // Both Gemini and ThirdParty pools are preserved for the detailed breakdown
+    let gemini_pool: Vec<_> = w
+        .iter()
+        .filter(|win| win.pool.as_deref() == Some("gemini"))
+        .collect();
+    assert_eq!(gemini_pool.len(), 2);
+    let tp_pool: Vec<_> = w
+        .iter()
+        .filter(|win| win.pool.as_deref() == Some("third-party"))
+        .collect();
+    assert_eq!(tp_pool.len(), 2);
 }
 
 #[test]
@@ -160,11 +200,12 @@ fn agy_third_party_model_reports_the_third_party_pool() {
         }
     });
     let w = agy_windows(&payload);
-    assert_eq!(w.len(), 2);
-    assert!((w[0].percent_used.unwrap() - 20.0).abs() < 1e-9);
-    assert_eq!(w[0].resets_at, Some(6_000));
-    assert!((w[1].percent_used.unwrap() - 40.0).abs() < 1e-9);
-    assert_eq!(w[1].resets_at, Some(91_000));
+    let primary: Vec<_> = w.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    assert!((primary[0].percent_used.unwrap() - 20.0).abs() < 1e-9);
+    assert_eq!(primary[0].resets_at, Some(6_000));
+    assert!((primary[1].percent_used.unwrap() - 40.0).abs() < 1e-9);
+    assert_eq!(primary[1].resets_at, Some(91_000));
 }
 
 #[test]
@@ -180,10 +221,17 @@ fn agy_argon_model_prefers_its_own_weekly_bucket() {
         }
     });
     let w = agy_windows(&payload);
-    assert_eq!(w.len(), 2);
-    assert_eq!(w[0].percent_used, Some(0.0));
-    assert!((w[1].percent_used.unwrap() - 50.0).abs() < 1e-9);
-    assert_eq!(w[1].resets_at, Some(1_060));
+    let primary: Vec<_> = w.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    assert_eq!(primary[0].percent_used, Some(0.0));
+    assert!((primary[1].percent_used.unwrap() - 50.0).abs() < 1e-9);
+    assert_eq!(primary[1].resets_at, Some(1_060));
+
+    let argon_pool: Vec<_> = w
+        .iter()
+        .filter(|win| win.pool.as_deref() == Some("gemini-argon"))
+        .collect();
+    assert_eq!(argon_pool.len(), 2);
 }
 
 #[test]
@@ -192,8 +240,9 @@ fn agy_accepts_remaining_percent_and_skips_disabled_buckets() {
         "model": {"id": "Gemini 3.8 Flash"},
         "quota": {"gemini-5h": {"remaining_percent": 40.0}}
     }));
-    assert_eq!(percent.len(), 1);
-    assert!((percent[0].percent_used.unwrap() - 60.0).abs() < 1e-9);
+    let primary: Vec<_> = percent.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(primary.len(), 1);
+    assert!((primary[0].percent_used.unwrap() - 60.0).abs() < 1e-9);
 
     let disabled = agy_windows(&json!({
         "model": {"id": "Gemini 3.8 Flash"},
@@ -202,8 +251,9 @@ fn agy_accepts_remaining_percent_and_skips_disabled_buckets() {
             "gemini-weekly": {"remaining_fraction": 0.9}
         }
     }));
-    assert_eq!(disabled.len(), 1);
-    assert_eq!(disabled[0].kind, UsageWindowKind::Weekly);
+    let disabled_primary: Vec<_> = disabled.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(disabled_primary.len(), 1);
+    assert_eq!(disabled_primary[0].kind, UsageWindowKind::Weekly);
 }
 
 #[test]
@@ -212,8 +262,9 @@ fn agy_exhausted_bucket_is_limited() {
         "model": {"id": "Gemini 3.8 Flash"},
         "quota": {"gemini-5h": {"remaining_fraction": 0.0}}
     }));
-    assert_eq!(w[0].percent_used, Some(100.0));
-    assert_eq!(w[0].status, UsageStatus::Limited);
+    let primary: Vec<_> = w.iter().filter(|win| win.pool.is_none()).collect();
+    assert_eq!(primary[0].percent_used, Some(100.0));
+    assert_eq!(primary[0].status, UsageStatus::Limited);
 }
 
 #[test]
@@ -233,8 +284,12 @@ fn agy_unknown_model_does_not_mix_pools() {
     let unambiguous = agy_windows(&json!({
         "quota": {"3p-5h": {"remaining_fraction": 0.3}}
     }));
-    assert_eq!(unambiguous.len(), 1);
-    assert_eq!(unambiguous[0].kind, UsageWindowKind::FiveHour);
+    let primary: Vec<_> = unambiguous
+        .iter()
+        .filter(|win| win.pool.is_none())
+        .collect();
+    assert_eq!(primary.len(), 1);
+    assert_eq!(primary[0].kind, UsageWindowKind::FiveHour);
 }
 
 #[test]

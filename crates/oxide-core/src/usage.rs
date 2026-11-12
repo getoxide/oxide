@@ -24,33 +24,83 @@ pub struct UsageLimitWindow {
     pub reported_at: i64,
 }
 
-/// The latest 5-hour and weekly Usage limits of one Provider.
+/// Detailed Usage limits for a specific pool / model category.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsagePoolLimits {
+    pub label: String,
+    pub five_hour: Option<UsageLimitWindow>,
+    pub weekly: Option<UsageLimitWindow>,
+}
+
+fn pool_label(key: &str) -> String {
+    match key {
+        "gemini" => "Gemini",
+        "gemini-argon" => "Gemini Argon",
+        "third-party" => "Third-party (Claude, GPT)",
+        "sonnet" => "Claude Sonnet",
+        "opus" => "Claude Opus",
+        "haiku" => "Claude Haiku",
+        "default" => "Default",
+        other => other,
+    }
+    .to_string()
+}
+
+/// The latest 5-hour and weekly Usage limits of one Provider, including pool breakdowns.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageLimits {
     pub five_hour: Option<UsageLimitWindow>,
     pub weekly: Option<UsageLimitWindow>,
+    #[serde(default)]
+    pub pools: HashMap<String, UsagePoolLimits>,
 }
 
 impl UsageLimits {
     fn merge(&mut self, windows: &[UsageWindow], reported_at: i64) {
         for w in windows {
-            let slot = match w.kind {
-                UsageWindowKind::FiveHour => &mut self.five_hour,
-                UsageWindowKind::Weekly => &mut self.weekly,
-            };
-            // A status-only report keeps the last known figure and reset time.
-            let previous = slot.take();
-            *slot = Some(UsageLimitWindow {
-                percent_used: w
-                    .percent_used
-                    .or_else(|| previous.as_ref().and_then(|p| p.percent_used)),
-                resets_at: w
-                    .resets_at
-                    .or_else(|| previous.as_ref().and_then(|p| p.resets_at)),
-                status: w.status,
-                reported_at,
-            });
+            if let Some(pool_key) = &w.pool {
+                let pool = self
+                    .pools
+                    .entry(pool_key.clone())
+                    .or_insert_with(|| UsagePoolLimits {
+                        label: pool_label(pool_key),
+                        five_hour: None,
+                        weekly: None,
+                    });
+                let slot = match w.kind {
+                    UsageWindowKind::FiveHour => &mut pool.five_hour,
+                    UsageWindowKind::Weekly => &mut pool.weekly,
+                };
+                let previous = slot.take();
+                *slot = Some(UsageLimitWindow {
+                    percent_used: w
+                        .percent_used
+                        .or_else(|| previous.as_ref().and_then(|p| p.percent_used)),
+                    resets_at: w
+                        .resets_at
+                        .or_else(|| previous.as_ref().and_then(|p| p.resets_at)),
+                    status: w.status,
+                    reported_at,
+                });
+            } else {
+                let slot = match w.kind {
+                    UsageWindowKind::FiveHour => &mut self.five_hour,
+                    UsageWindowKind::Weekly => &mut self.weekly,
+                };
+                let previous = slot.take();
+                *slot = Some(UsageLimitWindow {
+                    percent_used: w
+                        .percent_used
+                        .or_else(|| previous.as_ref().and_then(|p| p.percent_used)),
+                    resets_at: w
+                        .resets_at
+                        .or_else(|| previous.as_ref().and_then(|p| p.resets_at)),
+                    status: w.status,
+                    reported_at,
+                });
+            }
         }
     }
 }
@@ -199,6 +249,7 @@ mod tests {
                 percent_used: Some(20.0),
                 resets_at: None,
                 status: UsageStatus::Ok,
+                pool: None,
             }],
         );
         assert!(rx.try_recv().is_ok());

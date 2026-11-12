@@ -138,12 +138,13 @@ fn gemini_statusline_quota_becomes_usage_limits() {
     provider.send_prompt("usage_gemini_test").unwrap();
     let windows = usage_windows(&collect_turn(&rx));
 
-    assert_eq!(windows.len(), 2);
-    let five = windows
+    let primary: Vec<_> = windows.iter().filter(|w| w.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    let five = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
         .unwrap();
-    let week = windows
+    let week = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
         .unwrap();
@@ -162,12 +163,13 @@ fn wrapped_status_line_event_becomes_usage_limits() {
     provider.send_prompt("usage_wrapped_test").unwrap();
     let windows = usage_windows(&collect_turn(&rx));
 
-    assert_eq!(windows.len(), 2);
-    let five = windows
+    let primary: Vec<_> = windows.iter().filter(|w| w.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    let five = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
         .unwrap();
-    let week = windows
+    let week = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
         .unwrap();
@@ -186,12 +188,13 @@ fn third_party_statusline_quota_becomes_usage_limits() {
     provider.send_prompt("usage_third_party_test").unwrap();
     let windows = usage_windows(&collect_turn(&rx));
 
-    assert_eq!(windows.len(), 2);
-    let five = windows
+    let primary: Vec<_> = windows.iter().filter(|w| w.pool.is_none()).collect();
+    assert_eq!(primary.len(), 2);
+    let five = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::FiveHour)
         .unwrap();
-    let week = windows
+    let week = primary
         .iter()
         .find(|w| w.kind == oxide_provider::UsageWindowKind::Weekly)
         .unwrap();

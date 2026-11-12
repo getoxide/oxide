@@ -101,25 +101,25 @@ it("switches to the numbered thread with the primary modifier plus a digit", asy
   expect(host.querySelector('[data-thread="3"]')).not.toBeNull();
 });
 
-it("keeps inline shortcut hints visible and highlights them while the primary modifier is held", async () => {
+it("hides inline shortcut hints by default and reveals them while the primary modifier is held", async () => {
   await act(async () => root.render(<App />));
   await settle();
   const newThread = () => host.querySelector<HTMLButtonElement>(".sidebar-actions .btn.grow")!;
   const openProject = () => host.querySelector<HTMLButtonElement>('.sidebar-actions button[aria-label="Open a Project"]')!;
-  expect(newThread().querySelector("kbd")?.textContent).toBe(label("N"));
-  expect(openProject().querySelector("kbd")?.textContent).toBe(isMac ? "⌘⇧N" : "Ctrl+Shift+N");
-  expect(newThread().querySelector(".inline-shortcut-kbd")).toBeNull();
-  expect(openProject().querySelector(".inline-shortcut-kbd")).toBeNull();
+  const settings = () => host.querySelector<HTMLButtonElement>(".sidebar-footer")!;
+  expect(newThread().querySelector("kbd")).toBeNull();
+  expect(openProject().querySelector("kbd")).toBeNull();
+  expect(settings().querySelector("kbd")).toBeNull();
 
   await holdPrimary();
-  expect(newThread().querySelector(".inline-shortcut-kbd")?.textContent).toBe(label("N"));
-  expect(openProject().querySelector(".inline-shortcut-kbd")?.textContent).toBe(isMac ? "⌘⇧N" : "Ctrl+Shift+N");
+  expect(newThread().querySelector("kbd")?.textContent).toBe(label("N"));
+  expect(openProject().querySelector("kbd")?.textContent).toBe(isMac ? "⌘⇧N" : "Ctrl+Shift+N");
+  expect(settings().querySelector("kbd")?.textContent).toBe(label(","));
 
   await key("keyup", primaryKey, primary);
-  expect(newThread().querySelector(".inline-shortcut-kbd")).toBeNull();
-  expect(openProject().querySelector(".inline-shortcut-kbd")).toBeNull();
-  expect(newThread().querySelector("kbd")).not.toBeNull();
-  expect(openProject().querySelector("kbd")).not.toBeNull();
+  expect(newThread().querySelector("kbd")).toBeNull();
+  expect(openProject().querySelector("kbd")).toBeNull();
+  expect(settings().querySelector("kbd")).toBeNull();
 });
 
 it("leaves the digits to an open dialog or model picker", async () => {

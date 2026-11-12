@@ -866,13 +866,18 @@ fn tool_content(name: &str, input: &str, kind: ItemKind) -> String {
     }
 }
 
-/// Maps a stream-json `rate_limit_event` to a `UsageLimits` event. Only the 5-hour and the
-/// all-Models weekly windows are kept; `utilization` is a fraction and may be absent.
+/// Maps a stream-json `rate_limit_event` to a `UsageLimits` event. The 5-hour, all-Models
+/// weekly, and model-specific weekly windows (Sonnet, Opus, Haiku) are captured; `utilization` is
+/// a fraction and may be absent.
 pub fn parse_rate_limit_event(val: &serde_json::Value) -> Option<ProviderEvent> {
     let info = val.get("rate_limit_info")?;
-    let kind = match info.get("rateLimitType")?.as_str()? {
-        "five_hour" => UsageWindowKind::FiveHour,
-        "seven_day" => UsageWindowKind::Weekly,
+    let limit_type = info.get("rateLimitType")?.as_str()?;
+    let (kind, pool) = match limit_type {
+        "five_hour" => (UsageWindowKind::FiveHour, None),
+        "seven_day" => (UsageWindowKind::Weekly, None),
+        "seven_day_sonnet" => (UsageWindowKind::Weekly, Some("sonnet".to_string())),
+        "seven_day_opus" => (UsageWindowKind::Weekly, Some("opus".to_string())),
+        "seven_day_haiku" => (UsageWindowKind::Weekly, Some("haiku".to_string())),
         _ => return None,
     };
     let status = match info.get("status").and_then(|v| v.as_str()) {
@@ -889,6 +894,7 @@ pub fn parse_rate_limit_event(val: &serde_json::Value) -> Option<ProviderEvent> 
                 .map(|u| u * 100.0),
             resets_at: info.get("resetsAt").and_then(|v| v.as_i64()),
             status,
+            pool,
         }],
     })
 }

@@ -10,6 +10,7 @@ fn window(kind: UsageWindowKind, percent: Option<f64>, resets_at: Option<i64>) -
         percent_used: percent,
         resets_at,
         status: UsageStatus::Ok,
+        pool: None,
     }
 }
 

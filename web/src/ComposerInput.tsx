@@ -1,6 +1,7 @@
 import { useDictationTarget } from "./dictation";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { SquareFillIcon } from "@primer/octicons-react";
 import { AttachmentChip } from "./AttachmentChip";
 import {
   insertAt,
@@ -35,6 +36,7 @@ interface ComposerInputProps {
   /** Files on the clipboard; text is inserted by the editor itself. */
   onPasteFiles?: (files: File[]) => void;
   className?: string;
+  onStop?: () => void;
 }
 
 interface Snapshot {
@@ -198,7 +200,7 @@ function plainFromFragment(fragment: DocumentFragment, chips: Map<string, Compos
  * the editor keeps its own undo history so removing a chip can be undone.
  */
 export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(function ComposerInput(
-  { value, onChange, disabled, placeholder, ariaLabel, onKeyDown, onPasteFiles, className },
+  { value, onChange, disabled, placeholder, ariaLabel, onKeyDown, onPasteFiles, className, onStop },
   ref,
 ) {
   const root = useRef<HTMLDivElement>(null);
@@ -572,7 +574,23 @@ export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(func
 
   return (
     <div className="composer-field" ref={field}>
-    <span ref={caretEl} className="composer-caret" aria-hidden="true" hidden />
+      {onStop && (
+        <button
+          type="button"
+          className="composer-stop-btn"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onStop();
+          }}
+          aria-label="Stop agent"
+          title="Stop agent (Esc)"
+        >
+          <SquareFillIcon size={10} />
+          <span>Stop</span>
+        </button>
+      )}
+      <span ref={caretEl} className="composer-caret" aria-hidden="true" hidden />
     <div
       ref={root}
       className={className ?? "composer-input"}

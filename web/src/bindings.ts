@@ -2231,9 +2231,25 @@ export type UsageLimits = UsageLimits_Serialize | UsageLimits_Deserialize;
 export type UsageLimits_Deserialize = {
 	fiveHour?: UsageLimitWindow_Deserialize | null,
 	weekly?: UsageLimitWindow_Deserialize | null,
+	pools?: { [key in string]: UsagePoolLimits_Deserialize },
 };
 
 export type UsageLimits_Serialize = {
+	fiveHour: UsageLimitWindow_Serialize | null,
+	weekly: UsageLimitWindow_Serialize | null,
+	pools: { [key in string]: UsagePoolLimits_Serialize },
+};
+
+export type UsagePoolLimits = UsagePoolLimits_Serialize | UsagePoolLimits_Deserialize;
+
+export type UsagePoolLimits_Deserialize = {
+	label: string,
+	fiveHour?: UsageLimitWindow_Deserialize | null,
+	weekly?: UsageLimitWindow_Deserialize | null,
+};
+
+export type UsagePoolLimits_Serialize = {
+	label: string,
 	fiveHour: UsageLimitWindow_Serialize | null,
 	weekly: UsageLimitWindow_Serialize | null,
 };

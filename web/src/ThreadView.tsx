@@ -61,6 +61,7 @@ import { createFrameBatcher } from "./frameBatcher";
 import { pageRequest, pagesToLoad, turnAt, type TranscriptPages } from "./transcriptPages";
 import { formatAccelerator, isClearCommand, matchesAccelerator, modelDigitShortcut, stopsTurn } from "./shortcuts";
 import { useShortcuts } from "./useShortcuts";
+import { useModifierHeld } from "./useModifierHeld";
 import { ProviderMark } from "./ProviderMark";
 import { Dropdown } from "./Dropdown";
 import { ModelEffortPicker } from "./ModelEffortPicker";
@@ -231,6 +232,7 @@ export function ThreadView({
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const shortcuts = useShortcuts();
+  const modifierHeld = useModifierHeld();
   const dictation = useDictationState();
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [providerCapsEntry, setProviderCaps] = useState<{ provider: string; caps: ProviderCapabilities } | null>(null);
@@ -1177,6 +1179,7 @@ export function ThreadView({
         thread={thread}
         title={threadTitle}
         provider={currentProvider}
+        model={currentModel}
         gitControls={gitControls}
         reportsUsage={providerCaps?.reportsUsageLimits ?? false}
         editing={isEditingTitle}
@@ -1329,6 +1332,7 @@ export function ThreadView({
           value={value}
           onChange={handleComposerChange}
           onPasteFiles={(files) => attachFiles(files, composerRef.current?.caret() ?? undefined)}
+          onStop={isTurnActive ? stop : undefined}
           placeholder={
             isTurnActive
               ? "Working… (Esc to stop)"
@@ -1378,6 +1382,7 @@ export function ThreadView({
             >
               <ProviderMark provider={currentProvider} size={14} />
               <span className="t">{displayModel}{effortName && ` · ${effortName}`}</span>
+              {modifierHeld && <kbd className="shortcut-badge">{formatAccelerator(shortcuts.modelPicker)}</kbd>}
               <ChevronDownIcon size={12} />
             </button>
             <Dropdown
@@ -1394,7 +1399,7 @@ export function ThreadView({
               onChange={(mode) => void handlePermissionChange(mode)}
             />
           </div>
-          <button type="button" className="cbtn" aria-label="Toggle dictation" aria-pressed={dictation.phase === "recording"} title={`Dictation (${formatAccelerator(shortcuts.dictation)})`} disabled={sending || dictation.phase === "starting" || dictation.phase === "transcribing"} onMouseDown={(e) => e.preventDefault()} onClick={(e) => toggleDictation(e.currentTarget.closest("form")?.querySelector("[contenteditable]") ?? null)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="5.5" y="1" width="5" height="8" rx="2.5"/><path d="M3 7a5 5 0 0 0 10 0M8 12v3M5 15h6"/></svg></button>
+          <button type="button" className="cbtn" aria-label="Toggle dictation" aria-pressed={dictation.phase === "recording"} title={`Dictation (${formatAccelerator(shortcuts.dictation)})`} disabled={sending || dictation.phase === "starting" || dictation.phase === "transcribing"} onMouseDown={(e) => e.preventDefault()} onClick={(e) => toggleDictation(e.currentTarget.closest("form")?.querySelector("[contenteditable]") ?? null)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="5.5" y="1" width="5" height="8" rx="2.5"/><path d="M3 7a5 5 0 0 0 10 0M8 12v3M5 15h6"/></svg>{modifierHeld && <kbd className="shortcut-badge">{formatAccelerator(shortcuts.dictation)}</kbd>}</button>
           <button
             type="button"
             className="cbtn"
