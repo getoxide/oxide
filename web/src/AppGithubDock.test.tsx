@@ -33,7 +33,7 @@ const thread = (id: number, title: string, branch: string | null) => ({
 const threads = [thread(2, "Alpha work", "feat-alpha"), thread(3, "Beta work", "feat-beta"), thread(4, "Chat", null)];
 const pullRequest = { number: 5, title: "Fix the thing", url: "https://github.com/me/repo/pull/5", draft: false, base: "main", head: "remote-topic", author: "alice", createdAt: "2026-01-01T00:00:00Z" };
 const baseDetail = {
-  pullRequest, phase: "open", body: "", headSha: "abc123", dossierOutOfDate: false, comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
+  pullRequest, phase: "open", body: "", headSha: "abc123", comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 1, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
   checks: [{ name: "web", state: "failure", url: null, required: true }],
   diff: {
@@ -84,7 +84,7 @@ beforeEach(() => {
       case "list_projects": case "rescan_projects": return [project];
       case "last_selection": return selection;
       case "list_threads": return selection.threadId === null ? [] : threads;
-      case "git_diff": case "git_turn_diff": return { base: "main", files: [] };
+      case "git_diff": return { base: "main", files: [] };
       case "git_status": {
         if (statusFail) throw { message: statusFail };
         const owner = threads.find((t) => t.id === args.threadId);
@@ -93,10 +93,6 @@ beforeEach(() => {
       case "list_pull_requests": return [pullRequest];
       case "pull_request_detail": return prDetail;
       case "pull_request_review_threads": return reviewThreads;
-      case "refresh_pull_request_dossier":
-        prDetail = { ...prDetail, dossierOutOfDate: false };
-        return { state: "updated", pullRequest: 5, message: null };
-      case "pull_pull_request_branch": if (fail) throw { message: fail }; return null;
       case "checkout_pull_request": if (fail) throw { message: fail }; return null;
       case "issues_state": return { availability: "ready", guidance: null };
       case "list_issues": return [issue];
@@ -166,33 +162,8 @@ it("opens a remote review without checking anything out, and checks out only in 
   expect(called("checkout_pull_request")).toEqual([]);
   expect(called("git_status").every((args) => args.threadId === 2)).toBe(true);
 
-  await click(byText("Review files"));
-  expect(host.querySelector('[role="tab"][aria-label="Diff"]')?.getAttribute("aria-selected")).toBe("true");
-  expect(text()).toContain("PR #5");
-  expect(called("checkout_pull_request")).toEqual([]);
-
-  await click(host.querySelector('[role="tab"][aria-label="Pull request"]'));
   await click(byText("Check out"));
   expect(called("checkout_pull_request")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
-});
-
-it("shows GitHub inline review threads on the PR Diff scope", async () => {
-  await open("Pull request");
-  await click(byText("Fix the thing"));
-  await click(byText("Review files"));
-  expect(called("pull_request_review_threads")).toContainEqual({ projectId: 1, number: 5 });
-  const review = host.querySelector('[aria-label="Review threads"]');
-  expect(review?.textContent).toContain("src/app.rs:1");
-  expect(review?.textContent).toContain("@alice");
-  expect(review?.textContent).toContain("Please add a guard.");
-  expect(review?.textContent).toContain("Resolved");
-  // The resolved thread stays collapsed until the user asks for it.
-  expect(review?.textContent).not.toContain("Done.");
-  const lost = host.querySelector('[aria-label="Review threads not in this diff"]');
-  expect(lost?.textContent).toContain("src/gone.rs:9");
-  expect(lost?.textContent).toContain("Old note.");
-  await click(host.querySelector('.review-thread-summary[aria-expanded="false"]'));
-  expect(review?.textContent).toContain("Done.");
 });
 
 it("explains a failed local checkout instead of falling back to another checkout", async () => {
@@ -237,39 +208,6 @@ it("starts a fix Thread from a failing pull request and selects it", async () =>
   expect(host.querySelector('[data-thread="10"]')).not.toBeNull();
 });
 
-it("shows a Dossier published for an earlier commit as out of date and refreshes it in place", async () => {
-  prDetail = {
-    ...baseDetail,
-    dossierOutOfDate: true,
-    pullRequest: { ...pullRequest, head: "feat-alpha" },
-  };
-  await open("Pull request");
-  await click(byText("Fix the thing"));
-  expect(text()).toContain("may not describe this branch's latest commit");
-  await click(byText("Refresh Dossier"));
-  expect(called("refresh_pull_request_dossier")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
-  await vi.waitFor(() => expect(text()).not.toContain("may not describe this branch's latest commit"));
-});
-
-it("can fast-forward the owning Thread checkout before refreshing the Dossier", async () => {
-  prDetail = {
-    ...baseDetail,
-    dossierOutOfDate: true,
-    pullRequest: { ...pullRequest, head: "feat-alpha" },
-  };
-  await open("Pull request");
-  await click(byText("Fix the thing"));
-  await click(byText("Pull & Refresh"));
-  expect(called("pull_pull_request_branch")).toEqual([
-    { projectId: 1, threadId: 2, expectedBranch: "feat-alpha", expectedHead: "abc123" },
-  ]);
-  expect(called("refresh_pull_request_dossier")).toEqual([{ projectId: 1, threadId: 2, number: 5 }]);
-  expect(calls.findIndex((call) => call.command === "pull_pull_request_branch")).toBeLessThan(
-    calls.findIndex((call) => call.command === "refresh_pull_request_dossier"),
-  );
-  await vi.waitFor(() => expect(text()).not.toContain("may not describe this branch's latest commit"));
-});
-
 it("keeps the remote review readable when the Thread's checkout cannot be read", async () => {
   await open("Pull request");
   statusFail = "Worktree was deleted";
@@ -277,7 +215,6 @@ it("keeps the remote review readable when the Thread's checkout cannot be read",
   expect(text()).toContain("remote-topic");
   expect(text()).toContain("Worktree was deleted");
   expect((byText("Check out") as HTMLButtonElement).disabled).toBe(true);
-  expect(byText("Review files")).toBeTruthy();
 });
 
 it("gives the dock's missing-Thread Files state the shared empty layout", async () => {

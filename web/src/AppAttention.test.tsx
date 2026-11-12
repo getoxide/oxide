@@ -51,10 +51,6 @@ function setup(fixture?: { threads?: Record<number, Thread[]>; boards?: Record<n
   });
   return channels;
 }
-const attentionButton = () => container.querySelector<HTMLButtonElement>(".attention-btn")!;
-const attentionDialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
-const attentionItem = (text: string) => [...document.querySelectorAll<HTMLButtonElement>(".attention-item")]
-  .find((button) => button.textContent?.includes(text))!;
 const shownThread = () => container.querySelector('[data-testid="thread"]')?.textContent;
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
 const press = (key: string, init: KeyboardEventInit = {}) => act(async () => {
@@ -78,93 +74,7 @@ function richSetup() {
   });
 }
 
-it("shows attention for a background Project and jumps to its pending Approval from the tray", async () => {
-  setup();
-  await act(async () => root.render(<App />));
-  expect(shownThread()).toBe("10");
-  expect(attentionButton().getAttribute("aria-label")).toBe("1 Thread needs you: 1 waiting for input (1 Approval)");
-  await act(async () => attentionButton().click());
-  await act(async () => attentionItem("T20").click());
-  await settle();
-  expect(shownThread()).toBe("20");
-  expect(document.activeElement?.className).toContain("approval-btn");
-  expect(attentionDialog()).toBeNull();
-});
-
-it("toggles an accessible Attention Center dialog from the bell", async () => {
-  setup();
-  await act(async () => root.render(<App />));
-  const bell = attentionButton();
-  expect(bell.getAttribute("aria-haspopup")).toBe("dialog");
-  expect(bell.getAttribute("aria-expanded")).toBe("false");
-  await act(async () => bell.click());
-  expect(bell.getAttribute("aria-expanded")).toBe("true");
-  expect(attentionDialog()?.getAttribute("aria-label")).toBe("Attention Center");
-  await act(async () => bell.click());
-  expect(bell.getAttribute("aria-expanded")).toBe("false");
-  expect(attentionDialog()).toBeNull();
-});
-
-it("lists pending Threads by Project with their branch and urgency reason", async () => {
-  richSetup();
-  await act(async () => root.render(<App />));
-  await act(async () => attentionButton().click());
-  const dialog = attentionDialog()!;
-  const group = (name: string) => [...dialog.querySelectorAll<HTMLElement>(".attention-group")]
-    .find((section) => section.querySelector("h3")?.textContent === name)!;
-  expect([...dialog.querySelectorAll(".attention-group h3")].map((heading) => heading.textContent)).toEqual(["Alpha", "Beta"]);
-  const alpha = group("Alpha");
-  expect(alpha.textContent).toContain("Build failed");
-  expect(alpha.textContent).toContain("fix/build");
-  expect(alpha.textContent).toContain("Failed Turn");
-  expect(alpha.textContent).toContain("Lost session");
-  expect(alpha.textContent).toContain("Interrupted");
-  expect(alpha.textContent).toContain("Waiting on prompt");
-  expect(alpha.textContent).toContain("Needs Input");
-  expect(alpha.textContent).not.toContain("Release check");
-  const beta = group("Beta");
-  expect(beta.textContent).toContain("Release check");
-  expect(beta.textContent).toContain("feat/beta");
-  expect(beta.textContent).toContain("Pending Approval");
-  expect(beta.textContent).toContain("rm");
-  expect(dialog.textContent).not.toContain("Alpha work");
-});
-
-it("clicking a tray item navigates, focuses its action card and closes the tray", async () => {
-  richSetup();
-  await act(async () => root.render(<App />));
-  expect(shownThread()).toBe("10");
-  await act(async () => attentionButton().click());
-  await act(async () => attentionItem("Release check").click());
-  await settle();
-  expect(shownThread()).toBe("20");
-  expect(document.activeElement?.className).toContain("approval-btn");
-  expect(attentionDialog()).toBeNull();
-  expect(attentionButton().getAttribute("aria-expanded")).toBe("false");
-});
-
-it("closes the tray on Escape and returns focus to the bell", async () => {
-  setup();
-  await act(async () => root.render(<App />));
-  const bell = attentionButton();
-  bell.focus();
-  await act(async () => bell.click());
-  expect(attentionDialog()).not.toBeNull();
-  await press("Escape");
-  expect(attentionDialog()).toBeNull();
-  expect(document.activeElement).toBe(bell);
-});
-
-it("closes the tray when clicking outside it", async () => {
-  setup();
-  await act(async () => root.render(<App />));
-  await act(async () => attentionButton().click());
-  expect(attentionDialog()).not.toBeNull();
-  await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
-  expect(attentionDialog()).toBeNull();
-});
-
-it("jumps straight to the most urgent item from the keyboard without opening the tray", async () => {
+it("jumps straight to the most urgent item from the keyboard", async () => {
   richSetup();
   await act(async () => root.render(<App />));
   expect(shownThread()).toBe("10");
@@ -172,18 +82,4 @@ it("jumps straight to the most urgent item from the keyboard without opening the
   await settle();
   expect(shownThread()).toBe("20");
   expect(document.activeElement?.className).toContain("approval-btn");
-  expect(attentionDialog()).toBeNull();
-  expect(attentionButton().getAttribute("aria-expanded")).toBe("false");
-});
-
-it("updates the indicator from background events without moving focus or the selection", async () => {
-  const channels = setup();
-  await act(async () => root.render(<App />));
-  const input = container.querySelector<HTMLElement>('[role="textbox"]')!;
-  input.focus();
-  await act(async () => channels[1].onmessage({ type: "ThreadChanged", payload: { ...card({ ...thread(10, 1, "error") }), thread: { ...thread(10, 1, "error"), updatedAt: "2026-01-02T00:00:00Z" } } }));
-  expect(attentionButton().getAttribute("aria-label")).toContain("2 Threads need you");
-  expect(attentionButton().getAttribute("aria-label")).toContain("1 error");
-  expect(document.activeElement).toBe(input);
-  expect(shownThread()).toBe("10");
 });

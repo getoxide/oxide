@@ -23,7 +23,7 @@ Core, never to a webview filesystem or shell permission.
 ## Workflows
 
 The Thread and its Transcript stay in the centre. A collapsible sidebar holds
-Projects and recent Threads. One right dock holds Diff, Files, Terminal,
+Projects and recent Threads. One right dock holds Files, Terminal,
 Pull request and Issues; each Surface can be maximized and restored.
 Work modes are removed. Files contains the editor, and Project terminal tabs
 retain their own checkout. Switching tools or their presentation keeps open files,

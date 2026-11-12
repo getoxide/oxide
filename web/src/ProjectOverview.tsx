@@ -1,6 +1,5 @@
 import {
   CommentDiscussionIcon,
-  FileDiffIcon,
   GitPullRequestIcon,
   PlusIcon,
   RepoIcon,
@@ -16,7 +15,6 @@ export function ProjectOverview({
   onNewThread,
   onOpenThread,
   onSuggestionAccepted,
-  onOpenDiff,
   onOpenPullRequest,
 }: {
   project: Project;
@@ -24,7 +22,6 @@ export function ProjectOverview({
   onNewThread: () => void;
   onOpenThread: (id: number) => void;
   onSuggestionAccepted: (thread: Thread) => void;
-  onOpenDiff: () => void;
   onOpenPullRequest: () => void;
 }) {
   const working = threads.filter((t) => t.status === "working").length;
@@ -84,9 +81,6 @@ export function ProjectOverview({
         <RuleSuggestions key={project.id} projectId={project.id} onAccepted={onSuggestionAccepted} />
         <ReviewLedgerSummary key={project.id} projectId={project.id} />
         <nav className="project-overview-links" aria-label="Project tools">
-          <button onClick={onOpenDiff}>
-            <FileDiffIcon size={16} /> Review changes
-          </button>
           <button onClick={onOpenPullRequest}>
             <GitPullRequestIcon size={16} /> Pull requests
           </button>

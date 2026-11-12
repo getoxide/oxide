@@ -19,7 +19,6 @@ vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./dictation", () => ({ DictationController: () => null }));
 vi.mock("./CodeWorkbench", () => ({ CodeWorkbench: () => <div className="code-workbench">Editor</div> }));
 vi.mock("./TerminalSurface", () => ({ TerminalSurface: () => <div className="terminal-surface">Terminal</div> }));
-vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div className="diff-panel">Diff content</div> }));
 vi.mock("./PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
 vi.mock("./IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
 vi.mock("./SettingsView", () => ({ SettingsView: ({ onClose }: { onClose: () => void }) => <div className="settings-view"><button onClick={onClose}>Close</button></div> }));
@@ -53,7 +52,6 @@ beforeEach(() => {
       case "list_projects": case "rescan_projects": return projects;
       case "last_selection": return { projectId: 1, threadId: 10 };
       case "list_threads": return threads[(args as { projectId: number })?.projectId ?? 1] ?? [];
-      case "git_diff": case "git_turn_diff": return { base: "main", files: [] };
       case "git_status": return { branch: "main", ahead: 0, behind: 0, modified: 0, untracked: 0, staged: 0 };
       case "list_turns": return { turnCount: 1, turns: [] };
       case "plugin:event|listen": return 1;

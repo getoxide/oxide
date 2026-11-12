@@ -4,7 +4,7 @@ export type ModelInfo = BindingsModelInfo;
 
 export interface SlashCommandParseResult {
 
-  type: "model" | "effort" | "rename" | "diff" | "permissions" | "reload-cache" | "other" | "none";
+  type: "model" | "effort" | "rename" | "permissions" | "reload-cache" | "other" | "none";
 
   command: string;
   arg?: string;
@@ -34,8 +34,8 @@ export function parseSlashCommand(input: string): SlashCommandParseResult {
     return { type: "reload-cache", command, arg: arg || undefined };
   }
 
-  if (command === "/rename" || command === "/diff" || command === "/permissions") {
-    return { type: command.slice(1) as "rename" | "diff" | "permissions", command, arg: arg || undefined };
+  if (command === "/rename" || command === "/permissions") {
+    return { type: command.slice(1) as "rename" | "permissions", command, arg: arg || undefined };
   }
 
   return { type: "other", command, arg: arg || undefined };

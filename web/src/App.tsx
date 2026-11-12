@@ -4,12 +4,11 @@ import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, u
 import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type Project, type Thread, type ThreadStatus, type DiffFile, type ProjectServiceConflict } from "./bindings";
-import type { CodeOpenRequest, ReviewTarget } from "./codeOpen";
+import { commands, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import type { CodeOpenRequest } from "./codeOpen";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  FileDiffIcon,
   FileDirectoryIcon,
   FileIcon,
   EyeIcon,
@@ -28,13 +27,10 @@ import {
   type Icon,
   TrashIcon,
 } from "@primer/octicons-react";
-import { attentionGroups, attentionTarget, summarizeAttention, type AttentionTarget } from "./attention";
-import { AttentionButton } from "./AttentionButton";
+import { attentionTarget, type AttentionTarget } from "./attention";
 import { useAttention } from "./useAttention";
 import { useAttentionFocus } from "./useAttentionFocus";
 import { isBoardThread } from "./dispatch";
-import { DiffOpenContext } from "./diffOpen";
-import { defaultDiffScope, type PanelScope } from "./diffScope";
 import {
   allTabsOfThread, closeTab, describeAffectedTabs, emptyTerminals, focusCheckoutTab, openServiceTab, openTab, removeThreadTabsEverywhere, selectTab, setRunning,
   type TerminalCheckout, type TerminalsByProject,
@@ -71,7 +67,6 @@ const CodeWorkbench = lazy(() => import("./CodeWorkbench").then((module) => ({ d
 const FilesPanel = lazy(() => import("./FilesPanel").then((module) => ({ default: module.FilesPanel })));
 type WorkbenchContext = { key: string; projectId: number; threadId: number | null; rootPath: string };
 
-const DiffPanel = lazy(() => import("./DiffPanel").then((module) => ({ default: module.DiffPanel })));
 const PullRequestPanel = lazy(() =>
   import("./PullRequestPanel").then((module) => ({ default: module.PullRequestPanel })),
 );
@@ -79,7 +74,6 @@ const IssuesSurface = lazy(() =>
   import("./IssuesSurface").then((module) => ({ default: module.IssuesSurface })),
 );
 const TOOL_TABS: { name: string; Icon: Icon }[] = [
-  { name: "Diff", Icon: FileDiffIcon },
   { name: "Files", Icon: FileIcon },
   { name: "Terminal", Icon: TerminalIcon },
   { name: "Pull request", Icon: GitPullRequestIcon },
@@ -87,7 +81,7 @@ const TOOL_TABS: { name: string; Icon: Icon }[] = [
 ];
 
 const TOOL_TAB_ACTION: Record<string, ShortcutAction> = {
-  Files: "files", Diff: "diff", Terminal: "terminal", "Pull request": "pullRequests", Issues: "issues",
+  Files: "files", Terminal: "terminal", "Pull request": "pullRequests", Issues: "issues",
 };
 
 export function App() {
@@ -107,12 +101,9 @@ export function App() {
   const keys = (action: ShortcutAction) => formatAccelerator(shortcuts[action]);
   const modifierHeld = useModifierHeld();
   const [showTools, setShowTools] = useState(false);
-  const [fallbackTool, setFallbackTool] = useState<string>("Diff");
+  const [fallbackTool, setFallbackTool] = useState<string>("Files");
   const [activeToolsByProject, setActiveToolsByProject] = useState<Record<number, string>>({});
   const selectedThreadsByProject = useRef<Record<number, number | null>>({});
-  // The user's pick, for the Thread it was made in: elsewhere that Thread's default applies.
-  const [chosenDiffScope, setChosenDiffScope] = useState<{ threadId: number | null; scope: PanelScope } | null>(null);
-  const [diffFocus, setDiffFocus] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodySize = useElementSize(bodyRef, { width: window.innerWidth, height: window.innerHeight - 44 });
@@ -172,11 +163,6 @@ export function App() {
   }, [selectedId]);
   const openProjectIds = useMemo(() => sidebarProjects(projects ?? []).map((project) => project.id), [projects]);
   const attentionCards = useAttention(openProjectIds);
-  const attention = summarizeAttention(attentionCards);
-  const attentionTray = useMemo(
-    () => attentionGroups(attentionCards, sidebarProjects(projects ?? []).map(({ id, name }) => ({ id, name }))),
-    [attentionCards, projects],
-  );
   // A requested jump: kept until its Thread is shown and the response focused, so loading or failure never drops it.
   const [attentionJump, setAttentionJump] = useState<{ target: AttentionTarget; failed: boolean } | null>(null);
   const pendingThread = useRef<number | null>(null);
@@ -301,9 +287,9 @@ export function App() {
     setMaximized(false);
     setShowSettings(false);
   }, [workbenchContext, ensureCodeWorkspace]);
-  const openCodeFile = (path: string, diff?: DiffFile, remote = false, review?: ReviewTarget) => {
+  const openCodeFile = (path: string) => {
     if (!workbenchContext) return;
-    setCodeRequest({ id: ++codeSequence.current, path, diff, remote, review, contextKey: workbenchContext.key });
+    setCodeRequest({ id: ++codeSequence.current, path, contextKey: workbenchContext.key });
     ensureCodeWorkspace(workbenchContext);
     setMaximized(false);
     setShowSettings(false);
@@ -314,24 +300,6 @@ export function App() {
     if (legacySurface.current) { setActiveTool(legacySurface.current); setShowTools(true); legacySurface.current = null; }
     try { localStorage.removeItem("oxide:work-mode"); } catch { /* Presentation still migrates without storage. */ }
   }, [selected, threads, setActiveTool]);
-  const diffThread = {
-    board: threads?.some((thread) => thread.id === currentThreadId && isBoardThread(thread)) ?? false,
-    /** The selected Thread works in its own worktree, so nothing else edits its checkout. */
-    worktree: threads?.some((thread) => thread.id === currentThreadId && thread.worktreePath != null) ?? false,
-  };
-  // A Turn runs in the selected Thread's checkout: its own, or another Thread's that
-  // shares it. A Thread with a worktree of its own leaves this checkout alone.
-  const checkoutBusy = selected
-    ? (threads?.some((thread) =>
-        (thread.status === "working" || thread.status === "needs-input") &&
-        (thread.worktreePath ?? selected.path) === (selectedThread?.worktreePath ?? selected.path),
-      ) ?? false)
-    : false;
-  const diffScope =
-    chosenDiffScope && chosenDiffScope.threadId === currentThreadId
-      ? chosenDiffScope.scope
-      : defaultDiffScope(diffThread);
-  // Read by the stable `openDiff`.
   const currentThreadRef = useRef(currentThreadId);
   const currentProjectRef = useRef(selectedId);
   useEffect(() => {
@@ -357,7 +325,7 @@ export function App() {
   }, []);
 
   // Changes whenever a Thread's status does, so Git views refresh after a Turn.
-  // A commit or push bumps it too, so the header and the Diff Surface reload.
+  // A commit or push bumps it too, so the header reloads.
   const [gitRevision, setGitRevision] = useState(0);
   const onGitChanged = useCallback(() => {
     setGitRevision((n) => n + 1);
@@ -379,26 +347,6 @@ export function App() {
   if (turnRevision.statuses !== threadStatuses) {
     setTurnRevision({ statuses: threadStatuses, count: turnRevision.count + 1 });
   }
-
-  // Stable: it reaches memoized TurnViews through context.
-  const openDiff = useCallback((hint?: string) => {
-    setShowTools(true);
-    setRegionPriority("tools");
-    setActiveTool("Diff");
-    setChosenDiffScope({ threadId: currentThreadRef.current, scope: "uncommitted" });
-    setDiffFocus(hint ?? null);
-  }, [setActiveTool]);
-
-  // The pull request whose files the Diff Surface's PR scope shows.
-  const [reviewedPr, setReviewedPr] = useState<{ projectId: number; number: number } | null>(null);
-  const reviewPullRequestFiles = useCallback((projectId: number, number: number) => {
-    setReviewedPr({ projectId, number });
-    setShowTools(true);
-    setRegionPriority("tools");
-    setActiveTool("Diff");
-    setChosenDiffScope({ threadId: currentThreadRef.current, scope: "pr" });
-    setDiffFocus(null);
-  }, [setActiveTool]);
 
   const openPullRequest = useCallback(() => {
     setShowSettings(false);
@@ -766,8 +714,8 @@ export function App() {
         setShowSettings(false);
         setMaximized(false);
         selectThread(next);
-      } else if (action === "files" || action === "diff" || action === "pullRequests" || action === "issues" || action === "terminal") {
-        const tool = { files: "Files", diff: "Diff", pullRequests: "Pull request", issues: "Issues", terminal: "Terminal" }[action];
+      } else if (action === "files" || action === "pullRequests" || action === "issues" || action === "terminal") {
+        const tool = { files: "Files", pullRequests: "Pull request", issues: "Issues", terminal: "Terminal" }[action];
         selectSurface(tool);
         requestAnimationFrame(() => focusRegion("dock"));
       } else if (action === "toggleTools") {
@@ -956,9 +904,6 @@ export function App() {
         {!isWindows && <span className="grow" data-tauri-drag-region />}
         <div className="header-actions" data-tauri-drag-region>
         {openError && <span className="error header-error" role="alert">{openError}</span>}
-        <AttentionButton summary={attention} groups={attentionTray} failed={attentionJump?.failed ?? false}
-          onActivate={() => jumpToAttention()} onJump={jumpToAttention}
-          onRetry={() => setAttentionJump((current) => current && { ...current, failed: false })} />
         {selected && !selected.missing && currentThreadId !== null && (
           <button className="icon-btn" title="Reveal in Finder" aria-label="Reveal in Finder" onClick={() => void revealCheckout()}>
             <FileDirectoryIcon size={16} />
@@ -967,7 +912,7 @@ export function App() {
         <button
           className="icon-btn"
           aria-pressed={dockVisible}
-          title={`Surfaces: Diff, Files, Terminal, Pull request, Issues (${keys("toggleTools")})`}
+          title={`Surfaces: Files, Terminal, Pull request, Issues (${keys("toggleTools")})`}
           aria-label="Toggle tools panel"
           onClick={() => {
             const willShow = !dockVisible;
@@ -1060,7 +1005,6 @@ export function App() {
                 setThreads((previous) => [thread, ...(previous ?? []).filter((t) => t.id !== thread.id)]);
                 selectThread(thread.id);
               }}
-              onOpenDiff={openDiff}
               onOpenPullRequest={() => { setShowTools(true); setActiveTool("Pull request"); }} />
           ) : selected ? (
             <>
@@ -1087,15 +1031,8 @@ export function App() {
                 </button>
               </div>
             <main className="centre" aria-label="Thread" hidden={centreView === "code"}>
-              <DiffOpenContext.Provider value={openDiff}>
-                <ThreadView
+                              <ThreadView
                   visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
-                  onOpenDefaultDiff={() => {
-                    setShowTools(true);
-                    setActiveTool("Diff");
-                    setChosenDiffScope(null);
-                    setDiffFocus(null);
-                  }}
                   threadId={selectedThreadId}
                   projectId={selected.id}
                   gitControls={currentThreadId !== null && !selected.missing ? (
@@ -1104,7 +1041,14 @@ export function App() {
                       threadId={currentThreadId}
                       threadsKey={threadsKey}
                       agentBusy={selectedThread ? ["working", "needs-input"].includes(selectedThread.status) : false}
-                      onOpenDiff={() => openDiff()}
+                      threadProvider={selectedThread?.provider}
+                      threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
+                      threadWorking={selectedThread?.status === "working"}
+                      onThreadCreated={(thread) => {
+                        setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
+                        setSelectedThreadId(thread.id);
+                      }}
+                      onRestored={onRestored}
                       onOpenPullRequest={openPullRequest}
                       onChanged={onGitChanged}
                     />
@@ -1144,7 +1088,6 @@ export function App() {
                   newThreadFocus={newThreadFocus?.threadId === currentThreadId ? newThreadFocus : null}
                   onNewThreadFocusHandled={() => setNewThreadFocus(null)}
                 />
-              </DiffOpenContext.Provider>
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key
@@ -1158,7 +1101,6 @@ export function App() {
                   showExplorer={false}
                   onChanged={onGitChanged}
                   onOpenLanguageSettings={() => { setSettingsSection("language"); setMaximized(false); setShowSettings(true); }}
-                  onBackToDiff={() => selectSurface("Diff")}
                   openRequest={codeRequest?.contextKey === context.key ? codeRequest : null}
                 />
               </Suspense>
@@ -1214,45 +1156,6 @@ export function App() {
                 </button>
               </div>
             </nav>
-            {selected && visitedTools[`${selected.id}:Diff`] && (
-              <div className="surface-content" hidden={activeTool !== "Diff"}><Suspense fallback={<Skeleton kind="diff" label="Loading changesâ€¦" />}>
-                <DiffPanel
-                  projectId={selected.id}
-                  threadId={currentThreadId}
-                  threadProvider={selectedThread?.provider}
-                  threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
-                  board={diffThread.board}
-                  worktree={diffThread.worktree}
-                  turnRunning={threads?.some((thread) => thread.status === "working" && (diffThread.board ? thread.id === currentThreadId : !isBoardThread(thread))) ?? false}
-                  checkoutBusy={checkoutBusy}
-                  scope={diffScope}
-                  reviewedPr={reviewedPr?.projectId === selected.id ? reviewedPr.number : null}
-                  onScopeChange={(scope) => {
-                    setChosenDiffScope({ threadId: currentThreadId, scope });
-                    setDiffFocus(null);
-                  }}
-                  focus={diffFocus}
-                  refreshKey={threadsKey}
-                  onChanged={onGitChanged}
-                  onRestored={onRestored}
-                  onOpenPullRequest={openPullRequest}
-                  threadWorking={selectedThread?.status === "working"}
-                  onThreadCreated={(thread) => {
-                    setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                    setSelectedThreadId(thread.id);
-                  }}
-                  onOpenFile={(file) => {
-                    const review: ReviewTarget | undefined =
-                      diffScope === "pr" && reviewedPr?.projectId === selected.id
-                        ? { kind: "pullRequest", pullRequest: reviewedPr.number }
-                        : diffScope !== "pr" && currentThreadId !== null
-                          ? { kind: "thread", threadId: currentThreadId, scope: diffScope }
-                          : undefined;
-                    openCodeFile(file.path, file, diffScope === "pr", review);
-                  }}
-                />
-              </Suspense></div>
-            )}
             {selected && visitedTools[`${selected.id}:Pull request`] && (
               <div className="surface-content" hidden={activeTool !== "Pull request"}><Suspense fallback={<Skeleton kind="list" label="Loading pull requestsâ€¦" />}>
                 <PullRequestPanel
@@ -1264,7 +1167,6 @@ export function App() {
                   threads={threads ?? []}
                   refreshKey={gitRevision + turnRevision.count}
                   onChanged={onGitChanged}
-                  onReviewFiles={(number) => reviewPullRequestFiles(selected.id, number)}
                   onFixPullRequest={(prompt, ownerThreadId, reviewRound) => fixPullRequest(selected.id, prompt, ownerThreadId, reviewRound)}
                 />
               </Suspense></div>
@@ -1307,7 +1209,7 @@ export function App() {
               <section className="surface-empty">
                 <RepoIcon size={32} />
                 <p className="surface-empty-title">Open a Project to use its tools.</p>
-                <p className="surface-empty-description">The right dock holds five Surfaces for the selected Project: Diff, Files, Terminal, Pull request and Issues.</p>
+                <p className="surface-empty-description">The right dock holds four Surfaces for the selected Project: Files, Terminal, Pull request and Issues.</p>
                 <button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button>
               </section>
             )}

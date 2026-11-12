@@ -83,24 +83,6 @@ export const commands = {
 	dismissBlindReviewFinding: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("dismiss_blind_review_finding", { id })),
 	getProjectSetupCommand: (projectId: number) => typedError<string | null, AppError>(__TAURI_INVOKE("get_project_setup_command", { projectId })),
 	setProjectSetupCommand: (projectId: number, command: string | null) => typedError<null, AppError>(__TAURI_INVOKE("set_project_setup_command", { projectId, command })),
-	/**  The Project's own Verification commands, besides the built-in patterns. */
-	getProjectVerificationCommands: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("get_project_verification_commands", { projectId })),
-	/**  Replaces the Project's own Verification commands. */
-	setProjectVerificationCommands: (projectId: number, commands: string[]) => typedError<null, AppError>(__TAURI_INVOKE("set_project_verification_commands", { projectId, commands })),
-	/**  The Project's own sensitive paths, besides the built-in CI, dependency and migration patterns. */
-	getProjectSensitivePaths: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("get_project_sensitive_paths", { projectId })),
-	/**  Replaces the Project's own sensitive paths. */
-	setProjectSensitivePaths: (projectId: number, paths: string[]) => typedError<null, AppError>(__TAURI_INVOKE("set_project_sensitive_paths", { projectId, paths })),
-	/**
-	 *  The Dossier of a Thread: which Verification commands ran, whether they still apply, the
-	 *  separate risk signals about what stayed uncovered, and how much supervision the Turns had.
-	 */
-	verificationDossier: (threadId: number) => typedError<VerificationDossier_Serialize, AppError>(__TAURI_INVOKE("verification_dossier", { threadId })),
-	/**
-	 *  The Dossier of the Thread's whole branch: its commands and supervision, the commits no Turn
-	 *  produced and the pull request's checks.
-	 */
-	branchDossier: (threadId: number) => typedError<VerificationDossier_Serialize, AppError>(__TAURI_INVOKE("branch_dossier", { threadId })),
 	/**
 	 *  Whether chat Threads of this Project stay in the main checkout instead of each
 	 *  getting its own worktree on their first prompt.
@@ -194,8 +176,6 @@ export const commands = {
 	listBranches: (projectId: number, threadId: number | null) => typedError<GitBranch[], AppError>(__TAURI_INVOKE("list_branches", { projectId, threadId })),
 	/**  The changes of the main checkout in one scope, from Git. */
 	gitDiff: (projectId: number, threadId: number | null, scope: DiffScope) => typedError<Diff_Serialize, AppError>(__TAURI_INVOKE("git_diff", { projectId, threadId, scope })),
-	/**  What one Turn of a Thread changed, from its two Checkpoints. */
-	gitTurnDiff: (threadId: number, turnIndex: number) => typedError<Diff_Serialize, AppError>(__TAURI_INVOKE("git_turn_diff", { threadId, turnIndex })),
 	/**  The Thread's Turns, oldest first, for the Turn picker. */
 	listTurnPicks: (threadId: number) => typedError<TurnPick[], AppError>(__TAURI_INVOKE("list_turn_picks", { threadId })),
 	/**  What restoring a Thread's files to before a Turn would change. */
@@ -206,9 +186,6 @@ export const commands = {
 	undoRestore: (threadId: number) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("undo_restore", { threadId })),
 	/**  The restore of a Thread that can still be undone, if there is one. */
 	pendingRestore: (threadId: number) => typedError<PendingRestore | null, AppError>(__TAURI_INVOKE("pending_restore", { threadId })),
-	/**  Takes a file, or one hunk of it, out of the Uncommitted or Turn diff of a Thread's checkout. */
-	revertDiff: (projectId: number, threadId: number | null, scope: RevertScope, path: string, hunk: RevertHunk | null, confirmDelete: boolean) => typedError<null, AppError>(__TAURI_INVOKE("revert_diff", { projectId, threadId, scope, path, hunk, confirmDelete })),
-	addLineComment: (threadId: number, comment: NewLineComment) => typedError<LineComment_Serialize, AppError>(__TAURI_INVOKE("add_line_comment", { threadId, comment })),
 	editLineComment: (id: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_line_comment", { id, body })),
 	deleteLineComment: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("delete_line_comment", { id })),
 	/**  A Thread's draft comments, each flagged when its line has changed. */
@@ -217,13 +194,6 @@ export const commands = {
 	sendLineComments: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("send_line_comments", { threadId })),
 	/**  Sends a request that addresses selected reviewer comments, counting it as a review round. */
 	sendReviewerComments: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("send_reviewer_comments", { threadId, prompt })),
-	addPullRequestLineComment: (projectId: number, pullRequest: number, comment: NewPullRequestLineComment) => typedError<PullRequestLineComment, AppError>(__TAURI_INVOKE("add_pull_request_line_comment", { projectId, pullRequest, comment })),
-	editPullRequestLineComment: (id: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_pull_request_line_comment", { id, body })),
-	deletePullRequestLineComment: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("delete_pull_request_line_comment", { id })),
-	/**  A pull request's draft Line comments, oldest first. */
-	listPullRequestLineComments: (projectId: number, pullRequest: number) => typedError<PullRequestLineComment[], AppError>(__TAURI_INVOKE("list_pull_request_line_comments", { projectId, pullRequest })),
-	/**  Sends every draft as one GitHub review, leaving them in place if GitHub refuses. */
-	submitPullRequestReview: (projectId: number, number: number, verdict: ReviewVerdict, summary: string) => typedError<null, AppError>(__TAURI_INVOKE("submit_pull_request_review", { projectId, number, verdict, summary })),
 	/**  Checks out a branch; a remote one (`origin/x`) becomes a tracking branch. */
 	checkoutBranch: (projectId: number, threadId: number | null, name: string) => typedError<null, AppError>(__TAURI_INVOKE("checkout_branch", { projectId, threadId, name })),
 	/**  Creates a branch from HEAD and checks it out. */
@@ -232,15 +202,10 @@ export const commands = {
 	fetchProject: (projectId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("fetch_project", { projectId })),
 	/**  `git pull --ff-only`. */
 	pull: (projectId: number, threadId: number | null) => typedError<null, AppError>(__TAURI_INVOKE("pull", { projectId, threadId })),
-	/**  Fast-forwards a Thread checkout only if it is still on the pull request's branch. */
-	pullPullRequestBranch: (projectId: number, threadId: number, expectedBranch: string, expectedHead: string) => typedError<null, AppError>(__TAURI_INVOKE("pull_pull_request_branch", { projectId, threadId, expectedBranch, expectedHead })),
 	/**  Commits exactly the given files; other staged state is untouched. */
 	commit: (projectId: number, threadId: number | null, paths: string[], message: string) => typedError<null, AppError>(__TAURI_INVOKE("commit", { projectId, threadId, paths, message })),
-	/**
-	 *  Pushes the current branch; never forced. A Dossier update that fails is reported in the
-	 *  outcome rather than failing the push.
-	 */
-	push: (projectId: number, threadId: number | null, allowProtected: boolean) => typedError<PushOutcome_Serialize, AppError>(__TAURI_INVOKE("push", { projectId, threadId, allowProtected })),
+	/**  Pushes the current branch; never forced. */
+	push: (projectId: number, threadId: number | null, allowProtected: boolean) => typedError<null, AppError>(__TAURI_INVOKE("push", { projectId, threadId, allowProtected })),
 	/**
 	 *  Whether `gh` works and the branch's open pull request. Runs `gh` only when
 	 *  asked; the Surface decides when to refresh.
@@ -251,22 +216,12 @@ export const commands = {
 	/**  Title, body and base prefilled from the branch's commits. */
 	pullRequestDraft: (projectId: number, threadId: number | null) => typedError<PullRequestDraft, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId, threadId })),
 	/**  Pushes the branch if needed, then opens a pull request for it. */
-	createPullRequest: (projectId: number, threadId: number | null, pullRequest: NewPullRequest_Deserialize) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, threadId, pullRequest })),
-	/**
-	 *  The Dossier section for the pull request about to be opened from a Thread's branch. Prompts
-	 *  and the agent's closing message are included only when asked for.
-	 */
-	dossierPullRequestSection: (projectId: number, threadId: number, includePrompts: boolean, includeAgentMessage: boolean) => typedError<DossierSection, AppError>(__TAURI_INVOKE("dossier_pull_request_section", { projectId, threadId, includePrompts, includeAgentMessage })),
+	createPullRequest: (projectId: number, threadId: number | null, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, threadId, pullRequest })),
 	openPullRequest: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("open_pull_request", { projectId })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
 	listPullRequests: (projectId: number, mine: boolean, search: string) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("list_pull_requests", { projectId, mine, search })),
 	/**  One pull request's description, checks, conversation and changed files. */
 	pullRequestDetail: (projectId: number, number: number) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number })),
-	/**
-	 *  Recomputes and republishes a pull request's Dossier section, because the branch moved outside
-	 *  Oxide. A section removed by hand is not re-added.
-	 */
-	refreshPullRequestDossier: (projectId: number, threadId: number, number: number) => typedError<DossierUpdate_Serialize, AppError>(__TAURI_INVOKE("refresh_pull_request_dossier", { projectId, threadId, number })),
 	pullRequestReviewThreads: (projectId: number, number: number) => typedError<PullRequestReviewThread_Serialize[], AppError>(__TAURI_INVOKE("pull_request_review_threads", { projectId, number })),
 	commentPullRequest: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_pull_request", { projectId, number, body })),
 	mergePullRequest: (projectId: number, number: number, method: MergeMethod, deleteBranch: boolean, auto: boolean) => typedError<null, AppError>(__TAURI_INVOKE("merge_pull_request", { projectId, number, method, deleteBranch, auto })),
@@ -321,12 +276,6 @@ export type AdviceConfidence = "low" | "medium" | "high";
 export type AdvicePreference = "balanced" | "quality";
 
 export type AdviceStatus = "recommended" | "usableSlower" | "notRecommended" | "insufficientData";
-
-/**  The closing message of the agent, kept apart from what Oxide computed. */
-export type AgentClaim = {
-	turnIndex: number,
-	text: string,
-};
 
 export type AppError = {
 	message: string,
@@ -501,14 +450,6 @@ export type BlindReviewRequest_Serialize = {
 	issue: string | null,
 };
 
-/**  Who reviewed a change and how many findings were kept. */
-export type BlindReviewSummary = {
-	reviewThreadId: number,
-	provider: string,
-	findings: number,
-	kept: number,
-};
-
 /**  A Thread on the Thread Board with the Approvals it is waiting on. */
 export type BoardCard = BoardCard_Serialize | BoardCard_Deserialize;
 
@@ -533,12 +474,6 @@ export type BoardEvent = BoardEvent_Serialize | BoardEvent_Deserialize;
 export type BoardEvent_Deserialize = { type: "ThreadChanged"; payload: BoardCard_Deserialize } | { type: "ThreadDeleted"; payload: number };
 
 export type BoardEvent_Serialize = { type: "ThreadChanged"; payload: BoardCard_Serialize } | { type: "ThreadDeleted"; payload: number };
-
-/**  A commit on the branch that no Turn of the Thread accounts for. */
-export type BranchCommit = {
-	sha: string,
-	subject: string,
-};
 
 /**  A Board Thread's pull request: its state and a tally of its checks. */
 export type BranchPullRequest = {
@@ -895,7 +830,7 @@ export type DispatchRequest_Deserialize = {
 	baseBranch?: string | null,
 	issueNumber?: number | null,
 	issueTitle?: string | null,
-	/**  The issue's page on GitHub, kept for the Dossier. */
+	/**  The issue's page on GitHub, kept for the Thread. */
 	issueUrl?: string | null,
 	/**  The labels of that issue, by name. */
 	issueLabels?: string[],
@@ -912,87 +847,10 @@ export type DispatchRequest_Serialize = {
 	baseBranch: string | null,
 	issueNumber: number | null,
 	issueTitle: string | null,
-	/**  The issue's page on GitHub, kept for the Dossier. */
+	/**  The issue's page on GitHub, kept for the Thread. */
 	issueUrl: string | null,
 	/**  The labels of that issue, by name. */
 	issueLabels: string[],
-};
-
-/**  What was asked for: the stored issue reference and the Thread's own prompts. */
-export type DossierIntent = DossierIntent_Serialize | DossierIntent_Deserialize;
-
-/**  What was asked for: the stored issue reference and the Thread's own prompts. */
-export type DossierIntent_Deserialize = {
-	issue?: DossierIssue_Deserialize | null,
-	prompts: string[],
-};
-
-/**  What was asked for: the stored issue reference and the Thread's own prompts. */
-export type DossierIntent_Serialize = {
-	issue: DossierIssue_Serialize | null,
-	prompts: string[],
-};
-
-/**  The GitHub issue a Board Thread was started from. */
-export type DossierIssue = DossierIssue_Serialize | DossierIssue_Deserialize;
-
-/**  The GitHub issue a Board Thread was started from. */
-export type DossierIssue_Deserialize = {
-	number: number,
-	title?: string | null,
-	url?: string | null,
-};
-
-/**  The GitHub issue a Board Thread was started from. */
-export type DossierIssue_Serialize = {
-	number: number,
-	title: string | null,
-	url: string | null,
-};
-
-/**  The branch's pull request with the checks GitHub reports for it. */
-export type DossierPullRequest = DossierPullRequest_Serialize | DossierPullRequest_Deserialize;
-
-/**  The branch's pull request with the checks GitHub reports for it. */
-export type DossierPullRequest_Deserialize = {
-	number: number,
-	url: string,
-	checks: PullRequestCheck_Deserialize[],
-};
-
-/**  The branch's pull request with the checks GitHub reports for it. */
-export type DossierPullRequest_Serialize = {
-	number: number,
-	url: string,
-	checks: PullRequestCheck_Serialize[],
-};
-
-/**  The Dossier section offered for a pull request body, to preview before publishing. */
-export type DossierSection = {
-	markdown: string,
-	visibility: RepositoryVisibility,
-	headSha: string,
-};
-
-/**  What a push from Oxide, or the user's refresh, did to a pull request's Dossier section. */
-export type DossierUpdate = DossierUpdate_Serialize | DossierUpdate_Deserialize;
-
-export type DossierUpdateState = "updated" | "upToDate" | "noPullRequest" | "noSection" | "failed";
-
-/**  What a push from Oxide, or the user's refresh, did to a pull request's Dossier section. */
-export type DossierUpdate_Deserialize = {
-	state: DossierUpdateState,
-	pullRequest?: number | null,
-	/**  Why an update failed, when it did. The push itself still succeeded. */
-	message?: string | null,
-};
-
-/**  What a push from Oxide, or the user's refresh, did to a pull request's Dossier section. */
-export type DossierUpdate_Serialize = {
-	state: DossierUpdateState,
-	pullRequest: number | null,
-	/**  Why an update failed, when it did. The push itself still succeeded. */
-	message: string | null,
 };
 
 export type ExecutionDetails = ExecutionDetails_Serialize | ExecutionDetails_Deserialize;
@@ -1314,56 +1172,12 @@ export type ModelMemoryEstimate = {
 	measured: boolean,
 };
 
-/**  A draft comment on one line of a Diff. */
-export type NewLineComment = {
-	scope: CommentScope,
-	path: string,
-	side: CommentSide,
-	line: number,
-	code: string,
-	body: string,
-};
-
 /**  What the author chose for a new pull request. */
-export type NewPullRequest = NewPullRequest_Serialize | NewPullRequest_Deserialize;
-
-/**  A draft Line comment on a pull request's Diff. */
-export type NewPullRequestLineComment = {
-	path: string,
-	side: CommentSide,
-	line: number,
-	code: string,
-	body: string,
-};
-
-/**  What the author chose for a new pull request. */
-export type NewPullRequest_Deserialize = {
+export type NewPullRequest = {
 	title: string,
 	body: string,
 	base: string,
 	draft: boolean,
-	/**  The previewed Dossier section to publish in the body; `None` leaves the body as written. */
-	dossierSection?: string | null,
-	/**  Explicit local consent, independent of edits to the Dossier preview. */
-	dossierIncludePrompts: boolean,
-	dossierIncludeAgentMessage: boolean,
-	/**  The checkout commit the preview was computed from. */
-	dossierHeadSha?: string | null,
-};
-
-/**  What the author chose for a new pull request. */
-export type NewPullRequest_Serialize = {
-	title: string,
-	body: string,
-	base: string,
-	draft: boolean,
-	/**  The previewed Dossier section to publish in the body; `None` leaves the body as written. */
-	dossierSection: string | null,
-	/**  Explicit local consent, independent of edits to the Dossier preview. */
-	dossierIncludePrompts: boolean,
-	dossierIncludeAgentMessage: boolean,
-	/**  The checkout commit the preview was computed from. */
-	dossierHeadSha: string | null,
 };
 
 /**  An Approval the Provider is still waiting on. */
@@ -1436,30 +1250,6 @@ export type PerformanceMeasurement_Serialize = {
 };
 
 export type PermissionMode = "ask" | "auto-edit" | "full-access";
-
-/**
- *  One Permission mode and how many Turns started in it; `null` is a Turn stored before modes
- *  were recorded.
- */
-export type PermissionModeUse = PermissionModeUse_Serialize | PermissionModeUse_Deserialize;
-
-/**
- *  One Permission mode and how many Turns started in it; `null` is a Turn stored before modes
- *  were recorded.
- */
-export type PermissionModeUse_Deserialize = {
-	mode?: PermissionMode | null,
-	turns: number,
-};
-
-/**
- *  One Permission mode and how many Turns started in it; `null` is a Turn stored before modes
- *  were recorded.
- */
-export type PermissionModeUse_Serialize = {
-	mode: PermissionMode | null,
-	turns: number,
-};
 
 export type Project = {
 	id: number,
@@ -1650,8 +1440,6 @@ export type PullRequestDetail_Deserialize = {
 	body: string,
 	/**  The commit the pull request's head points at. */
 	headSha: string,
-	/**  Whether the Dossier section in `body` describes an earlier commit than `head_sha`. */
-	dossierOutOfDate: boolean,
 	checks: PullRequestCheck_Deserialize[],
 	comments: PullRequestComment_Deserialize[],
 	mergeState: MergeState,
@@ -1669,7 +1457,7 @@ export type PullRequestDetail_Deserialize = {
 	defaultMergeMethod?: MergeMethod | null,
 	/**  Whether the repository deletes merged branches on its own. */
 	deleteBranchOnMerge: boolean,
-	/**  The changed files, for the Diff Surface. */
+	/**  The changed files. */
 	diff: Diff_Deserialize,
 };
 
@@ -1679,8 +1467,6 @@ export type PullRequestDetail_Serialize = {
 	body: string,
 	/**  The commit the pull request's head points at. */
 	headSha: string,
-	/**  Whether the Dossier section in `body` describes an earlier commit than `head_sha`. */
-	dossierOutOfDate: boolean,
 	checks: PullRequestCheck_Serialize[],
 	comments: PullRequestComment_Serialize[],
 	mergeState: MergeState,
@@ -1698,7 +1484,7 @@ export type PullRequestDetail_Serialize = {
 	defaultMergeMethod: MergeMethod | null,
 	/**  Whether the repository deletes merged branches on its own. */
 	deleteBranchOnMerge: boolean,
-	/**  The changed files, for the Diff Surface. */
+	/**  The changed files. */
 	diff: Diff_Serialize,
 };
 
@@ -1721,18 +1507,6 @@ export type PullRequestEdit = {
 export type PullRequestLabel = {
 	name: string,
 	color: string,
-};
-
-/**  A draft Line comment on a pull request's Diff, kept until a review is submitted. */
-export type PullRequestLineComment = {
-	id: number,
-	projectId: number,
-	pullRequest: number,
-	path: string,
-	side: CommentSide,
-	line: number,
-	code: string,
-	body: string,
 };
 
 export type PullRequestPhase = "draft" | "open" | "merged" | "closed";
@@ -1791,24 +1565,6 @@ export type PullRequestState_Serialize = {
 	defaultBranch: string | null,
 	pullRequest: PullRequest | null,
 };
-
-/**  What a push from Oxide did besides moving the branch. */
-export type PushOutcome = PushOutcome_Serialize | PushOutcome_Deserialize;
-
-/**  What a push from Oxide did besides moving the branch. */
-export type PushOutcome_Deserialize = {
-	/**  The published Dossier update; `None` for a push with no Thread to compute one from. */
-	dossier?: DossierUpdate_Deserialize | null,
-};
-
-/**  What a push from Oxide did besides moving the branch. */
-export type PushOutcome_Serialize = {
-	/**  The published Dossier update; `None` for a push with no Thread to compute one from. */
-	dossier: DossierUpdate_Serialize | null,
-};
-
-/**  Who can read the repository a pull request is opened in. */
-export type RepositoryVisibility = "public" | "private" | "internal" | "unknown";
 
 export type ResourceDecision = ResourceDecision_Serialize | ResourceDecision_Deserialize;
 
@@ -1912,14 +1668,6 @@ export type RestorePreview = {
 	/**  The files that stand between the working tree and that Checkpoint. */
 	files: RestoreFile[],
 };
-
-export type RevertHunk = {
-	index: number,
-	/**  The `@@` line the Diff showed, so a diff that moved on is refused. */
-	header: string,
-};
-
-export type RevertScope = "uncommitted" | "turn";
 
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
@@ -2037,45 +1785,11 @@ export type ReviewThreadComment = {
 	createdAt: string,
 };
 
-/**  The decision a submitted review carries. */
-export type ReviewVerdict = "comment" | "approve" | "requestChanges";
-
 /**  What a review round was about: languages touched, diff size band and issue labels. */
 export type ReviewWorkKind = {
 	languages: string[],
 	sizeBand: ReviewSizeBand,
 	issueLabels: string[],
-};
-
-/**  One risk signal, with the files in the Diff it points at. */
-export type RiskSignal = RiskSignal_Serialize | RiskSignal_Deserialize;
-
-export type RiskSignalKind = "uncheckedLanguage" | "sourceWithoutTests" | "sensitivePath" | "largeDiff";
-
-/**  One risk signal, with the files in the Diff it points at. */
-export type RiskSignal_Deserialize = {
-	kind: RiskSignalKind,
-	/**  One sentence a reviewer can read on its own. */
-	explanation: string,
-	/**  The changed files the signal points at, relative to the checkout, in path order. */
-	files: string[],
-	/**  The language an unchecked-language signal is about. */
-	language?: string | null,
-	/**  The line threshold a large-diff signal crossed. */
-	threshold?: number | null,
-};
-
-/**  One risk signal, with the files in the Diff it points at. */
-export type RiskSignal_Serialize = {
-	kind: RiskSignalKind,
-	/**  One sentence a reviewer can read on its own. */
-	explanation: string,
-	/**  The changed files the signal points at, relative to the checkout, in path order. */
-	files: string[],
-	/**  The language an unchecked-language signal is about. */
-	language: string | null,
-	/**  The line threshold a large-diff signal crossed. */
-	threshold: number | null,
 };
 
 /**  Recurring feedback the app offers to turn into a rule for the Project's agent instructions. */
@@ -2181,7 +1895,6 @@ export type Shortcuts = {
 	issues: string,
 	terminal: string,
 	files: string,
-	diff: string,
 	previousThread: string,
 	nextThread: string,
 	closeThread: string,
@@ -2210,23 +1923,6 @@ export type SlashCommand_Serialize = {
 };
 
 export type SlashRoute = "oxide" | "passthrough" | "native";
-
-/**  How much supervision the work actually had. */
-export type Supervision = Supervision_Serialize | Supervision_Deserialize;
-
-/**  How much supervision the work actually had. */
-export type Supervision_Deserialize = {
-	approvalsGranted: number,
-	approvalsDenied: number,
-	permissionModes: PermissionModeUse_Deserialize[],
-};
-
-/**  How much supervision the work actually had. */
-export type Supervision_Serialize = {
-	approvalsGranted: number,
-	approvalsDenied: number,
-	permissionModes: PermissionModeUse_Serialize[],
-};
 
 export type Terminal = {
 	id: number,
@@ -2436,7 +2132,7 @@ export type TurnPage_Serialize = {
 	turnCount: number,
 };
 
-/**  One Turn of a Thread as the Diff Surface's Turn picker lists it. */
+/**  One Turn of a Thread as the Restore dialog lists it. */
 export type TurnPick = {
 	turnIndex: number,
 	prompt: string,
@@ -2543,75 +2239,6 @@ export type UsageLimits_Serialize = {
 };
 
 export type UsageStatus = "ok" | "warning" | "limited";
-
-/**  One Verification command of a Thread, with the state of its most recent evidence. */
-export type VerificationCommand = VerificationCommand_Serialize | VerificationCommand_Deserialize;
-
-/**  One Verification command of a Thread, with the state of its most recent evidence. */
-export type VerificationCommand_Deserialize = {
-	command: string,
-	kind: VerificationKind,
-	state: VerificationState,
-	turnIndex?: number | null,
-	outcome?: CommandOutcome | null,
-	exitCode?: number | null,
-};
-
-/**  One Verification command of a Thread, with the state of its most recent evidence. */
-export type VerificationCommand_Serialize = {
-	command: string,
-	kind: VerificationKind,
-	state: VerificationState,
-	turnIndex: number | null,
-	outcome: CommandOutcome | null,
-	exitCode: number | null,
-};
-
-/**
- *  The Dossier of one Thread: its Verification commands, risk signals and supervision, plus
- *  branch evidence in Branch scope.
- */
-export type VerificationDossier = VerificationDossier_Serialize | VerificationDossier_Deserialize;
-
-/**
- *  The Dossier of one Thread: its Verification commands, risk signals and supervision, plus
- *  branch evidence in Branch scope.
- */
-export type VerificationDossier_Deserialize = {
-	commands: VerificationCommand_Deserialize[],
-	signals: RiskSignal_Deserialize[],
-	intent: DossierIntent_Deserialize,
-	claim?: AgentClaim | null,
-	baseBranch?: string | null,
-	coverageKnown: boolean,
-	uncoveredCommits: BranchCommit[],
-	pullRequest?: DossierPullRequest_Deserialize | null,
-	pullRequestKnown: boolean,
-	supervision: Supervision_Deserialize,
-	blindReviews: BlindReviewSummary[],
-};
-
-/**
- *  The Dossier of one Thread: its Verification commands, risk signals and supervision, plus
- *  branch evidence in Branch scope.
- */
-export type VerificationDossier_Serialize = {
-	commands: VerificationCommand_Serialize[],
-	signals: RiskSignal_Serialize[],
-	intent: DossierIntent_Serialize,
-	claim: AgentClaim | null,
-	baseBranch: string | null,
-	coverageKnown: boolean,
-	uncoveredCommits: BranchCommit[],
-	pullRequest: DossierPullRequest_Serialize | null,
-	pullRequestKnown: boolean,
-	supervision: Supervision_Serialize,
-	blindReviews: BlindReviewSummary[],
-};
-
-export type VerificationKind = "test" | "lint" | "typeCheck" | "build" | "other";
-
-export type VerificationState = "fresh" | "stale" | "failed" | "neverRun" | "unknown";
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

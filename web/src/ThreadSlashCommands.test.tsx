@@ -56,7 +56,6 @@ it("loads capabilities before applying a permission command in a new Thread", as
 
 it.each(["claude", "codex", "agy"])("intercepts commands in a %s Thread without sending a Turn", async (provider) => {
   const calls: { command: string; args: unknown }[] = [];
-  const openDiff = vi.fn();
   const titleChanged = vi.fn();
   mockIPC((command, args) => {
     calls.push({ command, args });
@@ -71,16 +70,12 @@ it.each(["claude", "codex", "agy"])("intercepts commands in a %s Thread without 
     return null;
   });
   const render = (draft: string) => <ThreadView threadId={7} projectId={1} draft={draft}
-    onOpenDefaultDiff={openDiff} onThreadCreated={vi.fn()} onStatusChange={vi.fn()} onThreadTitleChange={titleChanged}
+    onThreadCreated={vi.fn()} onStatusChange={vi.fn()} onThreadTitleChange={titleChanged}
     prefill={null} onPrefillUsed={vi.fn()} onOpenThread={vi.fn()} onThreadContinued={vi.fn()} />;
   await act(async () => root.render(render("/rename New title")));
   await act(async () => container.querySelector("form")!.requestSubmit());
   expect(calls.some((c) => c.command === "rename_thread" && (c.args as { title: string }).title === "New title")).toBe(true);
   expect(titleChanged).toHaveBeenCalledWith(7, "New title");
-  await act(async () => root.render(render("/diff")));
-  await act(async () => container.querySelector("form")!.requestSubmit());
-  expect(openDiff).toHaveBeenCalledOnce();
-
   await act(async () => root.render(render("/reload-cache")));
   await act(async () => container.querySelector("form")!.requestSubmit());
   expect(calls.some((c) => c.command === "list_slash_commands" && (c.args as { refresh: boolean; threadId: number }).refresh && (c.args as { threadId: number }).threadId === 7)).toBe(true);
@@ -129,7 +124,6 @@ const menuCommands = [
   { name: "model", description: "Switch model", argumentHint: "<model>", aliases: [], route: "oxide" },
   { name: "effort", description: "Set effort", argumentHint: "[level]", aliases: [], route: "oxide" },
   { name: "compact", description: "Compact the Thread", argumentHint: "<instructions>", aliases: [], route: "passthrough" },
-  { name: "diff", description: "Open the Diff", argumentHint: null, aliases: [], route: "oxide" },
   { name: "context", description: "Show context", argumentHint: null, aliases: [], route: "oxide" },
   { name: "init", description: "Initialise", argumentHint: null, aliases: [], route: "passthrough" },
   { name: "review", description: "Review changes", argumentHint: null, aliases: [], route: "passthrough" },
@@ -197,12 +191,10 @@ it("scrolls the highlighted slash command into view with the arrow keys", async 
 });
 
 it("runs a command without arguments on Enter", async () => {
-  const openDiff = vi.fn();
   setupSlash();
-  await renderSlash("/diff", { onOpenDefaultDiff: openDiff });
+  await renderSlash("/clear");
   await flush();
   await press("Enter");
-  expect(openDiff).toHaveBeenCalledOnce();
 });
 
 it("runs a command with an optional argument on Enter once its name is typed", async () => {

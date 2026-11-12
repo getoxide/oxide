@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ItemSnapshot, ModelInfo } from "./bindings";
-import { DiffOpenContext } from "./diffOpen";
 import type { TranscriptTurn } from "./transcript";
 import { TurnView } from "./TurnView";
 
@@ -38,15 +37,12 @@ const turn = (over: Partial<TranscriptTurn>): TranscriptTurn => ({
   ...over,
 });
 
-async function render(t: TranscriptTurn, catalog: ModelInfo[] | null = null, openDiff = vi.fn()) {
+async function render(t: TranscriptTurn, catalog: ModelInfo[] | null = null) {
   await act(async () =>
     root.render(
-      <DiffOpenContext.Provider value={openDiff}>
-        <TurnView turn={t} provider="claude" catalog={catalog} onRespond={vi.fn()} isWorking={t.status === "running"} instant />
-      </DiffOpenContext.Provider>,
+      <TurnView turn={t} provider="claude" catalog={catalog} onRespond={vi.fn()} isWorking={t.status === "running"} instant />,
     ),
   );
-  return openDiff;
 }
 
 const click = async (el: Element | null | undefined) => {
@@ -121,14 +117,6 @@ it("drills down from the summary to a phase to an Item's detail", async () => {
   expect(container.textContent).toContain("1 passed");
   // Other phases stay closed.
   expect(container.textContent).not.toContain("const a = 1;");
-});
-
-it("opens a file Item in the Diff Surface", async () => {
-  const openDiff = await render(turn({ items: worked }));
-  await click(buttonWith("Explored 1 file"));
-  await click(phase("Edited"));
-  await click(container.querySelector('[aria-label="Open diff for src/a.ts"]'));
-  expect(openDiff).toHaveBeenCalledWith("src/a.ts");
 });
 
 it("shows a live line while running, ponders when idle, and drops it when the Turn ends", async () => {

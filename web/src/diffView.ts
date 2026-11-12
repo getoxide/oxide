@@ -1,4 +1,4 @@
-import type { DiffFile, DiffHunk, DiffKind } from "./bindings";
+import type { DiffHunk, DiffKind } from "./bindings";
 
 export interface NumberedLine {
   kind: DiffKind;
@@ -25,23 +25,4 @@ export function numberHunk(hunk: DiffHunk): NumberedLine[] {
     if (newNo !== null && line.kind !== "removed") newNo += 1;
     return numbered;
   });
-}
-
-/** The function or section after the second `@@`, which Git adds for context. */
-export const hunkContext = (header: string) => header.replace(/^@@[^@]*@@\s?/, "");
-
-const GENERATED = /(^|\/)(Cargo\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|poetry\.lock|Gemfile\.lock|composer\.lock|go\.sum)$|\.min\.(js|css)$/;
-
-/** Changed lines past which a file starts collapsed, so one huge file can't bury the rest. */
-export const BULKY_LINES = 400;
-
-/** Lockfiles, minified bundles and very large changes start collapsed. */
-export function startsCollapsed(file: DiffFile): boolean {
-  return GENERATED.test(file.path) || file.added + file.removed > BULKY_LINES;
-}
-
-/** `src/app/main.rs` → `{ dir: "src/app/", name: "main.rs" }`. */
-export function splitPath(path: string): { dir: string; name: string } {
-  const slash = path.lastIndexOf("/");
-  return slash < 0 ? { dir: "", name: path } : { dir: path.slice(0, slash + 1), name: path.slice(slash + 1) };
 }

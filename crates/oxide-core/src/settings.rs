@@ -83,7 +83,6 @@ pub struct Shortcuts {
     pub issues: String,
     pub terminal: String,
     pub files: String,
-    pub diff: String,
     pub previous_thread: String,
     pub next_thread: String,
     pub close_thread: String,
@@ -105,7 +104,6 @@ impl Default for Shortcuts {
             issues: s("Mod+Shift+I"),
             terminal: s("Mod+Shift+T"),
             files: s("Mod+Shift+F"),
-            diff: s("Mod+Shift+D"),
             previous_thread: s("Mod+ArrowUp"),
             next_thread: s("Mod+ArrowDown"),
             close_thread: s("Mod+Shift+W"),
@@ -119,7 +117,7 @@ impl Default for Shortcuts {
 
 impl Shortcuts {
     /// Every shortcut as `(settings key, accelerator)`.
-    fn slots(&mut self) -> [(&'static str, &mut String); 16] {
+    fn slots(&mut self) -> [(&'static str, &mut String); 15] {
         [
             ("dictation", &mut self.dictation),
             ("newThread", &mut self.new_thread),
@@ -129,7 +127,6 @@ impl Shortcuts {
             ("issues", &mut self.issues),
             ("terminal", &mut self.terminal),
             ("files", &mut self.files),
-            ("diff", &mut self.diff),
             ("previousThread", &mut self.previous_thread),
             ("nextThread", &mut self.next_thread),
             ("closeThread", &mut self.close_thread),

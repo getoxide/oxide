@@ -84,7 +84,6 @@ const STICK_TO_BOTTOM = 48;
 const PAGE_LOAD_DELAY = 80;
 interface ThreadViewProps {
   visible?: boolean;
-  onOpenDefaultDiff?: () => void;
   onInitialLoad?: () => void;
   threadId: number | null;
   projectId: number;
@@ -182,7 +181,6 @@ export function getOfferedPermissionModes(
 
 export function ThreadView({
   visible = true,
-  onOpenDefaultDiff,
   onInitialLoad,
   threadId,
   projectId,
@@ -1023,11 +1021,6 @@ export function ThreadView({
       if (!threadId) setCommandError("Create a Thread before renaming it.");
       else if (slash.arg) void saveRename(slash.arg);
       else handleStartRename();
-      handleInputChange("");
-      return;
-    }
-    if (slash.type === "diff") {
-      onOpenDefaultDiff?.();
       handleInputChange("");
       return;
     }

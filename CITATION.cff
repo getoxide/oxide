@@ -6,8 +6,7 @@ abstract: >-
   Oxide is an open-source desktop app for agentic coding. It drives the
   coding agent CLIs already installed on the user's machine (Claude Code,
   Codex and Antigravity CLI) and focuses on the path from a finished agent
-  Turn to a confident merge: per-Turn diffs, a Verification Dossier, line
-  comments, blind review by a second agent, and Git and GitHub integration.
+  Turn to a confident merge: line comments, blind review by a second agent, and Git and GitHub integration.
 authors:
   - family-names: Cavallini
     given-names: Lorenzo

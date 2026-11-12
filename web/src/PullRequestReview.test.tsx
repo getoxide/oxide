@@ -28,7 +28,6 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     phase: "open",
     body: "Bumps react-virtual.\n\nUpdates from 3.14.21 to 3.14.22",
     headSha: "abc123",
-    dossierOutOfDate: false,
     checks: [
       { name: "web", state: "failure", url: "https://github.com/me/oxide/actions/runs/1", required: true },
       { name: "rust", state: "success", url: null, required: false },
@@ -78,7 +77,7 @@ afterEach(async () => {
 
 async function render() {
   await act(async () =>
-    root.render(<PullRequestReview projectId={1} threadId={7} number={174} refreshKey={0} onBack={onBack} onChanged={onChanged} onReviewFiles={() => {}} onFixPullRequest={onFixPullRequest} />),
+    root.render(<PullRequestReview projectId={1} threadId={7} number={174} refreshKey={0} onBack={onBack} onChanged={onChanged} onFixPullRequest={onFixPullRequest} />),
   );
 }
 const button = (name: string | RegExp) =>

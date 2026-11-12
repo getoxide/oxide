@@ -64,7 +64,6 @@ describe("actionForKey with the default shortcuts", () => {
     expect(action({ key: "I", shiftKey: true })).toBe("issues");
     expect(action({ key: "T", shiftKey: true })).toBe("terminal");
     expect(action({ key: "F", shiftKey: true })).toBe("files");
-    expect(action({ key: "D", shiftKey: true })).toBe("diff");
     expect(action({ key: "ArrowUp" })).toBe("previousThread");
     expect(action({ key: "ArrowDown" })).toBe("nextThread");
     expect(action({ key: "\\" })).toBe("toggleTools");

@@ -38,9 +38,9 @@ it("records a new shortcut for an action, then resets it", async () => {
 
 it("records keys even when the clicked button never took focus (macOS)", async () => {
   await act(async () => root.render(<Harness />));
-  act(() => keyButton("Diff").click());
+  act(() => keyButton("Terminal").click());
   await press(document.body as unknown as HTMLButtonElement, { key: "y", code: "KeyY", metaKey: true });
-  expect(seen.shortcuts.diff).toBe("Mod+Y");
+  expect(seen.shortcuts.terminal).toBe("Mod+Y");
 });
 
 it("refuses a shortcut another action uses, and Esc cancels recording", async () => {
@@ -56,9 +56,9 @@ it("refuses a shortcut another action uses, and Esc cancels recording", async ()
 
 it("needs ⌘ or Ctrl in a new shortcut", async () => {
   await act(async () => root.render(<Harness />));
-  act(() => keyButton("Diff").click());
-  await press(keyButton("Diff"), { key: "x", code: "KeyX" });
-  expect(seen.shortcuts.diff).toBe("Mod+Shift+D");
+  act(() => keyButton("Terminal").click());
+  await press(keyButton("Terminal"), { key: "x", code: "KeyX" });
+  expect(seen.shortcuts.terminal).toBe("Mod+Shift+T");
   expect(container.textContent).toContain("Include ⌘");
 });
 

@@ -137,14 +137,6 @@ pub(crate) fn succeeds(cwd: &Path, args: &[&str]) -> bool {
     run(cwd, args).is_ok()
 }
 
-/// The commit HEAD points at, if the checkout has one.
-pub(crate) fn head(cwd: &Path) -> Option<String> {
-    run(cwd, &["rev-parse", "--verify", "--quiet", "HEAD"])
-        .ok()
-        .map(|sha| sha.trim().to_string())
-        .filter(|sha| !sha.is_empty())
-}
-
 /// Whether HEAD holds a commit no remote-tracking branch has.
 fn has_unpushed_commits(cwd: &Path) -> bool {
     run(cwd, &["rev-list", "--count", "HEAD", "--not", "--remotes"])

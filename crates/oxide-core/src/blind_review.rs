@@ -79,16 +79,6 @@ pub struct BlindReviewFinding {
     pub decision: FindingDecision,
 }
 
-/// Who reviewed a change and how many of their findings were kept.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlindReviewSummary {
-    pub review_thread_id: u32,
-    pub provider: String,
-    pub findings: u32,
-    pub kept: u32,
-}
-
 /// Builds the prompt for a Blind review: only the diff, the issue, and the required output
 /// format, with diff and issue delimited as data; no Transcript content is included.
 pub fn build_blind_review_prompt(issue_text: Option<&str>, diff_text: &str) -> String {
@@ -432,7 +422,7 @@ impl Core {
                 ],
             )?;
             let thread_id = db.last_insert_rowid() as u32;
-            // Record who reviewed the change now, so the Dossier names the reviewer even before
+            // Record who reviewed the change now, so the reviewer is named even before
             // the reply is parsed.
             db.execute(
                 "INSERT INTO blind_reviews (thread_id, review_thread_id, provider, scope)
@@ -673,29 +663,6 @@ impl Core {
             tx.commit()?;
         }
         Ok(())
-    }
-
-    /// Who reviewed this change and how many findings stayed, for the Dossier.
-    pub(crate) fn blind_review_summaries(&self, thread_id: u32) -> Result<Vec<BlindReviewSummary>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = db.prepare(
-            "SELECT r.review_thread_id, r.provider,
-                    (SELECT COUNT(*) FROM blind_review_findings f WHERE f.review_id = r.id),
-                    (SELECT COUNT(*) FROM blind_review_findings f
-                     WHERE f.review_id = r.id AND f.decision = 'kept')
-             FROM blind_reviews r WHERE r.thread_id = ?1 ORDER BY r.id",
-        )?;
-        let summaries = stmt
-            .query_map([thread_id], |r| {
-                Ok(BlindReviewSummary {
-                    review_thread_id: r.get(0)?,
-                    provider: r.get(1)?,
-                    findings: r.get(2)?,
-                    kept: r.get(3)?,
-                })
-            })?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(summaries)
     }
 }
 

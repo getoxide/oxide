@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import "./skeleton.css";
 
-type SkeletonKind = "list" | "detail" | "form" | "tree" | "code" | "diff" | "conversation" | "picker";
+type SkeletonKind = "list" | "detail" | "form" | "tree" | "code" | "conversation" | "picker";
 
 /** Content-shaped placeholders. Mount only while the corresponding content is unavailable. */
 export function Skeleton({ kind = "list", label = "Loading…", rows = 4, style }: {
@@ -53,7 +53,6 @@ export function Skeleton({ kind = "list", label = "Loading…", rows = 4, style 
         {kind === "list" && list()}
         {(kind === "tree" || kind === "picker") && list(true)}
         {kind === "code" && code}
-        {kind === "diff" && <div className="diff-split"><div className="diff-files">{list(true)}</div>{code}</div>}
         {kind === "detail" && <div className="skeleton-detail-body">
           {line("80%", "skeleton-heading")}{line("58%", "skeleton-heading")}
           {line("38%", "skeleton-meta")}

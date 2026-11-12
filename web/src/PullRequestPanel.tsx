@@ -18,8 +18,6 @@ interface PullRequestPanelProps {
   refreshKey: number;
   /** Called after a pull request was created, merged or checked out, so other Git views reload. */
   onChanged: () => void;
-  /** Shows a pull request's changed files in the Diff Surface. */
-  onReviewFiles: (number: number) => void;
   /** Sends the repair request to the Thread that owns the branch, or a new Thread with Settings defaults. */
   onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
 }

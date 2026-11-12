@@ -342,37 +342,6 @@ fn deleting_the_reviewed_thread_with_a_kept_finding_leaves_nothing_behind() {
 }
 
 #[test]
-fn the_dossier_names_the_reviewer_and_counts_the_kept_findings() {
-    let r = reviewed(
-        r#"[
-          {"path": "hello.rs", "line": 1, "body": "Kept"},
-          {"path": "hello.rs", "line": 1, "body": "Dismissed"}
-        ]"#,
-    );
-    let findings = r
-        .fixture
-        .core
-        .list_blind_review_findings(r.original)
-        .unwrap();
-    r.fixture
-        .core
-        .keep_blind_review_finding(findings[0].id)
-        .unwrap();
-    r.fixture
-        .core
-        .dismiss_blind_review_finding(findings[1].id)
-        .unwrap();
-
-    let dossier = r.fixture.core.verification_dossier(r.original).unwrap();
-    assert_eq!(dossier.blind_reviews.len(), 1);
-    let summary = &dossier.blind_reviews[0];
-    assert_eq!(summary.provider, "fake");
-    assert_eq!(summary.review_thread_id, r.review);
-    assert_eq!(summary.findings, 2);
-    assert_eq!(summary.kept, 1);
-}
-
-#[test]
 fn agy_cannot_honour_non_writing_and_is_not_offered_for_blind_review() {
     let f = fixture();
     assert!(!f.core.provider_can_honour_non_writing("agy"));

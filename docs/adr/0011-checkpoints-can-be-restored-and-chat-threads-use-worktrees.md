@@ -14,7 +14,7 @@ The glossary said a Checkpoint is read-only. Now a Thread's files can be restore
 
 ## Chat Threads work in a worktree by default
 
-The glossary said only a Board Thread has a worktree of its own. Now a new chat Thread creates a worktree with its first prompt, through the path Board Threads use, including the Setup command. Reason: in a shared checkout a Turn diff can include other Threads' changes, so Turn diffs are misattributed and the Verification Dossier, which is computed from them, would be wrong.
+The glossary said only a Board Thread has a worktree of its own. Now a new chat Thread creates a worktree with its first prompt, through the path Board Threads use, including the Setup command. Reason: in a shared checkout a Turn diff can include other Threads' changes, so Turn diffs are misattributed and a Blind review of a Turn would judge the wrong changes.
 
 - A per-Project setting opts out, for repositories where worktrees are impractical.
 - Threads that already exist keep their checkout; the default never moves running work.
@@ -25,4 +25,4 @@ The glossary said only a Board Thread has a worktree of its own. Now a new chat 
 
 - ADR-0005 stays. The Review ledger keeps only numbers and identifiers, never Transcript content, so deleting a Thread still removes its Transcript, Attachments and Checkpoints for good.
 - ADR-0009 stays: Thread Git operations resolve that Thread's checkout, which is now usually its own worktree.
-- The glossary entries for Checkpoint, Thread, Board Thread and Diff scope are updated to match.
+- The glossary entries for Checkpoint, Thread and Board Thread are updated to match.
