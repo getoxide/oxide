@@ -6,8 +6,6 @@ export { REFRESH_INTERVAL_MS };
 
 interface PullRequestPanelProps {
   projectId: number;
-  /** Names the repository whose pull requests are listed. */
-  projectName: string;
   /** The selected Thread: a new pull request is opened from its checkout. */
   threadId: number | null;
   /** The Project's Threads, so a fix can go to the one that owns the branch. */

@@ -67,24 +67,15 @@ it("lists issues with a full-width search and New issue, and no Refresh or Searc
   expect(host.textContent).toContain("bug");
 });
 
-it("puts search in the Surface toolbar and state with Mine on the secondary row", async () => {
+it("puts search in the Surface toolbar and has no state, Mine or scope rows", async () => {
   await render();
   const toolbar = host.querySelector(".surface-toolbar")!;
-  expect(toolbar).not.toBeNull();
   expect(toolbar.querySelector('input[aria-label="Search issues"]')).not.toBeNull();
-  const create = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New issue")!;
-  expect(create).toBeDefined();
-
-  // Open | Closed and Mine share the secondary row, under the standard segmented control.
-  const state = host.querySelector('[role="group"][aria-label="State"]')!;
-  expect(state).not.toBeNull();
-  expect(state.classList.contains("seg")).toBe(true);
-  expect([...state.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual(["Open", "Closed"]);
-  const mine = button("Mine");
-  expect(mine).toBeDefined();
-  expect(mine.parentElement).toBe(state.parentElement);
-  expect(toolbar.contains(state)).toBe(false);
-  expect(toolbar.contains(mine)).toBe(false);
+  expect([...toolbar.querySelectorAll("button")].some((b) => b.textContent?.trim() === "New issue")).toBe(true);
+  expect(host.querySelector('[role="group"][aria-label="State"]')).toBeNull();
+  expect(host.querySelector(".surface-secondary")).toBeNull();
+  expect(host.querySelector(".pr-scope-title")).toBeNull();
+  expect(button("Mine")).toBeUndefined();
 });
 
 it("shows an empty issue list on the shared Surface empty layout, with its primary action", async () => {
@@ -156,14 +147,6 @@ it("reloads by itself on focus and on a timer while visible", async () => {
   } finally {
     vi.useRealTimers();
   }
-});
-
-it("filters closed issues and your own without a submit", async () => {
-  await render();
-  await act(async () => button("Closed").click());
-  expect(commands.listIssues).toHaveBeenLastCalledWith(1, true, false, "");
-  await act(async () => button("Mine").click());
-  expect(commands.listIssues).toHaveBeenLastCalledWith(1, true, true, "");
 });
 
 it("searches as you type, after a short pause", async () => {
@@ -242,17 +225,6 @@ it("revalidates an older cached list in the background while it stays on screen"
   } finally {
     vi.useRealTimers();
   }
-});
-
-it("remembers each filter's own result", async () => {
-  await render();
-  vi.mocked(commands.listIssues).mockResolvedValue({ status: "ok", data: [summary({ title: "Old closed" })] });
-  await act(async () => button("Closed").click());
-  expect(host.textContent).toContain("Old closed");
-  vi.mocked(commands.listIssues).mockImplementation(() => new Promise(() => {}));
-  await act(async () => button("Open").click());
-  expect(host.textContent).toContain("Crash on startup");
-  expect(host.textContent).not.toContain("Loading…");
 });
 
 it("never shows one Project's issues in another", async () => {

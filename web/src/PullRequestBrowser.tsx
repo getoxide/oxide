@@ -44,7 +44,6 @@ import { threadLine } from "./reviewThreadPlacement";
 interface PullRequestBrowserProps {
   projectId: number;
   /** Names the repository whose lists are shown, which no Thread owns. */
-  projectName: string;
   /** The Thread whose checkout a new pull request is opened from. */
   threadId: number | null;
   /** The Project's Threads: the one whose branch is this pull request's head owns it. */
@@ -85,7 +84,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, projectName, threadId, threads, refreshKey, onChanged, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, threadId, threads, refreshKey, onChanged, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
   // The form belongs to the checkout it was opened for: another selection dismisses it unsubmitted.
   const [creatingFor, setCreatingFor] = useState<{ threadId: number | null } | null>(createRequest > 0 ? { threadId } : null);
   const creating = creatingFor !== null && creatingFor.threadId === threadId;
@@ -108,13 +107,6 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
     refreshKey + manual,
     { staleMs: QUERY_STALE_MS },
   );
-  // Where branch actions land, shown beside the repository-wide list.
-  const branch = useQuery(
-    `p${projectId}:prs:branch:${threadId ?? "none"}`,
-    async () => (threadId === null ? { status: "ok" as const, data: null } : commands.gitStatus(projectId, threadId)),
-    refreshKey + manual,
-  );
-  const branchName = branch.state === "ready" ? (branch.data?.branch ?? "detached HEAD") : null;
   const [opened, setOpened] = useState<number | null>(null);
   // A quiet line on the list after a pull request was merged or closed; it fades on its own.
   const [outcome, setOutcome] = useState<{ kind: "merged" | "closed"; number: number } | null>(null);
@@ -174,13 +166,6 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
         </SurfaceSearch>
         <button className="btn sm primary" disabled={threadId === null} onClick={() => setCreating(true)} title={threadId === null ? "Select a Thread to open a pull request from its branch" : undefined}><GitPullRequestIcon size={14} /> New pull request</button>
       </div>
-      <div className="surface-secondary">
-        <p className="pr-scope" aria-label="Branch actions">
-          {threadId === null ? "Select a Thread to open a pull request from its branch." : branchName === null
-            ? (branch.state === "error" ? `The Thread's checkout is unavailable: ${branch.message}` : "Reading the Thread's branch…")
-            : <>From <span className="pr-branch" title={branchName}>{branchName}</span> in the selected Thread's checkout</>}
-        </p>
-      </div>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
         {outcome && (
@@ -188,7 +173,6 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
             #{outcome.number} {outcome.kind}
           </p>
         )}
-        <h3 className="pr-scope-title" title={`Open pull requests of ${projectName}'s repository`}>Open pull requests · <span>{projectName}</span></h3>
         {list.state === "loading" && <Skeleton label="Loading pull requests…" />}
         {list.state === "error" && (
           <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(`p${projectId}:`); setManual((v) => v + 1); }} />

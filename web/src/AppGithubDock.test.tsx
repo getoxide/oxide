@@ -129,20 +129,15 @@ async function open(tab: "Pull request" | "Issues") {
   await settle();
   await click(host.querySelector('[aria-label="Toggle tools panel"]'));
   await click(host.querySelector(`[role="tab"][aria-label="${tab}"]`));
-  await vi.waitFor(() => expect(host.querySelector(".pr-scope-title")).not.toBeNull());
+  await vi.waitFor(() => expect(host.querySelector(".pr-browser")).not.toBeNull());
 }
 
-it("labels the pull request list by repository and branch actions by the selected Thread's checkout", async () => {
+it("lists the repository's pull requests without a Thread filter and without scope headings", async () => {
   await open("Pull request");
-  expect(host.querySelector(".pr-scope-title")?.textContent).toContain("Oxide");
-  expect(host.querySelector('[aria-label="Branch actions"]')?.textContent).toContain("feat-alpha");
-  expect(called("git_status").some((args) => args.threadId === 2)).toBe(true);
+  expect(host.querySelector(".pr-scope-title")).toBeNull();
+  expect(host.querySelector('[aria-label="Branch actions"]')).toBeNull();
   // The list is repository-wide: it was asked for the Project, with no Thread.
   expect(called("list_pull_requests")[0]).not.toHaveProperty("threadId");
-
-  await click(byText("Beta work"));
-  expect(host.querySelector('[aria-label="Branch actions"]')?.textContent).toContain("feat-beta");
-  expect(host.querySelector(".pr-scope-title")?.textContent).toContain("Oxide");
 });
 
 it("dismisses an unsubmitted create form when another Thread is selected", async () => {
@@ -180,7 +175,6 @@ it("explains the missing selection instead of acting on the main checkout", asyn
   await open("Pull request");
   const create = byText("New pull request") as HTMLButtonElement;
   expect(create.disabled).toBe(true);
-  expect(host.querySelector('[aria-label="Branch actions"]')?.textContent).toContain("Select a Thread");
   await click(byText("Fix the thing"));
   expect((byText("Check out") as HTMLButtonElement).disabled).toBe(true);
   expect(text()).toContain("Select a Thread to check this branch out");
@@ -189,7 +183,6 @@ it("explains the missing selection instead of acting on the main checkout", asyn
 
 it("starts a Thread from an Issue and selects it in the same window", async () => {
   await open("Issues");
-  expect(host.querySelector(".pr-scope-title")?.textContent).toContain("Oxide");
   await click(byText("Crash on start"));
   await click(byText("Start thread from issue"));
   const form = document.querySelector<HTMLFormElement>('[role="dialog"][aria-label="Dispatch a task"]')!;
