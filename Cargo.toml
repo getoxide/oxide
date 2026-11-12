@@ -4,7 +4,7 @@ members = ["crates/oxide-provider", "crates/oxide-core", "crates/oxide-app"]
 exclude = ["crates/oxide-vulkan-worker", "crates/oxide-cuda-worker"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 license = "MIT"
 publish = false
