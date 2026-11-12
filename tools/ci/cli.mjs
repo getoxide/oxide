@@ -8,7 +8,7 @@
 //   node tools/ci/cli.mjs tauri-alignment
 //   node tools/ci/cli.mjs release-notes <tag> [<previous-tag>]
 //   node tools/ci/cli.mjs dependabot                    env DEPENDENCIES_JSON
-//   node tools/ci/cli.mjs update-manifest <dir> <tag> [<owner/repo>]
+//   node tools/ci/cli.mjs update-manifest <dir> <tag> [<owner/repo>] [<out-file>]
 //   node tools/ci/cli.mjs update-feed <latest.json> <tag>  prints the URLs the feed points at
 //   node tools/ci/cli.mjs bump <version>                writes the three manifests and Cargo.lock
 //
@@ -81,7 +81,7 @@ const commands = {
     const range = previous ? `${previous}..${tag}` : tag;
     const commits = git("log", "--format=%s%x1f%b%x1e", range).split("\x1e").map((entry) => entry.trim()).filter(Boolean)
       .map((entry) => { const [subject, body = ""] = entry.split("\x1f"); return { subject, body }; });
-    const repository = process.env.GITHUB_REPOSITORY ?? "cavallinilorenzo/oxide";
+    const repository = process.env.GITHUB_REPOSITORY ?? "getoxide/oxide";
     process.stdout.write(releaseNotes(commits, { repository, previousTag: previous, tag }));
   },
   dependabot() {
@@ -91,13 +91,13 @@ const commands = {
     console.log(`${decision}: ${reason}`);
     output({ decision, reason });
   },
-  "update-manifest"([directory = "release-artifacts", tag, repository = "cavallinilorenzo/oxide"]) {
+  "update-manifest"([directory = "release-artifacts", tag, repository = "getoxide/oxide", outFile = join(directory, "latest.json")]) {
     const names = readdirSync(directory);
     const signatures = Object.fromEntries(names.filter((name) => name.endsWith(".sig"))
       .map((name) => [name.slice(0, -".sig".length), readFileSync(join(directory, name), "utf8")]));
     const feed = updateManifest(names, signatures, { repository, tag, date: new Date().toISOString() });
-    writeFileSync(join(directory, "latest.json"), `${JSON.stringify(feed, null, 2)}\n`);
-    console.log(`Wrote ${join(directory, "latest.json")} for ${Object.keys(feed.platforms).join(", ")}.`);
+    writeFileSync(outFile, `${JSON.stringify(feed, null, 2)}\n`);
+    console.log(`Wrote ${outFile} for ${Object.keys(feed.platforms).join(", ")}.`);
   },
   "update-feed"([file, tag]) {
     const result = checkUpdateFeed(JSON.parse(readFileSync(file, "utf8")), tag);

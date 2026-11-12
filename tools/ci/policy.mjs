@@ -279,7 +279,7 @@ export function dependabotDecision(updatedDependencies) {
 }
 
 // The Tauri updater platform key for each signed updater package.
-const UPDATER_PACKAGES = [["darwin-aarch64", /\.app\.tar\.gz$/], ["windows-x86_64", /_x64-setup\.exe$/]];
+const UPDATER_PACKAGES = [["darwin-aarch64", /_aarch64\.dmg$/], ["windows-x86_64", /_x64-setup\.exe$/]];
 
 /**
  * The `latest.json` feed the native updater reads. `signatures` maps each
@@ -299,7 +299,7 @@ export function updateManifest(artifactNames, signatures, { repository, tag, dat
     if (!signature) throw new Error(`Empty signature for ${name}.`);
     platforms[platform] = { signature, url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}` };
   }
-  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (.app.tar.gz or _x64-setup.exe).");
+  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (_aarch64.dmg or _x64-setup.exe).");
   const version = tag.slice(1);
   return {
     version,

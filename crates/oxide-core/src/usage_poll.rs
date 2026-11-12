@@ -181,9 +181,40 @@ fn fetch_codex(user_home: &Path) -> Result<Vec<UsageWindow>, String> {
 
 // ---------- Antigravity ----------
 
+/// Classifies an Antigravity `/usage` bucket into Oxide's quota pool key using the bucket `id`
+/// first and falling back to the enclosing group `name`.
+fn agy_bucket_pool(bucket: &Value, group_name: Option<&str>) -> Option<&'static str> {
+    if let Some(id) = bucket.get("id").and_then(Value::as_str) {
+        let lower = id.to_ascii_lowercase();
+        if lower.contains("argon") {
+            return Some("gemini-argon");
+        }
+        if lower.starts_with("3p-") {
+            return Some("third-party");
+        }
+        if lower.starts_with("gemini-") {
+            return Some("gemini");
+        }
+    }
+    if let Some(name) = group_name {
+        let lower = name.to_ascii_lowercase();
+        if lower.contains("argon") {
+            return Some("gemini-argon");
+        }
+        if lower.contains("claude") || lower.contains("gpt") || lower.contains("third") {
+            return Some("third-party");
+        }
+        if lower.contains("gemini") {
+            return Some("gemini");
+        }
+    }
+    None
+}
+
 /// `agy -p /usage --output-format json`: `command.data.groups[].buckets[]` with
-/// `remaining_fraction`, `window` (`5h` | `weekly`) and `reset_time`. When several groups report
-/// the same window, the most used one wins.
+/// `id`, `remaining_fraction`, `window` (`5h` | `weekly`) and `reset_time`.
+/// Each group's buckets stay in their own pool (`gemini`, `gemini-argon`, `third-party`);
+/// `gemini` also populates the default unpooled fallback (`pool: None`).
 pub(crate) fn parse_agy_usage(body: &Value) -> Vec<UsageWindow> {
     let mut out: Vec<UsageWindow> = Vec::new();
     let groups = body
@@ -191,30 +222,51 @@ pub(crate) fn parse_agy_usage(body: &Value) -> Vec<UsageWindow> {
         .and_then(|g| g.as_array())
         .cloned()
         .unwrap_or_default();
-    for bucket in groups
-        .iter()
-        .filter_map(|g| g.get("buckets")?.as_array())
-        .flatten()
-    {
-        let kind = match bucket.get("window").and_then(|v| v.as_str()) {
-            Some("5h") => UsageWindowKind::FiveHour,
-            Some("weekly") => UsageWindowKind::Weekly,
-            _ => continue,
-        };
-        let Some(remaining) = bucket.get("remaining_fraction").and_then(|v| v.as_f64()) else {
+    for group in &groups {
+        let group_name = group.get("name").and_then(Value::as_str);
+        let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) else {
             continue;
         };
-        let resets = bucket
-            .get("reset_time")
-            .and_then(|v| v.as_str())
-            .and_then(parse_rfc3339);
-        let w = window(kind, (1.0 - remaining) * 100.0, resets, None);
-        match out.iter_mut().find(|e| e.kind == kind) {
-            Some(e) if e.percent_used < w.percent_used => *e = w,
-            Some(_) => {}
-            None => out.push(w),
+        for bucket in buckets {
+            let kind = match bucket.get("window").and_then(|v| v.as_str()) {
+                Some("5h") => UsageWindowKind::FiveHour,
+                Some("weekly") => UsageWindowKind::Weekly,
+                _ => continue,
+            };
+            let Some(remaining) = bucket.get("remaining_fraction").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            let resets = bucket
+                .get("reset_time")
+                .and_then(|v| v.as_str())
+                .and_then(parse_rfc3339);
+            let pool = agy_bucket_pool(bucket, group_name).map(str::to_string);
+            let w = window(kind, (1.0 - remaining) * 100.0, resets, pool.clone());
+            match out.iter_mut().find(|e| e.kind == kind && e.pool == w.pool) {
+                Some(e) if e.percent_used < w.percent_used => *e = w,
+                Some(_) => {}
+                None => out.push(w),
+            }
         }
     }
+
+    // Keep the top-level unpooled fallback aligned with standard Gemini so stale DB entries
+    // or models without a specific pool never inherit Argon or Third-party limits.
+    let gemini_defaults: Vec<UsageWindow> = out
+        .iter()
+        .filter(|w| w.pool.as_deref() == Some("gemini"))
+        .cloned()
+        .map(|mut w| {
+            w.pool = None;
+            w
+        })
+        .collect();
+    for w in gemini_defaults {
+        if !out.iter().any(|e| e.kind == w.kind && e.pool.is_none()) {
+            out.push(w);
+        }
+    }
+
     out
 }
 
@@ -357,6 +409,52 @@ mod tests {
         assert_eq!(w.len(), 2);
         assert_eq!(w[0].percent_used, Some(50.0));
         assert!((w[1].percent_used.unwrap() - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn agy_usage_separates_gemini_argon_and_third_party_pools() {
+        let w = parse_agy_usage(&json!({"command": {"data": {"groups": [
+            {
+                "name": "Gemini Models",
+                "buckets": [
+                    {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.25},
+                    {"id": "gemini-5h", "window": "5h", "remaining_fraction": 0.90}
+                ]
+            },
+            {
+                "name": "Claude and GPT models",
+                "buckets": [
+                    {"id": "3p-weekly", "window": "weekly", "remaining_fraction": 0.60},
+                    {"id": "3p-5h", "window": "5h", "remaining_fraction": 1.0}
+                ]
+            },
+            {
+                "name": "Gemini 4 Argon",
+                "buckets": [
+                    {"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.01}
+                ]
+            }
+        ]}}}));
+
+        let find = |pool: Option<&str>, kind: UsageWindowKind| {
+            w.iter()
+                .find(|e| e.pool.as_deref() == pool && e.kind == kind)
+                .and_then(|e| e.percent_used)
+                .unwrap()
+        };
+
+        assert!((find(Some("gemini"), UsageWindowKind::FiveHour) - 10.0).abs() < 1e-9);
+        assert!((find(Some("gemini"), UsageWindowKind::Weekly) - 75.0).abs() < 1e-9);
+        assert!((find(Some("third-party"), UsageWindowKind::FiveHour) - 0.0).abs() < 1e-9);
+        assert!((find(Some("third-party"), UsageWindowKind::Weekly) - 40.0).abs() < 1e-9);
+        assert!((find(Some("gemini-argon"), UsageWindowKind::Weekly) - 99.0).abs() < 1e-9);
+        assert!(
+            !w.iter().any(|e| e.pool.as_deref() == Some("gemini-argon")
+                && e.kind == UsageWindowKind::FiveHour)
+        );
+        // Unpooled default reflects standard Gemini, never Argon's 99% or Third-party's 40%.
+        assert!((find(None, UsageWindowKind::FiveHour) - 10.0).abs() < 1e-9);
+        assert!((find(None, UsageWindowKind::Weekly) - 75.0).abs() < 1e-9);
     }
 
     #[test]

@@ -335,13 +335,13 @@ mod settings {
     }
 
     #[test]
-    fn a_settings_file_saved_with_the_removed_board_shortcut_still_loads() {
+    fn a_settings_file_saved_with_removed_shortcuts_still_loads() {
         let tmp = tempfile::tempdir().unwrap();
         let core = Core::open(tmp.path()).unwrap();
         let rx = watch(&core);
         std::fs::write(
             tmp.path().join("settings.json"),
-            r#"{ "shortcuts": { "toggleBoard": "Mod+B", "terminal": "Mod+Alt+T" } }"#,
+            r#"{ "shortcuts": { "toggleBoard": "Mod+B", "dictation": "Mod+Shift+R", "diff": "Mod+Shift+D", "terminal": "Mod+Alt+T" } }"#,
         )
         .unwrap();
         let state = next(&rx);

@@ -114,14 +114,14 @@ Oxide checks for new versions in **Settings → Updates** and installs them in p
 
 ### Verifying a download
 
-Every release attaches `SHA256SUMS.txt` and a [build-provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for each file, which ties it to the exact workflow run and commit that built it:
+Every release lists the SHA-256 checksums in its release notes and attaches a [build-provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for each installer, which ties it to the exact workflow run and commit that built it:
 
 ```sh
-shasum -a 256 --check --ignore-missing SHA256SUMS.txt   # macOS; use sha256sum on Linux
+shasum -a 256 Oxide_<version>_aarch64.dmg   # macOS; compare with the release notes
 gh attestation verify Oxide_<version>_aarch64.dmg --repo getoxide/oxide
 ```
 
-On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with the line in `SHA256SUMS.txt`.
+On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with the release notes.
 
 ### Opening an unsigned build
 

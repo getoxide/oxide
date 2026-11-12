@@ -265,11 +265,16 @@ fn active_pool(model: Option<&str>) -> Option<QuotaPool> {
     let lower = model?.to_ascii_lowercase();
     if lower.contains("argon") {
         Some(QuotaPool::GeminiArgon)
-    } else if lower.contains("gemini") || lower.contains("flash") || lower.contains("learnlm") {
+    } else if lower.contains("gemini")
+        || lower.contains("hydrogen")
+        || lower.contains("flash")
+        || lower.contains("learnlm")
+    {
         Some(QuotaPool::Gemini)
     } else if lower.contains("claude")
         || lower.contains("sonnet")
         || lower.contains("opus")
+        || lower.contains("haiku")
         || lower.contains("gpt")
         || lower.starts_with("o1")
         || lower.starts_with("o3")

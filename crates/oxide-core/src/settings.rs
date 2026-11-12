@@ -180,9 +180,10 @@ fn accelerator_problem(accelerator: &str) -> Option<String> {
 fn shortcuts(obj: Option<Map<String, Value>>, errors: &mut Vec<FieldError>) -> Shortcuts {
     let mut obj = obj.unwrap_or_default();
     let mut shortcuts = Shortcuts::default();
-    // The Thread Board is gone: a file saved while it existed still carries its shortcut.
+    // Removed shortcuts: a file saved while they existed still carries them; drop on next save.
     obj.remove("toggleBoard");
     obj.remove("dictation");
+    obj.remove("diff");
     let in_file: Vec<String> = obj.keys().cloned().collect();
     for (key, slot) in shortcuts.slots() {
         let default = slot.clone();
