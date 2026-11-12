@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
+      actions: read
       issues: write
     env:
       TAG: ${{ github.event.release.tag_name }}
@@ -31,12 +32,17 @@ jobs:
           node-version-file: .node-version
           package-manager-cache: false
 
-      - name: Download the assets and check the checksums
+      - name: Download the assets, metadata and check the checksums
         run: |
-          mkdir assets
+          mkdir assets metadata
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-          cd assets
-          sha256sum --check SHA256SUMS.txt
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::Could not find a completed Release workflow run for $TAG."
+            exit 1
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name release-metadata --dir metadata
+          (cd assets && sha256sum --check ../metadata/SHA256SUMS.txt)
 
       - name: Verify the attestations
         working-directory: assets
@@ -44,23 +50,38 @@ jobs:
           while read -r _ file; do
             file="${file#\*}"
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
-          done < SHA256SUMS.txt
-          gh attestation verify SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"
+          done < ../metadata/SHA256SUMS.txt
 
-      - name: Verify the update feed
+      - name: Publish and verify the update feed
         if: env.PRERELEASE != 'true'
         run: |
-          # The stable feed is releases/latest; give GitHub a moment to move it.
-          for attempt in 1 2 3 4 5 6; do
-            if curl -fsSL -o feed.json "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" \
-              && node tools/ci/cli.mjs update-feed feed.json "$TAG" > feed.log 2>&1; then
-              break
-            fi
-            if [ "$attempt" = 6 ]; then cat feed.log 2>/dev/null; exit 1; fi
-            sleep 20
-          done
+          node tools/ci/cli.mjs update-feed metadata/latest.json "$TAG" > feed.log
           grep '^https://' feed.log | while read -r url; do
             curl -fsSL -r 0-0 -o /dev/null "$url" || { echo "::error::The update feed points at $url, which does not resolve."; exit 1; }
+          done
+
+          blob_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/blobs" -f content="$(base64 -w0 < metadata/latest.json)" -f encoding=base64 --jq .sha)
+          tree_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/trees" -f "tree[0][path]=latest.json" -f "tree[0][mode]=100644" -f "tree[0][type]=blob" -f "tree[0][sha]=${blob_sha}" --jq .sha)
+          parent_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/updater" --jq .object.sha 2>/dev/null || true)
+          if [ -n "$parent_sha" ]; then
+            commit_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/commits" -f message="chore(updater): ${TAG}" -f tree="${tree_sha}" -f "parents[0]=${parent_sha}" --jq .sha)
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/updater" -f sha="${commit_sha}" -F force=false > /dev/null
+          else
+            commit_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/commits" -f message="chore(updater): ${TAG}" -f tree="${tree_sha}" --jq .sha)
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/heads/updater" -f sha="${commit_sha}" > /dev/null
+          fi
+
+          gh api -H "Accept: application/vnd.github.raw+json" "repos/${GITHUB_REPOSITORY}/contents/latest.json?ref=updater" > published-feed.json
+          node tools/ci/cli.mjs update-feed published-feed.json "$TAG"
+          for attempt in 1 2 3 4; do
+            if curl -fsSL -o /dev/null "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updater/latest.json?t=$(date +%s)"; then
+              break
+            fi
+            if [ "$attempt" = 4 ]; then
+              echo "::error::https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/updater/latest.json did not resolve."
+              exit 1
+            fi
+            sleep 5
           done
 
       - name: Open an issue

@@ -173,6 +173,41 @@ describe("usageView", () => {
     expect(argonView.pools.find((p) => p.key === "gemini")?.isActive).toBe(false);
   });
 
+  it("keeps third-party Antigravity models isolated from Gemini fallback and sorts pools deterministically", () => {
+    const limitsWithReverseOrder: UsageLimits = {
+      fiveHour: win({ percentUsed: 80 }),
+      weekly: win({ percentUsed: 90 }),
+      pools: {
+        "third-party": {
+          label: "Third-party (Claude, GPT)",
+          fiveHour: null,
+          weekly: null,
+        },
+        "gemini-argon": {
+          label: "Gemini Argon",
+          fiveHour: null,
+          weekly: win({ percentUsed: 99 }),
+        },
+        gemini: {
+          label: "Gemini",
+          fiveHour: win({ percentUsed: 20 }),
+          weekly: win({ percentUsed: 30 }),
+        },
+      },
+    };
+
+    const claudeView = ready(usageView(limitsWithReverseOrder, true, NOW, NOW, "antigravity", "claude-opus-5-5-high"));
+    expect(claudeView.activePoolKey).toBe("third-party");
+    expect(claudeView.windows[0].detail).toBe("No usage reported yet");
+    expect(claudeView.windows[1].detail).toBe("No usage reported yet");
+
+    const hydrogenView = ready(usageView(limitsWithReverseOrder, true, NOW, NOW, "antigravity", "gemini-4-hydrogen-high"));
+    expect(hydrogenView.activePoolKey).toBe("gemini");
+    expect(hydrogenView.windows[0].fraction).toBe(0.2);
+    expect(hydrogenView.windows[1].fraction).toBe(0.3);
+    expect(hydrogenView.pools.map((p) => p.key)).toEqual(["gemini", "gemini-argon"]);
+  });
+
   it("selects model-specific pool in Claude provider (e.g. Sonnet vs Opus)", () => {
     const claudeLimits: UsageLimits = {
       fiveHour: win({ percentUsed: 30 }),

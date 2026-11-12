@@ -155,6 +155,13 @@ function windowView(
   };
 }
 
+const POOL_ORDER = ["gemini", "gemini-argon", "third-party", "sonnet", "opus", "haiku", "default"];
+
+function poolSortRank(key: string): number {
+  const index = POOL_ORDER.indexOf(key);
+  return index === -1 ? POOL_ORDER.length : index;
+}
+
 /** Resolves which pool key applies to the given provider and model name. */
 export function resolveActivePoolKey(provider: string, model: string | null): string {
   const p = (provider || "").toLowerCase();
@@ -165,6 +172,7 @@ export function resolveActivePoolKey(provider: string, model: string | null): st
       m.includes("claude") ||
       m.includes("sonnet") ||
       m.includes("opus") ||
+      m.includes("haiku") ||
       m.includes("gpt") ||
       m.startsWith("o1") ||
       m.startsWith("o3") ||
@@ -207,15 +215,18 @@ export function resolveModelWindows(
 } {
   const poolKey = resolveActivePoolKey(provider, model);
   const pools = (limits as { pools?: Record<string, { label: string; fiveHour: UsageLimitWindow | null; weekly: UsageLimitWindow | null }> })?.pools;
+  const hasPools = !!pools && Object.keys(pools).length > 0;
   const pool = pools?.[poolKey];
   const poolLabel = pool?.label || poolDisplayName(poolKey, provider);
 
-  // For 5-hour:
-  // If pool has fiveHour, use it. For gemini-argon, fall back to gemini's fiveHour if not directly defined.
-  // Otherwise fall back to limits?.fiveHour.
-  const fiveHour = pool?.fiveHour ?? (poolKey === "gemini-argon" ? pools?.["gemini"]?.fiveHour : undefined) ?? limits?.fiveHour;
-  // For weekly:
-  const weekly = pool?.weekly ?? limits?.weekly;
+  // For Antigravity third-party models, never fall back to the top-level Gemini limits once
+  // pool breakdowns are present. Gemini Argon shares Gemini's 5-hour window.
+  const isIsolatedThirdParty = hasPools && poolKey === "third-party";
+  const fiveHour =
+    pool?.fiveHour ??
+    (poolKey === "gemini-argon" ? pools?.["gemini"]?.fiveHour : undefined) ??
+    (isIsolatedThirdParty ? undefined : limits?.fiveHour);
+  const weekly = pool?.weekly ?? (isIsolatedThirdParty ? undefined : limits?.weekly);
 
   return { fiveHour, weekly, poolKey, poolLabel };
 }
@@ -246,7 +257,11 @@ export function usageView(
 
   const poolViews: UsagePoolView[] = [];
   if (poolsObj && Object.keys(poolsObj).length > 0) {
-    for (const [key, poolData] of Object.entries(poolsObj)) {
+    const entries = Object.entries(poolsObj).sort(([a], [b]) => {
+      const rankDiff = poolSortRank(a) - poolSortRank(b);
+      return rankDiff !== 0 ? rankDiff : a.localeCompare(b);
+    });
+    for (const [key, poolData] of entries) {
       const p5h = poolData.fiveHour?.reportedAt ?? 0;
       const pwk = poolData.weekly?.reportedAt ?? 0;
       if (p5h > newest) newest = p5h;

@@ -393,36 +393,36 @@ describe("checkUpdateFeed", () => {
 });
 
 describe("updateManifest", () => {
-  const release = { repository: "cavallinilorenzo/oxide", tag: "v1.2.3", date: "2026-10-29T00:00:00Z" };
-  const artifacts = ["Oxide_1.2.3_aarch64.dmg", "Oxide_1.2.3_aarch64.app.tar.gz", "Oxide_1.2.3_aarch64.app.tar.gz.sig", "Oxide_1.2.3_x64-setup.exe", "Oxide_1.2.3_x64-setup.exe.sig", "SHA256SUMS.txt"];
-  const signatures = { "Oxide_1.2.3_aarch64.app.tar.gz": "mac-signature\n", "Oxide_1.2.3_x64-setup.exe": "windows-signature" };
+  const release = { repository: "getoxide/oxide", tag: "v1.2.3", date: "2026-10-29T00:00:00Z" };
+  const artifacts = ["Oxide_1.2.3_aarch64.dmg", "Oxide_1.2.3_aarch64.dmg.sig", "Oxide_1.2.3_x64-setup.exe", "Oxide_1.2.3_x64-setup.exe.sig"];
+  const signatures = { "Oxide_1.2.3_aarch64.dmg": "mac-signature\n", "Oxide_1.2.3_x64-setup.exe": "windows-signature" };
 
   test("one signed package per platform produces the updater feed", () => {
     assert.deepEqual(updateManifest(artifacts, signatures, release), {
       version: "1.2.3",
-      notes: "Oxide 1.2.3\nRelease notes: https://github.com/cavallinilorenzo/oxide/releases/tag/v1.2.3",
+      notes: "Oxide 1.2.3\nRelease notes: https://github.com/getoxide/oxide/releases/tag/v1.2.3",
       pub_date: "2026-10-29T00:00:00Z",
       platforms: {
         "darwin-aarch64": {
           signature: "mac-signature",
-          url: "https://github.com/cavallinilorenzo/oxide/releases/download/v1.2.3/Oxide_1.2.3_aarch64.app.tar.gz",
+          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_aarch64.dmg",
         },
         "windows-x86_64": {
           signature: "windows-signature",
-          url: "https://github.com/cavallinilorenzo/oxide/releases/download/v1.2.3/Oxide_1.2.3_x64-setup.exe",
+          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_x64-setup.exe",
         },
       },
     });
   });
 
   test("a missing or empty signature fails", () => {
-    assert.throws(() => updateManifest(artifacts, { "Oxide_1.2.3_x64-setup.exe": "windows-signature" }, release), /Missing signature for Oxide_1\.2\.3_aarch64\.app\.tar\.gz/);
+    assert.throws(() => updateManifest(artifacts, { "Oxide_1.2.3_x64-setup.exe": "windows-signature" }, release), /Missing signature for Oxide_1\.2\.3_aarch64\.dmg/);
     assert.throws(() => updateManifest(artifacts, { ...signatures, "Oxide_1.2.3_x64-setup.exe": " \n" }, release), /Empty signature for Oxide_1\.2\.3_x64-setup\.exe/);
   });
 
   test("a duplicate package or no package fails", () => {
     assert.throws(() => updateManifest([...artifacts, "Oxide_1.2.2_x64-setup.exe"], signatures, release), /windows-x86_64: expected exactly one/);
-    assert.throws(() => updateManifest(["Oxide_1.2.3_aarch64.dmg", "SHA256SUMS.txt"], {}, release), /No updater packages/);
+    assert.throws(() => updateManifest(["Oxide_1.2.3_aarch64.app.tar.gz", "SHA256SUMS.txt"], {}, release), /No updater packages/);
   });
 
   test("an invalid tag or repository fails", () => {
@@ -435,7 +435,7 @@ describe("updateManifest", () => {
   });
 
   test("a release can ship one platform", () => {
-    const macOnly = updateManifest(["Oxide_1.2.3_aarch64.app.tar.gz"], { "Oxide_1.2.3_aarch64.app.tar.gz": "mac-signature" }, release);
+    const macOnly = updateManifest(["Oxide_1.2.3_aarch64.dmg"], { "Oxide_1.2.3_aarch64.dmg": "mac-signature" }, release);
     assert.deepEqual(Object.keys(macOnly.platforms), ["darwin-aarch64"]);
   });
 });

@@ -137,9 +137,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          extra=()
-          if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
-          web/node_modules/.bin/tauri build --ci --bundles app,dmg "${extra[@]}" -- --locked
+          web/node_modules/.bin/tauri build --ci --bundles app,dmg -- --locked
+          if [ "$RELEASE" = "true" ]; then
+            version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
+            web/node_modules/.bin/tauri signer sign --app-version "$version" "target/release/bundle/dmg/Oxide_${version}_aarch64.dmg"
+          fi
 
       - name: Build the Windows installer
         if: inputs.platform == 'windows-x64'
@@ -172,8 +174,7 @@ jobs:
           mkdir -p staged
           if [ "$PLATFORM" = "macos-aarch64" ]; then
             cp "$bundle/dmg/Oxide_${version}_aarch64.dmg" staged/
-            cp "$bundle/macos/Oxide.app.tar.gz" "staged/Oxide_${version}_aarch64.app.tar.gz"
-            cp "$bundle/macos/Oxide.app.tar.gz.sig" "staged/Oxide_${version}_aarch64.app.tar.gz.sig"
+            cp "$bundle/dmg/Oxide_${version}_aarch64.dmg.sig" staged/
             if [ "$NOTARIZED" = "true" ]; then
               notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
             elif [ "$SIGNED" = "true" ]; then
@@ -184,7 +185,7 @@ jobs:
           else
             cp "$bundle/nsis/Oxide_${version}_x64-setup.exe" staged/
             cp "$bundle/nsis/Oxide_${version}_x64-setup.exe.sig" staged/
-            notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against SHA256SUMS.txt."
+            notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
           fi
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"
           ls -l staged

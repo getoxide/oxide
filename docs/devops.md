@@ -35,8 +35,8 @@ push main / release/** ──► CI, every lane forced on (incl. both bundles) �
 
 tag vX.Y.Z  (immutable once pushed)
    └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS + Windows, signed ─► publish DRAFT
-                                                                                    (checksums, attestations, SBOM, latest.json, notes)
-Release Manager reviews and clicks Publish ──► immutable release ──► updater feed live ──► Verify release
+                                                                                    (dmg + exe, notes, checksums; metadata/SBOM as run artifact)
+Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (publishes `latest.json` on `updater` branch)
 
 daily  ──► Advisories (RustSec) ──► one tracking issue on failure
 weekly ──► Dependabot ──► auto-merge low-risk / `manual-review`
@@ -175,8 +175,8 @@ nextest runs each test in its own process with the settings in [`.config/nextest
 ### `build.yml` (shared build)
 
 - **What:** the one place installers are built. Inputs: `platform` (`macos-aarch64` or `windows-x64`) and `release`.
-  - `release: false` (CI): unsigned, caches allowed, no updater artifacts.
-  - `release: true`: no caches at all, frozen installs, the updater config (`tauri.updater.conf.json`) and `TAURI_SIGNING_PRIVATE_KEY`. It fails if that key is missing. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
+  - `release: false` (CI): unsigned, caches allowed, no updater signatures.
+  - `release: true`: no caches at all, frozen installs, `TAURI_SIGNING_PRIVATE_KEY` signs the macOS `.dmg` via `tauri signer sign` and the Windows NSIS installer via `tauri.updater.conf.json`. It fails if that key is missing. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
 - **Why:** PR bundles and release bundles come from one definition, so what `main` proves is what ships. It declares the `release` environment itself, because a job that calls a reusable workflow can't name one, and the approval must guard the job that reads the secrets.
 - **Bundles:** macOS `app,dmg`; Windows `nsis` only (the updater's Windows package is the NSIS setup).
 - **Local:** `node tools/check.mjs` builds an unsigned bundle for your OS. Signed builds are never made locally.
@@ -187,7 +187,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 1. **`verify`** (read-only): the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
 2. **`build`** (both platforms in parallel, `release: true`) waits for approval of the `release` environment.
-3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): names the deliverables (`Oxide_<v>_aarch64.dmg`, `Oxide_<v>_aarch64.app.tar.gz` + `.sig`, `Oxide_<v>_x64-setup.exe` + `.sig`), generates `latest.json` and `SHA256SUMS.txt`, attests build provenance for every file, exports the SPDX SBOM from the dependency graph, drafts the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
+3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the two installers (`Oxide_<v>_aarch64.dmg` and `Oxide_<v>_x64-setup.exe`) for the release, attests build provenance for them, writes `latest.json`, `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
 **Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push the signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
 
@@ -199,10 +199,10 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `verify-release.yml` (Verify release)
 
-- **What:** when a release is published, re-downloads every asset and checks `SHA256SUMS.txt`, runs `gh attestation verify` on each file, and, for a stable release, checks that `releases/latest/download/latest.json` serves this version, every URL in it resolves and every signature is non-empty.
-- **Why:** the updater feed is the one thing that, once broken, affects every installed app. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
+- **What:** when a release is published, re-downloads both installers and checks `SHA256SUMS.txt` from the `release-metadata` run artifact, runs `gh attestation verify` on each file, and, for a stable release, checks every URL in `latest.json` resolves, publishes `latest.json` to the `updater` branch (`raw.githubusercontent.com/getoxide/oxide/updater/latest.json`) and verifies it serves this version.
+- **Why:** the updater feed is the one thing that, once broken, affects every installed app, and keeping `latest.json`, `.sig`s, checksums and the SBOM off the release keeps the release page limited to the `.dmg` and `.exe` installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
-- **Local:** `gh attestation verify <file> --repo getoxide/oxide` and `sha256sum --check SHA256SUMS.txt`.
+- **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
 
 ## Scheduled and automatic workflows
 
@@ -256,13 +256,13 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 - **The updater key** is the root of trust for every installed app: apps accept only packages signed by it, and the matching public key is in `crates/oxide-app/tauri.conf.json`. Keep an encrypted offline backup. If it is lost, installed apps can never be updated again. Never commit it or replace the public key casually.
 - **Fork PRs** run on `pull_request` with a read-only token and no secrets. Actions settings require approval for first-time contributors.
 - **No `pull_request_target` workflow checks out PR code.** Untrusted code never gets a write token.
-- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` and `advisories` alone write issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
+- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes `latest.json` to the `updater` branch and failure issues, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
 - **Checkouts don't persist credentials,** so later steps can't push with the token.
 - **Third-party actions are pinned to a full commit SHA** with a version comment, so a moved tag can't inject code. Dependabot keeps the pins current.
 - **Release builds are clean:** no cache is restored or saved, so a poisoned cache can't reach a shipped binary.
 - **actionlint and zizmor** run on every PR that touches `.github/`.
 - **Dependency intake:** cooldowns on Dependabot, `minimumReleaseAge` and an install-script allowlist in pnpm, `cargo-deny` licences and sources, dependency review on PRs.
-- **Users can verify a download** with `SHA256SUMS.txt` or `gh attestation verify`, which ties it to the exact workflow run and commit.
+- **Users can verify a download** with the SHA-256 checksums in the release notes or `gh attestation verify`, which ties it to the exact workflow run and commit.
 - **CodeQL** (default setup for Actions, JavaScript/TypeScript and Rust) is advisory, not merge-blocking: Rust analysis is young and its false-positive rate here is unknown. Promote it to a code-scanning ruleset rule once the baseline is clean.
 
 ## Pinned versions Dependabot can't bump
