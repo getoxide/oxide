@@ -76,6 +76,15 @@ pub struct UsageHub {
     subscribers: Mutex<Vec<(String, crossbeam_channel::Sender<UsageLimits>)>>,
 }
 
+/// Antigravity is `agy` to its CLI and `antigravity` to Oxide's UI; both name one store entry.
+fn canonical(provider: &str) -> &str {
+    if provider == "agy" {
+        "antigravity"
+    } else {
+        provider
+    }
+}
+
 fn state_key(provider: &str) -> String {
     format!("usage_limits:{provider}")
 }
@@ -98,6 +107,7 @@ impl UsageHub {
     }
 
     pub(crate) fn get(&self, provider: &str) -> Option<UsageLimits> {
+        let provider = canonical(provider);
         self.limits
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -113,6 +123,7 @@ impl UsageHub {
         Option<UsageLimits>,
         crossbeam_channel::Receiver<UsageLimits>,
     ) {
+        let provider = canonical(provider);
         let (tx, rx) = crossbeam_channel::unbounded();
         // Registering under the limits lock keeps a concurrent report from slipping between
         // the snapshot and the subscription.
@@ -129,6 +140,7 @@ impl UsageHub {
         if windows.is_empty() {
             return;
         }
+        let provider = canonical(provider);
         let snapshot = {
             let mut limits = self.limits.lock().unwrap_or_else(|e| e.into_inner());
             let entry = limits.entry(provider.to_string()).or_default();
@@ -164,8 +176,32 @@ fn load_all(db_path: &PathBuf) -> rusqlite::Result<HashMap<String, UsageLimits>>
     Ok(rows
         .filter_map(|r| r.ok())
         .filter_map(|(key, value)| {
-            let provider = key.strip_prefix("usage_limits:")?.to_string();
+            let provider = canonical(key.strip_prefix("usage_limits:")?).to_string();
             Some((provider, serde_json::from_str(&value).ok()?))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxide_provider::UsageWindowKind;
+
+    #[test]
+    fn agy_reports_reach_antigravity_subscribers() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = UsageHub::new(dir.path().join("none.db"));
+        let (_, rx) = hub.subscribe("antigravity");
+        hub.report(
+            "agy",
+            &[UsageWindow {
+                kind: UsageWindowKind::Weekly,
+                percent_used: Some(20.0),
+                resets_at: None,
+                status: UsageStatus::Ok,
+            }],
+        );
+        assert!(rx.try_recv().is_ok());
+        assert!(hub.get("antigravity").is_some());
+    }
 }

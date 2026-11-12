@@ -19,7 +19,6 @@ vi.mock("./dictation", () => ({ DictationController: () => null }));
 vi.mock("./CodeWorkbench", () => ({ CodeWorkbench: () => <div className="code-workbench">Editor</div> }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div className="files-navigation" /> }));
 vi.mock("./TerminalSurface", () => ({ TerminalSurface: () => <div className="terminal-surface">Terminal</div> }));
-vi.mock("./DiffPanel", () => ({ DiffPanel: () => <div className="diff-panel">Diff content</div> }));
 vi.mock("./PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
 vi.mock("./IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
 
@@ -53,7 +52,6 @@ beforeEach(() => {
       case "list_projects": case "rescan_projects": return [project];
       case "last_selection": return { projectId: 1, threadId: 2 };
       case "list_threads": return threads;
-      case "git_diff": case "git_turn_diff": return { base: "main", files: [] };
       case "git_status": return { branch: "main", upstream: null, ahead: 0, behind: 0, added: 0, removed: 0, changedFiles: 0, protected: false, unpublished: false, pickerDisabledReason: null };
       case "list_turns": return { turnCount: 1, turns: [] };
       case "plugin:event|listen": return 1;
@@ -122,21 +120,21 @@ it("cycles through the dock's Surfaces and restores focus deliberately when coll
   await act(async () => toolsToggle.click());
   await settle();
 
-  const diffTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!;
-  expect(diffTab).toBeTruthy();
-  expect(diffTab.getAttribute("aria-selected")).toBe("true");
-  expect(diffTab.getAttribute("tabindex")).toBe("0");
+  const firstTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!;
+  expect(firstTab).toBeTruthy();
+  expect(firstTab.getAttribute("aria-selected")).toBe("true");
+  expect(firstTab.getAttribute("tabindex")).toBe("0");
 
   // Surface headers rove focus with ArrowRight
-  diffTab.focus();
+  firstTab.focus();
   const tabsNav = host.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"]')!;
   await act(async () => {
     tabsNav.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
   });
   await settle();
 
-  const filesTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!;
-  expect(filesTab.getAttribute("aria-selected")).toBe("true");
+  const nextTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Terminal"]')!;
+  expect(nextTab.getAttribute("aria-selected")).toBe("true");
 
   // Collapsing a focused dock moves focus to its handle
   await press("\\", { ctrlKey: true });
@@ -162,12 +160,12 @@ it("shows every Surface's icon and label inside a strip that leaves the utility 
     while (region.parentElement && region.parentElement !== nav) region = region.parentElement!;
     return region;
   };
-  const diffTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!;
-  const strip = regionOf(diffTab);
+  const firstTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!;
+  const strip = regionOf(firstTab);
   expect(strip).not.toBe(nav);
 
   // Labels never depend on whether the tab is active: both states keep icon + label.
-  for (const name of ["Diff", "Files", "Terminal", "Pull request", "Issues"]) {
+  for (const name of ["Files", "Terminal", "Pull request", "Issues"]) {
     const tab = host.querySelector<HTMLButtonElement>(`[role="tab"][aria-label="${name}"]`)!;
     expect(tab).not.toBeNull();
     expect(strip.contains(tab)).toBe(true);
@@ -180,11 +178,14 @@ it("shows every Surface's icon and label inside a strip that leaves the utility 
   }
 
   // Maximize/Restore and Close sit after the scrolling strip, not inside it, so they stay reachable.
-  await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Terminal"]')!.click());
   await settle();
   // The previously active tab keeps its label once it goes inactive.
-  expect(diffTab.getAttribute("aria-selected")).toBe("false");
-  expect(diffTab.textContent?.trim()).toBe("Diff");
+  expect(firstTab.getAttribute("aria-selected")).toBe("false");
+  expect(firstTab.textContent?.trim()).toBe("Files");
+  // The maximize control belongs to the Files Surface.
+  await act(async () => firstTab.click());
+  await settle();
   const close = host.querySelector<HTMLButtonElement>('button[aria-label="Close tools panel"]')!;
   const maximize = host.querySelector<HTMLButtonElement>('button[aria-label="Maximize Surface"]')!;
   const actions = regionOf(close);
@@ -202,8 +203,8 @@ it("scrolls the focused tab into view for every roving keyboard move", async () 
   await settle();
 
   const nav = host.querySelector<HTMLElement>('[role="tablist"][aria-label="Surfaces"]')!;
-  const diffTab = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Diff"]')!;
-  diffTab.focus();
+  const firstTab0 = host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!;
+  firstTab0.focus();
 
   const focusAndDispatch = async (key: string) => {
     scrolledIntoView = [];
@@ -214,17 +215,17 @@ it("scrolls the focused tab into view for every roving keyboard move", async () 
     return nav.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
   };
 
-  const filesTab = await focusAndDispatch("ArrowRight");
-  expect(filesTab.getAttribute("aria-label")).toBe("Files");
-  expect(document.activeElement).toBe(filesTab);
-  expect(scrolledIntoView).toContain(filesTab);
+  const terminalTab = await focusAndDispatch("ArrowRight");
+  expect(terminalTab.getAttribute("aria-label")).toBe("Terminal");
+  expect(document.activeElement).toBe(terminalTab);
+  expect(scrolledIntoView).toContain(terminalTab);
 
   const issuesTab = await focusAndDispatch("End");
   expect(issuesTab.getAttribute("aria-label")).toBe("Issues");
   expect(scrolledIntoView).toContain(issuesTab);
 
   const firstTab = await focusAndDispatch("Home");
-  expect(firstTab.getAttribute("aria-label")).toBe("Diff");
+  expect(firstTab.getAttribute("aria-label")).toBe("Files");
   expect(scrolledIntoView).toContain(firstTab);
 });
 
@@ -254,7 +255,9 @@ it("handles Escape hierarchy: closes topmost overlay, else restores maximization
   await act(async () => toolsToggle.click());
   await settle();
 
-  // Full screen is for browsing: no button on Diff, but the Files navigator can widen.
+  // Full screen is for browsing: no button on Terminal, but the Files navigator can widen.
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Terminal"]')!.click());
+  await settle();
   expect(host.querySelector('button[aria-label="Maximize Surface"]')).toBeNull();
   await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Files"]')!.click());
   await settle();
@@ -317,11 +320,6 @@ it("surface shortcut actions select the single Surface and move focus", async ()
   await press("F", { ctrlKey: true, shiftKey: true });
   await settle();
   expect(host.querySelector('[role="tab"][aria-label="Files"]')?.getAttribute("aria-selected")).toBe("true");
-
-  // Diff shortcut Mod+Shift+D
-  await press("D", { ctrlKey: true, shiftKey: true });
-  await settle();
-  expect(host.querySelector('[role="tab"][aria-label="Diff"]')?.getAttribute("aria-selected")).toBe("true");
 
   // Issues shortcut Mod+Shift+I
   await press("I", { ctrlKey: true, shiftKey: true });

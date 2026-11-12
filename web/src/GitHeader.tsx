@@ -5,8 +5,10 @@ import {
   CheckIcon,
   ChevronDownIcon,
   GitBranchIcon,
+  EyeIcon,
   GitCommitIcon,
   GitPullRequestIcon,
+  HistoryIcon,
   PlusIcon,
   RepoPullIcon,
   RepoPushIcon,
@@ -14,10 +16,15 @@ import {
   TriangleDownIcon,
   XIcon,
 } from "@primer/octicons-react";
-import { commands, type AppError, type GitBranch, type GitStatus } from "./bindings";
+import { commands, type AppError, type GitBranch, type GitStatus, type Thread } from "./bindings";
 import { canCreateBranch, filterBranches } from "./branchFilter";
 import { AGENT_BUSY, createPrBlockedReason, nextAction, pushBlockedReason } from "./gitAction";
 import { usePushFlow } from "./usePushFlow";
+import { BlindReviewDialog } from "./BlindReviewDialog";
+import { BlindReviewFindings } from "./BlindReviewFindings";
+import { CommitDialog } from "./CommitDialog";
+import { LineComments } from "./LineComments";
+import { RestoreDialog } from "./RestoreDialog";
 
 interface GitHeaderProps {
   projectId: number;
@@ -27,7 +34,16 @@ interface GitHeaderProps {
   threadsKey: string;
   /** The Thread's agent has not finished its Turn (working, or waiting on the user). */
   agentBusy: boolean;
-  onOpenDiff: () => void;
+  /** The Thread's provider, to mark 'same provider' in a Blind review. */
+  threadProvider?: string;
+  /** The Thread's issue reference, offered to a Blind review. */
+  threadIssue?: string | null;
+  /** The Thread is running a Turn, so its draft Line comments cannot be sent yet. */
+  threadWorking?: boolean;
+  /** A Blind review started its own Thread. */
+  onThreadCreated?: (thread: Thread) => void;
+  /** Called after a restore, so the Transcript shows that it happened. */
+  onRestored?: () => void;
   onOpenPullRequest: () => void;
   /** Called after Git changed the checkout or its remote, so other views reload. */
   onChanged: () => void;
@@ -42,7 +58,8 @@ export function GitHeader(props: GitHeaderProps) {
   return <GitHeaderBody key={`${props.projectId}:${props.threadId}`} {...props} />;
 }
 
-function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff, onOpenPullRequest, onChanged }: GitHeaderProps) {
+function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvider, threadIssue, threadWorking = false, onThreadCreated, onRestored, onOpenPullRequest, onChanged }: GitHeaderProps) {
+  const [dialog, setDialog] = useState<"commit" | "restore" | "blind" | null>(null);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -129,7 +146,9 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
   const disabledReason = status.pickerDisabledReason ?? (busy ? "Working…" : null);
   const dirty = status.changedFiles > 0;
 
+  const reviewKey = `${threadsKey}`;
   return (
+    <div className="git-header-wrap">
     <div className="git-header">
       <div className="branch-picker" ref={branchRef}>
         <button
@@ -158,7 +177,7 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
         <button
           className="chip dirty-chip"
           title={`${status.changedFiles} changed file${status.changedFiles === 1 ? "" : "s"}`}
-          onClick={onOpenDiff}
+          onClick={() => setDialog("commit")}
         >
           <span className="chip-added">+{status.added}</span> <span className="chip-removed">−{status.removed}</span>
         </button>
@@ -178,7 +197,7 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
           className={`git-primary${busy || push.busy ? " pending" : ""}`}
           disabled={busy || push.busy || action.kind === "up-to-date" || action.kind === "busy" || action.blockedReason !== null}
           title={action.blockedReason ?? undefined}
-          onClick={() => (action.kind === "commit-push" ? onOpenDiff() : void pushNow())}
+          onClick={() => (action.kind === "commit-push" ? setDialog("commit") : void pushNow())}
         >
           {busy || push.busy || action.kind === "busy" ? <SyncIcon size={14} className="spin" /> : action.kind === "up-to-date" ? <CheckIcon size={14} /> : action.kind === "commit-push" ? <GitCommitIcon size={14} /> : <RepoPushIcon size={14} />}
           {action.label.replace(/^✓\s*/, "")}
@@ -200,8 +219,14 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
               if (e.key === "Escape") setMenuOpen(false);
             }}
           >
-            <button role="menuitem" disabled={!dirty || agentBusy} onClick={() => (setMenuOpen(false), onOpenDiff())}>
+            <button role="menuitem" disabled={!dirty || agentBusy} onClick={() => (setMenuOpen(false), setDialog("commit"))}>
               <GitCommitIcon size={14} /> Commit…
+            </button>
+            <button role="menuitem" disabled={agentBusy} title={agentBusy ? AGENT_BUSY : undefined} onClick={() => (setMenuOpen(false), setDialog("restore"))}>
+              <HistoryIcon size={14} /> Restore files…
+            </button>
+            <button role="menuitem" onClick={() => (setMenuOpen(false), setDialog("blind"))}>
+              <EyeIcon size={14} /> Blind review…
             </button>
             <button
               role="menuitem"
@@ -223,14 +248,6 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
         )}
       </div>
       {push.dialog}
-      {push.warning && (
-        <span className="git-note" role="status" title={push.warning}>
-          <span className="git-error-text">{push.warning}</span>
-          <button className="icon-btn sm" aria-label="Dismiss notice" onClick={push.clearWarning}>
-            <XIcon size={12} />
-          </button>
-        </span>
-      )}
       {(error ?? push.error) && (
         <span className="git-error" role="alert" title={error ?? push.error ?? undefined}>
           <span className="git-error-text">{error ?? push.error}</span>
@@ -246,6 +263,22 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, onOpenDiff,
           </button>
         </span>
       )}
+    </div>
+    {dialog === "commit" && (
+      <CommitDialog projectId={projectId} threadId={threadId} push={push} onClose={() => setDialog(null)}
+        onCommitted={() => { void refresh(); onChanged(); }} />
+    )}
+    {dialog === "restore" && (
+      <RestoreDialog threadId={threadId} onClose={() => setDialog(null)}
+        onRestored={() => { void refresh(); onChanged(); onRestored?.(); }} />
+    )}
+    {dialog === "blind" && (
+      <BlindReviewDialog projectId={projectId} threadId={threadId} threadProvider={threadProvider}
+        threadIssue={threadIssue} onClose={() => setDialog(null)}
+        onStarted={(thread) => { onThreadCreated?.(thread); onChanged(); }} />
+    )}
+    <BlindReviewFindings projectId={projectId} threadId={threadId} refreshKey={reviewKey} />
+    <LineComments projectId={projectId} threadId={threadId} working={threadWorking} refreshKey={reviewKey} />
     </div>
   );
 }

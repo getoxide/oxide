@@ -34,15 +34,6 @@ beforeEach(() => {
       head: "fix/topic",
     },
   });
-  vi.spyOn(commands, "dossierPullRequestSection").mockResolvedValue({
-    status: "ok",
-    data: {
-      markdown:
-        "<!-- oxide:dossier:start -->\nfacts\n<!-- oxide:dossier:end -->",
-      visibility: "public",
-      headSha: "abc123",
-    },
-  });
   vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({
     status: "ok",
     data: ["main", "dev", "fix/topic"],
@@ -85,11 +76,6 @@ it("submits a prefilled draft and keeps the form and diagnostics when the push f
     body: "Tested locally",
     base: "main",
     draft: true,
-    dossierSection:
-      "<!-- oxide:dossier:start -->\nfacts\n<!-- oxide:dossier:end -->",
-    dossierIncludePrompts: false,
-    dossierIncludeAgentMessage: false,
-    dossierHeadSha: "abc123",
   });
   expect(created).not.toHaveBeenCalled();
   expect(host.querySelector('[role="alert"]')?.textContent).toContain(
@@ -173,59 +159,16 @@ async function submit() {
   );
 }
 
-it("previews the Dossier with the repository's visibility, publishes what was edited and offers prompts only as an opt-in", async () => {
+it("creates the pull request with the description as written", async () => {
   const create = vi
     .spyOn(commands, "createPullRequest")
     .mockResolvedValue({ status: "ok", data: pullRequest });
   await open(7);
-  expect(commands.dossierPullRequestSection).toHaveBeenLastCalledWith(
-    1,
-    7,
-    false,
-    false,
-  );
-  expect(host.querySelector(".pr-create-visibility")?.textContent).toContain(
-    "public",
-  );
-  const preview = [...host.querySelectorAll("textarea")].find((area) =>
-    area.value.includes("facts"),
-  )!;
-  expect(preview).toBeTruthy();
-
-  const prompts = [...host.querySelectorAll<HTMLInputElement>("input")].find(
-    (input) => input.parentElement?.textContent?.includes("my prompts"),
-  )!;
-  await act(async () => prompts.click());
-  expect(commands.dossierPullRequestSection).toHaveBeenLastCalledWith(
-    1,
-    7,
-    true,
-    false,
-  );
   await submit();
-  expect(create.mock.calls[0][2].dossierSection).toContain("facts");
-});
-
-it("declining the Dossier publishes the description as written", async () => {
-  const create = vi
-    .spyOn(commands, "createPullRequest")
-    .mockResolvedValue({ status: "ok", data: pullRequest });
-  await open(7);
-  const toggle = [...host.querySelectorAll<HTMLInputElement>("input")].find(
-    (input) => input.parentElement?.textContent?.includes("Add the Dossier"),
-  )!;
-  await act(async () => toggle.click());
-  await submit();
-  expect(create.mock.calls[0][2].dossierSection).toBeNull();
-});
-
-it("offers no Dossier outside a Thread", async () => {
-  const create = vi
-    .spyOn(commands, "createPullRequest")
-    .mockResolvedValue({ status: "ok", data: pullRequest });
-  await open(null);
-  expect(commands.dossierPullRequestSection).not.toHaveBeenCalled();
-  expect(host.querySelector(".pr-create-dossier")).toBeNull();
-  await submit();
-  expect(create.mock.calls[0][2].dossierSection).toBeNull();
+  expect(create).toHaveBeenCalledWith(1, 7, {
+    title: "Fix topic",
+    body: "Tested locally",
+    base: "main",
+    draft: false,
+  });
 });

@@ -29,8 +29,7 @@ import { fontStyle, getAppearance } from "./appearance";
 import { registerEditorSave } from "./editorSaves";
 import { invalidateQueries } from "./queryCache";
 import { shortcutLabel } from "./shortcuts";
-import { hunkTarget, patchDocument, type CodeOpenRequest, type ReviewTarget } from "./codeOpen";
-import { CommentComposer } from "./CommentComposer";
+import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
 
 /** Dock width below which the file list becomes a toggled overlay. */
@@ -38,8 +37,6 @@ const COMPACT_WIDTH = 560;
 type CloseChoice = "save" | "discard" | "cancel";
 
 interface Document {
-  readOnly?: boolean;
-  sourcePath?: string;
   path: string;
   model: monaco.editor.ITextModel;
   saved: string;
@@ -48,12 +45,6 @@ interface Document {
   saving: boolean;
   /** Replaced by the next single-click open until it is edited or double-clicked. */
   preview?: boolean;
-  /** The reviewed revision may differ from the local file, so hunk lines can't be trusted. */
-  remote?: boolean;
-  /** Opened from a Diff hunk, so Back to Diff is offered. */
-  fromDiff?: boolean;
-  /** Set when lines of this patch can be commented on for a Thread. */
-  review?: ReviewTarget;
   listener?: monaco.IDisposable;
 }
 interface Problem {
@@ -74,8 +65,6 @@ interface Props {
   onOpenLanguageSettings: () => void;
   /** Reports whether any file is open, so the host can offer full-screen editing. */
   onOpenFilesChange?: (open: boolean) => void;
-  /** Shows the Diff Surface again, where the comparison, file and scroll were left. */
-  onBackToDiff?: () => void;
 }
 
 export function CodeWorkbench({
@@ -89,7 +78,6 @@ export function CodeWorkbench({
   onOpenLanguageSettings,
   onOpenFilesChange,
   openRequest,
-  onBackToDiff,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -102,7 +90,6 @@ export function CodeWorkbench({
   const [loading, setLoading] = useState(false);
   useEffect(() => { onOpenFilesChange?.(documents.length > 0); }, [documents.length, onOpenFilesChange]);
   const [quickOpen, setQuickOpen] = useState(false);
-  const [commenting, setCommenting] = useState(false);
   const [newFile, setNewFile] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
   const [closing, setClosing] = useState<string | null>(null);
@@ -131,7 +118,7 @@ export function CodeWorkbench({
     try {
       localStorage.setItem(
         `oxide:code-tabs:${contextKey}`,
-        JSON.stringify(docs.filter((d) => !d.readOnly).map((d) => d.path)),
+        JSON.stringify(docs.map((d) => d.path)),
       );
     } catch {
       /* Editing works without UI persistence. */
@@ -146,7 +133,6 @@ export function CodeWorkbench({
     );
     if (previous) previous.view = instance.saveViewState();
     instance.setModel(doc.model);
-    instance.updateOptions({ readOnly: doc.readOnly ?? false });
     if (doc.view) instance.restoreViewState(doc.view);
     if (selection) {
       instance.setSelection(selection);
@@ -243,7 +229,7 @@ export function CodeWorkbench({
 
   const saveDocument = useCallback(
     async (doc: Document): Promise<boolean> => {
-      if (doc.readOnly || !doc.dirty) return true;
+      if (!doc.dirty) return true;
       if (doc.saving) return false;
       const content = doc.model.getValue();
       doc.saving = true;
@@ -294,7 +280,7 @@ export function CodeWorkbench({
       for (const path of paths) {
         const doc = records.current.get(path);
         if (!doc) continue;
-        if (doc.dirty && !doc.readOnly) {
+        if (doc.dirty) {
           if (active !== path) select(doc);
           const choice = await ask(path);
           setClosing(null);
@@ -364,16 +350,6 @@ export function CodeWorkbench({
       stickyScroll: { enabled: true },
     });
     editor.current = instance;
-    const commentAction = instance.addAction({
-      id: "oxide.commentOnLine",
-      label: "Comment on line",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyM],
-      run: () => {
-        const model = instance.getModel();
-        const doc = [...records.current.values()].find((d) => d.model === model);
-        if (doc?.review) setCommenting(true);
-      },
-    });
     const appearance=()=>instance.updateOptions({fontFamily:getAppearance().fonts.code, fontSize:fontStyle("code").size, fontWeight:String(fontStyle("code").weight)});
     window.addEventListener("oxide-appearance-changed",appearance);
     const bridge = new EditorLanguages(
@@ -447,7 +423,6 @@ export function CodeWorkbench({
       unregister();
       window.removeEventListener("oxide-appearance-changed",appearance);
       window.removeEventListener("oxide-language-tools-changed", reconnect);
-      commentAction.dispose();
       cursorChange.dispose();
       markers.dispose();
       opener.dispose();
@@ -466,23 +441,10 @@ export function CodeWorkbench({
 
   useEffect(() => {
     if (!openRequest || !editor.current) return;
-    if (!openRequest.diff) {
-      void actions.current.openFile(openRequest.path, undefined, false).then(() => {
-        const doc = records.current.get(openRequest.path);
-        if (doc && requestedFile.current?.id === openRequest.id) select(doc);
-      });
-      return;
-    }
-    const path = `Changes: ${openRequest.path}`;
-    const content = patchDocument(openRequest.diff);
-    let doc = records.current.get(path);
-    if (doc) { doc.model.setValue(content); doc.saved = content; doc.review = openRequest.review; }
-    else {
-      doc = { path, model: monaco.editor.createModel(content, "diff"), saved: content, dirty: false, view: null, saving: false, readOnly: true, sourcePath: openRequest.diff.status === "deleted" ? undefined : openRequest.path, remote: openRequest.remote, review: openRequest.review };
-      records.current.set(path, doc);
-    }
-    publish();
-    select(doc);
+    void actions.current.openFile(openRequest.path, undefined, false).then(() => {
+      const doc = records.current.get(openRequest.path);
+      if (doc && requestedFile.current?.id === openRequest.id) select(doc);
+    });
   }, [openRequest, publish, select]);
 
   useEffect(() => {
@@ -549,7 +511,7 @@ export function CodeWorkbench({
 
   async function reload() {
     const doc = records.current.get(active ?? "");
-    if (!doc || doc.readOnly) return;
+    if (!doc) return;
     const result = await commands.readFile(projectId, threadId, doc.path);
     if (result.status === "error") {
       setError(result.error.message);
@@ -653,7 +615,7 @@ export function CodeWorkbench({
         <EditorFileTree
           projectId={projectId}
           threadId={threadId}
-          selected={current?.readOnly ? (current.sourcePath ?? null) : active}
+          selected={active}
           onOpen={(path) => {
             if (compact) closeTree();
             void openFile(path, undefined, true, false);
@@ -733,7 +695,7 @@ export function CodeWorkbench({
                 }}
               >
                 <FileIcon size={13} />
-                <span>{doc.readOnly ? "Changes: " : ""}{doc.path.split("/").pop()}</span>
+                <span>{doc.path.split("/").pop()}</span>
                 {doc.dirty && (
                   <span className="editor-dirty" aria-label="Unsaved changes" />
                 )}
@@ -780,7 +742,7 @@ export function CodeWorkbench({
                   }}
                 >
                   <FileIcon size={13} />
-                  <span>{doc.readOnly ? "Changes: " : ""}{doc.path}</span>
+                  <span>{doc.path}</span>
                   {doc.dirty && <span className="editor-dirty" aria-label="Unsaved changes" />}
                 </button>
               ))}
@@ -812,38 +774,9 @@ export function CodeWorkbench({
         {current && (
           <div className="editor-breadcrumb">
             <span title={current.path}>{current.path}</span>
-            {current.readOnly && <span className="chip">Git patch · read-only</span>}
             <span className="grow" />
-            {current.review && (
-              <button className="btn sm" title={`Comment on the cursor's line (${shortcutLabel}+Alt+M)`} onClick={() => setCommenting(true)}>
-                Comment on line
-              </button>
-            )}
-            {current.sourcePath && (
-              <button
-                className="btn sm"
-                onClick={() => {
-                  const line = current.remote ? 1 : hunkTarget(current.model.getValue(), cursor.lineNumber);
-                  const range = { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 };
-                  const path = current.sourcePath!;
-                  void openFile(path, range).then(() => {
-                    const doc = records.current.get(path);
-                    if (doc && !doc.fromDiff) {
-                      doc.fromDiff = true;
-                      publish();
-                    }
-                  });
-                }}
-              >
-                Open in Code
-              </button>
-            )}
-            {(current.fromDiff || current.readOnly) && onBackToDiff && (
-              <button className="btn sm" onClick={onBackToDiff}>Back to Diff</button>
-            )}
             <button
               className="btn sm"
-              disabled={current.readOnly}
               onClick={() =>
                 void editor.current
                   ?.getAction("editor.action.formatDocument")
@@ -867,17 +800,6 @@ export function CodeWorkbench({
               Save
             </button>
           </div>
-        )}
-        {current?.review && commenting && (
-          <CommentComposer
-            key={`${current.path}:${cursor.lineNumber}`}
-            projectId={projectId}
-            path={current.path.replace(/^Changes: /, "")}
-            patch={current.model.getValue()}
-            line={cursor.lineNumber}
-            review={current.review}
-            onClose={() => { setCommenting(false); editor.current?.focus(); }}
-          />
         )}
         {language && (
           <LanguageSupportNotice

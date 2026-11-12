@@ -26,7 +26,6 @@ import {
   type PhaseKind,
 } from "./activity";
 import type { ItemSnapshot } from "./bindings";
-import { useOpenDiff } from "./diffOpen";
 import { splitHeadline } from "./transcriptView";
 
 /** How often the live phrase moves on within one kind of work. */
@@ -92,7 +91,6 @@ function ChildItem({ item }: { item: ItemSnapshot }) {
 }
 
 function ItemRow({ entry, kind }: { entry: ActivityItem; kind: PhaseKind }) {
-  const openDiff = useOpenDiff();
   const [open, setOpen] = useState(false);
   const { item, children } = entry;
   const { headline, detail } = splitHeadline(item.content);
@@ -101,15 +99,10 @@ function ItemRow({ entry, kind }: { entry: ActivityItem; kind: PhaseKind }) {
 
   if (item.kind === "file_change" || kind === "edit") {
     return (
-      <button
-        type="button"
-        className="activity-item activity-item-file"
-        onClick={() => openDiff(headline)}
-        aria-label={`Open diff for ${headline}`}
-      >
+      <div className="activity-item activity-item-file">
         <FileDiffIcon size={12} />
         <span className="activity-item-text">{headline}</span>
-      </button>
+      </div>
     );
   }
 

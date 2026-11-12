@@ -354,6 +354,16 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX line_comments_by_finding ON line_comments(finding_id)
         WHERE finding_id IS NOT NULL;
 ",
+    // The Verification Dossier and the Diff Surface's pull request review drafts are gone: drop
+    // what only they used.
+    "
+    ALTER TABLE projects DROP COLUMN sensitive_paths;
+    ALTER TABLE turns DROP COLUMN head_before;
+    ALTER TABLE turns DROP COLUMN head_after;
+    DROP INDEX pull_request_line_comments_by_pr;
+    DROP TABLE pull_request_line_comments;
+    DELETE FROM app_state WHERE key LIKE 'dossier_options:%';
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:

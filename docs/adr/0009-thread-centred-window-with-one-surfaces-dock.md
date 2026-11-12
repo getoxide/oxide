@@ -2,7 +2,7 @@
 
 Keep the Thread and its Transcript central, Projects and recent Threads in a
 collapsible left sidebar, and exactly one right dock for Diff, Files, Terminal,
-Pull request and Issues. Files owns the editor. Maximizing a Surface changes its
+Pull request and Issues (the Diff Surface was later removed, ADR-0014). Files owns the editor. Maximizing a Surface changes its
 presentation while retaining the same tool and working state; restoring it brings
 the Thread back. Work modes and the separate bottom terminal are removed.
 
@@ -46,7 +46,7 @@ the user moves between Threads.
 
 This supersedes only the editor-ownership part of the original decision. The rest
 stands: there is still one right dock for Diff, Files, Terminal, Pull request and
-Issues, a Surface still maximizes and restores its own working state, and the
+Issues (minus the Diff Surface, removed by ADR-0014), a Surface still maximizes and restores its own working state, and the
 sidebar/dock fitting rules are unchanged. The Files Surface no longer hosts an
 editor, so maximizing it widens the navigator rather than an editor. Thread and
 Terminal ownership rules from the original text remain as written.

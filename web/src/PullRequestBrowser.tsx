@@ -10,13 +10,11 @@ import {
   ChevronDownIcon,
   CommentDiscussionIcon,
   CommentIcon,
-  FileDiffIcon,
   GitMergeIcon,
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   MarkGithubIcon,
-  SyncIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
@@ -55,8 +53,6 @@ interface PullRequestBrowserProps {
   refreshKey: number;
   /** Called after a checkout or merge, so other Git views reload. */
   onChanged: () => void;
-  /** Shows the pull request's changed files in the Diff Surface. */
-  onReviewFiles: (number: number) => void;
   onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
   createRequest?: number;
   onCreateHandled?: () => void;
@@ -89,7 +85,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, projectName, threadId, threads, refreshKey, onChanged, onReviewFiles, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, projectName, threadId, threads, refreshKey, onChanged, onFixPullRequest, createRequest = 0, onCreateHandled }: PullRequestBrowserProps) {
   // The form belongs to the checkout it was opened for: another selection dismisses it unsubmitted.
   const [creatingFor, setCreatingFor] = useState<{ threadId: number | null } | null>(createRequest > 0 ? { threadId } : null);
   const creating = creatingFor !== null && creatingFor.threadId === threadId;
@@ -147,7 +143,6 @@ export function PullRequestBrowser({ projectId, projectName, threadId, threads, 
           setManual((n) => n + 1);
         }}
         onChanged={onChanged}
-        onReviewFiles={onReviewFiles}
         onFixPullRequest={onFixPullRequest}
         threads={threads}
       />
@@ -266,7 +261,6 @@ interface PullRequestReviewProps {
   refreshKey: number;
   onBack: (done?: "merged" | "closed") => void;
   onChanged: () => void;
-  onReviewFiles: (number: number) => void;
   onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
 }
 
@@ -283,7 +277,6 @@ export function PullRequestReview({
   refreshKey,
   onBack,
   onChanged,
-  onReviewFiles,
   onFixPullRequest,
 }: PullRequestReviewProps) {
   const [reload, setReload] = useState(0);
@@ -478,20 +471,6 @@ export function PullRequestReview({
     return ok;
   }
 
-  const refreshDossier = (owner: number) =>
-    change("dossier", () => commands.refreshPullRequestDossier(projectId, owner, number));
-  const pullAndRefreshDossier = (owner: number) =>
-    change("dossier", async () => {
-      const pulled = await commands.pullPullRequestBranch(
-        projectId,
-        owner,
-        pr.head,
-        detail.headSha,
-      );
-      if (pulled.status === "error") return pulled;
-      onChanged();
-      return commands.refreshPullRequestDossier(projectId, owner, number);
-    });
   const setDraft = (draft: boolean) => change("ready", () => commands.setPullRequestDraft(projectId, number, draft));
   const edit = (partial: Partial<PullRequestEdit>) =>
     change("edit", () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
@@ -547,10 +526,6 @@ export function PullRequestReview({
         </header>
 
         <div className="pr-actions">
-          <button className="primary" onClick={() => onReviewFiles(number)}>
-            <FileDiffIcon size={14} /> Review files
-            <span className="pr-count">{detail.diff.files.length}</span>
-          </button>
           {live && (
             <button
               className={pending === "checkout" ? "pending" : undefined}
@@ -564,43 +539,9 @@ export function PullRequestReview({
             </button>
           )}
         </div>
-        {live && git === null && <p className="pr-note">{gitError ? `The selected Thread's checkout is unavailable: ${gitError}` : "Select a Thread to check this branch out in its checkout."} Reviewing files needs no checkout.</p>}
+        {live && git === null && <p className="pr-note">{gitError ? `The selected Thread's checkout is unavailable: ${gitError}` : "Select a Thread to check this branch out in its checkout."}</p>}
         {live && git?.pickerDisabledReason && <p className="pr-note">{git.pickerDisabledReason}</p>}
 
-        {live && detail.dossierOutOfDate && (
-          <div className="pr-dossier-stale" role="status">
-            <span>
-              The Dossier in this description may not describe this branch's latest commit.
-              {ownerThread
-                ? " Refresh it with the evidence Oxide has now."
-                : " Open the Thread that owns this branch to refresh it."}
-            </span>
-            {ownerThread && (
-              <>
-                <button
-                  className={pending === "dossier" ? "pending" : undefined}
-                  disabled={busy}
-                  title={`Recompute the Dossier from Thread #${ownerThread.id} and replace only the marked section`}
-                  onClick={() => void refreshDossier(ownerThread.id)}
-                >
-                  <Working on={pending === "dossier"} label="Refreshing…">
-                    <SyncIcon size={14} /> Refresh Dossier
-                  </Working>
-                </button>
-                <button
-                  className={pending === "dossier" ? "pending" : undefined}
-                  disabled={busy}
-                  title={`Fast-forward Thread #${ownerThread.id}'s checkout, then refresh only the marked Dossier section`}
-                  onClick={() => void pullAndRefreshDossier(ownerThread.id)}
-                >
-                  <Working on={pending === "dossier"} label="Pulling and refreshing…">
-                    <SyncIcon size={14} /> Pull &amp; Refresh
-                  </Working>
-                </button>
-              </>
-            )}
-          </div>
-        )}
         {detail.body.trim() && <Description body={detail.body} />}
         {live && <MergeStatus
             requirements={requirements}

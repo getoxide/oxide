@@ -62,13 +62,11 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 
 ### Review before you merge
 
-- **Diff by Turn, Uncommitted or Branch.** See exactly what one agent Turn changed, thanks to Checkpoints taken at the start and end of every Turn.
-- **Verification Dossier.** An account of the change's intent, evidence and risk signals, computed without an LLM: which Verification commands ran and whether they're still fresh, languages no check covers, source changed without a test change, sensitive paths, the pull request's checks and the Approvals granted. Separate signals, never a single score. It can be published in the pull request body.
-- **Line comments.** Comment on any Diff line and send the comments back to the Thread as one prompt, or submit them to GitHub as a pull request review.
+- **Line comments.** Drafts from a Blind review that you keep, sent back to the Thread as one prompt.
 - **Blind review.** Have a second Provider review the change seeing only the diff and the issue, never the original conversation. Its findings become Line comments you keep or dismiss.
-- **Revert and Restore.** Take out one file or hunk, or put a Thread's files back to how they were before any Turn. Both are undoable.
+- **Restore.** Put a Thread's files back to how they were before any Turn. It is undoable.
 - **Rule suggestions.** Feedback you keep giving turns into a proposed rule for the Project's `AGENTS.md`.
-- **Pull requests, from review to merge.** Open the pull request from the Pull request Surface and submit Line comments to GitHub as a review. **Fix** sends failing checks, conflicts and the review threads you select back to the agent, in the branch's Thread or a new one. Merge, squash or rebase when GitHub says it's ready, or turn on auto-merge while checks run.
+- **Pull requests, from review to merge.** Open the pull request from the Pull request Surface. **Fix** sends failing checks, conflicts and the review threads you select back to the agent, in the branch's Thread or a new one. Merge, squash or rebase when GitHub says it's ready, or turn on auto-merge while checks run.
 
 ### A full workspace around the conversation
 
@@ -146,8 +144,8 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 1. Install and log in to at least one Provider (for example, run `claude` once in a terminal).
 2. Launch Oxide and press **⌘⇧N** (Ctrl+Shift+N on Windows) to open the Project palette: pick a folder, create one with `git init`, or clone a repository.
 3. Start a Thread, choose the Provider, Model and Permission mode, and write your prompt.
-4. When the Turn finishes, open the **Diff** Surface: review the Turn, read the Dossier, leave Line comments or revert what you don't want.
-5. **Commit & Push**, then open the pull request from the **Pull request** Surface.
+4. When the Turn finishes, start a Blind review or restore the files to before any Turn from the Git menu under the Thread title.
+5. **Commit & Push** from the same header, then open the pull request from the **Pull request** Surface.
 
 <!-- /site:quick-start -->
 
@@ -249,7 +247,7 @@ No separate key for Oxide. Each Provider uses its own login and its own subscrip
 Oxide has no telemetry and no server. Your prompts and code go only to the Provider you chose, through its own CLI. The Transcript, Checkpoints and Review ledger stay on your machine, and dictation runs fully on-device.
 
 **How is it different from using Claude Code or Codex in a terminal?**
-You keep the same CLIs, sessions and logins. Oxide adds a per-Turn Diff, the Verification Dossier, Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
+You keep the same CLIs, sessions and logins. Oxide adds Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
 
 **Which platforms are supported?**
 Official builds target macOS on Apple Silicon and Windows x64. Linux isn't packaged yet.

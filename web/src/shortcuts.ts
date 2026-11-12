@@ -20,7 +20,6 @@ export type ShortcutAction =
   | "issues"
   | "terminal"
   | "files"
-  | "diff"
   | "previousThread"
   | "nextThread"
   | "closeThread"
@@ -45,7 +44,6 @@ export const DEFAULT_SHORTCUTS: Shortcuts = {
   issues: "Mod+Shift+I",
   terminal: "Mod+Shift+T",
   files: "Mod+Shift+F",
-  diff: "Mod+Shift+D",
   previousThread: "Mod+ArrowUp",
   nextThread: "Mod+ArrowDown",
   closeThread: "Mod+Shift+W",
@@ -65,7 +63,6 @@ export const SHORTCUT_ACTIONS: { action: ShortcutAction; label: string; group: s
   { action: "openProject", label: "Open a Project", group: "Threads" },
   { action: "modelPicker", label: "Model picker", group: "Threads" },
   { action: "files", label: "Files", group: "Panels" },
-  { action: "diff", label: "Diff", group: "Panels" },
   { action: "pullRequests", label: "Pull requests", group: "Panels" },
   { action: "issues", label: "Issues", group: "Panels" },
   { action: "terminal", label: "Terminal", group: "Panels" },

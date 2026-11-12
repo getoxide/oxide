@@ -12,14 +12,7 @@ fn a_provider_with_no_commands_still_lists_oxides_once_each() {
     let names: Vec<_> = list.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
         names,
-        [
-            "clear",
-            "diff",
-            "model",
-            "permissions",
-            "reload-cache",
-            "rename"
-        ]
+        ["clear", "model", "permissions", "reload-cache", "rename"]
     );
 }
 

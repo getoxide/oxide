@@ -19,14 +19,7 @@ fn names(provider: Vec<SlashCommandInfo>) -> Vec<String> {
 fn effort_is_not_in_the_merged_catalog_while_oxide_commands_remain() {
     let names = names(Vec::new());
     assert!(!names.iter().any(|name| name == "effort"));
-    for oxide in [
-        "clear",
-        "diff",
-        "model",
-        "permissions",
-        "reload-cache",
-        "rename",
-    ] {
+    for oxide in ["clear", "model", "permissions", "reload-cache", "rename"] {
         assert!(
             names.iter().any(|name| name == oxide),
             "{oxide} must stay in the catalog"

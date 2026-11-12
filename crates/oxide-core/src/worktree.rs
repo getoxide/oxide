@@ -24,7 +24,7 @@ pub struct DispatchRequest {
     /// `oxide/<issue-n>-<slug of the issue title>`.
     pub issue_number: Option<u32>,
     pub issue_title: Option<String>,
-    /// The issue's page on GitHub, kept so its Dossier can link to it without asking again.
+    /// The issue's page on GitHub, kept so a Blind review can link to it without asking again.
     pub issue_url: Option<String>,
     /// The labels of that issue, kept by name so a Review round can describe the kind of work.
     #[serde(default)]

@@ -17,7 +17,6 @@ function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
     phase: "open",
     body: "",
     headSha: "abc123",
-    dossierOutOfDate: false,
     checks: [],
     comments: [],
     mergeState: "clean",

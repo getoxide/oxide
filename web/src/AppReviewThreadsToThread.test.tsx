@@ -64,7 +64,6 @@ beforeEach(() => {
       case "last_selection": return { projectId: 1, threadId: 2 };
       case "list_threads": return threads;
       case "git_status": return { branch: checkedOutBranch, upstream: null, ahead: 0, behind: 0, added: 0, removed: 0, changedFiles: 0, protected: false, unpublished: false, pickerDisabledReason: null };
-      case "git_diff": case "git_turn_diff": return { base: "main", files: [] };
       case "list_pull_requests": return [pullRequest];
       case "pull_request_detail": return detail;
       case "pull_request_review_threads": return reviewThreads;

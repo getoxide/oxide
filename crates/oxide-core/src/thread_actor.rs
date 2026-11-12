@@ -439,7 +439,6 @@ fn handle_provider_event(
             let turn_index = state.next_turn_index;
             state.next_turn_index += 1;
             state.dropped_items.clear();
-            let head_before = crate::git::head(&state.checkout);
             checkpoint::take(&state.checkout, state.thread_id, turn_index, Phase::Start);
             let segments = state
                 .pending_segments
@@ -455,7 +454,6 @@ fn handle_provider_event(
                 turn_index,
                 prompt.clone(),
                 segments.clone(),
-                head_before,
             ) {
                 id = Some(started.id);
                 model = started.model;
@@ -797,8 +795,7 @@ fn finish_turn(
         }
     });
     let recorded = if let Some(turn_id) = turn.id {
-        let head_after = crate::git::head(&state.checkout);
-        match storage.update_turn_completed(turn_id, status, error.clone(), head_after) {
+        match storage.update_turn_completed(turn_id, status, error.clone()) {
             Ok(()) => true,
             Err(error) => {
                 eprintln!("could not record Turn {turn_id} as {status:?}: {error:?}");
