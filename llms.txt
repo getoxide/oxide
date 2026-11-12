@@ -10,7 +10,7 @@ Key facts:
 
 - Repository: https://github.com/getoxide/oxide
 - License: MIT. Status: pre-release (version 0.x). Downloads: https://github.com/getoxide/oxide/releases
-- Stack: Rust core (`crates/oxide-core`), Provider adapters (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage, local Whisper dictation.
+- Stack: Rust core (`crates/oxide-core`), Provider adapters (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage.
 - Requirements: at least one Provider CLI (`claude`, `codex` or `agy`) installed and logged in; `git`; optionally the GitHub CLI `gh`.
 
 ## Docs
@@ -24,5 +24,4 @@ Key facts:
 ## Optional
 
 - [Security policy](https://github.com/getoxide/oxide/blob/main/SECURITY.md)
-- [Local dictation](https://github.com/getoxide/oxide/blob/main/docs/dictation.md)
 - [Product brief](https://github.com/getoxide/oxide/blob/main/PRODUCT.md)

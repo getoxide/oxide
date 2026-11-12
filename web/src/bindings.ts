@@ -6,27 +6,6 @@ import { invoke as __TAURI_INVOKE, Channel } from "@tauri-apps/api/core";
 
 /** Commands */
 export const commands = {
-	dictationStatus: () => typedError<DictationStatus_Serialize, AppError>(__TAURI_INVOKE("dictation_status")),
-	dictationAdvice: (preference: AdvicePreference) => typedError<DictationStatus_Serialize, AppError>(__TAURI_INVOKE("dictation_advice", { preference })),
-	dictationCheckPerformance: (request: DictationBenchmarkRequest_Deserialize, progress: Channel<DictationBenchmarkProgress_Deserialize>) => typedError<DictationBenchmarkResult_Serialize[], AppError>(__TAURI_INVOKE("dictation_check_performance", { request, progress })),
-	dictationCancelPerformance: () => __TAURI_INVOKE<void>("dictation_cancel_performance"),
-	dictationInstall: () => typedError<null, AppError>(__TAURI_INVOKE("dictation_install")),
-	dictationModelCatalogue: () => __TAURI_INVOKE<DictationModelCatalogue>("dictation_model_catalogue"),
-	dictationModels: () => typedError<DictationModelStatus[], AppError>(__TAURI_INVOKE("dictation_models")),
-	dictationModelStatus: (model: DictationModelId) => typedError<DictationModelStatus, AppError>(__TAURI_INVOKE("dictation_model_status", { model })),
-	dictationModelInstall: (model: DictationModelId) => typedError<null, AppError>(__TAURI_INVOKE("dictation_model_install", { model })),
-	dictationModelRetry: (model: DictationModelId) => typedError<null, AppError>(__TAURI_INVOKE("dictation_model_retry", { model })),
-	dictationModelCancel: (model: DictationModelId) => __TAURI_INVOKE<void>("dictation_model_cancel", { model }),
-	dictationModelDelete: (model: DictationModelId) => typedError<null, AppError>(__TAURI_INVOKE("dictation_model_delete", { model })),
-	dictationStart: () => typedError<null, AppError>(__TAURI_INVOKE("dictation_start")),
-	dictationStop: () => typedError<string, AppError>(__TAURI_INVOKE("dictation_stop")),
-	dictationRetryOnCpu: () => typedError<string, AppError>(__TAURI_INVOKE("dictation_retry_on_cpu")),
-	dictationCancel: () => __TAURI_INVOKE<void>("dictation_cancel"),
-	dictationRuntimes: () => typedError<RuntimeCatalogue_Serialize, AppError>(__TAURI_INVOKE("dictation_runtimes")),
-	/**  Installs the newest published runtime for `backend`; also the update action. */
-	dictationRuntimeInstall: (backend: BackendId) => typedError<InstalledRuntime, AppError>(__TAURI_INVOKE("dictation_runtime_install", { backend })),
-	dictationRuntimeCancel: (backend: BackendId) => __TAURI_INVOKE<void>("dictation_runtime_cancel", { backend }),
-	dictationRuntimeRemove: (backend: BackendId) => typedError<null, AppError>(__TAURI_INVOKE("dictation_runtime_remove", { backend })),
 	listProjects: () => typedError<Project[], AppError>(__TAURI_INVOKE("list_projects")),
 	/**
 	 *  Scans the scan roots for new repositories, then lists all Projects.
@@ -271,12 +250,6 @@ export const commands = {
 /* Types */
 export type ActivityCategory = "explore" | "edit" | "run" | "delegate" | "other";
 
-export type AdviceConfidence = "low" | "medium" | "high";
-
-export type AdvicePreference = "balanced" | "quality";
-
-export type AdviceStatus = "recommended" | "usableSlower" | "notRecommended" | "insufficientData";
-
 export type AppError = {
 	message: string,
 };
@@ -344,49 +317,6 @@ export type Attachment = {
 };
 
 export type AttachmentKind = "image" | "pdf" | "text" | "other";
-
-export type AvailableRuntime = {
-	backend: BackendId,
-	version: string,
-	bytes: number | null,
-	requirements: string,
-};
-
-export type BackendCandidate = BackendCandidate_Serialize | BackendCandidate_Deserialize;
-
-export type BackendCandidate_Deserialize = {
-	probe: BackendProbe_Deserialize,
-	adapterId?: string | null,
-	driverVersion?: string | null,
-	runtimeVersion: string,
-};
-
-export type BackendCandidate_Serialize = {
-	probe: BackendProbe_Serialize,
-	adapterId: string | null,
-	driverVersion: string | null,
-	runtimeVersion: string,
-};
-
-export type BackendId = "cpu" | "cuda" | "vulkan" | "metal";
-
-export type BackendProbe = BackendProbe_Serialize | BackendProbe_Deserialize;
-
-export type BackendProbe_Deserialize = {
-	backend: BackendId,
-	state: CapabilityState_Deserialize,
-	adapter?: string | null,
-	memoryPool?: MemoryPool_Deserialize | null,
-};
-
-export type BackendProbe_Serialize = {
-	backend: BackendId,
-	state: CapabilityState_Serialize,
-	adapter: string | null,
-	memoryPool?: MemoryPool_Serialize,
-};
-
-export type BenchmarkPhase = { phase: "loading" } | { phase: "warmup" } | { phase: "measuring"; run: number };
 
 /**  One finding of a Blind review, anchored to the reviewed Diff or kept as plain text. */
 export type BlindReviewFinding = BlindReviewFinding_Serialize | BlindReviewFinding_Deserialize;
@@ -485,24 +415,6 @@ export type BranchPullRequest = {
 	checksPending: number,
 };
 
-export type BuildManifest = {
-	whisperRsVersion: string,
-	whisperCppPinned: string,
-	includedBackends: BackendId[],
-};
-
-export type CapabilityState = CapabilityState_Serialize | CapabilityState_Deserialize;
-
-export type CapabilityState_Deserialize = { status: "omittedFromBuild" } | { status: "noCompatibleDevice" } | { status: "missingDriverOrRuntime" } | { status: "initializationFailure"; details: string } | { status: "insufficientMemory"; details: {
-	required_bytes: number | null,
-	available_bytes?: number | null,
-} } | { status: "available" } | { status: "verifiedByInference" };
-
-export type CapabilityState_Serialize = { status: "omittedFromBuild" } | { status: "noCompatibleDevice" } | { status: "missingDriverOrRuntime" } | { status: "initializationFailure"; details: string } | { status: "insufficientMemory"; details: {
-	required_bytes: number | null,
-	available_bytes?: number | null,
-} } | { status: "available" } | { status: "verifiedByInference" };
-
 export type CheckState = "success" | "failure" | "pending";
 
 export type ClaudeCustomizations = {
@@ -546,22 +458,6 @@ export type ContinuedThread_Deserialize = {
 export type ContinuedThread_Serialize = {
 	thread: Thread_Serialize,
 	recap: string,
-};
-
-export type CpuResources = CpuResources_Serialize | CpuResources_Deserialize;
-
-export type CpuResources_Deserialize = {
-	architecture: string,
-	model: string,
-	usableCores: number,
-	instructionCompatible?: boolean | null,
-};
-
-export type CpuResources_Serialize = {
-	architecture: string,
-	model: string,
-	usableCores: number,
-	instructionCompatible: boolean | null,
 };
 
 export type DebugSequencedThreadEvent = DebugSequencedThreadEvent_Serialize | DebugSequencedThreadEvent_Deserialize;
@@ -616,152 +512,6 @@ export type DeveloperTool_Serialize = {
 	path: string | null,
 	canInstall: boolean,
 	documentation: string,
-};
-
-export type DictationBenchmarkProgress = DictationBenchmarkProgress_Serialize | DictationBenchmarkProgress_Deserialize;
-
-export type DictationBenchmarkProgress_Deserialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapterId?: string | null,
-	phase: BenchmarkPhase,
-};
-
-export type DictationBenchmarkProgress_Serialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapterId: string | null,
-	phase: BenchmarkPhase,
-};
-
-export type DictationBenchmarkRequest = DictationBenchmarkRequest_Serialize | DictationBenchmarkRequest_Deserialize;
-
-export type DictationBenchmarkRequest_Deserialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapterId?: string | null,
-	includeConservativeCandidate: boolean,
-};
-
-export type DictationBenchmarkRequest_Serialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapterId: string | null,
-	includeConservativeCandidate: boolean,
-};
-
-export type DictationBenchmarkResult = DictationBenchmarkResult_Serialize | DictationBenchmarkResult_Deserialize;
-
-export type DictationBenchmarkResult_Deserialize = {
-	fixtureVersion: string,
-	model: DictationModelId,
-	measurement: PerformanceMeasurement_Deserialize,
-	execution: ExecutionDetails_Deserialize,
-	medianInferenceMs: number | null,
-	medianRtfMilli: number | null,
-};
-
-export type DictationBenchmarkResult_Serialize = {
-	fixtureVersion: string,
-	model: DictationModelId,
-	measurement: PerformanceMeasurement_Serialize,
-	execution: ExecutionDetails_Serialize,
-	medianInferenceMs: number | null,
-	medianRtfMilli: number | null,
-};
-
-export type DictationDevice = "cpu" | "gpu" | "auto";
-
-export type DictationModelCatalogue = {
-	version: number,
-	models: DictationModelEntry[],
-};
-
-export type DictationModelEntry = {
-	id: DictationModelId,
-	languageCoverage: string,
-	url: string,
-	revision: string,
-	expectedBytes: number | null,
-	sha256: string,
-	format: string,
-	quantization: string,
-	license: string,
-	licenseUrl: string,
-	nativeRevision: string,
-	estimatedPeakBytes: ModelMemoryEstimate[],
-	tradeoff: string,
-};
-
-export type DictationModelId = "tiny" | "base" | "small" | "medium" | "large-v3" | "large-v3-turbo";
-
-export type DictationModelState = { status: "missing" } | { status: "installed" } | { status: "installing"; received: number | null; total: number | null } | { status: "cancelled" } | { status: "error"; message: string };
-
-export type DictationModelStatus = {
-	id: DictationModelId,
-	state: DictationModelState,
-};
-
-export type DictationResourceAdvice = DictationResourceAdvice_Serialize | DictationResourceAdvice_Deserialize;
-
-export type DictationResourceAdvice_Deserialize = {
-	resources: ResourceSnapshot_Deserialize,
-	backends: BackendCandidate_Deserialize[],
-	recommendation: ResourceRecommendation_Deserialize,
-};
-
-export type DictationResourceAdvice_Serialize = {
-	resources: ResourceSnapshot_Serialize,
-	backends: BackendCandidate_Serialize[],
-	recommendation: ResourceRecommendation_Serialize,
-};
-
-export type DictationSettings = DictationSettings_Serialize | DictationSettings_Deserialize;
-
-export type DictationSettings_Deserialize = {
-	enabled: boolean,
-	language: string,
-	device: DictationDevice,
-	model?: DictationModelId,
-	backend?: BackendId | null,
-	adapterId?: string | null,
-};
-
-export type DictationSettings_Serialize = {
-	enabled: boolean,
-	language: string,
-	device: DictationDevice,
-	model: DictationModelId,
-	backend?: BackendId,
-	adapterId?: string,
-};
-
-export type DictationStatus = DictationStatus_Serialize | DictationStatus_Deserialize;
-
-export type DictationStatus_Deserialize = {
-	installed: boolean,
-	gpuCompiled: boolean,
-	availableMemoryGb: number | null,
-	cpuThreads: number,
-	recommendation: string,
-	manifest: BuildManifest,
-	probes: BackendProbe_Deserialize[],
-	lastExecution?: ExecutionDetails_Deserialize | null,
-	memoryPool?: MemoryPool_Deserialize | null,
-	resourceAdvice?: DictationResourceAdvice_Deserialize | null,
-};
-
-export type DictationStatus_Serialize = {
-	installed: boolean,
-	gpuCompiled: boolean,
-	availableMemoryGb: number | null,
-	cpuThreads: number,
-	recommendation: string,
-	manifest: BuildManifest,
-	probes: BackendProbe_Serialize[],
-	lastExecution: ExecutionDetails_Serialize | null,
-	memoryPool?: MemoryPool_Serialize,
-	resourceAdvice?: DictationResourceAdvice_Serialize,
 };
 
 export type Diff = Diff_Serialize | Diff_Deserialize;
@@ -853,24 +603,6 @@ export type DispatchRequest_Serialize = {
 	issueLabels: string[],
 };
 
-export type ExecutionDetails = ExecutionDetails_Serialize | ExecutionDetails_Deserialize;
-
-export type ExecutionDetails_Deserialize = {
-	backend: BackendId,
-	adapter?: string | null,
-	offloaded: boolean,
-	offloadEvidence?: string | null,
-	fallbackReason?: string | null,
-};
-
-export type ExecutionDetails_Serialize = {
-	backend: BackendId,
-	adapter: string | null,
-	offloaded: boolean,
-	offloadEvidence: string | null,
-	fallbackReason?: string,
-};
-
 export type FieldError = {
 	path: string,
 	message: string,
@@ -944,14 +676,6 @@ export type GithubRepository = {
 	nameWithOwner: string,
 	description: string,
 	isPrivate: boolean,
-};
-
-export type InstalledRuntime = {
-	backend: BackendId,
-	version: string,
-	protocolVersion: number,
-	compatible: boolean,
-	bytes: number | null,
 };
 
 export type IssueCloseReason = "completed" | "notPlanned";
@@ -1126,22 +850,6 @@ export type LineComment_Serialize = {
 	provider: string | null,
 };
 
-export type MemoryPool = MemoryPool_Serialize | MemoryPool_Deserialize;
-
-export type MemoryPool_Deserialize = {
-	unified: boolean,
-	totalBytes: number | null,
-	availableBytes?: number | null,
-	maxWorkingSetBytes?: number | null,
-};
-
-export type MemoryPool_Serialize = {
-	unified: boolean,
-	totalBytes: number | null,
-	availableBytes?: number | null,
-	maxWorkingSetBytes?: number | null,
-};
-
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 export type MergeState = "clean" | "conflicting" | "behind" | "blocked" | "unstable" | "unknown";
@@ -1164,12 +872,6 @@ export type ModelInfo_Serialize = {
 	supportedEfforts: string[],
 	defaultEffort: string | null,
 	isLegacy: boolean,
-};
-
-export type ModelMemoryEstimate = {
-	backend: BackendId,
-	bytes: number | null,
-	measured: boolean,
 };
 
 /**  What the author chose for a new pull request. */
@@ -1205,48 +907,6 @@ export type PendingRestore = {
 	turnIndex: number,
 	/**  The files the restore changed. */
 	files: RestoreFile[],
-};
-
-export type PerformanceIdentity = PerformanceIdentity_Serialize | PerformanceIdentity_Deserialize;
-
-export type PerformanceIdentity_Deserialize = {
-	modelSha256: string,
-	backend: BackendId,
-	adapterId?: string | null,
-	driverVersion?: string | null,
-	runtimeVersion: string,
-	policyVersion: number,
-	catalogueVersion: number,
-	cpu: CpuResources_Deserialize,
-};
-
-export type PerformanceIdentity_Serialize = {
-	modelSha256: string,
-	backend: BackendId,
-	adapterId: string | null,
-	driverVersion: string | null,
-	runtimeVersion: string,
-	policyVersion: number,
-	catalogueVersion: number,
-	cpu: CpuResources_Serialize,
-};
-
-export type PerformanceMeasurement = PerformanceMeasurement_Serialize | PerformanceMeasurement_Deserialize;
-
-export type PerformanceMeasurement_Deserialize = {
-	key: PerformanceIdentity_Deserialize,
-	recordedAtSecs: number | null,
-	audioDurationMs: number | null,
-	warmInferenceMs: [(number | null), (number | null), (number | null)],
-	coldLoadMs: number | null,
-};
-
-export type PerformanceMeasurement_Serialize = {
-	key: PerformanceIdentity_Serialize,
-	recordedAtSecs: number | null,
-	audioDurationMs: number | null,
-	warmInferenceMs: [(number | null), (number | null), (number | null)],
-	coldLoadMs: number | null,
 };
 
 export type PermissionMode = "ask" | "auto-edit" | "full-access";
@@ -1566,74 +1226,6 @@ export type PullRequestState_Serialize = {
 	pullRequest: PullRequest | null,
 };
 
-export type ResourceDecision = ResourceDecision_Serialize | ResourceDecision_Deserialize;
-
-export type ResourceDecision_Deserialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapter?: string | null,
-	adapterId?: string | null,
-	status: AdviceStatus,
-	confidence: AdviceConfidence,
-	provisional: boolean,
-	safeToLoad: boolean,
-	reason: string,
-	medianRtfMilli?: number | null,
-	coldLoadMs?: number | null,
-};
-
-export type ResourceDecision_Serialize = {
-	model: DictationModelId,
-	backend: BackendId,
-	adapter: string | null,
-	adapterId: string | null,
-	status: AdviceStatus,
-	confidence: AdviceConfidence,
-	provisional: boolean,
-	safeToLoad: boolean,
-	reason: string,
-	medianRtfMilli: number | null,
-	coldLoadMs: number | null,
-};
-
-export type ResourceRecommendation = ResourceRecommendation_Serialize | ResourceRecommendation_Deserialize;
-
-export type ResourceRecommendation_Deserialize = {
-	policyVersion: number,
-	catalogueVersion: number,
-	preference: AdvicePreference,
-	decisions: ResourceDecision_Deserialize[],
-	selected?: number | null,
-};
-
-export type ResourceRecommendation_Serialize = {
-	policyVersion: number,
-	catalogueVersion: number,
-	preference: AdvicePreference,
-	decisions: ResourceDecision_Serialize[],
-	selected: number | null,
-};
-
-export type ResourceSnapshot = ResourceSnapshot_Serialize | ResourceSnapshot_Deserialize;
-
-export type ResourceSnapshot_Deserialize = {
-	capturedAtSecs: number | null,
-	cpu: CpuResources_Deserialize,
-	totalRamBytes?: number | null,
-	availableRamBytes?: number | null,
-	baselineBytes?: number | null,
-	freeDiskBytes?: number | null,
-};
-
-export type ResourceSnapshot_Serialize = {
-	capturedAtSecs: number | null,
-	cpu: CpuResources_Serialize,
-	totalRamBytes: number | null,
-	availableRamBytes: number | null,
-	baselineBytes: number | null,
-	freeDiskBytes: number | null,
-};
-
 /**  What a restore does to one file. */
 export type RestoreChange = 
 /**  The file is written back to how the Checkpoint had it. */
@@ -1800,36 +1392,6 @@ export type RuleSuggestion = {
 	comments: string[],
 };
 
-export type RuntimeCatalogue = RuntimeCatalogue_Serialize | RuntimeCatalogue_Deserialize;
-
-export type RuntimeCatalogue_Deserialize = {
-	/**  Protocol the app speaks; installed runtimes with another value are unusable. */
-	protocolVersion: number,
-	installed: InstalledRuntime[],
-	available: AvailableRuntime[],
-	/**
-	 *  Why the published list could not be read (offline, bad signature…). Installed runtimes
-	 *  are still listed.
-	 */
-	indexError?: string | null,
-	/**  Backends being installed right now. */
-	installing: BackendId[],
-};
-
-export type RuntimeCatalogue_Serialize = {
-	/**  Protocol the app speaks; installed runtimes with another value are unusable. */
-	protocolVersion: number,
-	installed: InstalledRuntime[],
-	available: AvailableRuntime[],
-	/**
-	 *  Why the published list could not be read (offline, bad signature…). Installed runtimes
-	 *  are still listed.
-	 */
-	indexError: string | null,
-	/**  Backends being installed right now. */
-	installing: BackendId[],
-};
-
 export type Selection = Selection_Serialize | Selection_Deserialize;
 
 export type Selection_Deserialize = {
@@ -1869,7 +1431,6 @@ export type SettingsState_Serialize = {
 };
 
 export type Settings_Deserialize = {
-	dictation: DictationSettings_Deserialize,
 	defaultProvider: Provider,
 	providers: Providers_Deserialize,
 	confirmQuit: boolean,
@@ -1878,7 +1439,6 @@ export type Settings_Deserialize = {
 };
 
 export type Settings_Serialize = {
-	dictation: DictationSettings_Serialize,
 	defaultProvider: Provider,
 	providers: Providers_Serialize,
 	confirmQuit: boolean,
@@ -1887,7 +1447,6 @@ export type Settings_Serialize = {
 };
 
 export type Shortcuts = {
-	dictation: string,
 	newThread: string,
 	openProject: string,
 	modelPicker: string,

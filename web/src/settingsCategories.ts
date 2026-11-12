@@ -3,7 +3,6 @@ export const SETTINGS_CATEGORIES = [
   { id: "general", label: "General", sections: ["general"] },
   { id: "providers", label: "Providers", sections: ["providers"] },
   { id: "appearance", label: "Appearance", sections: ["appearance"] },
-  { id: "dictation", label: "Voice & Dictation", sections: ["dictation"] },
   { id: "developer", label: "Developer Tools", sections: ["github", "language"] },
   { id: "shortcuts", label: "Shortcuts", sections: ["shortcuts"] },
   { id: "updates", label: "Updates", sections: ["updates"] },

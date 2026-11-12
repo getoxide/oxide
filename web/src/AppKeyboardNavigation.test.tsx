@@ -15,7 +15,6 @@ vi.mock("./ThreadView", () => ({
 }));
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
-vi.mock("./dictation", () => ({ DictationController: () => null }));
 vi.mock("./CodeWorkbench", () => ({ CodeWorkbench: () => <div className="code-workbench">Editor</div> }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div className="files-navigation" /> }));
 vi.mock("./TerminalSurface", () => ({ TerminalSurface: () => <div className="terminal-surface">Terminal</div> }));

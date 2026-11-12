@@ -1,14 +1,6 @@
 //! The App shell: a thin Tauri layer that exposes [`oxide_core::Core`] to the webview.
 //! The webview talks only to the TypeScript bindings generated from here.
 
-mod dictation_advice;
-mod dictation_benchmark;
-mod dictation_runtimes;
-use dictation_benchmark::{dictation_cancel_performance, dictation_check_performance};
-use dictation_runtimes::{
-    dictation_runtime_cancel, dictation_runtime_install, dictation_runtime_remove,
-    dictation_runtimes,
-};
 mod system;
 mod updates;
 use updates::{app_update_status, check_app_update, install_app_update};
@@ -222,7 +214,6 @@ pub struct ClaudeCustomizations {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Shortcuts {
-    dictation: String,
     new_thread: String,
     open_project: String,
     model_picker: String,
@@ -242,406 +233,11 @@ pub struct Shortcuts {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    dictation: DictationSettings,
     default_provider: Provider,
     providers: Providers,
     confirm_quit: bool,
     claude_customizations: ClaudeCustomizations,
     shortcuts: Shortcuts,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum DictationDevice {
-    Cpu,
-    Gpu,
-    Auto,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum DictationModelId {
-    Tiny,
-    Base,
-    #[default]
-    Small,
-    Medium,
-    LargeV3,
-    LargeV3Turbo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelMemoryEstimate {
-    backend: BackendId,
-    #[specta(type = f64)]
-    bytes: u64,
-    measured: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DictationModelEntry {
-    id: DictationModelId,
-    language_coverage: String,
-    url: String,
-    revision: String,
-    #[specta(type = f64)]
-    expected_bytes: u64,
-    sha256: String,
-    format: String,
-    quantization: String,
-    license: String,
-    license_url: String,
-    native_revision: String,
-    estimated_peak_bytes: Vec<ModelMemoryEstimate>,
-    tradeoff: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DictationModelCatalogue {
-    version: u32,
-    models: Vec<DictationModelEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(tag = "status", rename_all = "camelCase")]
-pub enum DictationModelState {
-    Missing,
-    Installed,
-    Installing {
-        #[specta(type = f64)]
-        received: u64,
-        #[specta(type = f64)]
-        total: u64,
-    },
-    Cancelled,
-    Error {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct DictationModelStatus {
-    id: DictationModelId,
-    state: DictationModelState,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum BackendId {
-    Cpu,
-    Cuda,
-    Vulkan,
-    Metal,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(tag = "status", content = "details", rename_all = "camelCase")]
-pub enum CapabilityState {
-    OmittedFromBuild,
-    NoCompatibleDevice,
-    MissingDriverOrRuntime,
-    InitializationFailure(String),
-    InsufficientMemory {
-        #[specta(type = f64)]
-        required_bytes: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[specta(type = Option<f64>)]
-        available_bytes: Option<u64>,
-    },
-    Available,
-    VerifiedByInference,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct MemoryPool {
-    pub unified: bool,
-    #[specta(type = f64)]
-    pub total_bytes: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[specta(type = Option<f64>)]
-    pub available_bytes: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[specta(type = Option<f64>)]
-    pub max_working_set_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendProbe {
-    pub backend: BackendId,
-    pub state: CapabilityState,
-    pub adapter: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_pool: Option<MemoryPool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionDetails {
-    pub backend: BackendId,
-    pub adapter: Option<String>,
-    pub offloaded: bool,
-    pub offload_evidence: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildManifest {
-    pub whisper_rs_version: String,
-    pub whisper_cpp_pinned: String,
-    pub included_backends: Vec<BackendId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DictationSettings {
-    enabled: bool,
-    language: String,
-    device: DictationDevice,
-    #[serde(default)]
-    model: DictationModelId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    backend: Option<BackendId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    adapter_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DictationStatus {
-    installed: bool,
-    gpu_compiled: bool,
-    available_memory_gb: f64,
-    cpu_threads: u32,
-    recommendation: String,
-    manifest: BuildManifest,
-    probes: Vec<BackendProbe>,
-    last_execution: Option<ExecutionDetails>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_pool: Option<MemoryPool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_advice: Option<dictation_advice::DictationResourceAdvice>,
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_status(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-) -> Result<DictationStatus, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(
-        tauri::async_runtime::spawn_blocking(move || convert(&dictation.status(core.home())))
-            .await
-            .map_err(|e| oxide_core::Error::Dictation(e.to_string()))?,
-    )
-}
-#[tauri::command]
-#[specta::specta]
-async fn dictation_advice(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    preference: dictation_advice::AdvicePreference,
-) -> Result<DictationStatus, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        let status = dictation.status_with_preference(
-            core.home(),
-            match preference {
-                dictation_advice::AdvicePreference::Balanced => {
-                    oxide_core::dictation::resources::Preference::Balanced
-                }
-                dictation_advice::AdvicePreference::Quality => {
-                    oxide_core::dictation::resources::Preference::Quality
-                }
-            },
-        );
-        convert(&status)
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))?)
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_install(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    app: tauri::AppHandle,
-) -> Result<(), AppError> {
-    dictation_model_install(core, dictation, app, DictationModelId::Small).await
-}
-
-#[tauri::command]
-#[specta::specta]
-fn dictation_model_catalogue() -> DictationModelCatalogue {
-    convert(oxide_core::dictation::models::catalogue())
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_models(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-) -> Result<Vec<DictationModelStatus>, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        dictation.models.list(core.home()).map(|s| convert(&s))
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_model_status(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    model: DictationModelId,
-) -> Result<DictationModelStatus, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        dictation
-            .models
-            .status(core.home(), convert(&model))
-            .map(|s| convert(&s))
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_model_install(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    app: tauri::AppHandle,
-    model: DictationModelId,
-) -> Result<(), AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        dictation
-                .models
-                .install(core.home(), convert(&model), |status| {
-                    if status.id == oxide_core::dictation::ModelId::Small
-                        && let oxide_core::dictation::models::ModelState::Installing {
-                            received,
-                            total,
-                        } = &status.state
-                    {
-                        let _ = app.emit("dictation-download", (received, total));
-                    }
-                    let payload: DictationModelStatus = convert(&status);
-                    let _ = app.emit("dictation-model-download", payload);
-                })
-    })
-    .await;
-    Ok(result.map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_model_retry(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    app: tauri::AppHandle,
-    model: DictationModelId,
-) -> Result<(), AppError> {
-    dictation_model_install(core, dictation, app, model).await
-}
-
-#[tauri::command]
-#[specta::specta]
-fn dictation_model_cancel(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    model: DictationModelId,
-) {
-    dictation.models.cancel(core.home(), convert(&model));
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_model_delete(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    model: DictationModelId,
-) -> Result<(), AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        let settings = core.settings().settings.dictation;
-        let id = convert(&model);
-        if settings.enabled && settings.model == id {
-            return Err(oxide_core::Error::Dictation(
-                "Disable dictation or select another model before deleting the active model".into(),
-            ));
-        }
-        dictation.models.delete(core.home(), id)
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn dictation_start(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-) -> Result<(), AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        let prepared =
-            dictation.prepare_recording(core.home(), || core.settings().settings.dictation)?;
-        dictation.start_prepared(prepared)
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-#[tauri::command]
-#[specta::specta]
-async fn dictation_stop(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-) -> Result<String, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        dictation.stop(core.home(), &core.settings().settings.dictation)
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-#[tauri::command]
-#[specta::specta]
-async fn dictation_retry_on_cpu(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-) -> Result<String, AppError> {
-    let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        dictation.retry_on_cpu(core.home(), &core.settings().settings.dictation)
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
-}
-#[tauri::command]
-#[specta::specta]
-fn dictation_cancel(dictation: State<'_, Arc<oxide_core::dictation::Dictation>>) {
-    dictation.cancel();
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -690,29 +286,15 @@ fn get_settings(core: State<'_, Arc<Core>>) -> SettingsState {
 
 #[tauri::command]
 #[specta::specta]
-async fn save_settings(
-    core: State<'_, Arc<Core>>,
-    dictation: State<'_, Arc<oxide_core::dictation::Dictation>>,
-    settings: Settings,
-) -> Result<(), AppError> {
+async fn save_settings(core: State<'_, Arc<Core>>, settings: Settings) -> Result<(), AppError> {
     let core = core.inner().clone();
-    let dictation = dictation.inner().clone();
     let settings: oxide_core::Settings = convert(&settings);
-    // Stop capture/inference immediately, before waiting for the settings worker.
-    if !settings.dictation.enabled {
-        dictation.cancel();
-    }
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        let previous = core.settings().settings;
-        dictation.configure(core.home(), &settings.dictation)?;
-        if let Err(error) = core.save_settings(&settings) {
-            let _ = dictation.configure(core.home(), &previous.dictation);
-            return Err(error);
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| oxide_core::Error::Dictation(e.to_string()))??)
+    tauri::async_runtime::spawn_blocking(move || core.save_settings(&settings))
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })?
+        .map_err(AppError::from)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -3757,26 +3339,6 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
-        dictation_status,
-        dictation_advice,
-        dictation_check_performance,
-        dictation_cancel_performance,
-        dictation_install,
-        dictation_model_catalogue,
-        dictation_models,
-        dictation_model_status,
-        dictation_model_install,
-        dictation_model_retry,
-        dictation_model_cancel,
-        dictation_model_delete,
-        dictation_start,
-        dictation_stop,
-        dictation_retry_on_cpu,
-        dictation_cancel,
-        dictation_runtimes,
-        dictation_runtime_install,
-        dictation_runtime_cancel,
-        dictation_runtime_remove,
         list_projects,
         rescan_projects,
         add_project,
@@ -3935,10 +3497,8 @@ pub fn run() {
     export_bindings();
 
     tauri::Builder::default()
-        .manage(Arc::new(oxide_core::dictation::Dictation::default()))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(updates::Updates::default()))
-        .manage(Arc::new(dictation_runtimes::RuntimeOps::default()))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler({
@@ -3968,10 +3528,6 @@ pub fn run() {
                 // Closing only hides the window: Threads keep running in the background.
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    window
-                        .app_handle()
-                        .state::<Arc<oxide_core::dictation::Dictation>>()
-                        .cancel();
                     let _ = window.hide();
                     if let Some(core) = window.app_handle().try_state::<Arc<Core>>() {
                         core.set_window_active(false);
@@ -3998,7 +3554,6 @@ pub fn run() {
                 .home_dir()
                 .expect("no home directory")
                 .join(".oxide");
-            oxide_core::dictation::runtimes::set_home(&home);
             let core = Core::open(home)?;
             core.start_usage_poller();
             let handle = app.handle().clone();
@@ -4009,13 +3564,7 @@ pub fn run() {
                     let _ = service_handle.emit(PROJECT_SERVICES_CHANGED, event.project_id);
                 }
             });
-            let dictation = app
-                .state::<Arc<oxide_core::dictation::Dictation>>()
-                .inner()
-                .clone();
-            let dictation_home = core.home().to_path_buf();
             core.subscribe_settings(move |state| {
-                let _ = dictation.configure(&dictation_home, &state.settings.dictation);
                 let _ = handle.emit(SETTINGS_CHANGED, SettingsState::from(state));
             });
             core.set_system(Arc::new(system::MacSystem::new(app.handle().clone())));
