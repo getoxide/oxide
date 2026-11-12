@@ -34,33 +34,33 @@ jobs:
 
       - name: Download the assets, metadata and check the checksums
         run: |
-          mkdir assets metadata
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          mkdir verify-assets verify-metadata
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir verify-assets
           run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
             echo "::error::Could not find a completed Release workflow run for $TAG."
             exit 1
           fi
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name release-metadata --dir metadata
-          (cd assets && sha256sum --check ../metadata/SHA256SUMS.txt)
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name release-metadata --dir verify-metadata
+          (cd verify-assets && sha256sum --check ../verify-metadata/SHA256SUMS.txt)
 
       - name: Verify the attestations
-        working-directory: assets
+        working-directory: verify-assets
         run: |
           while read -r _ file; do
             file="${file#\*}"
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY"
-          done < ../metadata/SHA256SUMS.txt
+          done < ../verify-metadata/SHA256SUMS.txt
 
       - name: Publish and verify the update feed
         if: env.PRERELEASE != 'true'
         run: |
-          node tools/ci/cli.mjs update-feed metadata/latest.json "$TAG" > feed.log
+          node tools/ci/cli.mjs update-feed verify-metadata/latest.json "$TAG" > feed.log
           grep '^https://' feed.log | while read -r url; do
             curl -fsSL -r 0-0 -o /dev/null "$url" || { echo "::error::The update feed points at $url, which does not resolve."; exit 1; }
           done
 
-          blob_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/blobs" -f content="$(base64 -w0 < metadata/latest.json)" -f encoding=base64 --jq .sha)
+          blob_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/blobs" -f content="$(base64 -w0 < verify-metadata/latest.json)" -f encoding=base64 --jq .sha)
           tree_sha=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/trees" -f "tree[0][path]=latest.json" -f "tree[0][mode]=100644" -f "tree[0][type]=blob" -f "tree[0][sha]=${blob_sha}" --jq .sha)
           parent_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/updater" --jq .object.sha 2>/dev/null || true)
           if [ -n "$parent_sha" ]; then
