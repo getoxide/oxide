@@ -40,6 +40,20 @@ describe("parseMarkdown", () => {
     ]);
   });
 
+  it("renders a bot comment like GitHub: no hidden reference, a table, a relative time", () => {
+    const iso = new Date(Date.now() - 5 * 60_000).toISOString();
+    const blocks = parseMarkdown(
+      `[vc]: #abc123==:eyJ0\nThe latest updates on your projects.\n\n| Project | Deployment | Updated |\n| :--- | :----- | :------ |\n| [site](https://x.y) | [Ready](https://x.y/z) | <relative-time datetime="${iso}">Nov 13, 2026</relative-time> |`,
+    );
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toMatchObject({ kind: "paragraph", inline: [{ text: "The latest updates on your projects." }] });
+    expect(blocks[1]).toMatchObject({
+      kind: "table",
+      header: [[{ text: "Project" }], [{ text: "Deployment" }], [{ text: "Updated" }]],
+      rows: [[[{ kind: "link", text: "site" }], [{ kind: "link", text: "Ready" }], [{ kind: "text", text: "5m" }]]],
+    });
+  });
+
   it("reads checklists with their state", () => {
     const [list] = parseMarkdown("- [ ] Tests added\n- [x] Docs");
     expect(list).toMatchObject({ kind: "list", items: [{ checked: false }, { checked: true }] });

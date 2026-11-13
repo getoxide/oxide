@@ -72,9 +72,18 @@ const key = (type: "keydown" | "keyup", name: string, init: KeyboardEventInit = 
   });
 const holdPrimary = async () => {
   await key("keydown", primaryKey, primary);
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
 };
 const badges = () => Array.from(host.querySelectorAll(".thread-row .shortcut-badge")).map((badge) => badge.textContent);
+
+it("does not reveal badges while a shortcut is being typed", async () => {
+  await act(async () => root.render(<App />));
+  await settle();
+  await key("keydown", primaryKey, primary);
+  await key("keydown", "k", primary);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  expect(badges()).toEqual([]);
+});
 
 it("reveals thread shortcut badges while the primary modifier is held, and hides them on release", async () => {
   await act(async () => root.render(<App />));

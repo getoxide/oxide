@@ -1094,6 +1094,10 @@ section.terminal.terminal-hidden { display: none; }
 .pr-views .md code, .pr-views .md pre { font-family: var(--mono); font-size: 12px; background: var(--bg3); border-radius: 4px; }
 .pr-views .md code { padding: 1px 5px; }
 .pr-views .md pre { padding: var(--space-2) 10px; overflow-x: auto; white-space: pre; }
+.pr-views .md-table { overflow-x: auto; }
+.pr-views .md table { border-collapse: collapse; font-size: 12px; }
+.pr-views .md th, .pr-views .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.pr-views .md th { color: var(--fg-bright); font-weight: 650; background: var(--bg3); }
 .pr-views .md hr { border: 0; border-top: 1px solid var(--line); width: 100%; }
 .pr-views .md ul { list-style: none; padding: 0; display: grid; gap: 4px; }
 .pr-views .md li { display: flex; gap: var(--space-2); }

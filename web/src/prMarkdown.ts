@@ -2,6 +2,8 @@
  *  It shows what matters (headings, lists, checkboxes, code, link text) and drops what is
  *  noise in a narrow panel: HTML comments, bot metadata, raw tags. Output is data, never HTML. */
 
+import { relativeTime } from "./pullRequestReview";
+
 export interface Inline {
   kind: "text" | "code" | "link" | "strong";
   text: string;
@@ -12,6 +14,7 @@ export type Block =
   | { kind: "paragraph"; inline: Inline[] }
   | { kind: "list"; items: { checked: boolean | null; inline: Inline[] }[] }
   | { kind: "code"; text: string }
+  | { kind: "table"; header: Inline[][]; rows: Inline[][][] }
   | { kind: "rule" };
 
 const TAGS =
@@ -21,6 +24,10 @@ function clean(src: string): string {
   return src
     .replace(/\r\n?/g, "\n")
     .replace(/<!--[\s\S]*?-->/g, "")
+    // GitHub shows a time as "now" or "5m ago", not as the raw tag.
+    .replace(/<relative-time[^>]*datetime="([^"]*)"[^>]*>[\s\S]*?<\/relative-time>/gi, (all, iso: string) => relativeTime(iso) || all)
+    // A link reference definition (`[vc]: #...`) is invisible on GitHub: bots use it to hide metadata.
+    .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]+\S.*$/gm, "")
     // Dependabot's machine-readable trailer.
     .replace(/\n?---\nupdated-dependencies:[\s\S]*?(\n\.\.\.\n?|$)/, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -58,6 +65,8 @@ function cost(block: Block): number {
       return block.items.reduce((n, item) => n + textLines(item.inline), 0);
     case "code":
       return block.text.split("\n").length;
+    case "table":
+      return 1 + block.rows.length;
     case "rule":
       return 0;
   }
@@ -85,6 +94,12 @@ export function limitBlocks(blocks: Block[], budget: number): { blocks: Block[];
   return { blocks, truncated: false };
 }
 
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+function tableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
 export function parseMarkdown(src: string): Block[] {
   const blocks: Block[] = [];
   const lines = clean(src).split("\n");
@@ -100,6 +115,17 @@ export function parseMarkdown(src: string): Block[] {
       const code: string[] = [];
       for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]);
       blocks.push({ kind: "code", text: code.join("\n") });
+      continue;
+    }
+    if (line.includes("|") && TABLE_SEPARATOR.test(lines[i + 1] ?? "") && (lines[i + 1] ?? "").includes("-")) {
+      flush();
+      const header = tableCells(line).map(parseInline);
+      const rows: Inline[][][] = [];
+      for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes("|"); i++) {
+        rows.push(tableCells(lines[i]).map(parseInline));
+      }
+      i--;
+      blocks.push({ kind: "table", header, rows });
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
