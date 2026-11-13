@@ -23,7 +23,7 @@ feat/x   ●    fix/y  docs/z     one topic per branch
 4. **One topic per branch.** Do not stack unrelated work. If you depend on another unmerged branch, say so in the PR.
 5. **Keep up to date** by merging or rebasing `origin/main` into your branch.
 6. **Never push to `main`, force-push shared branches, or merge your own PR without a human's go-ahead.** The ruleset enforces most of this; do not look for workarounds.
-7. **Releases are a human decision.** Only the Release Managers (`cavallinilorenzo`, `itsmrma`) release: bump the version in a normal `chore(release): vX.Y.Z` PR into `main`, wait for `gate` on the merge commit, then tag it (runbook in `docs/devops.md`). Never create a `v*` tag as an agent. Tags are immutable once pushed (a `release tags` ruleset; only the admin can delete one), and a release build waits for a Release Manager's approval.
+7. **Releases.** Either a Release Manager (`cavallinilorenzo`, `itsmrma`) or an agent may tag releases and open releases: bump the version in a normal `chore(release): vX.Y.Z` PR into `main`, wait for `gate` on the merge commit, then tag it (runbook in `docs/devops.md`). Tags are immutable once pushed (a `release tags` ruleset; only the admin can delete one), and a release build waits for a Release Manager's approval.
 8. **Hotfixes** are ordinary PRs into `main`. If an already-published release needs a fix and `main` has moved on, a human creates a `release/x.y` branch from the tag and cherry-picks.
 9. Branches are deleted automatically on merge. Do not reuse a merged branch name.
 
