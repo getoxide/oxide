@@ -953,7 +953,7 @@ fn branch_pull_request_value(
     branch: &str,
 ) -> Result<Option<serde_json::Value>> {
     gh.require_ready(cwd)?;
-    let fields = format!("{PR_FIELDS},statusCheckRollup");
+    let fields = format!("{PR_FIELDS},statusCheckRollup,headRefOid");
     let list = parse(&gh.run(
         cwd,
         &[
@@ -968,6 +968,18 @@ fn branch_pull_request_value(
         .max_by_key(|v| v["number"].as_u64())
         .or_else(|| prs.iter().max_by_key(|v| v["number"].as_u64()))
         .cloned())
+}
+
+/// The commit `branch` was at when its pull request was merged on GitHub: `Some` only when the
+/// pull request GitHub shows for the branch is merged, `None` when it is open, closed or absent.
+pub fn merged_branch_head(gh: &Gh, cwd: &Path, branch: &str) -> Result<Option<String>> {
+    let Some(v) = branch_pull_request_value(gh, cwd, branch)? else {
+        return Ok(None);
+    };
+    if phase_from(&v) != PullRequestPhase::Merged {
+        return Ok(None);
+    }
+    Ok(v["headRefOid"].as_str().map(str::to_string))
 }
 
 /// The pull request of `branch`, whatever its state: an open one if there is one, else the

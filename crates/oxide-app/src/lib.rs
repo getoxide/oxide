@@ -238,6 +238,7 @@ pub struct Settings {
     default_provider: Provider,
     providers: Providers,
     confirm_quit: bool,
+    delete_merged_branches: bool,
     claude_customizations: ClaudeCustomizations,
     shortcuts: Shortcuts,
 }
@@ -3193,8 +3194,24 @@ fn subscribe_board(
     on_event: tauri::ipc::Channel<BoardEvent>,
 ) -> Result<Vec<BoardCard>, AppError> {
     let (cards, rx) = core.subscribe_board(project_id)?;
+    let core = Arc::clone(&core);
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
+            // "Delete merged branches": a Thread whose pull request just showed up merged has
+            // its worktree and branch removed. Off the feed's thread, because `gh` is slow, and
+            // the removal publishes the Thread again, now without a branch.
+            if let oxide_core::BoardEvent::ThreadChanged(card) = &evt
+                && card.thread.branch.is_some()
+                && card
+                    .pull_request
+                    .as_ref()
+                    .is_some_and(|pr| pr.phase == oxide_core::PullRequestPhase::Merged)
+            {
+                let (core, thread_id) = (Arc::clone(&core), card.thread.id);
+                std::thread::spawn(move || {
+                    let _ = core.clean_up_merged_thread(thread_id);
+                });
+            }
             if on_event.send(convert(&evt)).is_err() {
                 break;
             }

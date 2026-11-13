@@ -46,7 +46,7 @@ function mockSettings(settings: Settings, onSave?: (saved: Settings) => void) {
 }
 
 const baseSettings = (): Settings => ({
-  defaultProvider: "claude", confirmQuit: true, shortcuts: DEFAULT_SHORTCUTS,
+  defaultProvider: "claude", confirmQuit: true, deleteMergedBranches: false, shortcuts: DEFAULT_SHORTCUTS,
   claudeCustomizations: { claudeMd: false, skills: false, plugins: false, mcpServers: false, hooks: false },
   providers: {
     claude: { model: null, effort: null, permissionMode: "ask" },

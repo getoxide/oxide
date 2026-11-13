@@ -1550,3 +1550,117 @@ fn checkout_in_a_thread_switches_only_that_threads_worktree() {
     assert!(!err.to_string().is_empty());
     assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "main");
 }
+
+/// A dispatched Thread whose Turn has settled, with its pull request recorded in the fake `gh`
+/// as merged at `merged_oid` (its branch tip when `None`).
+fn merged_thread(f: &Fixture, merged_oid: Option<&str>) -> oxide_core::ThreadSummary {
+    install_gh(f, ok_state());
+    let thread = f
+        .core
+        .dispatch_thread(oxide_core::DispatchRequest {
+            project_id: f.project.id,
+            prompt: "Do it".into(),
+            provider: "fake".into(),
+            model: None,
+            effort: None,
+            permission_mode: None,
+            base_branch: Some("main".into()),
+            issue_number: None,
+            issue_title: None,
+            issue_url: None,
+            issue_labels: Vec::new(),
+        })
+        .unwrap();
+    for _ in 0..3000 {
+        let status = f.core.get_thread_snapshot(thread.id).unwrap().thread.status;
+        if status != oxide_core::ThreadStatus::Working {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let branch = thread.branch.clone().unwrap();
+    let tip = git(
+        Path::new(&thread.worktree_path.clone().unwrap()),
+        &["rev-parse", "HEAD"],
+    );
+    f.set_gh(serde_json::json!({
+        "auth": "ok", "default_branch": "main", "next_number": 8,
+        "prs": {"7": {
+            "number": 7, "title": "T", "url": "https://example.test/pull/7", "state": "MERGED",
+            "isDraft": false, "baseRefName": "main", "headRefName": branch,
+            "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": merged_oid.unwrap_or(tip.trim()),
+            "author": {"login": "me"}, "createdAt": "2026-01-01T00:00:00Z",
+        }},
+    }));
+    thread
+}
+
+fn enable_cleanup(f: &Fixture) {
+    let mut settings = f.core.settings().settings;
+    settings.delete_merged_branches = true;
+    f.core.save_settings(&settings).unwrap();
+}
+
+fn branch_exists(repo: &Path, branch: &str) -> bool {
+    !git(repo, &["branch", "--list", branch]).trim().is_empty()
+}
+
+#[test]
+fn merged_thread_loses_its_worktree_and_branch_when_the_setting_is_on() {
+    let f = fixture();
+    let thread = merged_thread(&f, None);
+    let (branch, worktree) = (
+        thread.branch.clone().unwrap(),
+        thread.worktree_path.unwrap(),
+    );
+    enable_cleanup(&f);
+
+    assert!(f.core.clean_up_merged_thread(thread.id).unwrap());
+
+    assert!(!Path::new(&worktree).exists());
+    assert!(!branch_exists(&f.work, &branch));
+    let after = f.core.get_thread_snapshot(thread.id).unwrap().thread;
+    assert_eq!((after.branch, after.worktree_path), (None, None));
+}
+
+#[test]
+fn merged_thread_is_left_alone_when_the_setting_is_off() {
+    let f = fixture();
+    let thread = merged_thread(&f, None);
+    let (branch, worktree) = (
+        thread.branch.clone().unwrap(),
+        thread.worktree_path.unwrap(),
+    );
+
+    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
+
+    assert!(Path::new(&worktree).exists());
+    assert!(branch_exists(&f.work, &branch));
+}
+
+#[test]
+fn cleanup_keeps_uncommitted_changes_and_commits_that_were_not_merged() {
+    let f = fixture();
+    let thread = merged_thread(&f, None);
+    let (branch, worktree) = (
+        thread.branch.clone().unwrap(),
+        thread.worktree_path.unwrap(),
+    );
+    enable_cleanup(&f);
+
+    std::fs::write(Path::new(&worktree).join("wip.txt"), "wip\n").unwrap();
+    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
+    assert!(Path::new(&worktree).exists() && branch_exists(&f.work, &branch));
+
+    std::fs::remove_file(Path::new(&worktree).join("wip.txt")).unwrap();
+
+    // Committed after the merge: GitHub never saw this commit.
+    commit_file(
+        Path::new(&worktree),
+        "late.txt",
+        "late\n",
+        "After the merge",
+    );
+    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
+    assert!(Path::new(&worktree).exists() && branch_exists(&f.work, &branch));
+}

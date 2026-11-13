@@ -215,6 +215,19 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           Confirm before quitting
           {fieldErrors("confirmQuit")}
         </label>
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={draft.deleteMergedBranches}
+            onChange={(e) => set({ deleteMergedBranches: e.target.checked })}
+          />
+          Delete merged branches and worktrees
+          {fieldErrors("deleteMergedBranches")}
+        </label>
+        <p className="settings-hint">
+          When a Thread's pull request is merged on GitHub, remove its worktree and local branch.
+          Skipped when there are uncommitted changes or commits that were not merged.
+        </p>
       </div>
     </section>
   );
