@@ -21,7 +21,7 @@ _Avoid_: Project switcher, quick open
 ## Threads
 
 **Thread**:
-One conversation with a single Provider inside a Project, with its own Model, Effort and context (Model and Effort can change between Turns); it maps one-to-one to the Provider's own session. `/clear` and ⌘N start a new Thread in the same Project; the old one stays in the sidebar until the user deletes it. A finished Thread is deleted, not archived: deleting removes its Transcript, Approvals, Attachments and Checkpoints for good, and its worktree with them (its branch stays). The Provider's own session files are left to the Provider. A new chat Thread works in a worktree of its own by default. See ADR-0005 and ADR-0011.
+One conversation with a single Provider inside a Project, with its own Model, Effort and context (Model and Effort can change between Turns); it maps one-to-one to the Provider's own session. `/clear` and ⌘N start a new Thread in the same Project; the old one stays in the sidebar until the user deletes it. A finished Thread is deleted, not archived: deleting removes its Transcript, Approvals, Attachments and Checkpoints for good, and its worktree with them (its branch stays). The Settings option "Delete merged branches and worktrees" (off by default) removes a Thread's worktree and local branch once its pull request is merged on GitHub, and keeps the Thread; it skips anything with uncommitted changes or unmerged commits. The Provider's own session files are left to the Provider. A new chat Thread works in a worktree of its own by default. See ADR-0005 and ADR-0011.
 _Avoid_: Agent, session, chat, Archived Thread
 
 **Thread status**:

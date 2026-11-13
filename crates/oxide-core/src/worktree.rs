@@ -398,28 +398,97 @@ impl Core {
             actor.shutdown();
         }
         if let Some(worktree) = worktree {
-            self.language_servers.stop_root(&worktree);
-            let terminals: Vec<_> = self
-                .terminals
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .values()
-                .filter(|terminal| Path::new(&terminal.summary.cwd).starts_with(&worktree))
-                .map(|terminal| terminal.summary.id)
-                .collect();
-            for terminal in terminals {
-                self.close_terminal(terminal)?;
-            }
-            self.git.mutate(&root, || {
-                git::run(
-                    &root,
-                    &["worktree", "remove", "--force", &worktree.to_string_lossy()],
-                )
-                .map(drop)
-            })?;
+            self.remove_worktree(&root, &worktree)?;
         }
         self.remove_thread_records(thread_id, &root)?;
         Ok(DeleteOutcome::Deleted)
+    }
+
+    /// Stops what runs in a Thread's worktree and removes the worktree; its branch stays.
+    fn remove_worktree(&self, root: &Path, worktree: &Path) -> Result<()> {
+        self.language_servers.stop_root(worktree);
+        let terminals: Vec<_> = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter(|terminal| Path::new(&terminal.summary.cwd).starts_with(worktree))
+            .map(|terminal| terminal.summary.id)
+            .collect();
+        for terminal in terminals {
+            self.close_terminal(terminal)?;
+        }
+        self.git.mutate(root, || {
+            git::run(
+                root,
+                &["worktree", "remove", "--force", &worktree.to_string_lossy()],
+            )
+            .map(drop)
+        })
+    }
+
+    /// When the setting "Delete merged branches" is on and the Thread's pull request is merged
+    /// on GitHub, removes the Thread's worktree and local branch. The Thread itself stays, as a
+    /// plain Thread: its next prompt gets a fresh worktree. Nothing is touched, and `false` is
+    /// returned, whenever anything could be lost: the setting is off, a Turn is running, the
+    /// worktree has uncommitted or unsaved changes, the branch has commits that were not part of
+    /// the merge, or `gh` is unusable.
+    pub fn clean_up_merged_thread(&self, thread_id: u32) -> Result<bool> {
+        if !self.settings().settings.delete_merged_branches {
+            return Ok(false);
+        }
+        let (project_id, root, branch, worktree) = self.thread_checkouts(thread_id)?;
+        let Some(branch) = branch else {
+            return Ok(false);
+        };
+        if self.thread_summary(thread_id)?.status == ThreadStatus::Working
+            || self
+                .dirty_editors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&format!("{project_id}:{thread_id}"))
+        {
+            return Ok(false);
+        }
+        let Ok(Some(merged_head)) = crate::github::merged_branch_head(&self.gh, &root, &branch)
+        else {
+            return Ok(false);
+        };
+        let ref_name = format!("refs/heads/{branch}");
+        let local_head = git::run(&root, &["rev-parse", "--verify", "--quiet", &ref_name])
+            .ok()
+            .map(|h| h.trim().to_string());
+        // A branch that moved on after the merge holds commits GitHub never saw.
+        if local_head.is_some_and(|head| head != merged_head) {
+            return Ok(false);
+        }
+        let worktree = worktree.filter(|w| w.exists());
+        if let Some(worktree) = &worktree {
+            let dirty = self.git.mutate(&root, || {
+                Ok(!git::run(worktree, &["status", "--porcelain"])?
+                    .trim()
+                    .is_empty())
+            })?;
+            if dirty {
+                return Ok(false);
+            }
+            self.remove_worktree(&root, worktree)?;
+        }
+        let deleted = self.git.mutate(&root, || {
+            git::run(&root, &["worktree", "prune"])?;
+            // `-D`: a squash merge leaves the branch looking unmerged to Git.
+            Ok(git::run(&root, &["branch", "-D", &branch]).is_ok()
+                || !git::succeeds(&root, &["rev-parse", "--verify", "--quiet", &ref_name]))
+        })?;
+        if !deleted {
+            return Ok(false); // e.g. checked out in the main checkout
+        }
+        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            "UPDATE threads SET branch = NULL, worktree_path = NULL WHERE id = ?1",
+            [thread_id],
+        )?;
+        self.board.publish(thread_id);
+        Ok(true)
     }
 
     /// Makes sure the Thread has a checkout to run its Turns in, and reports whether a Turn

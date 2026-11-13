@@ -1434,6 +1434,7 @@ export type Settings_Deserialize = {
 	defaultProvider: Provider,
 	providers: Providers_Deserialize,
 	confirmQuit: boolean,
+	deleteMergedBranches: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
 };
@@ -1442,6 +1443,7 @@ export type Settings_Serialize = {
 	defaultProvider: Provider,
 	providers: Providers_Serialize,
 	confirmQuit: boolean,
+	deleteMergedBranches: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
 };

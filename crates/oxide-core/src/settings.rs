@@ -230,6 +230,9 @@ pub struct Settings {
     pub default_provider: Provider,
     pub providers: Providers,
     pub confirm_quit: bool,
+    /// Remove a Thread's worktree and local branch once its pull request is merged on GitHub.
+    /// Off by default: it deletes a branch.
+    pub delete_merged_branches: bool,
     /// Which of the user's own `CLAUDE.md`, skills, plugins, hooks and MCP servers Claude Code
     /// may load. All off by default so a new Thread starts with a clean context window.
     pub claude_customizations: ClaudeCustomizations,
@@ -243,6 +246,7 @@ impl Default for Settings {
             default_provider: Provider::Claude,
             providers: Providers::default(),
             confirm_quit: true,
+            delete_merged_branches: false,
             claude_customizations: ClaudeCustomizations::default(),
             shortcuts: Shortcuts::default(),
         }
@@ -439,6 +443,13 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
             "",
             "confirmQuit",
             defaults.confirm_quit,
+            &mut errors,
+        ),
+        delete_merged_branches: field(
+            &mut root,
+            "",
+            "deleteMergedBranches",
+            defaults.delete_merged_branches,
             &mut errors,
         ),
         shortcuts: shortcuts(
