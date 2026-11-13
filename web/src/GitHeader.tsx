@@ -104,16 +104,23 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvi
     onOpenPullRequest,
   );
 
-  // Fetch when the Project opens and when the window regains focus. Core
-  // throttles, and a failed background fetch (offline) isn't worth showing.
+  // Fetch when the Project opens, when the window regains focus and every
+  // half minute while it is visible. Core throttles, and a failed background
+  // fetch (offline) isn't worth showing. Status never waits on the network.
   useEffect(() => {
     const sync = () => {
-      void commands.fetchProject(projectId).then(refresh);
+      void commands.fetchProject(projectId).then(refresh, () => undefined);
     };
     void refresh();
     sync();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") sync();
+    }, 30_000);
     window.addEventListener("focus", sync);
-    return () => window.removeEventListener("focus", sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sync);
+    };
   }, [projectId, refresh]);
 
   useEffect(() => {

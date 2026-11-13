@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Minimum time between two background fetches of one checkout.
-pub const FETCH_INTERVAL: Duration = Duration::from_secs(60);
+pub const FETCH_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Untracked files larger than this are not line-counted for the dirty chip.
 pub(crate) const MAX_COUNTED_BYTES: u64 = 8 * 1024 * 1024;
