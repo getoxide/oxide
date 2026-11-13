@@ -971,6 +971,7 @@ section.terminal.terminal-hidden { display: none; }
 .pr-views .pr-panel-flush { padding: 0; display: flex; flex-direction: column; overflow: hidden; gap: 0; }
 .pr-views .pr-browser, .pr-views .pr-review { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; align-content: normal; }
 .pr-views .pr-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--space-3) var(--pr-pad) var(--space-4); display: grid; gap: var(--space-4); align-content: start; grid-template-columns: minmax(0, 1fr); }
+.pr-views .pr-scroll .skeleton-detail-body { padding: 0; }
 /* An empty list is the scroll region's only tall child, so a column lets it take the leftover height
    and centre its message like the other Surfaces. Lists, headings and skeletons keep the start-aligned
    grid above. */
@@ -2358,72 +2359,6 @@ section.terminal.terminal-hidden { display: none; }
 .service-log-line.stderr { color: var(--red); }
 .service-log-empty { margin: 0; color: var(--faint); font-size: 12px; }
 .service-log-jump { position: absolute; right: 12px; bottom: 12px; box-shadow: 0 2px 8px #0004; }
-
-/* ── Open Thread Tabs & Split View ───────────────────────── */
-.open-threads-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg2);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.open-threads-bar::-webkit-scrollbar { display: none; }
-.open-thread-tab {
-  display: inline-flex;
-  align-items: center;
-  max-width: 240px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--dim);
-  transition: background-color var(--motion-fast) ease-out, border-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
-}
-.open-thread-tab:hover { border-color: var(--line-strong); color: var(--fg); }
-.open-thread-tab.active { background: var(--bg3); border-color: var(--acc); color: var(--fg-bright); }
-.open-thread-tab.pinned:not(.active) { border-color: var(--line-strong); color: var(--fg); }
-.open-thread-select {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 24px;
-  min-height: 24px;
-  padding: 0 6px 0 8px;
-  border: 0;
-  border-radius: 5px 0 0 5px;
-  background: transparent;
-  color: inherit;
-}
-.open-thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.open-thread-pin, .open-thread-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 24px;
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dim);
-}
-.open-thread-pin:hover:not(:disabled), .open-thread-close:hover:not(:disabled) {
-  background: var(--bg4);
-  color: var(--fg-bright);
-  border: 0;
-}
-.open-thread-pin[aria-pressed="true"] { color: var(--acc2); }
-.thread-panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
-.thread-pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
-.thread-pane[hidden] { display: none; }
-.thread-panes.split .thread-pane:not([hidden]) { border-right: 1px solid var(--line); }
-.thread-panes.split .thread-pane.active:not([hidden]) { box-shadow: inset 0 2px 0 var(--acc); }
 
 /* ── PR Merged Confirmation ──────────────────────────────── */
 .pr-merged-overlay {

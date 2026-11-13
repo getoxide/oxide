@@ -382,3 +382,21 @@ it("reloads sooner while checks are still running, and stops once they are done"
     vi.useRealTimers();
   }
 });
+
+it("places the loading preview header inside .pr-scroll so it shares the review padding", async () => {
+  vi.spyOn(commands, "pullRequestDetail").mockReturnValue(new Promise(() => {}));
+  await act(async () => root.render(
+    <PullRequestReview
+      projectId={1}
+      threadId={null}
+      number={174}
+      refreshKey={0}
+      onBack={onBack}
+      onChanged={onChanged}
+      onFixPullRequest={onFixPullRequest}
+    />,
+  ));
+  const scroll = host.querySelector(".pr-review .pr-scroll");
+  expect(scroll).not.toBeNull();
+  expect(scroll!.querySelector('.skeleton[role="status"]')).not.toBeNull();
+});

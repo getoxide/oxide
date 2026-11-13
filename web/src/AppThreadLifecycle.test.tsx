@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./queryCache";
+import { DEFAULT_SHORTCUTS } from "./shortcuts";
 import { App } from "./App";
 
 type ThreadViewProps = {
@@ -37,9 +38,12 @@ Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: 
 
 let host: HTMLDivElement;
 let root: Root;
-const project = { id: 1, name: "Alpha", path: "/alpha", hidden: false, open: true, missing: false };
-const thread = (id: number, provider: string) => ({
-  id, projectId: 1, title: `T${id}`, status: "completed", provider,
+const projects = [
+  { id: 1, name: "Alpha", path: "/alpha", hidden: false, open: true, missing: false },
+  { id: 2, name: "Beta", path: "/beta", hidden: false, open: true, missing: false },
+];
+const thread = (id: number, provider: string, projectId = 1) => ({
+  id, projectId, title: `T${id}`, status: "completed", provider,
   updatedAt: "2026-01-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z",
   branch: null, worktreePath: null, issueNumber: null,
 });
@@ -60,12 +64,32 @@ beforeEach(() => {
   mockIPC((command, args) => {
     calls.push({ command, args });
     switch (command) {
-      case "list_projects": case "rescan_projects": return [project];
+      case "list_projects": case "rescan_projects": return projects;
       case "last_selection": return { projectId: 1, threadId: 2 };
-      case "list_threads": return [thread(2, "claude")];
+      case "list_threads": {
+        const pid = (args as { projectId?: number })?.projectId ?? 1;
+        return pid === 2 ? [thread(20, "claude", 2)] : [thread(2, "claude", 1)];
+      }
       case "list_turns": return { offset: 0, turns: [], turnCount: existingTurns };
-      case "get_settings": return { settings: { defaultProvider, providers: {} }, errors: [] };
-      case "create_thread": return thread(3, defaultProvider);
+      case "get_settings":
+        return {
+          settings: {
+            defaultProvider,
+            confirmQuit: true,
+            deleteMergedBranches: false,
+            shortcuts: DEFAULT_SHORTCUTS,
+            claudeCustomizations: { claudeMd: false, skills: false, plugins: false, mcpServers: false, hooks: false },
+            providers: {
+              claude: { model: null, effort: null, permissionMode: "ask" },
+              codex: { model: null, effort: null, permissionMode: "auto-edit" },
+              antigravity: { model: null, effort: null, permissionMode: "auto-edit" },
+            },
+          },
+          errors: [],
+        };
+      case "get_model_catalog": return [];
+      case "detect_provider": return { installed: false, authenticated: false, available: false };
+      case "create_thread": return thread(3, defaultProvider, (args as { projectId?: number })?.projectId ?? 1);
       case "clear_thread": return { ...thread((args as { threadId: number }).threadId, "claude"), title: null };
       case "subscribe_board": return [];
       case "plugin:event|listen": return 1;
@@ -117,32 +141,47 @@ it("gives a newly created Thread its default Provider before the Transcript load
   expect(host.querySelector<HTMLElement>('[data-thread="3"]')!.getAttribute("data-provider")).toBe("antigravity");
 });
 
-it("keeps previous threads open in tabs, supports pinning side by side, and clears the active thread in place", async () => {
+it("keeps multiple projects expanded in the sidebar, clears threads in place, and exits settings on New Thread", async () => {
   existingTurns = 1;
   await act(async () => root.render(<App />));
   await settle();
 
-  // Open a second thread via New Thread: both thread 2 and thread 3 stay mounted as open tabs.
-  await act(async () => newThreadButton().click());
+  // Alpha starts expanded with its thread list; expanding Beta keeps Alpha expanded too.
+  const alphaBtn = host.querySelector<HTMLButtonElement>('button.project[title*="alpha"]')!;
+  const betaBtn = host.querySelector<HTMLButtonElement>('button.project[title*="beta"]')!;
+  expect(alphaBtn.getAttribute("aria-expanded")).toBe("true");
+  expect(betaBtn.getAttribute("aria-expanded")).toBe("false");
+
+  await act(async () => betaBtn.click());
+  await settle();
+  expect(alphaBtn.getAttribute("aria-expanded")).toBe("true");
+  expect(betaBtn.getAttribute("aria-expanded")).toBe("true");
+  expect(host.querySelector('ul.thread-list[aria-label="Thread list for Alpha"]')).not.toBeNull();
+  expect(host.querySelector('ul.thread-list[aria-label="Thread list for Beta"]')).not.toBeNull();
+  expect(host.querySelector('[data-thread="20"]')).not.toBeNull();
+
+  // Clicking a thread inside another expanded project switches to that project and thread while keeping both expanded.
+  const alphaThread = host.querySelector<HTMLButtonElement>('ul.thread-list[aria-label="Thread list for Alpha"] .thread-item')!;
+  await act(async () => alphaThread.click());
   await settle();
   expect(host.querySelector('[data-thread="2"]')).not.toBeNull();
-  expect(host.querySelector('[data-thread="3"]')).not.toBeNull();
-  expect(host.querySelectorAll(".open-thread-tab")).toHaveLength(2);
+  expect(alphaBtn.getAttribute("aria-expanded")).toBe("true");
+  expect(betaBtn.getAttribute("aria-expanded")).toBe("true");
 
-  // Pin thread 2 so both thread 2 and thread 3 are visible side by side simultaneously.
-  const pinTwo = host.querySelector<HTMLButtonElement>('[aria-label="Pin T2 side by side"]')!;
-  await act(async () => pinTwo.click());
-  expect(host.querySelector(".thread-panes")?.classList.contains("split")).toBe(true);
-  const panes = [...host.querySelectorAll<HTMLElement>(".thread-pane")];
-  expect(panes.filter((p) => !p.hidden)).toHaveLength(2);
-
-  // Running /clear clears the thread in place instead of spawning a new thread.
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-clear="3"]')!.click());
+  // Running /clear clears the active thread in place instead of spawning a new thread.
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-clear="2"]')!.click());
   await settle();
-  expect(calls.some((c) => c.command === "clear_thread" && (c.args as { threadId: number }).threadId === 3)).toBe(true);
+  expect(calls.some((c) => c.command === "clear_thread" && (c.args as { threadId: number }).threadId === 2)).toBe(true);
 
-  // Closing tab 2 removes its mounted pane without deleting it.
-  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Close tab T2"]')!.click());
-  expect(host.querySelector('[data-thread="2"]')).toBeNull();
-  expect(host.querySelectorAll(".open-thread-tab")).toHaveLength(1);
+  // Open Settings, then click New Thread in the sidebar: Settings closes and creates Thread 3.
+  await act(async () => host.querySelector<HTMLButtonElement>(".sidebar-footer")!.click());
+  for (let i = 0; i < 40 && !host.querySelector('main.settings[aria-label="Settings"]'); i++) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
+  }
+  expect(host.querySelector('main.settings[aria-label="Settings"]')).not.toBeNull();
+
+  await act(async () => newThreadButton().click());
+  await settle();
+  expect(host.querySelector('main.settings[aria-label="Settings"]')).toBeNull();
+  expect(host.querySelector('[data-thread="3"]')).not.toBeNull();
 });

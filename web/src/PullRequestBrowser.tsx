@@ -353,8 +353,10 @@ export function PullRequestReview({
     return (
       <div className="pr-review" aria-busy>
         {nav}
-        {preview && <PreviewHeader pr={preview} />}
-        <Skeleton kind="detail" label="Loading pull request…" />
+        <div className="pr-scroll">
+          {preview && <PreviewHeader pr={preview} />}
+          <Skeleton kind="detail" label="Loading pull request…" />
+        </div>
       </div>
     );
   }

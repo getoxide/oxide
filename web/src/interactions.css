@@ -59,14 +59,13 @@
   }
   .tools[hidden] { opacity: 0; transform: translateX(6px); }
   .terminal-region[hidden] { opacity: 0; transform: translateY(6px); }
-  .thread-pane, .settings-category {
+  .settings-category {
     transition: opacity 140ms ease-out, transform 160ms cubic-bezier(.16, 1, .3, 1), display 140ms allow-discrete;
   }
-  .thread-pane[hidden], .settings-category[hidden] { opacity: 0; }
+  .settings-category[hidden] { opacity: 0; }
   @starting-style {
     .tools { opacity: 0; transform: translateX(6px); }
     .terminal-region { opacity: 0; transform: translateY(6px); }
-    .thread-pane { opacity: 0; transform: translateY(4px); }
     .settings-category { opacity: 0; transform: translateY(4px); }
   }
   .dropdown-menu, .pr-popover, .app-menu-popup, .usage-details-popover, .git-menu, .branch-menu, .terminal-input-menu {
@@ -83,7 +82,7 @@
   .modal, .palette, .model-picker, .pr-merged-card {
     animation: modal-pop 160ms cubic-bezier(.16, 1, .3, 1);
   }
-  .settings-view, .open-thread-tab, .pr-outcome, .approval-card, .turn-group {
+  .settings-view, .pr-outcome, .approval-card, .turn-group {
     animation: surface-reveal 140ms ease-out;
   }
   .pr-merged-circle {
@@ -111,6 +110,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .collapsible-inner { overflow: hidden; min-height: 0; }
-  .tools, .terminal-region, .thread-pane, .settings-category { transition: opacity 60ms linear, display 60ms allow-discrete; }
-  .tools[hidden], .terminal-region[hidden], .thread-pane[hidden], .settings-category[hidden] { opacity: 0; }
+  .tools, .terminal-region, .settings-category { transition: opacity 60ms linear, display 60ms allow-discrete; }
+  .tools[hidden], .terminal-region[hidden], .settings-category[hidden] { opacity: 0; }
 }

@@ -6,7 +6,6 @@ import { listen } from "@tauri-apps/api/event";
 import { commands, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
 import type { CodeOpenRequest } from "./codeOpen";
 import {
-  ChevronDownIcon,
   ChevronRightIcon,
   FileDirectoryIcon,
   FileIcon,
@@ -15,7 +14,6 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   IssueOpenedIcon,
-  PinIcon,
   PlusIcon,
   RepoIcon,
   SearchIcon,
@@ -27,6 +25,7 @@ import {
   type Icon,
   TrashIcon,
 } from "@primer/octicons-react";
+import { Collapsible } from "./Collapsible";
 import { attentionTarget, type AttentionTarget } from "./attention";
 import { useAttention } from "./useAttention";
 import { useAttentionFocus } from "./useAttentionFocus";
@@ -125,15 +124,15 @@ export function App() {
   }, []);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [threads, setThreads] = useState<Thread[] | null>(null);
+  const [threadsByProject, setThreadsByProject] = useState<Record<number, Thread[]>>({});
+  const [expandedProjectIds, setExpandedProjectIds] = useState<number[]>([]);
+  const lastAutoExpandedProjectId = useRef<number | null>(null);
   const [lastSelectionLoaded, setLastSelectionLoaded] = useState(false);
   const [threadLoadError, setThreadLoadError] = useState<{ projectId: number; message: string } | null>(null);
   const [threadReload, setThreadReload] = useState(0);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { contextKey: string }) | null>(null);
   const codeSequence = useRef(0);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
-  const [openThreadsByProject, setOpenThreadsByProject] = useState<Record<number, number[]>>({});
-  const [pinnedThreadsByProject, setPinnedThreadsByProject] = useState<Record<number, number[]>>({});
   const [threadQuery, setThreadQuery] = useState("");
   // A New Thread request that reopened an empty Thread: the selection may not change, so
   // ThreadView gets a one-shot request to focus the composer and show a cue.
@@ -146,6 +145,10 @@ export function App() {
   // Derived, so it always reflects the latest list (missing badge) and
   // disappears when the Project is hidden.
   const selected = projects?.find((p) => p.id === selectedId && !p.hidden) ?? null;
+  const threads = useMemo(
+    () => (selected ? (threadsByProject[selected.id] ?? null) : null),
+    [selected, threadsByProject],
+  );
   const activeTool = (selected ? activeToolsByProject[selected.id] : null) ?? fallbackTool;
   const setActiveTool = useCallback((name: string) => {
     setFallbackTool(name);
@@ -173,59 +176,70 @@ export function App() {
     : null;
   const sidebarThreads = useMemo(() => filterThreads(threads ?? [], threadQuery), [threads, threadQuery]);
   const selectedThread = threads?.find((thread) => thread.id === currentThreadId);
-  const openThreadIds = useMemo(() => {
-    if (!selected) return [];
-    const valid = new Set((threads ?? []).map((t) => t.id));
-    const stored = (openThreadsByProject[selected.id] ?? []).filter((id) => valid.has(id));
-    if (currentThreadId !== null && valid.has(currentThreadId) && !stored.includes(currentThreadId)) {
-      return [...stored, currentThreadId];
+  const expandProject = useCallback((projectId: number) => {
+    setExpandedProjectIds((prev) => (prev.includes(projectId) ? prev : [...prev, projectId]));
+  }, []);
+  const toggleProjectExpand = useCallback((projectId: number) => {
+    setExpandedProjectIds((prev) =>
+      prev.includes(projectId) ? prev.filter((id) => id !== projectId) : [...prev, projectId],
+    );
+  }, []);
+  const setProjectThreads = useCallback(
+    (projectId: number, updater: Thread[] | ((prev: Thread[] | null) => Thread[])) => {
+      setThreadsByProject((prev) => {
+        const next = typeof updater === "function" ? updater(prev[projectId] ?? null) : updater;
+        return prev[projectId] === next ? prev : { ...prev, [projectId]: next };
+      });
+    },
+    [],
+  );
+  const mapLoadedProjectThreads = useCallback((mapFn: (list: Thread[]) => Thread[]) => {
+    setThreadsByProject((prev) => {
+      let changed = false;
+      const next: Record<number, Thread[]> = {};
+      for (const [pid, list] of Object.entries(prev)) {
+        const mapped = mapFn(list);
+        next[Number(pid)] = mapped;
+        if (mapped !== list) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+  useEffect(() => {
+    if (selectedId === null) {
+      lastAutoExpandedProjectId.current = null;
+      return;
     }
-    return stored;
-  }, [selected, threads, openThreadsByProject, currentThreadId]);
-  const pinnedThreadIds = useMemo(() => {
-    if (!selected) return [];
-    const openSet = new Set(openThreadIds);
-    return (pinnedThreadsByProject[selected.id] ?? []).filter((id) => openSet.has(id));
-  }, [selected, openThreadIds, pinnedThreadsByProject]);
-  const visibleThreadIds = useMemo(() => {
-    const pinnedSet = new Set(pinnedThreadIds);
-    return openThreadIds.filter((id) => id === currentThreadId || pinnedSet.has(id));
-  }, [openThreadIds, pinnedThreadIds, currentThreadId]);
-  if (selected && currentThreadId !== null && !(openThreadsByProject[selected.id] ?? []).includes(currentThreadId)) {
-    setOpenThreadsByProject((prev) => {
-      const existing = prev[selected.id] ?? [];
-      if (existing.includes(currentThreadId)) return prev;
-      return { ...prev, [selected.id]: [...existing, currentThreadId] };
-    });
-  }
-  const closeOpenThreadTab = useCallback((threadId: number) => {
-    if (!selected) return;
-    const projectId = selected.id;
-    const nextOpen = openThreadIds.filter((id) => id !== threadId);
-    setOpenThreadsByProject((prev) => ({ ...prev, [projectId]: nextOpen }));
-    setPinnedThreadsByProject((prev) => {
-      const existing = prev[projectId] ?? [];
-      if (!existing.includes(threadId)) return prev;
-      return { ...prev, [projectId]: existing.filter((id) => id !== threadId) };
-    });
-    if (currentThreadId === threadId) {
-      const idx = openThreadIds.indexOf(threadId);
-      const nextSelected = nextOpen[Math.min(idx, nextOpen.length - 1)] ?? null;
-      selectedThreadsByProject.current[projectId] = nextSelected;
-      setSelectedThreadId(nextSelected);
+    if (lastAutoExpandedProjectId.current !== selectedId) {
+      lastAutoExpandedProjectId.current = selectedId;
+      expandProject(selectedId);
     }
-  }, [selected, openThreadIds, currentThreadId]);
-  const togglePinOpenThread = useCallback((threadId: number) => {
-    if (!selected) return;
-    const projectId = selected.id;
-    setPinnedThreadsByProject((prev) => {
-      const existing = prev[projectId] ?? [];
-      const next = existing.includes(threadId)
-        ? existing.filter((id) => id !== threadId)
-        : [...existing, threadId];
-      return { ...prev, [projectId]: next };
+  }, [selectedId, expandProject]);
+  useEffect(() => {
+    const missing = expandedProjectIds.filter((pid) => pid !== selectedId && threadsByProject[pid] === undefined);
+    if (missing.length === 0) return;
+    let active = true;
+    void Promise.all(
+      missing.map(async (pid) => {
+        const res = await commands.listThreads(pid).catch(() => null);
+        return [pid, res?.status === "ok" ? res.data : null] as const;
+      }),
+    ).then((entries) => {
+      if (!active) return;
+      setThreadsByProject((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [pid, list] of entries) {
+          if (list && next[pid] === undefined) {
+            next[pid] = list;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     });
-  }, [selected]);
+    return () => { active = false; };
+  }, [expandedProjectIds, selectedId, threadsByProject]);
   const workbenchContext = useMemo<WorkbenchContext | null>(() => selected && currentThreadId !== null ? {
     key: `${selected.id}:${selectedThread?.worktreePath ? currentThreadId : "main"}`,
     projectId: selected.id, threadId: selectedThread?.worktreePath ? currentThreadId : null,
@@ -402,12 +416,14 @@ export function App() {
     if (id === null || id === undefined) return;
     const res = await commands.clearThread(id).catch(() => null);
     if (res?.status === "ok") {
-      setThreads((prev) => prev?.map((t) => (t.id === id ? res.data : t)) ?? null);
+      mapLoadedProjectThreads((list) =>
+        list.some((t) => t.id === id) ? list.map((t) => (t.id === id ? res.data : t)) : list,
+      );
       setDrafts((prev) => setDraft(prev, id, ""));
       setThreadTranscriptRevisions((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
       setGitRevision((n) => n + 1);
     }
-  }, []);
+  }, [mapLoadedProjectThreads]);
   // An agent can open a pull request during a Turn, which no change the user makes reports,
   // so the Pull request tab reloads whenever a Thread changes status.
   const [turnRevision, setTurnRevision] = useState({ statuses: threadStatuses, count: 0 });
@@ -457,28 +473,35 @@ export function App() {
 
   // Stable, since ThreadView resubscribes whenever it changes.
   const onThreadStatusChange = useCallback((threadId: number, status: ThreadStatus) => {
-    setThreads(
-      (prev) =>
-        prev?.map((t) => (t.id === threadId && t.status !== status ? { ...t, status } : t)) ?? null
+    mapLoadedProjectThreads((list) =>
+      list.some((t) => t.id === threadId && t.status !== status)
+        ? list.map((t) => (t.id === threadId && t.status !== status ? { ...t, status } : t))
+        : list,
     );
-  }, []);
+  }, [mapLoadedProjectThreads]);
 
   const onThreadTitleChange = useCallback((threadId: number, title: string) => {
-    setThreads(
-      (prev) => prev?.map((t) => (t.id === threadId ? { ...t, title } : t)) ?? null
+    mapLoadedProjectThreads((list) =>
+      list.some((t) => t.id === threadId && t.title !== title)
+        ? list.map((t) => (t.id === threadId ? { ...t, title } : t))
+        : list,
     );
-  }, []);
+  }, [mapLoadedProjectThreads]);
 
   const onThreadUpdated = useCallback((updated: Thread) => {
-    setThreads(
-      (prev) => prev?.map((t) => (t.id === updated.id ? updated : t)) ?? null
+    setProjectThreads(updated.projectId, (prev) =>
+      prev ? prev.map((t) => (t.id === updated.id ? updated : t)) : [updated],
     );
-  }, []);
+  }, [setProjectThreads]);
 
   /** A new Thread in the Project with Settings defaults; `null` if it could not be created. */
   const createThreadIn = useCallback(async (projectId: number): Promise<Thread | null> => {
     const created = await createDefaultThread(projectId);
-    return created.status === "ok" ? created.data : null;
+    if (created.status === "error") {
+      setOpenError(created.error.message);
+      return null;
+    }
+    return created.data;
   }, []);
 
   const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false) => {
@@ -518,7 +541,7 @@ export function App() {
       setDrafts((prev) => setDraft(prev, thread.id, ""));
     } finally {
       if (currentProjectRef.current === projectId) {
-        setThreads((prev) => [thread, ...(prev ?? [])]);
+        setProjectThreads(projectId, (prev) => [thread, ...(prev ?? [])]);
         setSelectedThreadId(thread.id);
 
         setMaximized(false);
@@ -532,7 +555,9 @@ export function App() {
     if (!selected || startingThread.current) return;
     startingThread.current = true;
     try {
+      setShowSettings(false);
       setMaximized(false);
+      expandProject(selected.id);
       const askForComposerFocus = (threadId: number) =>
         setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
       // Only Threads that could be unused need a Turn count; a failed lookup just rules one out.
@@ -545,22 +570,27 @@ export function App() {
         return r?.status === "ok" && isUnusedThread(t, r.data.turnCount, drafts);
       });
       if (empty) {
-        setSelectedThreadId(empty.id);
+        selectThread(empty.id);
         // Reopening the Thread that is already open is visually a no-op: the request makes it felt.
         askForComposerFocus(empty.id);
         return;
       }
-      const created = await createThreadIn(selected.id).catch(() => null);
+      const created = await createThreadIn(selected.id).catch((cause: unknown) => {
+        setOpenError(cause instanceof Error ? cause.message : String(cause));
+        return null;
+      });
       if (created) {
+        setOpenError(null);
+        setShowSettings(false);
         setMaximized(false);
-        setThreads((prev) => [created, ...(prev || [])]);
-        setSelectedThreadId(created.id);
+        setProjectThreads(selected.id, (prev) => [created, ...(prev || [])]);
+        selectThread(created.id);
         askForComposerFocus(created.id);
       }
     } finally {
       startingThread.current = false;
     }
-  }, [selected, threads, drafts, createThreadIn]);
+  }, [selected, threads, drafts, createThreadIn, expandProject, selectThread, setProjectThreads]);
 
   /** Jumps to a Thread waiting on the user, by default the most urgent. Never answers or clears it. */
   const jumpToAttention = useCallback((target: AttentionTarget | null = attentionTarget(attentionCards, openProjectIds)) => {
@@ -572,7 +602,6 @@ export function App() {
       restore.current = null;
       pendingThread.current = target.threadId;
       setSelectedId(target.projectId);
-      setThreads(null);
       setSelectedThreadId(null);
     }
     setAttentionJump({ target, failed: false });
@@ -602,12 +631,12 @@ export function App() {
     setShowSettings(false);
     const opened = { ...project, open: true, hidden: false };
     setProjects((prev) => [opened, ...(prev?.filter((p) => p.id !== project.id) ?? [])]);
+    expandProject(project.id);
     if (project.id !== selectedId) {
       setSelectedId(project.id);
-      setThreads(null);
       setSelectedThreadId(null);
     }
-  }, [selectedId]);
+  }, [selectedId, expandProject]);
 
   // The palette's search pick: âŒ˜â‡§N plus Enter is a new Thread in that Project.
   const startThreadIn = useCallback((project: Project) => {
@@ -627,23 +656,19 @@ export function App() {
   }, [selected, currentThreadId]);
 
   const deleteThread = useCallback((threadId: number) => {
-    const title = threadTitle(threads?.find((t) => t.id === threadId) ?? { id: threadId, title: null });
+    const match = threads?.find((t) => t.id === threadId)
+      ?? Object.values(threadsByProject).flat().find((t) => t.id === threadId);
+    const title = threadTitle(match ?? { id: threadId, title: null });
     const affected = describeAffectedTabs(allTabsOfThread(terminals, threadId));
     overlays.current?.openDelete(threadId, title, affected);
-  }, [threads, terminals]);
+  }, [threads, threadsByProject, terminals]);
 
   const onThreadDeleted = useCallback((deletedId: number) => {
     setWorkbenches((contexts) => contexts.filter((context) => context.threadId !== deletedId));
     setTerminals((previous) => removeThreadTabsEverywhere(previous, deletedId));
-    setThreads((prev) => threadsAfterDelete(prev, deletedId));
-    setOpenThreadsByProject((prev) =>
-      Object.fromEntries(Object.entries(prev).map(([pid, ids]) => [pid, ids.filter((id) => id !== deletedId)])),
-    );
-    setPinnedThreadsByProject((prev) =>
-      Object.fromEntries(Object.entries(prev).map(([pid, ids]) => [pid, ids.filter((id) => id !== deletedId)])),
-    );
+    mapLoadedProjectThreads((list) => threadsAfterDelete(list, deletedId) ?? []);
     setSelectedThreadId((current) => selectionAfterDelete(current, deletedId));
-  }, []);
+  }, [mapLoadedProjectThreads]);
 
   // An empty Thread (no Turn yet) closes at once; any other one asks first.
   const closeThread = useCallback(async (threadId: number) => {
@@ -676,9 +701,8 @@ export function App() {
       const centre = document.querySelector<HTMLElement>('.centre-column');
       if (centre && !centre.hidden) {
         const settings = centre.querySelector<HTMLElement>('.settings-view button, .settings-view input');
-        const activePane = centre.querySelector<HTMLElement>('.centre .thread-pane.active');
-        const threadScope = activePane ?? centre;
-        const thread = threadScope.querySelector<HTMLElement>('.centre [role="textbox"], .centre textarea, .centre .empty-state button, .centre button, [role="textbox"], textarea, button');
+        const threadScope = centre.querySelector<HTMLElement>('.centre:not([hidden])') ?? centre;
+        const thread = threadScope.querySelector<HTMLElement>('[role="textbox"], textarea, .empty-state button, button');
         (settings ?? thread)?.focus();
       } else {
         const handle = document.querySelector<HTMLElement>('.thread-restore-handle, button[aria-label="Restore Thread"]');
@@ -874,17 +898,19 @@ export function App() {
     const unlisten = listen<{ threadId: number; status: ThreadStatus }>(
       "thread-status-changed",
       (event) => {
-        setThreads((prev) =>
-          prev?.map((t) =>
-            t.id === event.payload.threadId ? { ...t, status: event.payload.status } : t
-          ) ?? null
+        mapLoadedProjectThreads((list) =>
+          list.some((t) => t.id === event.payload.threadId && t.status !== event.payload.status)
+            ? list.map((t) =>
+                t.id === event.payload.threadId ? { ...t, status: event.payload.status } : t
+              )
+            : list,
         );
       }
     );
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [mapLoadedProjectThreads]);
 
   // When selected project changes, fetch its threads
   useEffect(() => {
@@ -893,7 +919,6 @@ export function App() {
     void (async () => {
       if (!selected) {
         if (active) {
-          setThreads(null);
           setSelectedThreadId(null);
         }
         return;
@@ -906,12 +931,12 @@ export function App() {
         // Cleared only once applied: a re-run mid-await must still start the Thread.
         if (!active) return;
         pendingNewThread.current = null;
-        setThreads(created ? [created, ...res.data] : res.data);
+        setProjectThreads(selected.id, created ? [created, ...res.data] : res.data);
         const initialThreadId = created?.id ?? res.data[0]?.id ?? null;
         setSelectedThreadId(initialThreadId);
 
       } else if (active && res.status === "ok") {
-        setThreads(res.data);
+        setProjectThreads(selected.id, res.data);
         const wanted = restore.current;
         const jump = pendingThread.current;
         pendingThread.current = null;
@@ -929,7 +954,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [selected, createThreadIn, threadReload, selectThread]);
+  }, [selected, createThreadIn, threadReload, selectThread, setProjectThreads]);
 
   const starting = !projectsLoaded || !lastSelectionLoaded || (selected !== null && threads === null);
 
@@ -1018,6 +1043,9 @@ export function App() {
           <Sidebar
             projects={projects}
             selected={selected}
+            expandedProjectIds={expandedProjectIds}
+            threadsByProject={threadsByProject}
+            onToggleProjectExpand={toggleProjectExpand}
             onCloseProject={async (projectId) => {
               const closed = await commands.setProjectOpen(projectId, false);
               if (closed.status === "error") return closed.error.message;
@@ -1026,11 +1054,17 @@ export function App() {
                 ? listed.data
                 : (projects ?? []).map((project) => project.id === projectId ? { ...project, open: false } : project);
               setProjects(updatedProjects);
+              setExpandedProjectIds((prev) => prev.filter((id) => id !== projectId));
+              setThreadsByProject((prev) => {
+                if (!(projectId in prev)) return prev;
+                const next = { ...prev };
+                delete next[projectId];
+                return next;
+              });
               if (selectedId === projectId) {
                 const next = sidebarProjects(updatedProjects).find((project) => project.id !== projectId);
                 restore.current = null;
                 setSelectedId(next?.id ?? null);
-                setThreads(null);
                 setSelectedThreadId(null);
               }
               return listed.status === "error" ? listed.error.message : null;
@@ -1039,17 +1073,37 @@ export function App() {
               restore.current = null;
               pendingThread.current = null;
               setShowSettings(false);
+              expandProject(p.id);
+              const cached = threadsByProject[p.id];
+              const remembered = selectedThreadsByProject.current[p.id];
+              const cachedThreadId = cached
+                ? (remembered !== undefined && (remembered === null || cached.some((t) => t.id === remembered))
+                  ? remembered
+                  : cached[0]?.id ?? null)
+                : null;
               setSelectedId(p.id);
-              setThreads(null);
-              setSelectedThreadId(null);
+              setSelectedThreadId(cachedThreadId);
             }}
             threads={threads === null ? null : sidebarThreads}
             threadCount={threads?.length ?? 0}
             selectedThreadId={selectedThreadId}
-            onSelectThread={(threadId) => {
+            onSelectThread={(threadId, projectId) => {
               setMaximized(false);
               setShowSettings(false);
-              selectThread(threadId);
+              if (projectId === selectedId) {
+                selectThread(threadId);
+                return;
+              }
+              restore.current = null;
+              pendingThread.current = threadId;
+              selectedThreadsByProject.current[projectId] = threadId;
+              expandProject(projectId);
+              const cached = threadsByProject[projectId];
+              setSelectedId(projectId);
+              setSelectedThreadId(cached?.some((t) => t.id === threadId) ? threadId : null);
+              setCentreViews((previous) => previous[projectId] === "thread" || previous[projectId] === undefined
+                ? previous
+                : { ...previous, [projectId]: "thread" });
             }}
             onDeleteThread={(threadId) => void deleteThread(threadId)}
             onNewThread={() => {
@@ -1085,11 +1139,11 @@ export function App() {
               onOpenThread={(id) => { selectThread(id); }}
               onSuggestionAccepted={(thread) => {
                 if (currentProjectRef.current !== thread.projectId) return;
-                setThreads((previous) => [thread, ...(previous ?? []).filter((t) => t.id !== thread.id)]);
+                setProjectThreads(thread.projectId, (previous) => [thread, ...(previous ?? []).filter((t) => t.id !== thread.id)]);
                 selectThread(thread.id);
               }}
               onOpenPullRequest={() => { setShowTools(true); setActiveTool("Pull request"); }} />
-          ) : selected ? (
+          ) : selected && currentThreadId !== null ? (
             <>
               <div className="centre-view-switch" role="tablist" aria-label="Project workspace">
                 <button
@@ -1114,133 +1168,60 @@ export function App() {
                 </button>
               </div>
             <main className="centre" aria-label="Thread" hidden={centreView === "code"}>
-              {openThreadIds.length > 0 && (
-                <div className="open-threads-bar" role="tablist" aria-label="Open threads">
-                  {openThreadIds.map((tid) => {
-                    const t = threads?.find((item) => item.id === tid);
-                    if (!t) return null;
-                    const active = tid === currentThreadId;
-                    const pinned = pinnedThreadIds.includes(tid);
-                    const label = threadTitle(t);
-                    return (
-                      <div
-                        key={tid}
-                        className={`open-thread-tab${active ? " active" : ""}${pinned ? " pinned" : ""}`}
-                        role="presentation"
-                      >
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          className="open-thread-select"
-                          title={label}
-                          onClick={() => selectThread(tid)}
-                        >
-                          <span className={`status-dot ${t.status}`} aria-hidden="true" />
-                          <span className="open-thread-title">{label}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="open-thread-pin"
-                          aria-pressed={pinned}
-                          aria-label={pinned ? `Unpin ${label}` : `Pin ${label} side by side`}
-                          title={pinned ? "Unpin from side-by-side view" : "Keep visible side by side"}
-                          onClick={() => togglePinOpenThread(tid)}
-                        >
-                          <PinIcon size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          className="open-thread-close"
-                          aria-label={`Close tab ${label}`}
-                          title="Close tab"
-                          onClick={() => closeOpenThreadTab(tid)}
-                        >
-                          <XIcon size={12} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div className={`thread-panes${visibleThreadIds.length > 1 ? " split" : ""}`}>
-                {[...openThreadIds]
-                  .sort((a, b) => (a === currentThreadId ? -1 : b === currentThreadId ? 1 : 0))
-                  .map((tid) => {
-                    const paneThread = threads?.find((item) => item.id === tid);
-                    if (!paneThread) return null;
-                    const isActive = tid === currentThreadId;
-                    const isPaneVisible = visibleThreadIds.includes(tid);
-                    const order = openThreadIds.indexOf(tid);
-                    return (
-                      <section
-                        key={tid}
-                        className={`thread-pane${isActive ? " active" : ""}${visibleThreadIds.length > 1 && isPaneVisible ? " split" : ""}`}
-                        hidden={!isPaneVisible}
-                        style={{ order }}
-                        aria-label={threadTitle(paneThread)}
-                        onMouseDown={() => {
-                          if (!isActive) selectThread(tid);
-                        }}
-                      >
-                        <ThreadView
-                          visible={isActive && !showSettings && !(maximized && dockVisible) && centreView === "thread"}
-                          threadId={tid}
-                          projectId={selected.id}
-                          gitControls={!selected.missing ? (
-                            <GitHeader
-                              projectId={selected.id}
-                              threadId={tid}
-                              threadsKey={threadsKey}
-                              agentBusy={["working", "needs-input"].includes(paneThread.status)}
-                              threadProvider={paneThread.provider}
-                              threadIssue={paneThread.issueNumber != null ? `#${paneThread.issueNumber}` : null}
-                              threadWorking={paneThread.status === "working"}
-                              onThreadCreated={(thread) => {
-                                setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                                selectThread(thread.id);
-                              }}
-                              onRestored={onRestored}
-                              onOpenPullRequest={openPullRequest}
-                              onChanged={onGitChanged}
-                            />
-                          ) : undefined}
-                          draft={getDraft(drafts, tid)}
-                          onDraftChange={(text) =>
-                            setDrafts((prev) => setDraft(prev, tid, text))
-                          }
-                          onClearThread={(clearedId) => {
-                            void clearCurrentThread(clearedId ?? tid);
-                          }}
-                          onThreadCreated={(newThread) => {
-                            setThreads((prev) => [newThread, ...(prev || [])]);
-                            selectThread(newThread.id);
-                          }}
-                          onThreadUpdated={onThreadUpdated}
-                          onStatusChange={onThreadStatusChange}
-                          onThreadTitleChange={onThreadTitleChange}
-                          prefill={prefill}
-                          onPrefillUsed={() => setPrefill(null)}
-                          onOpenThread={(id) => {
-                            selectThread(id);
-                          }}
-                          onThreadContinued={(continued, from) => {
-                            setThreads((prev) => [
-                              continued.thread,
-                              ...(prev?.map((t) => (t.id === from ? { ...t, continuedIn: continued.thread.id } : t)) ?? []),
-                            ]);
-                            setPrefill({ threadId: continued.thread.id, text: continued.recap });
-                            selectThread(continued.thread.id);
-                          }}
-                          transcriptRevision={transcriptRevision + (threadTranscriptRevisions[tid] ?? 0)}
-                          initialProvider={paneThread.provider}
-                          newThreadFocus={newThreadFocus?.threadId === tid ? newThreadFocus : null}
-                          onNewThreadFocusHandled={() => setNewThreadFocus(null)}
-                        />
-                      </section>
-                    );
-                  })}
-              </div>
+              <ThreadView
+                visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
+                threadId={currentThreadId}
+                projectId={selected.id}
+                gitControls={!selected.missing ? (
+                  <GitHeader
+                    projectId={selected.id}
+                    threadId={currentThreadId}
+                    threadsKey={threadsKey}
+                    agentBusy={["working", "needs-input"].includes(selectedThread?.status ?? "")}
+                    threadProvider={selectedThread?.provider}
+                    threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
+                    threadWorking={selectedThread?.status === "working"}
+                    onThreadCreated={(thread) => {
+                      setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
+                      selectThread(thread.id);
+                    }}
+                    onRestored={onRestored}
+                    onOpenPullRequest={openPullRequest}
+                    onChanged={onGitChanged}
+                  />
+                ) : undefined}
+                draft={getDraft(drafts, currentThreadId)}
+                onDraftChange={(text) =>
+                  setDrafts((prev) => setDraft(prev, currentThreadId, text))
+                }
+                onClearThread={(clearedId) => {
+                  void clearCurrentThread(clearedId ?? currentThreadId);
+                }}
+                onThreadCreated={(newThread) => {
+                  setProjectThreads(newThread.projectId, (prev) => [newThread, ...(prev || [])]);
+                  selectThread(newThread.id);
+                }}
+                onThreadUpdated={onThreadUpdated}
+                onStatusChange={onThreadStatusChange}
+                onThreadTitleChange={onThreadTitleChange}
+                prefill={prefill}
+                onPrefillUsed={() => setPrefill(null)}
+                onOpenThread={(id) => {
+                  selectThread(id);
+                }}
+                onThreadContinued={(continued, from) => {
+                  setProjectThreads(continued.thread.projectId, (prev) => [
+                    continued.thread,
+                    ...(prev?.map((t) => (t.id === from ? { ...t, continuedIn: continued.thread.id } : t)) ?? []),
+                  ]);
+                  setPrefill({ threadId: continued.thread.id, text: continued.recap });
+                  selectThread(continued.thread.id);
+                }}
+                transcriptRevision={transcriptRevision + (threadTranscriptRevisions[currentThreadId] ?? 0)}
+                initialProvider={selectedThread?.provider}
+                newThreadFocus={newThreadFocus?.threadId === currentThreadId ? newThreadFocus : null}
+                onNewThreadFocusHandled={() => setNewThreadFocus(null)}
+              />
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key
@@ -1374,7 +1355,7 @@ export function App() {
                     // The Thread opens through the same dispatch/setup flow; if the
                     // user moved to another Project meanwhile, it only joins that Project's list there.
                     if (currentProjectRef.current !== thread.projectId) return;
-                    setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
+                    setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
                     setSelectedThreadId(thread.id);
                     setShowSettings(false);
                     setMaximized(false);
@@ -1391,6 +1372,9 @@ export function App() {
 interface SidebarProps {
   projects: Project[] | null;
   selected: Project | null;
+  expandedProjectIds: number[];
+  threadsByProject: Record<number, Thread[]>;
+  onToggleProjectExpand: (projectId: number) => void;
   onCloseProject: (projectId: number) => Promise<string | null>;
   onSelect: (p: Project) => void;
   /** The selected Project's Threads for the sidebar, already filtered and ordered like ⌘1..9. */
@@ -1398,7 +1382,7 @@ interface SidebarProps {
   /** The Thread count before filtering, to distinguish "none" from "no match". */
   threadCount: number;
   selectedThreadId: number | null;
-  onSelectThread: (threadId: number) => void;
+  onSelectThread: (threadId: number, projectId: number) => void;
   onDeleteThread: (threadId: number) => void;
   onNewThread: () => void;
   onRenameThread?: (threadId: number, newTitle: string) => void;
@@ -1420,6 +1404,9 @@ interface SidebarProps {
 function Sidebar({
   projects,
   selected,
+  expandedProjectIds,
+  threadsByProject,
+  onToggleProjectExpand,
   onCloseProject,
   onSelect,
   threads,
@@ -1472,7 +1459,7 @@ function Sidebar({
   const shown = selected && !listed.some((p) => p.id === selected.id) ? [selected, ...listed] : listed;
   const now = new Date();
 
-  const renderThread = (t: Thread, index: number) => (
+  const renderThread = (t: Thread, index: number, showShortcutBadge: boolean) => (
     <li key={t.id} className="thread-row">
       {editingThreadId === t.id ? (
         <input
@@ -1491,7 +1478,7 @@ function Sidebar({
         <button
           className="thread-item"
           aria-current={t.id === selectedThreadId}
-          onClick={() => onSelectThread(t.id)}
+          onClick={() => onSelectThread(t.id, t.projectId)}
           onDoubleClick={(e) => {
             e.preventDefault();
             setEditingThreadId(t.id);
@@ -1511,7 +1498,7 @@ function Sidebar({
               <GitBranchIcon size={12} />
             </span>
           )}
-          {modifierHeld && index < 9 ? (
+          {showShortcutBadge && modifierHeld && index < 9 ? (
             <span className="shortcut-badge">{formatAccelerator(`Mod+${index + 1}`)}</span>
           ) : (
             <span className="thread-item-age">{relativeAge(t.updatedAt, now)}</span>
@@ -1571,11 +1558,30 @@ function Sidebar({
         <ul className="project-list">
           {shown.map((p) => {
             const isSelected = p.id === selected?.id;
+            const isExpanded = expandedProjectIds.includes(p.id);
+            const rawProjectThreads = isSelected ? threads : (threadsByProject[p.id] ?? null);
+            const visibleProjectThreads = isSelected
+              ? threads
+              : rawProjectThreads ? filterThreads(rawProjectThreads, threadQuery) : null;
+            const totalProjectThreads = isSelected ? threadCount : (rawProjectThreads?.length ?? 0);
             return (
               <li key={p.id} className={`project-node${p.missing ? " missing" : ""}`}>
                 <div className="project-row">
-                  <button className="project" aria-current={isSelected} aria-expanded={isSelected} onClick={() => onSelect(p)} title={readablePath(p.path)}>
-                    {isSelected ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+                  <button
+                    className="project"
+                    aria-current={isSelected}
+                    aria-expanded={isExpanded}
+                    onClick={(e) => {
+                      const onChevron = Boolean((e.target as HTMLElement).closest(".disclosure-chev"));
+                      if (isExpanded && (isSelected || onChevron)) {
+                        onToggleProjectExpand(p.id);
+                        return;
+                      }
+                      onSelect(p);
+                    }}
+                    title={readablePath(p.path)}
+                  >
+                    <ChevronRightIcon size={12} className="disclosure-chev" />
                     <RepoIcon size={13} />
                     <span className="project-name">{p.name}</span>
                     {p.missing && <span className="badge">missing</span>}
@@ -1584,14 +1590,14 @@ function Sidebar({
                     <XIcon size={13} />
                   </button>
                 </div>
-                {isSelected && (
-                  <ul className="thread-list" aria-label="Thread list">
-                    {threads && threads.length === 0 && (
-                      <li className="sidebar-note">{threadCount === 0 ? "No Threads yet" : "No matching Threads"}</li>
+                <Collapsible open={isExpanded}>
+                  <ul className="thread-list" aria-label={`Thread list for ${p.name}`}>
+                    {visibleProjectThreads && visibleProjectThreads.length === 0 && (
+                      <li className="sidebar-note">{totalProjectThreads === 0 ? "No Threads yet" : "No matching Threads"}</li>
                     )}
-                    {threads?.map((t, index) => renderThread(t, index))}
+                    {visibleProjectThreads?.map((t, index) => renderThread(t, index, isSelected))}
                   </ul>
-                )}
+                </Collapsible>
               </li>
             );
           })}
