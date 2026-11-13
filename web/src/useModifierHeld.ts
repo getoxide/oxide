@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { isMacPlatform } from "./shortcuts";
 
-/** A short pause before revealing badges, so typing a key combination does not flash them. */
-const REVEAL_DELAY_MS = 100;
+/** How long the modifier must be held alone before badges show: long enough to type a shortcut. */
+const REVEAL_DELAY_MS = 600;
 
 /**
  * Whether the primary modifier is held: ⌘ on macOS, Ctrl elsewhere. Badges show after a short
@@ -36,8 +36,8 @@ export function useModifierHeld(): boolean {
       } else if (event.key === primaryKey) {
         if (timer === null) timer = setTimeout(show, REVEAL_DELAY_MS);
       } else if ((isMacPlatform && event.metaKey) || (!isMacPlatform && event.ctrlKey)) {
-        // The modifier is already down as part of a combination: reveal without waiting.
-        show();
+        // The modifier is part of a shortcut being typed: the user knows it, so no badges.
+        cancelTimer();
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {

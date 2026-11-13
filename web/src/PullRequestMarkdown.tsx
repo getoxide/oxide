@@ -28,6 +28,21 @@ export function Markdown({ source, maxLines }: { source: string; maxLines?: numb
             return <pre key={i}>{b.text}</pre>;
           case "rule":
             return <hr key={i} />;
+          case "table":
+            return (
+              <div key={i} className="md-table">
+                <table>
+                  <thead>
+                    <tr>{b.header.map((cell, j) => <th key={j}>{inline(cell)}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((row, j) => (
+                      <tr key={j}>{row.map((cell, k) => <td key={k}>{inline(cell)}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case "list":
             return (
               <ul key={i}>

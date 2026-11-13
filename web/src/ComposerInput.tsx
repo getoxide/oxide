@@ -184,6 +184,27 @@ function placeCaret(root: HTMLElement, units: number) {
   selection.addRange(range);
 }
 
+let fontCanvas: CanvasRenderingContext2D | null | undefined;
+
+/** Ascent of the font's line box and cap height, in px; `null` where canvas text cannot be measured. */
+function measureFont(font: string): { ascent: number; cap: number } | null {
+  if (fontCanvas === undefined) {
+    try {
+      fontCanvas = document.createElement("canvas").getContext("2d");
+    } catch {
+      fontCanvas = null;
+    }
+  }
+  if (!fontCanvas || !font) return null;
+  fontCanvas.font = font;
+  const m = fontCanvas.measureText("H");
+  if (!m.fontBoundingBoxAscent || !m.actualBoundingBoxAscent) return null;
+  return { ascent: m.fontBoundingBoxAscent, cap: m.actualBoundingBoxAscent };
+}
+
+/** Clipboard format that keeps chips when text is copied within the editor. */
+const CLIPBOARD_TYPE = "application/x-oxide-composer";
+
 /** Plain text of a copied selection: chips read `[name]`. */
 function plainFromFragment(fragment: DocumentFragment, chips: Map<string, ComposerChip>): string {
   const out: Token[] = [];
@@ -456,6 +477,30 @@ export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(func
       onPasteFiles?.(files);
       return;
     }
+    // Text copied out of this editor carries its chips along, so they come back as chips.
+    const rich = e.clipboardData?.getData(CLIPBOARD_TYPE);
+    if (rich) {
+      try {
+        const copied = JSON.parse(rich) as Token[];
+        const nodes: Node[] = [];
+        for (const token of copied) {
+          if (token.t === "text") nodes.push(document.createTextNode(token.text));
+          else if (token.t === "br") nodes.push(document.createElement("br"));
+          else {
+            const chip = latest.current.get(token.key);
+            if (!chip) continue;
+            chips.current.set(chip.key, chip);
+            nodes.push(document.createTextNode("\u200b"), chipHost(chip), document.createTextNode("\u200b"));
+          }
+        }
+        if (nodes.length > 0) {
+          insertNodes(nodes);
+          return;
+        }
+      } catch {
+        // Not ours after all: fall back to the plain text.
+      }
+    }
     const text = e.clipboardData?.getData("text/plain");
     if (text) insertText(text);
   };
@@ -467,7 +512,11 @@ export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(func
     const range = selection.getRangeAt(0);
     if (range.collapsed || !el.contains(range.commonAncestorContainer)) return;
     e.preventDefault();
-    e.clipboardData.setData("text/plain", plainFromFragment(range.cloneContents(), chips.current));
+    const fragment = range.cloneContents();
+    e.clipboardData.setData("text/plain", plainFromFragment(fragment, chips.current));
+    const copied: Token[] = [];
+    tokens(fragment, copied, true);
+    if (copied.some((t) => t.t === "chip")) e.clipboardData.setData(CLIPBOARD_TYPE, JSON.stringify(copied));
     if (cut) {
       range.deleteContents();
       sync();
@@ -536,11 +585,18 @@ export const ComposerInput = forwardRef<ComposerHandle, ComposerInputProps>(func
       const host = box.getBoundingClientRect();
       const area = el.getBoundingClientRect();
       if (rect.top < area.top || rect.bottom > area.bottom) return native();
-      // Sized to the letters (about their cap height), not to the font's full ascent and descent.
-      const fontSize = parseFloat(getComputedStyle(el).fontSize) || 14;
-      const height = Math.round(fontSize * 0.8);
+      // Sized to the letters (their cap height) and set on the baseline, from the font's own metrics.
+      const style = getComputedStyle(el);
+      const fontSize = parseFloat(style.fontSize) || 14;
+      let height = Math.round(fontSize * 0.8);
+      let offset = (rect.height - height) / 2 + fontSize * 0.06;
+      const metrics = measureFont(style.font);
+      if (metrics) {
+        height = Math.round(metrics.cap);
+        offset = metrics.ascent - metrics.cap;
+      }
       mark.style.height = `${height}px`;
-      mark.style.transform = `translate(${rect.x - host.left + 1}px, ${rect.top - host.top + (rect.height - height) / 2 + fontSize * 0.06}px)`;
+      mark.style.transform = `translate(${rect.x - host.left + 1}px, ${rect.top - host.top + offset}px)`;
       const key = `${rect.x}:${rect.top}`;
       if (key !== lastKey) {
         // A caret that has just moved is solid, then blinks again.
