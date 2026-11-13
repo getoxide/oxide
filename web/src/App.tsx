@@ -15,6 +15,7 @@ import {
   GitBranchIcon,
   GitPullRequestIcon,
   IssueOpenedIcon,
+  PinIcon,
   PlusIcon,
   RepoIcon,
   SearchIcon,
@@ -131,6 +132,8 @@ export function App() {
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { contextKey: string }) | null>(null);
   const codeSequence = useRef(0);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
+  const [openThreadsByProject, setOpenThreadsByProject] = useState<Record<number, number[]>>({});
+  const [pinnedThreadsByProject, setPinnedThreadsByProject] = useState<Record<number, number[]>>({});
   const [threadQuery, setThreadQuery] = useState("");
   // A New Thread request that reopened an empty Thread: the selection may not change, so
   // ThreadView gets a one-shot request to focus the composer and show a cue.
@@ -170,6 +173,59 @@ export function App() {
     : null;
   const sidebarThreads = useMemo(() => filterThreads(threads ?? [], threadQuery), [threads, threadQuery]);
   const selectedThread = threads?.find((thread) => thread.id === currentThreadId);
+  const openThreadIds = useMemo(() => {
+    if (!selected) return [];
+    const valid = new Set((threads ?? []).map((t) => t.id));
+    const stored = (openThreadsByProject[selected.id] ?? []).filter((id) => valid.has(id));
+    if (currentThreadId !== null && valid.has(currentThreadId) && !stored.includes(currentThreadId)) {
+      return [...stored, currentThreadId];
+    }
+    return stored;
+  }, [selected, threads, openThreadsByProject, currentThreadId]);
+  const pinnedThreadIds = useMemo(() => {
+    if (!selected) return [];
+    const openSet = new Set(openThreadIds);
+    return (pinnedThreadsByProject[selected.id] ?? []).filter((id) => openSet.has(id));
+  }, [selected, openThreadIds, pinnedThreadsByProject]);
+  const visibleThreadIds = useMemo(() => {
+    const pinnedSet = new Set(pinnedThreadIds);
+    return openThreadIds.filter((id) => id === currentThreadId || pinnedSet.has(id));
+  }, [openThreadIds, pinnedThreadIds, currentThreadId]);
+  if (selected && currentThreadId !== null && !(openThreadsByProject[selected.id] ?? []).includes(currentThreadId)) {
+    setOpenThreadsByProject((prev) => {
+      const existing = prev[selected.id] ?? [];
+      if (existing.includes(currentThreadId)) return prev;
+      return { ...prev, [selected.id]: [...existing, currentThreadId] };
+    });
+  }
+  const closeOpenThreadTab = useCallback((threadId: number) => {
+    if (!selected) return;
+    const projectId = selected.id;
+    const nextOpen = openThreadIds.filter((id) => id !== threadId);
+    setOpenThreadsByProject((prev) => ({ ...prev, [projectId]: nextOpen }));
+    setPinnedThreadsByProject((prev) => {
+      const existing = prev[projectId] ?? [];
+      if (!existing.includes(threadId)) return prev;
+      return { ...prev, [projectId]: existing.filter((id) => id !== threadId) };
+    });
+    if (currentThreadId === threadId) {
+      const idx = openThreadIds.indexOf(threadId);
+      const nextSelected = nextOpen[Math.min(idx, nextOpen.length - 1)] ?? null;
+      selectedThreadsByProject.current[projectId] = nextSelected;
+      setSelectedThreadId(nextSelected);
+    }
+  }, [selected, openThreadIds, currentThreadId]);
+  const togglePinOpenThread = useCallback((threadId: number) => {
+    if (!selected) return;
+    const projectId = selected.id;
+    setPinnedThreadsByProject((prev) => {
+      const existing = prev[projectId] ?? [];
+      const next = existing.includes(threadId)
+        ? existing.filter((id) => id !== threadId)
+        : [...existing, threadId];
+      return { ...prev, [projectId]: next };
+    });
+  }, [selected]);
   const workbenchContext = useMemo<WorkbenchContext | null>(() => selected && currentThreadId !== null ? {
     key: `${selected.id}:${selectedThread?.worktreePath ? currentThreadId : "main"}`,
     projectId: selected.id, threadId: selectedThread?.worktreePath ? currentThreadId : null,
@@ -337,9 +393,21 @@ export function App() {
   }, [selectedId]);
   const threadStatuses = threads?.map((t) => `${t.id}:${t.status}`).join(",") ?? "";
   const threadsKey = `${threadStatuses}#${gitRevision}`;
-  // A restore records a mark in the Transcript, so the Thread is read again.
+  // A restore or /clear records a change in the Transcript, so the Thread is read again.
   const [transcriptRevision, setTranscriptRevision] = useState(0);
+  const [threadTranscriptRevisions, setThreadTranscriptRevisions] = useState<Record<number, number>>({});
   const onRestored = useCallback(() => setTranscriptRevision((n) => n + 1), []);
+  const clearCurrentThread = useCallback(async (targetId?: number) => {
+    const id = targetId ?? currentThreadRef.current;
+    if (id === null || id === undefined) return;
+    const res = await commands.clearThread(id).catch(() => null);
+    if (res?.status === "ok") {
+      setThreads((prev) => prev?.map((t) => (t.id === id ? res.data : t)) ?? null);
+      setDrafts((prev) => setDraft(prev, id, ""));
+      setThreadTranscriptRevisions((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+      setGitRevision((n) => n + 1);
+    }
+  }, []);
   // An agent can open a pull request during a Turn, which no change the user makes reports,
   // so the Pull request tab reloads whenever a Thread changes status.
   const [turnRevision, setTurnRevision] = useState({ statuses: threadStatuses, count: 0 });
@@ -568,6 +636,12 @@ export function App() {
     setWorkbenches((contexts) => contexts.filter((context) => context.threadId !== deletedId));
     setTerminals((previous) => removeThreadTabsEverywhere(previous, deletedId));
     setThreads((prev) => threadsAfterDelete(prev, deletedId));
+    setOpenThreadsByProject((prev) =>
+      Object.fromEntries(Object.entries(prev).map(([pid, ids]) => [pid, ids.filter((id) => id !== deletedId)])),
+    );
+    setPinnedThreadsByProject((prev) =>
+      Object.fromEntries(Object.entries(prev).map(([pid, ids]) => [pid, ids.filter((id) => id !== deletedId)])),
+    );
     setSelectedThreadId((current) => selectionAfterDelete(current, deletedId));
   }, []);
 
@@ -602,7 +676,9 @@ export function App() {
       const centre = document.querySelector<HTMLElement>('.centre-column');
       if (centre && !centre.hidden) {
         const settings = centre.querySelector<HTMLElement>('.settings-view button, .settings-view input');
-        const thread = centre.querySelector<HTMLElement>('.centre [role="textbox"], .centre textarea, .centre .empty-state button, .centre button');
+        const activePane = centre.querySelector<HTMLElement>('.centre .thread-pane.active');
+        const threadScope = activePane ?? centre;
+        const thread = threadScope.querySelector<HTMLElement>('.centre [role="textbox"], .centre textarea, .centre .empty-state button, .centre button, [role="textbox"], textarea, button');
         (settings ?? thread)?.focus();
       } else {
         const handle = document.querySelector<HTMLElement>('.thread-restore-handle, button[aria-label="Restore Thread"]');
@@ -1038,63 +1114,133 @@ export function App() {
                 </button>
               </div>
             <main className="centre" aria-label="Thread" hidden={centreView === "code"}>
-                              <ThreadView
-                  visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
-                  threadId={selectedThreadId}
-                  projectId={selected.id}
-                  gitControls={currentThreadId !== null && !selected.missing ? (
-                    <GitHeader
-                      projectId={selected.id}
-                      threadId={currentThreadId}
-                      threadsKey={threadsKey}
-                      agentBusy={selectedThread ? ["working", "needs-input"].includes(selectedThread.status) : false}
-                      threadProvider={selectedThread?.provider}
-                      threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
-                      threadWorking={selectedThread?.status === "working"}
-                      onThreadCreated={(thread) => {
-                        setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                        setSelectedThreadId(thread.id);
-                      }}
-                      onRestored={onRestored}
-                      onOpenPullRequest={openPullRequest}
-                      onChanged={onGitChanged}
-                    />
-                  ) : undefined}
-                  draft={getDraft(drafts, selectedThreadId)}
-                  onDraftChange={(text) =>
-                    setDrafts((prev) => setDraft(prev, selectedThreadId, text))
-                  }
-                  onClearThread={() => {
-                    void startNewThread();
-                  }}
-                  onThreadCreated={(newThread) => {
-                    setThreads((prev) => [newThread, ...(prev || [])]);
-                    setSelectedThreadId(newThread.id);
-
-                  }}
-                  onThreadUpdated={onThreadUpdated}
-                  onStatusChange={onThreadStatusChange}
-                  onThreadTitleChange={onThreadTitleChange}
-                  prefill={prefill}
-                  onPrefillUsed={() => setPrefill(null)}
-                  onOpenThread={(id) => {
-                    setSelectedThreadId(id);
-
-                  }}
-                  onThreadContinued={(continued, from) => {
-                    setThreads((prev) => [
-                      continued.thread,
-                      ...(prev?.map((t) => (t.id === from ? { ...t, continuedIn: continued.thread.id } : t)) ?? []),
-                    ]);
-                    setPrefill({ threadId: continued.thread.id, text: continued.recap });
-                    setSelectedThreadId(continued.thread.id);
-
-                  }}
-                  transcriptRevision={transcriptRevision}
-                  initialProvider={selectedThread?.provider}
-                  newThreadFocus={newThreadFocus?.threadId === currentThreadId ? newThreadFocus : null}
-                  onNewThreadFocusHandled={() => setNewThreadFocus(null)}
-                />
+              {openThreadIds.length > 0 && (
+                <div className="open-threads-bar" role="tablist" aria-label="Open threads">
+                  {openThreadIds.map((tid) => {
+                    const t = threads?.find((item) => item.id === tid);
+                    if (!t) return null;
+                    const active = tid === currentThreadId;
+                    const pinned = pinnedThreadIds.includes(tid);
+                    const label = threadTitle(t);
+                    return (
+                      <div
+                        key={tid}
+                        className={`open-thread-tab${active ? " active" : ""}${pinned ? " pinned" : ""}`}
+                        role="presentation"
+                      >
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          className="open-thread-select"
+                          title={label}
+                          onClick={() => selectThread(tid)}
+                        >
+                          <span className={`status-dot ${t.status}`} aria-hidden="true" />
+                          <span className="open-thread-title">{label}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="open-thread-pin"
+                          aria-pressed={pinned}
+                          aria-label={pinned ? `Unpin ${label}` : `Pin ${label} side by side`}
+                          title={pinned ? "Unpin from side-by-side view" : "Keep visible side by side"}
+                          onClick={() => togglePinOpenThread(tid)}
+                        >
+                          <PinIcon size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          className="open-thread-close"
+                          aria-label={`Close tab ${label}`}
+                          title="Close tab"
+                          onClick={() => closeOpenThreadTab(tid)}
+                        >
+                          <XIcon size={12} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className={`thread-panes${visibleThreadIds.length > 1 ? " split" : ""}`}>
+                {[...openThreadIds]
+                  .sort((a, b) => (a === currentThreadId ? -1 : b === currentThreadId ? 1 : 0))
+                  .map((tid) => {
+                    const paneThread = threads?.find((item) => item.id === tid);
+                    if (!paneThread) return null;
+                    const isActive = tid === currentThreadId;
+                    const isPaneVisible = visibleThreadIds.includes(tid);
+                    const order = openThreadIds.indexOf(tid);
+                    return (
+                      <section
+                        key={tid}
+                        className={`thread-pane${isActive ? " active" : ""}${visibleThreadIds.length > 1 && isPaneVisible ? " split" : ""}`}
+                        hidden={!isPaneVisible}
+                        style={{ order }}
+                        aria-label={threadTitle(paneThread)}
+                        onMouseDown={() => {
+                          if (!isActive) selectThread(tid);
+                        }}
+                      >
+                        <ThreadView
+                          visible={isActive && !showSettings && !(maximized && dockVisible) && centreView === "thread"}
+                          threadId={tid}
+                          projectId={selected.id}
+                          gitControls={!selected.missing ? (
+                            <GitHeader
+                              projectId={selected.id}
+                              threadId={tid}
+                              threadsKey={threadsKey}
+                              agentBusy={["working", "needs-input"].includes(paneThread.status)}
+                              threadProvider={paneThread.provider}
+                              threadIssue={paneThread.issueNumber != null ? `#${paneThread.issueNumber}` : null}
+                              threadWorking={paneThread.status === "working"}
+                              onThreadCreated={(thread) => {
+                                setThreads((prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
+                                selectThread(thread.id);
+                              }}
+                              onRestored={onRestored}
+                              onOpenPullRequest={openPullRequest}
+                              onChanged={onGitChanged}
+                            />
+                          ) : undefined}
+                          draft={getDraft(drafts, tid)}
+                          onDraftChange={(text) =>
+                            setDrafts((prev) => setDraft(prev, tid, text))
+                          }
+                          onClearThread={(clearedId) => {
+                            void clearCurrentThread(clearedId ?? tid);
+                          }}
+                          onThreadCreated={(newThread) => {
+                            setThreads((prev) => [newThread, ...(prev || [])]);
+                            selectThread(newThread.id);
+                          }}
+                          onThreadUpdated={onThreadUpdated}
+                          onStatusChange={onThreadStatusChange}
+                          onThreadTitleChange={onThreadTitleChange}
+                          prefill={prefill}
+                          onPrefillUsed={() => setPrefill(null)}
+                          onOpenThread={(id) => {
+                            selectThread(id);
+                          }}
+                          onThreadContinued={(continued, from) => {
+                            setThreads((prev) => [
+                              continued.thread,
+                              ...(prev?.map((t) => (t.id === from ? { ...t, continuedIn: continued.thread.id } : t)) ?? []),
+                            ]);
+                            setPrefill({ threadId: continued.thread.id, text: continued.recap });
+                            selectThread(continued.thread.id);
+                          }}
+                          transcriptRevision={transcriptRevision + (threadTranscriptRevisions[tid] ?? 0)}
+                          initialProvider={paneThread.provider}
+                          newThreadFocus={newThreadFocus?.threadId === tid ? newThreadFocus : null}
+                          onNewThreadFocusHandled={() => setNewThreadFocus(null)}
+                        />
+                      </section>
+                    );
+                  })}
+              </div>
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key

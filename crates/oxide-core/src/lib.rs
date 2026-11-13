@@ -727,6 +727,82 @@ impl Core {
         Ok(thread)
     }
 
+    fn collect_thread_attachments(
+        db: &rusqlite::Connection,
+        thread_id: u32,
+    ) -> Result<Vec<PathBuf>> {
+        let mut stmt =
+            db.prepare("SELECT segments, attachments FROM turns WHERE thread_id = ?1")?;
+        let attachments = stmt
+            .query_map([thread_id], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
+            })?
+            .filter_map(|row| row.ok())
+            .flat_map(|(segments, legacy)| attachments::stored_paths(segments.as_deref(), &legacy))
+            .collect();
+        Ok(attachments)
+    }
+
+    fn clear_thread_history_tx(tx: &rusqlite::Transaction<'_>, thread_id: u32) -> Result<()> {
+        for table in ["approvals", "unknown_events", "items"] {
+            tx.execute(
+                &format!(
+                    "DELETE FROM {table} WHERE turn_id IN (SELECT id FROM turns WHERE thread_id = ?1)"
+                ),
+                [thread_id],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM line_comments WHERE thread_id = ?1",
+            [thread_id],
+        )?;
+        tx.execute("DELETE FROM restores WHERE thread_id = ?1", [thread_id])?;
+        tx.execute("DELETE FROM turns WHERE thread_id = ?1", [thread_id])?;
+        Ok(())
+    }
+
+    /// Clears a Thread's Transcript and resets its Provider session in-place so the next prompt
+    /// starts a fresh conversation inside the same Thread.
+    pub fn clear_thread(&self, thread_id: u32) -> Result<ThreadSummary> {
+        let (_project_id, root, _branch, _worktree) = self.thread_checkouts(thread_id)?;
+        let actor = self
+            .thread_actors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&thread_id);
+        if let Some(actor) = actor {
+            actor.shutdown();
+        }
+        let _ = self.storage.get_snapshot(thread_id, 0);
+
+        let (summary, attachments) = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let attachments = Self::collect_thread_attachments(&db, thread_id)?;
+            let tx = crate::db::write_transaction(&db)?;
+            Self::clear_thread_history_tx(&tx, thread_id)?;
+            tx.execute(
+                "UPDATE threads
+                 SET provider_session_id = NULL,
+                     session_lost = 0,
+                     title = NULL,
+                     status = 'completed',
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1",
+                [thread_id],
+            )?;
+            tx.commit()?;
+            (self.get_thread_by_id(&db, thread_id)?, attachments)
+        };
+
+        checkpoint::forget(&root, thread_id);
+        let store = self.attachment_store();
+        for path in &attachments {
+            store.remove_stored(path);
+        }
+        self.board.publish(thread_id);
+        Ok(summary)
+    }
+
     /// Removes a Thread's Transcript, Approvals, attachments and Checkpoints, and the Thread
     /// itself. The Thread's actor must already be stopped. Threads that continued it or were
     /// continued by it simply lose the link.
@@ -745,31 +821,9 @@ impl Core {
                 [thread_id],
                 |r| r.get(0),
             )?;
-            let mut stmt =
-                db.prepare("SELECT segments, attachments FROM turns WHERE thread_id = ?1")?;
-            let attachments: Vec<PathBuf> = stmt
-                .query_map([thread_id], |r| {
-                    Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
-                })?
-                .filter_map(|row| row.ok())
-                .flat_map(|(segments, legacy)| {
-                    attachments::stored_paths(segments.as_deref(), &legacy)
-                })
-                .collect();
-            drop(stmt);
+            let attachments = Self::collect_thread_attachments(&db, thread_id)?;
             let tx = crate::db::write_transaction(&db)?;
-            for table in ["approvals", "unknown_events", "items"] {
-                tx.execute(
-                    &format!(
-                        "DELETE FROM {table} WHERE turn_id IN (SELECT id FROM turns WHERE thread_id = ?1)"
-                    ),
-                    [thread_id],
-                )?;
-            }
-            tx.execute(
-                "DELETE FROM line_comments WHERE thread_id = ?1",
-                [thread_id],
-            )?;
+            Self::clear_thread_history_tx(&tx, thread_id)?;
             // A Blind review's findings die with the review or with the change it reviewed.
             tx.execute(
                 "DELETE FROM blind_review_findings WHERE review_id IN
@@ -785,8 +839,6 @@ impl Core {
                 "UPDATE threads SET blind_review_of = NULL WHERE blind_review_of = ?1",
                 [thread_id],
             )?;
-            tx.execute("DELETE FROM restores WHERE thread_id = ?1", [thread_id])?;
-            tx.execute("DELETE FROM turns WHERE thread_id = ?1", [thread_id])?;
             tx.execute(
                 "UPDATE threads SET continued_from = NULL WHERE continued_from = ?1",
                 [thread_id],

@@ -253,18 +253,29 @@ it("preselects the merge method GitHub's own merge box would, not the first allo
   expect(onChanged).toHaveBeenCalledTimes(1);
 });
 
-it("keeps the merge button coloured while merging, then confirms and returns to the list", async () => {
-  let finish!: () => void;
-  vi.spyOn(commands, "mergePullRequest").mockReturnValue(
-    new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
-  );
-  await render();
-  await click(button(/Squash and merge/));
-  const merging = button(/Merging/);
-  expect(merging.disabled).toBe(true);
-  expect(merging.classList.contains("pending")).toBe(true);
-  await act(async () => finish());
-  expect(onBack).toHaveBeenCalledWith("merged");
+it("keeps the merge button coloured while merging, shows the PR merged checkmark, then returns to the list", async () => {
+  vi.useFakeTimers();
+  try {
+    let finish!: () => void;
+    vi.spyOn(commands, "mergePullRequest").mockReturnValue(
+      new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+    );
+    await render();
+    await click(button(/Squash and merge/));
+    const merging = button(/Merging/);
+    expect(merging.disabled).toBe(true);
+    expect(merging.classList.contains("pending")).toBe(true);
+    await act(async () => finish());
+    expect(host.querySelector(".pr-merged-overlay")?.textContent).toContain("PR merged");
+    expect(host.querySelector(".pr-merged-check")).not.toBeNull();
+    expect(onBack).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(onBack).toHaveBeenCalledWith("merged");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("closes a pull request without merging it, then returns to the list", async () => {

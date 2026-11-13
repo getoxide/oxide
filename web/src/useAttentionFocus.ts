@@ -2,8 +2,8 @@ import { useEffect } from "react";
 import type { AttentionTarget } from "./attention";
 
 const RESPONSE = {
-  approval: '.centre [aria-label="Approval"].pending .approval-btn.allow',
-  composer: '.centre [role="textbox"][contenteditable="true"]',
+  approval: '.centre .thread-pane.active [aria-label="Approval"].pending .approval-btn.allow, .centre [aria-label="Approval"].pending .approval-btn.allow',
+  composer: '.centre .thread-pane.active [role="textbox"][contenteditable="true"], .centre [role="textbox"][contenteditable="true"]',
 };
 
 /**

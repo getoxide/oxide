@@ -79,3 +79,27 @@ fn deleting_a_thread_twice_fails_the_second_time() {
 
     assert!(core.delete_thread(thread, false).is_err());
 }
+
+#[test]
+fn clearing_a_thread_empties_its_transcript_and_resets_session_in_place() {
+    let (_dir, core, project, thread) = core_with_thread();
+    core.rename_thread(thread, "Active chat").unwrap();
+    core.send_prompt(thread, "hello").unwrap();
+    wait_for_completed_turn(&core, thread);
+
+    let cleared = core.clear_thread(thread).unwrap();
+
+    assert_eq!(cleared.id, thread);
+    assert_eq!(cleared.title, None);
+    let snapshot = core.get_thread_snapshot(thread).unwrap();
+    assert_eq!(snapshot.turn_count, 0);
+    assert!(snapshot.turns.is_empty());
+    assert!(!core.list_threads(project).unwrap().is_empty());
+
+    // Subsequent prompt on the same thread starts fresh cleanly.
+    core.send_prompt(thread, "second start").unwrap();
+    wait_for_completed_turn(&core, thread);
+    let after = core.get_thread_snapshot(thread).unwrap();
+    assert_eq!(after.turn_count, 1);
+    assert_eq!(after.turns[0].prompt, "second start");
+}

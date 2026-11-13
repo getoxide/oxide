@@ -1,3 +1,4 @@
+import { Collapsible } from "./Collapsible";
 import { Skeleton } from "./Skeleton";
 import { SurfaceSearch } from "./SurfaceSearch";
 import { shortcutLabel } from "./shortcuts";
@@ -17,7 +18,7 @@ import {
   MarkGithubIcon,
   ToolsIcon,
 } from "@primer/octicons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   commands,
   type GitStatus,
@@ -298,6 +299,10 @@ export function PullRequestReview({
   const [comment, setComment] = useState("");
   const [methodChoice, setMethod] = useState<MergeMethod | null>(null);
   const [deleteChoice, setDeleteBranch] = useState<boolean | null>(null);
+  const mergeDoneTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (mergeDoneTimer.current !== null) window.clearTimeout(mergeDoneTimer.current);
+  }, []);
   const [merged, setMerged] = useState(false);
   const [autoMerge, setAutoMerge] = useState(false);
 
@@ -412,7 +417,8 @@ export function PullRequestReview({
       setMerged(true);
       dropFromLists();
       onChanged();
-      onBack("merged");
+      if (mergeDoneTimer.current !== null) window.clearTimeout(mergeDoneTimer.current);
+      mergeDoneTimer.current = window.setTimeout(() => onBack("merged"), 1050);
     }
   }
 
@@ -672,6 +678,17 @@ export function PullRequestReview({
           </p>
         </footer>
       )}
+      {merged && (
+        <div className="pr-merged-overlay" role="status" aria-live="polite">
+          <div className="pr-merged-card">
+            <svg className="pr-merged-check" viewBox="0 0 52 52" aria-hidden="true">
+              <circle className="pr-merged-circle" cx="26" cy="26" r="22" fill="none" />
+              <path className="pr-merged-tick" d="M15.5 26.5l7 7L36.5 19" fill="none" />
+            </svg>
+            <strong>PR merged</strong>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -743,7 +760,9 @@ function Description({ body }: { body: string }) {
         <h4>Description</h4>
         <ChevronDownIcon size={14} className="pr-chev" />
       </button>
-      {open && <Markdown source={body} />}
+      <Collapsible open={open}>
+        <Markdown source={body} />
+      </Collapsible>
     </section>
   );
 }

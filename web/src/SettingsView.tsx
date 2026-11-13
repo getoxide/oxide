@@ -84,7 +84,7 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
     null,
   );
   const [catalogs, setCatalogs] = useState<Partial<Record<Provider, ModelInfo[]>>>({});
-  const scroller = useRef<HTMLElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const [category, setCategory] = useState<SettingsCategoryId>(() => {
     return settingsCategoryFor(section) ?? hashCategory() ?? "general";
   });
@@ -394,68 +394,72 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
   };
 
   return (
-    <main ref={scroller} className="settings" aria-label="Settings">
-      <header className="settings-header">
-        <h1>Settings</h1>
-        <p>Manage your defaults, Providers and Projects.</p>
-      </header>
-      {fileErrors.length > 0 && (
-        <section className="error-summary" role="alert">
-          <p>
-            <strong>settings.json has errors.</strong> Oxide is using the last
-            valid settings.
-          </p>
-          <ul>
-            {fileErrors.map((e) => (
-              <li key={`${e.path}:${e.message}`}>
-                {e.path ? <code>{e.path}</code> : "file"}: {e.message}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      <div className="settings-layout">
-        <nav className="settings-nav" aria-label="Settings categories">
-          {SETTINGS_CATEGORIES.map(({ id, label }) => {
-            const Icon = CATEGORY_ICONS[id];
-            return (
-              <button
+    <main className="settings" aria-label="Settings">
+      <div ref={scroller} className="settings-scroll">
+        <header className="settings-header">
+          <h1>Settings</h1>
+          <p>Manage your defaults, Providers and Projects.</p>
+        </header>
+        {fileErrors.length > 0 && (
+          <section className="error-summary" role="alert">
+            <p>
+              <strong>settings.json has errors.</strong> Oxide is using the last
+              valid settings.
+            </p>
+            <ul>
+              {fileErrors.map((e) => (
+                <li key={`${e.path}:${e.message}`}>
+                  {e.path ? <code>{e.path}</code> : "file"}: {e.message}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Settings categories">
+            {SETTINGS_CATEGORIES.map(({ id, label }) => {
+              const Icon = CATEGORY_ICONS[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className="settings-nav-item"
+                  aria-current={category === id ? "page" : undefined}
+                  onClick={() => setCategory(id)}
+                >
+                  <Icon size={16} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="settings-categories">
+            {SETTINGS_CATEGORIES.map(({ id, label }) => (
+              <section
                 key={id}
-                type="button"
-                className="settings-nav-item"
-                aria-current={category === id ? "page" : undefined}
-                onClick={() => setCategory(id)}
+                className="settings-category"
+                data-settings-category={id}
+                aria-label={label}
+                hidden={category !== id}
               >
-                <Icon size={16} />
-                <span>{label}</span>
-              </button>
-            );
-          })}
-        </nav>
-        <div className="settings-categories">
-          {SETTINGS_CATEGORIES.map(({ id, label }) => (
-            <section
-              key={id}
-              className="settings-category"
-              data-settings-category={id}
-              aria-label={label}
-              hidden={category !== id}
-            >
-              {category === id && panels[id]}
-            </section>
-          ))}
+                {category === id && panels[id]}
+              </section>
+            ))}
+          </div>
         </div>
       </div>
-      {saveError && <p className="error" role="alert">{saveError}</p>}
-      <div className="actions">
-        <button className="primary" onClick={save} disabled={saveStatus === "saving"}>
-          {saveStatus === "saving" ? "Saving…" : "Save"}
-        </button>
-        <button onClick={onClose}>Close</button>
-        <span className="settings-save-status" role="status" aria-label="Settings save status">
-          {saveStatus === "saved" ? "Settings saved." : ""}
-        </span>
-      </div>
+      <footer className="settings-footer">
+        {saveError && <p className="error" role="alert">{saveError}</p>}
+        <div className="actions">
+          <button className="primary" onClick={save} disabled={saveStatus === "saving"}>
+            {saveStatus === "saving" ? "Saving…" : "Save"}
+          </button>
+          <button onClick={onClose}>Close</button>
+          <span className="settings-save-status" role="status" aria-label="Settings save status">
+            {saveStatus === "saved" ? "Settings saved." : ""}
+          </span>
+        </div>
+      </footer>
     </main>
   );
 }

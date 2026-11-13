@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
+import { Collapsible } from "./Collapsible";
 import {
-  ChevronDownIcon,
   ChevronRightIcon,
   CommentDiscussionIcon,
   FileDiffIcon,
@@ -53,7 +53,7 @@ function Disclosure({
 }) {
   return (
     <button type="button" className={className} aria-expanded={open} onClick={onToggle}>
-      {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+      <ChevronRightIcon size={12} className="disclosure-chev" />
       {children}
     </button>
   );
@@ -135,14 +135,14 @@ function ItemRow({ entry, kind }: { entry: ActivityItem; kind: PhaseKind }) {
           <FailedMark count={failed ? 1 : failedChildren} label={failedAriaLabel(failed ? 1 : failedChildren)} />
         )}
       </Disclosure>
-      {open && (
+      <Collapsible open={open}>
         <div className="activity-item-body">
           {detail && <pre className="tool-detail">{detail}</pre>}
           {children.map((child) => (
             <ChildItem key={child.id || child.itemIndex} item={child} />
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   );
 }
@@ -168,13 +168,13 @@ function PhaseRow({ phase }: { phase: Phase }) {
         )}
         {phase.kind !== "reasoning" && <span className="activity-count">{count}</span>}
       </Disclosure>
-      {open && (
+      <Collapsible open={open}>
         <div className="rail">
           {phase.items.map((entry) => (
             <ItemRow key={entry.item.id || entry.item.itemIndex} entry={entry} kind={phase.kind} />
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   );
 }
@@ -260,13 +260,13 @@ export function ActivityView({
               <span className="activity-worked">Worked for {formatElapsed(workedMs)}</span>
             )}
           </Disclosure>
-          {open && (
+          <Collapsible open={open}>
             <div className="activity-phases">
               {activity.phases.map((phase, i) => (
                 <PhaseRow key={i} phase={phase} />
               ))}
             </div>
-          )}
+          </Collapsible>
         </div>
       )}
     </div>

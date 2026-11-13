@@ -10,6 +10,7 @@ type ThreadViewProps = {
   threadId: number;
   initialProvider?: string;
   newThreadFocus?: { threadId: number; id: number } | null;
+  onClearThread?: (threadId?: number) => void;
 };
 const seen = vi.hoisted(() => [] as ThreadViewProps[]);
 vi.mock("./ThreadView", () => ({
@@ -20,7 +21,11 @@ vi.mock("./ThreadView", () => ({
         data-thread={props.threadId}
         data-provider={props.initialProvider ?? ""}
         data-focus={props.newThreadFocus?.id ?? ""}
-      />
+      >
+        <button type="button" data-clear={props.threadId} onClick={() => props.onClearThread?.(props.threadId)}>
+          Clear
+        </button>
+      </div>
     );
   },
 }));
@@ -61,6 +66,7 @@ beforeEach(() => {
       case "list_turns": return { offset: 0, turns: [], turnCount: existingTurns };
       case "get_settings": return { settings: { defaultProvider, providers: {} }, errors: [] };
       case "create_thread": return thread(3, defaultProvider);
+      case "clear_thread": return { ...thread((args as { threadId: number }).threadId, "claude"), title: null };
       case "subscribe_board": return [];
       case "plugin:event|listen": return 1;
       case "remember_selection": return null;
@@ -109,4 +115,34 @@ it("gives a newly created Thread its default Provider before the Transcript load
   expect(created.length).toBeGreaterThan(0);
   expect(created.every((props) => props.initialProvider === "antigravity")).toBe(true);
   expect(host.querySelector<HTMLElement>('[data-thread="3"]')!.getAttribute("data-provider")).toBe("antigravity");
+});
+
+it("keeps previous threads open in tabs, supports pinning side by side, and clears the active thread in place", async () => {
+  existingTurns = 1;
+  await act(async () => root.render(<App />));
+  await settle();
+
+  // Open a second thread via New Thread: both thread 2 and thread 3 stay mounted as open tabs.
+  await act(async () => newThreadButton().click());
+  await settle();
+  expect(host.querySelector('[data-thread="2"]')).not.toBeNull();
+  expect(host.querySelector('[data-thread="3"]')).not.toBeNull();
+  expect(host.querySelectorAll(".open-thread-tab")).toHaveLength(2);
+
+  // Pin thread 2 so both thread 2 and thread 3 are visible side by side simultaneously.
+  const pinTwo = host.querySelector<HTMLButtonElement>('[aria-label="Pin T2 side by side"]')!;
+  await act(async () => pinTwo.click());
+  expect(host.querySelector(".thread-panes")?.classList.contains("split")).toBe(true);
+  const panes = [...host.querySelectorAll<HTMLElement>(".thread-pane")];
+  expect(panes.filter((p) => !p.hidden)).toHaveLength(2);
+
+  // Running /clear clears the thread in place instead of spawning a new thread.
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-clear="3"]')!.click());
+  await settle();
+  expect(calls.some((c) => c.command === "clear_thread" && (c.args as { threadId: number }).threadId === 3)).toBe(true);
+
+  // Closing tab 2 removes its mounted pane without deleting it.
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Close tab T2"]')!.click());
+  expect(host.querySelector('[data-thread="2"]')).toBeNull();
+  expect(host.querySelectorAll(".open-thread-tab")).toHaveLength(1);
 });

@@ -303,7 +303,7 @@ impl Core {
     /// The Project id, its root, and for a Thread with its own checkout, its branch and
     /// worktree. A chat Thread that has not started yet has neither a branch nor a
     /// worktree and keeps running in the Project's main checkout.
-    fn thread_checkouts(
+    pub(crate) fn thread_checkouts(
         &self,
         thread_id: u32,
     ) -> Result<(u32, PathBuf, Option<String>, Option<PathBuf>)> {

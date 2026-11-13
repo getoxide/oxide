@@ -325,3 +325,17 @@ it("starts a fresh Thread on /clear once the current Thread has Turns", async ()
   expect(calls.some((c) => c.command === "send_prompt")).toBe(false);
   expect(editor().textContent?.trim()).toBe("");
 });
+
+it("submits /clear immediately when clicked in the slash menu", async () => {
+  setupSlash({ turns: 2 });
+  const onClearThread = vi.fn();
+  await renderSlash("/cl", { onClearThread });
+  await flush();
+  const clearOption = options().find((option) => option.querySelector(".n")?.textContent === "/clear")!;
+  expect(clearOption).toBeTruthy();
+  await act(async () => {
+    clearOption.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+  await flush();
+  expect(onClearThread).toHaveBeenCalledOnce();
+});

@@ -71,6 +71,11 @@ export const commands = {
 	/**  Starts a new Thread that continues one whose Provider session is gone. */
 	continueThread: (threadId: number) => typedError<ContinuedThread_Serialize, AppError>(__TAURI_INVOKE("continue_thread", { threadId })),
 	/**
+	 *  Clears a Thread's Transcript and resets its Provider session in-place so `/clear` starts
+	 *  fresh without creating another Thread.
+	 */
+	clearThread: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("clear_thread", { threadId })),
+	/**
 	 *  Deletes a Thread and its Transcript. Deleting a Board Thread removes its worktree; with
 	 *  uncommitted changes that waits for `discard_changes`.
 	 */

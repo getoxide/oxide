@@ -92,7 +92,7 @@ interface ThreadViewProps {
   gitControls?: ReactNode;
   draft?: string;
   onDraftChange?: (draft: string) => void;
-  onClearThread?: () => void;
+  onClearThread?: (threadId?: number) => void;
   onThreadCreated: (thread: Thread) => void;
   onThreadUpdated?: (thread: Thread) => void;
   onStatusChange: (threadId: number, status: ThreadStatus) => void;
@@ -556,6 +556,10 @@ export function ThreadView({
       };
     }
 
+    if (transcriptRevision > 0) {
+      savedViews.current.delete(threadId);
+    }
+
     // Per-token deltas never reach React directly: at most one update per frame.
     const batcher = createFrameBatcher<SequencedThreadEvent>((batch) => {
       if (!active) return;
@@ -1002,9 +1006,23 @@ export function ThreadView({
 
     if (isClearCommand(typed)) {
       // A Thread with no Turns is already the clean slate: keep it and wipe the draft instead of
-      // asking App for another empty Thread, which would only focus this one again.
+      // clearing an empty Thread.
       handleInputChange("");
-      if (turnCount > 0) onClearThread?.();
+      if (turnCount > 0) {
+        if (threadId !== null) savedViews.current.delete(threadId);
+        setOutgoing(null);
+        setPages(new Map());
+        setTranscript((prev) => ({
+          ...initialTranscriptState(null),
+          thread: prev.thread
+            ? { ...prev.thread, title: null, status: "completed", sessionLost: false }
+            : null,
+          capabilities: prev.capabilities,
+          supportedPermissionModes: prev.supportedPermissionModes,
+        }));
+        if (threadId !== null) onStatusChange(threadId, "completed");
+        onClearThread?.(threadId ?? undefined);
+      }
       return;
     }
 
@@ -1313,7 +1331,16 @@ export function ThreadView({
                 className={i === slashIndex ? "active" : undefined}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  handleInputChange(`/${c.name} `);
+                  const result = pickSlashCommand(c, "Enter", `/${c.name}`);
+                  if ("submit" in result) {
+                    const nextSegments = [{ kind: "text" as const, text: `/${c.name}` }];
+                    valueRef.current = nextSegments;
+                    setValue(nextSegments);
+                    composerRef.current?.replace(nextSegments);
+                    queueMicrotask(() => composerFormRef.current?.requestSubmit());
+                  } else {
+                    handleInputChange(result.insert);
+                  }
                 }}
               >
                 <span className="n">/{c.name}</span>
