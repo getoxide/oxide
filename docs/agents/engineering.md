@@ -30,4 +30,4 @@ Read by `/verify`, `/judge`, `/build`, `/ship`, `/ui` and `/release`.
 
 ## Release
 
-- release: only a human tags releases; the runbook is in `docs/devops.md` (ADR 0008)
+- release: agents and Release Managers may tag releases and open draft releases; the `release` environment still requires Release Manager approval; the runbook is in `docs/devops.md` (ADR 0008)

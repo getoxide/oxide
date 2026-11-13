@@ -3,7 +3,7 @@
 //! See `docs/research/usage-quota-tracking.md`.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -75,7 +75,7 @@ fn claude_token(user_home: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok();
     #[cfg(target_os = "macos")]
     let raw = raw.or_else(|| {
-        let out = Command::new("security")
+        let out = std::process::Command::new("security")
             .args([
                 "find-generic-password",
                 "-s",
@@ -271,7 +271,10 @@ pub(crate) fn parse_agy_usage(body: &Value) -> Vec<UsageWindow> {
 }
 
 fn fetch_agy() -> Result<Vec<UsageWindow>, String> {
-    let mut cmd = Command::new("agy");
+    let mut cmd = oxide_provider::agy::command_for(
+        oxide_provider::agy::DEFAULT_AGY_COMMAND,
+        &std::collections::HashMap::new(),
+    );
     cmd.args([
         "-p",
         "/usage",
@@ -283,9 +286,22 @@ fn fetch_agy() -> Result<Vec<UsageWindow>, String> {
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::null());
-    oxide_provider::process::hide_console(&mut cmd);
+    oxide_provider::process::spawn_in_own_group(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("cannot run agy: {e}"))?;
-    let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let pgid = child.id() as i32;
+    oxide_provider::process::attach_child_to_job(&mut child)
+        .map_err(|e| format!("cannot run agy: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        oxide_provider::process::terminate_group(
+            pgid,
+            oxide_provider::process::SHUTDOWN_GRACE,
+            || {
+                let _ = child.try_wait();
+            },
+        );
+        let _ = child.wait();
+        "no stdout"
+    })?;
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
         let _ = std::io::Read::read_to_string(&mut stdout, &mut s);
@@ -294,12 +310,21 @@ fn fetch_agy() -> Result<Vec<UsageWindow>, String> {
     let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(_)) => {
+                oxide_provider::process::release_job(pgid);
+                break;
+            }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(100))
             }
             _ => {
-                let _ = child.kill();
+                oxide_provider::process::terminate_group(
+                    pgid,
+                    oxide_provider::process::SHUTDOWN_GRACE,
+                    || {
+                        let _ = child.try_wait();
+                    },
+                );
                 let _ = child.wait();
                 return Err("agy /usage timed out".into());
             }

@@ -48,7 +48,7 @@ pub fn find_in(path: &OsStr, program: &OsStr, pathext: Option<&OsStr>) -> Option
 
 /// Build a Provider invocation using its own search environment. Rust's `Command` handles
 /// `.cmd`/`.bat` quoting once the full shim path has been resolved.
-pub(crate) fn provider_command(
+pub fn provider_command(
     program: &str,
     extra_env: &std::collections::HashMap<String, String>,
 ) -> std::process::Command {

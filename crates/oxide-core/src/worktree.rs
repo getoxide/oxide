@@ -98,8 +98,8 @@ struct SetupRun {
     output: String,
 }
 
-/// Runs `command` through the shell in `worktree`, stdout and stderr interleaved.
-fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
+/// Builds the shell command used to run a Project's Setup command in `worktree`.
+fn setup_command(command: &str, worktree: &Path, project_root: &Path) -> Command {
     #[cfg(unix)]
     let mut cmd = {
         let mut cmd = Command::new("sh");
@@ -110,13 +110,18 @@ fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
     let mut cmd = {
         let mut cmd = Command::new("cmd");
         cmd.arg("/C").arg(format!("{command} 2>&1"));
+        oxide_provider::process::hide_console(&mut cmd);
         cmd
     };
-    let result = cmd
-        .current_dir(worktree)
+    cmd.current_dir(worktree)
         .env("OXIDE_PROJECT_ROOT", project_root)
-        .stdin(Stdio::null())
-        .output();
+        .stdin(Stdio::null());
+    cmd
+}
+
+/// Runs `command` through the shell in `worktree`, stdout and stderr interleaved.
+fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
+    let result = setup_command(command, worktree, project_root).output();
     let (success, mut output) = match result {
         Ok(out) => {
             let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -536,7 +541,8 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use super::slugify;
+    use super::{run_setup, setup_command, slugify};
+    use std::ffi::OsStr;
 
     #[test]
     fn slugs_are_lowercase_dashed_and_never_empty() {
@@ -544,5 +550,25 @@ mod tests {
         assert_eq!(slugify("  --Ünï/cødé--  ", "thread"), "n-c-d");
         assert_eq!(slugify("!!!", "thread"), "thread");
         assert_eq!(slugify(&"a".repeat(100), "thread").len(), 40);
+    }
+
+    #[test]
+    fn setup_command_runs_in_worktree_with_project_root_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("proj");
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+
+        let cmd = setup_command("echo hello", &wt, &proj);
+        assert_eq!(cmd.get_current_dir(), Some(wt.as_path()));
+        assert!(
+            cmd.get_envs()
+                .any(|(k, v)| k == OsStr::new("OXIDE_PROJECT_ROOT") && v == Some(proj.as_os_str()))
+        );
+
+        let run = run_setup("echo setup-ok", &wt, &proj);
+        assert!(run.success);
+        assert!(run.output.contains("setup-ok"));
     }
 }

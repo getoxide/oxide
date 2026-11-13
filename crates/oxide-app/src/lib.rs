@@ -3531,12 +3531,27 @@ pub fn run() {
                 return;
             }
             match event {
-                // Closing only hides the window: Threads keep running in the background.
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    if let Some(core) = window.app_handle().try_state::<Arc<Core>>() {
-                        core.set_window_active(false);
+                    let app = window.app_handle();
+                    match main_window_close_action(cfg!(target_os = "macos")) {
+                        // macOS keeps running when the window closes because the Dock icon can reopen it.
+                        CloseAction::Hide => {
+                            api.prevent_close();
+                            let _ = window.hide();
+                            if let Some(core) = app.try_state::<Arc<Core>>() {
+                                core.set_window_active(false);
+                            }
+                        }
+                        // Windows and Linux have no Dock or tray icon, so closing the main window quits Oxide.
+                        CloseAction::Quit => {
+                            if let Some(prompt) = app
+                                .try_state::<Arc<Core>>()
+                                .and_then(|core| quit_prompt_for_core(&core))
+                            {
+                                api.prevent_close();
+                                emit_quit_prompt(app, prompt);
+                            }
+                        }
                     }
                 }
                 tauri::WindowEvent::Focused(focused) => {
@@ -3593,21 +3608,18 @@ pub fn run() {
             // The Dock icon was clicked while the window was hidden.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => show_main_window(app),
-            // ⌘Q: ask first when Threads are running.
+            // ⌘Q / close-before-destroy: ask first when dirty editors or running Threads exist,
+            // but never prevent exit after the main window has already been destroyed.
             tauri::RunEvent::ExitRequested {
                 code: None, api, ..
             } => {
-                let core = app.state::<Arc<Core>>();
-                if core.dirty_editor_count() > 0 {
-                    api.prevent_exit();
-                    show_main_window(app);
-                    let _ = app.emit("editor-quit-requested", core.dirty_editor_count());
+                if !should_prompt_on_exit_request(app.get_webview_window(MAIN_WINDOW).is_some()) {
                     return;
                 }
-                if let Some(running) = app.state::<Arc<Core>>().quit_confirmation() {
+                let core = app.state::<Arc<Core>>();
+                if let Some(prompt) = quit_prompt_for_core(&core) {
                     api.prevent_exit();
-                    show_main_window(app);
-                    let _ = app.emit(QUIT_REQUESTED, running);
+                    emit_quit_prompt(app, prompt);
                 }
             }
             // Managed state is not dropped on exit: interrupt every Turn, then stop every
@@ -3615,6 +3627,50 @@ pub fn run() {
             tauri::RunEvent::Exit => app.state::<Arc<Core>>().quit(),
             _ => {}
         });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseAction {
+    Hide,
+    Quit,
+}
+
+const fn main_window_close_action(is_macos: bool) -> CloseAction {
+    if is_macos {
+        CloseAction::Hide
+    } else {
+        CloseAction::Quit
+    }
+}
+
+const fn should_prompt_on_exit_request(has_main_window: bool) -> bool {
+    has_main_window
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuitPrompt {
+    DirtyEditors(u32),
+    RunningThreads(u32),
+}
+
+fn quit_prompt_for_core(core: &Core) -> Option<QuitPrompt> {
+    let dirty = core.dirty_editor_count();
+    if dirty > 0 {
+        return Some(QuitPrompt::DirtyEditors(dirty));
+    }
+    core.quit_confirmation().map(QuitPrompt::RunningThreads)
+}
+
+fn emit_quit_prompt(app: &tauri::AppHandle, prompt: QuitPrompt) {
+    show_main_window(app);
+    match prompt {
+        QuitPrompt::DirtyEditors(count) => {
+            let _ = app.emit("editor-quit-requested", count);
+        }
+        QuitPrompt::RunningThreads(count) => {
+            let _ = app.emit(QUIT_REQUESTED, count);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3707,5 +3763,31 @@ mod tests {
             },
         });
         assert!(matches!(app.event, ThreadEvent::ProviderRetrying { .. }));
+    }
+
+    #[test]
+    fn closing_main_window_hides_only_on_macos() {
+        assert_eq!(main_window_close_action(true), CloseAction::Hide);
+        assert_eq!(main_window_close_action(false), CloseAction::Quit);
+    }
+
+    #[test]
+    fn exit_request_only_prompts_while_main_window_exists() {
+        assert!(should_prompt_on_exit_request(true));
+        assert!(!should_prompt_on_exit_request(false));
+    }
+
+    #[test]
+    fn quit_prompt_prioritizes_dirty_editors_over_idle_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().to_path_buf()).unwrap();
+        assert_eq!(quit_prompt_for_core(&core), None);
+
+        core.set_editor_dirty("tab-1".into(), true);
+        assert_eq!(
+            quit_prompt_for_core(&core),
+            Some(QuitPrompt::DirtyEditors(1))
+        );
+        core.quit();
     }
 }
