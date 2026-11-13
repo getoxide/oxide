@@ -55,7 +55,7 @@ export async function loadCatalog(
 /** Run at launch so the Model picker opens with Providers and catalogs already known. */
 export async function warmModelCatalogs(): Promise<void> {
   await detectProviders();
-  await Promise.all(PICKER_PROVIDERS.filter((p) => installedCache.get(p)).map((p) => loadCatalog(p)));
+  await cachedCatalogs(PICKER_PROVIDERS.filter((p) => installedCache.get(p)));
 }
 
 /** The cached catalog of every given Provider, fetching (without refresh) the ones not cached yet. */

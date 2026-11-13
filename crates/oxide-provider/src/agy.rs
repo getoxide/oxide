@@ -24,6 +24,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_AGY_COMMAND: &str = "agy";
 
+/// Builds an `agy` command with `PATH`/`PATHEXT` resolution and auto-update disabled so
+/// background probes, usage polls, and turns never spawn an updater window.
+pub fn command_for(program: &str, extra_env: &HashMap<String, String>) -> std::process::Command {
+    let mut cmd = crate::command::provider_command(program, extra_env);
+    if !extra_env
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("AGY_CLI_DISABLE_AUTO_UPDATE"))
+    {
+        cmd.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+    }
+    cmd
+}
+
 /// Pinned version range for `agy` tested with Oxide (the fixtures come from 1.4.5).
 /// Range: >= 1.4.0, < 1.5.0
 pub const PINNED_VERSION_MIN: (u64, u64, u64) = (1, 4, 0);
@@ -479,7 +492,7 @@ impl AgyProvider {
         args: &[&str],
         working_dir: Option<&std::path::Path>,
     ) -> std::io::Result<std::process::Output> {
-        let mut cmd = crate::command::provider_command(&self.command, &self.extra_env);
+        let mut cmd = command_for(&self.command, &self.extra_env);
         cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -590,18 +603,77 @@ fn parse_models(stdout: &str) -> Vec<AgyModel> {
         .collect()
 }
 
-impl Provider for AgyProvider {
-    fn detect(&self) -> Result<Detection, ProviderError> {
+fn models_to_info(models: Vec<AgyModel>) -> Vec<ModelInfo> {
+    models
+        .into_iter()
+        .map(|m| {
+            let is_legacy = m.slug.contains("1.5") || m.slug.contains("legacy");
+            ModelInfo {
+                id: m.slug,
+                name: m.label,
+                description: None,
+                supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
+                default_effort: Some("medium".into()),
+                is_legacy,
+            }
+        })
+        .collect()
+}
+
+fn default_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gemini-3.8-flash-high".into(),
+            name: "Gemini 3.8 Flash (High)".into(),
+            description: Some("Fast model with high reasoning".into()),
+            supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
+            default_effort: Some("high".into()),
+            is_legacy: false,
+        },
+        ModelInfo {
+            id: "gemini-3.8-flash-medium".into(),
+            name: "Gemini 3.8 Flash (Medium)".into(),
+            description: Some("Fast model with medium reasoning".into()),
+            supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
+            default_effort: Some("medium".into()),
+            is_legacy: false,
+        },
+        ModelInfo {
+            id: "claude-sonnet-4-6".into(),
+            name: "Claude Sonnet 4.6 (Thinking)".into(),
+            description: Some("Advanced reasoning model".into()),
+            supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
+            default_effort: Some("high".into()),
+            is_legacy: false,
+        },
+        ModelInfo {
+            id: "gemini-1.5-pro".into(),
+            name: "Gemini 1.5 Pro".into(),
+            description: None,
+            supported_efforts: vec![],
+            default_effort: None,
+            is_legacy: true,
+        },
+    ]
+}
+
+impl AgyProvider {
+    /// Detects the Antigravity CLI and captures its model catalog from the same `agy models`
+    /// probe, avoiding a second CLI launch during startup warmup.
+    pub fn detect_with_models(&self) -> Result<(Detection, Option<Vec<ModelInfo>>), ProviderError> {
         let version_output = match self.run_probe(&["--version"]) {
             Ok(out) if out.status.success() => out,
             _ => {
-                return Ok(Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                });
+                return Ok((
+                    Detection {
+                        available: false,
+                        installed: false,
+                        version: None,
+                        authenticated: false,
+                        warning: None,
+                    },
+                    None,
+                ));
             }
         };
         let raw = String::from_utf8_lossy(&version_output.stdout);
@@ -617,17 +689,36 @@ impl Provider for AgyProvider {
             });
 
         // `agy` has no auth command; listing models needs the cached credentials.
-        let authenticated = self
-            .run_probe(&["models"])
-            .is_ok_and(|out| out.status.success());
+        let models_output = self.run_probe(&["models"]);
+        let authenticated = models_output.as_ref().is_ok_and(|out| out.status.success());
+        let catalog = match models_output {
+            Ok(out) if out.status.success() => {
+                let parsed = parse_models(&String::from_utf8_lossy(&out.stdout));
+                if parsed.is_empty() {
+                    default_models()
+                } else {
+                    models_to_info(parsed)
+                }
+            }
+            _ => default_models(),
+        };
 
-        Ok(Detection {
-            available: authenticated,
-            installed: true,
-            version,
-            authenticated,
-            warning,
-        })
+        Ok((
+            Detection {
+                available: authenticated,
+                installed: true,
+                version,
+                authenticated,
+                warning,
+            },
+            Some(catalog),
+        ))
+    }
+}
+
+impl Provider for AgyProvider {
+    fn detect(&self) -> Result<Detection, ProviderError> {
+        self.detect_with_models().map(|(det, _)| det)
     }
 
     fn start(&mut self, context: &StartContext) -> Result<Receiver<ProviderEvent>, ProviderError> {
@@ -673,7 +764,7 @@ impl Provider for AgyProvider {
             ));
         }
 
-        let mut cmd = crate::command::provider_command(&self.command, &self.extra_env);
+        let mut cmd = command_for(&self.command, &self.extra_env);
         // Batch shims cannot carry multiline prompts or arbitrarily long arguments. One
         // streamed user message followed by EOF keeps the same one-process-per-Turn lifecycle.
         #[cfg(windows)]
@@ -809,54 +900,8 @@ impl Provider for AgyProvider {
 
     fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         match self.list_models() {
-            Ok(models) if !models.is_empty() => Ok(models
-                .into_iter()
-                .map(|m| {
-                    let is_legacy = m.slug.contains("1.5") || m.slug.contains("legacy");
-                    ModelInfo {
-                        id: m.slug,
-                        name: m.label,
-                        description: None,
-                        supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
-                        default_effort: Some("medium".into()),
-                        is_legacy,
-                    }
-                })
-                .collect()),
-            _ => Ok(vec![
-                ModelInfo {
-                    id: "gemini-3.8-flash-high".into(),
-                    name: "Gemini 3.8 Flash (High)".into(),
-                    description: Some("Fast model with high reasoning".into()),
-                    supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
-                    default_effort: Some("high".into()),
-                    is_legacy: false,
-                },
-                ModelInfo {
-                    id: "gemini-3.8-flash-medium".into(),
-                    name: "Gemini 3.8 Flash (Medium)".into(),
-                    description: Some("Fast model with medium reasoning".into()),
-                    supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
-                    default_effort: Some("medium".into()),
-                    is_legacy: false,
-                },
-                ModelInfo {
-                    id: "claude-sonnet-4-6".into(),
-                    name: "Claude Sonnet 4.6 (Thinking)".into(),
-                    description: Some("Advanced reasoning model".into()),
-                    supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
-                    default_effort: Some("high".into()),
-                    is_legacy: false,
-                },
-                ModelInfo {
-                    id: "gemini-1.5-pro".into(),
-                    name: "Gemini 1.5 Pro".into(),
-                    description: None,
-                    supported_efforts: vec![],
-                    default_effort: None,
-                    is_legacy: true,
-                },
-            ]),
+            Ok(models) if !models.is_empty() => Ok(models_to_info(models)),
+            _ => Ok(default_models()),
         }
     }
 
@@ -1368,5 +1413,34 @@ fn join_headline(headline: String, detail: &str) -> String {
         headline
     } else {
         format!("{headline}\n{detail}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_for;
+    use std::collections::HashMap;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn command_for_disables_auto_update_by_default() {
+        let cmd = command_for("agy", &HashMap::new());
+        let env: Vec<_> = cmd.get_envs().collect();
+        assert!(env.contains(&(
+            OsStr::new("AGY_CLI_DISABLE_AUTO_UPDATE"),
+            Some(OsStr::new("true"))
+        )));
+    }
+
+    #[test]
+    fn command_for_respects_explicit_auto_update_override() {
+        let extra = HashMap::from([("AGY_CLI_DISABLE_AUTO_UPDATE".into(), "false".into())]);
+        let cmd = command_for("agy", &extra);
+        let values: Vec<_> = cmd
+            .get_envs()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("AGY_CLI_DISABLE_AUTO_UPDATE"))
+            .map(|(_, v)| v.map(|s| s.to_os_string()))
+            .collect();
+        assert_eq!(values, vec![Some("false".into())]);
     }
 }

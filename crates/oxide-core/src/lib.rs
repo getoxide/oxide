@@ -845,15 +845,27 @@ impl Core {
                     authenticated: false,
                     warning: None,
                 }),
-            "agy" | "antigravity" => oxide_provider::agy::AgyProvider::new().detect().unwrap_or(
-                oxide_provider::Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                },
-            ),
+            "agy" | "antigravity" => {
+                let (det, models) = oxide_provider::agy::AgyProvider::new()
+                    .detect_with_models()
+                    .unwrap_or((
+                        oxide_provider::Detection {
+                            available: false,
+                            installed: false,
+                            version: None,
+                            authenticated: false,
+                            warning: None,
+                        },
+                        None,
+                    ));
+                if let Some(models) = models.filter(|m| !m.is_empty()) {
+                    self.model_catalogs
+                        .lock()
+                        .unwrap()
+                        .insert(provider.to_string(), models);
+                }
+                det
+            }
             "fake" => oxide_provider::Detection {
                 available: true,
                 installed: true,
