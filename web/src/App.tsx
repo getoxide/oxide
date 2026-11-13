@@ -459,30 +459,38 @@ export function App() {
   };
 
   // Only one unused Thread (no Turn, no draft, not working) at a time: asking for another reopens it.
+  const startingThread = useRef(false);
   const startNewThread = useCallback(async () => {
-    if (!selected) return;
-    setMaximized(false);
-    const counts = await Promise.all((threads ?? []).map((t) => commands.listTurns(t.id, 0, 1)));
-    const empty = threads?.find((t, i) => {
-      const r = counts[i];
-      return r.status === "ok" && isUnusedThread(t, r.data.turnCount, drafts);
-    });
-    const askForComposerFocus = (threadId: number) =>
-      setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
-    if (empty) {
-      setSelectedThreadId(empty.id);
-      // Reopening the Thread that is already open is visually a no-op: the request makes it felt.
-      askForComposerFocus(empty.id);
-
-      return;
-    }
-    const created = await createThreadIn(selected.id);
-    if (created) {
+    if (!selected || startingThread.current) return;
+    startingThread.current = true;
+    try {
       setMaximized(false);
-      setThreads((prev) => [created, ...(prev || [])]);
-      setSelectedThreadId(created.id);
-      askForComposerFocus(created.id);
-
+      const askForComposerFocus = (threadId: number) =>
+        setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
+      // Only Threads that could be unused need a Turn count; a failed lookup just rules one out.
+      const candidates = (threads ?? []).filter((t) => t.status !== "working" && getDraft(drafts, t.id).trim() === "");
+      const counts = await Promise.all(
+        candidates.map((t) => commands.listTurns(t.id, 0, 1).catch(() => null)),
+      );
+      const empty = candidates.find((t, i) => {
+        const r = counts[i];
+        return r?.status === "ok" && isUnusedThread(t, r.data.turnCount, drafts);
+      });
+      if (empty) {
+        setSelectedThreadId(empty.id);
+        // Reopening the Thread that is already open is visually a no-op: the request makes it felt.
+        askForComposerFocus(empty.id);
+        return;
+      }
+      const created = await createThreadIn(selected.id).catch(() => null);
+      if (created) {
+        setMaximized(false);
+        setThreads((prev) => [created, ...(prev || [])]);
+        setSelectedThreadId(created.id);
+        askForComposerFocus(created.id);
+      }
+    } finally {
+      startingThread.current = false;
     }
   }, [selected, threads, drafts, createThreadIn]);
 
