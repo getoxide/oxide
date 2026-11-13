@@ -107,6 +107,19 @@ kbd {
 :root[data-appearance="light"] .icon-btn {
   color: var(--dim);
 }
+:root[data-appearance="light"] .modal-backdrop {
+  background: rgb(15 23 42 / 0.24);
+}
+:root[data-appearance="light"] .modal,
+:root[data-appearance="light"] .palette,
+:root[data-appearance="light"] .pr-popover,
+:root[data-appearance="light"] .dropdown-menu,
+:root[data-appearance="light"] .app-menu-popup,
+:root[data-appearance="light"] .usage-popover,
+:root[data-appearance="light"] .usage-details-popover,
+:root[data-appearance="light"] .pr-merged-card {
+  box-shadow: 0 12px 32px rgb(15 23 42 / 0.14);
+}
 @container (max-width: 500px) {
   .appearance-font-row { grid-template-columns: minmax(0, 1fr) 110px 76px; gap: 12px; }
   .appearance-font-row > strong { grid-column: 1 / -1; }

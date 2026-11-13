@@ -969,8 +969,9 @@ section.terminal.terminal-hidden { display: none; }
 /* Pull request panel, redesigned. Scoped under .pr-views because Issues still shares the older pr-* classes. */
 .pr-views { --pr-pad: 12px; container-type: inline-size; }
 .pr-views .pr-panel-flush { padding: 0; display: flex; flex-direction: column; overflow: hidden; gap: 0; }
-.pr-views .pr-browser, .pr-views .pr-review { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; align-content: normal; }
+.pr-views .pr-browser, .pr-views .pr-review { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; align-content: normal; }
 .pr-views .pr-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--space-3) var(--pr-pad) var(--space-4); display: grid; gap: var(--space-4); align-content: start; grid-template-columns: minmax(0, 1fr); }
+.pr-views .pr-scroll .skeleton-detail-body { padding: 0; }
 /* An empty list is the scroll region's only tall child, so a column lets it take the leftover height
    and centre its message like the other Surfaces. Lists, headings and skeletons keep the start-aligned
    grid above. */
@@ -1149,7 +1150,7 @@ section.terminal.terminal-hidden { display: none; }
 .pr-views .pr-toggle h4 { flex: 1; text-align: left; }
 .pr-views .pr-toggle .pr-chev { transition: transform var(--motion-fast) ease-out; color: var(--faint); }
 .pr-views .pr-toggle[aria-expanded="true"] .pr-chev { transform: rotate(180deg); }
-.pr-views .pr-description > .md { padding: 4px 12px 12px; }
+.pr-views .pr-description .md { padding: 4px 12px 12px; }
 
 /* Details: reviewers, assignees, labels */
 .pr-views .pr-details { gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); }
@@ -1381,6 +1382,15 @@ section.terminal.terminal-hidden { display: none; }
 .settings {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 24px 32px;
   display: flex;
@@ -1392,7 +1402,7 @@ section.terminal.terminal-hidden { display: none; }
 .settings h2 { font-size: 15px; margin: 0; color: var(--fg-bright); }
 .settings h3 { font-size: 14px; margin: 0; }
 .settings-header p, .settings-section-header p, .settings-category-header p { margin: 4px 0 0; color: var(--dim); }
-.settings-header, .settings-layout, .settings > .actions, .settings > .error-summary { width: 100%; max-width: 1120px; margin-inline: auto; }
+.settings-header, .settings-layout, .settings-scroll > .error-summary, .settings-footer > .actions, .settings-footer > .error { width: 100%; max-width: 1120px; margin-inline: auto; }
 .settings-layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); align-items: start; gap: 28px; }
 .settings-nav {
   position: sticky;
@@ -1447,7 +1457,8 @@ section.terminal.terminal-hidden { display: none; }
 .settings-customizations legend { padding: 0 0 8px; color: var(--dim); }
 .settings .hint { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
 .settings .provider-hint, .settings .provider-warning { width: 100%; max-width: none; margin: 0; overflow-wrap: anywhere; }
-.settings .actions { position: sticky; bottom: -24px; display: flex; align-items: center; gap: 8px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); z-index: 1; }
+.settings-footer { flex: none; padding: 12px 32px; background: var(--bg); border-top: 1px solid var(--line); z-index: 2; display: flex; flex-direction: column; gap: 8px; }
+.settings .actions { display: flex; align-items: center; gap: 8px; }
 .settings-save-status { color: var(--green); }
 .shortcut-group { display: flex; flex-direction: column; gap: 4px; }
 .shortcut-group + .shortcut-group { padding-top: 12px; border-top: 1px solid var(--line); }
@@ -1754,7 +1765,7 @@ section.terminal.terminal-hidden { display: none; }
 .pr-views .pr-toggle h4 { flex: 1; text-align: left; }
 .pr-views .pr-toggle .pr-chev { transition: transform var(--motion-fast) ease-out; color: var(--faint); }
 .pr-views .pr-toggle[aria-expanded="true"] .pr-chev { transform: rotate(180deg); }
-.pr-views .pr-description > .md { padding: 4px 12px 12px; }
+.pr-views .pr-description .md { padding: 4px 12px 12px; }
 
 /* Details: reviewers, assignees, labels */
 .pr-views .pr-details { gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); }
@@ -1986,6 +1997,15 @@ section.terminal.terminal-hidden { display: none; }
 .settings {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 24px 32px;
   display: flex;
@@ -1997,7 +2017,7 @@ section.terminal.terminal-hidden { display: none; }
 .settings h2 { font-size: 15px; margin: 0; color: var(--fg-bright); }
 .settings h3 { font-size: 14px; margin: 0; }
 .settings-header p, .settings-section-header p, .settings-category-header p { margin: 4px 0 0; color: var(--dim); }
-.settings-header, .settings-layout, .settings > .actions, .settings > .error-summary { width: 100%; max-width: 1120px; margin-inline: auto; }
+.settings-header, .settings-layout, .settings-scroll > .error-summary, .settings-footer > .actions, .settings-footer > .error { width: 100%; max-width: 1120px; margin-inline: auto; }
 .settings-layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); align-items: start; gap: 28px; }
 .settings-nav {
   position: sticky;
@@ -2052,7 +2072,8 @@ section.terminal.terminal-hidden { display: none; }
 .settings-customizations legend { padding: 0 0 8px; color: var(--dim); }
 .settings .hint { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
 .settings .provider-hint, .settings .provider-warning { width: 100%; max-width: none; margin: 0; overflow-wrap: anywhere; }
-.settings .actions { position: sticky; bottom: -24px; display: flex; align-items: center; gap: 8px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); z-index: 1; }
+.settings-footer { flex: none; padding: 12px 32px; background: var(--bg); border-top: 1px solid var(--line); z-index: 2; display: flex; flex-direction: column; gap: 8px; }
+.settings .actions { display: flex; align-items: center; gap: 8px; }
 .settings-save-status { color: var(--green); }
 .shortcut-group { display: flex; flex-direction: column; gap: 4px; }
 .shortcut-group + .shortcut-group { padding-top: 12px; border-top: 1px solid var(--line); }
@@ -2338,3 +2359,42 @@ section.terminal.terminal-hidden { display: none; }
 .service-log-line.stderr { color: var(--red); }
 .service-log-empty { margin: 0; color: var(--faint); font-size: 12px; }
 .service-log-jump { position: absolute; right: 12px; bottom: 12px; box-shadow: 0 2px 8px #0004; }
+
+/* ── PR Merged Confirmation ──────────────────────────────── */
+.pr-merged-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(4px);
+}
+.pr-merged-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 22px 30px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--green) 45%, var(--line-strong));
+  background: var(--bg2);
+  box-shadow: 0 18px 48px #0006;
+  color: var(--fg-bright);
+  font-size: 14px;
+}
+.pr-merged-check { width: 48px; height: 48px; color: var(--green); }
+.pr-merged-circle {
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 140;
+  stroke-dashoffset: 0;
+}
+.pr-merged-tick {
+  stroke: currentColor;
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 0;
+}

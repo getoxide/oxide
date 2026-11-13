@@ -78,6 +78,63 @@ const TITANIUM_DARK: Record<string, unknown> = {
     }
   }
 };
+const TITANIUM_LIGHT: Record<string, unknown> = {
+  "editor.background": "#FBFBFA",
+  "editor.foreground": "#2C2C2E",
+  "editor.gutter.background": "#FBFBFA",
+  "editor.line_number": "#8A8883",
+  "editor.active_line_number": "#5F5E5A",
+  "editor.active_line.background": "#F2F1EE",
+  "editor.selection.background": "#BCD6F5",
+  "editor.cursor": "#1C1C1E",
+  "editor.indent_guide": "#DEDDD8",
+  "editor.widget.background": "#F2F1EE",
+  "editor.widget.border": "#C7C6C1",
+  "terminal.background": "#FBFBFA",
+  "terminal.foreground": "#2C2C2E",
+  "terminal.cursor": "#0969DA",
+  "terminal.selection.background": "#BCD6F5",
+  "terminal.ansi.black": "#2C2C2E",
+  "terminal.ansi.red": "#C4281F",
+  "terminal.ansi.green": "#15703C",
+  "terminal.ansi.yellow": "#8A5A00",
+  "terminal.ansi.blue": "#0969DA",
+  "terminal.ansi.magenta": "#7148C0",
+  "terminal.ansi.cyan": "#0B7285",
+  "terminal.ansi.white": "#62615C",
+  "terminal.ansi.bright_black": "#62615C",
+  "terminal.ansi.bright_red": "#A5201A",
+  "terminal.ansi.bright_green": "#0F5A30",
+  "terminal.ansi.bright_yellow": "#6E4700",
+  "terminal.ansi.bright_blue": "#0757B5",
+  "terminal.ansi.bright_magenta": "#5B38A0",
+  "terminal.ansi.bright_cyan": "#095C6B",
+  "terminal.ansi.bright_white": "#1C1C1E",
+  "syntax": {
+    "comment": {
+      "color": "#62615C",
+      "font_style": "italic"
+    },
+    "keyword": {
+      "color": "#7148C0"
+    },
+    "string": {
+      "color": "#15703C"
+    },
+    "number": {
+      "color": "#8A5A00"
+    },
+    "type": {
+      "color": "#1F5FA8"
+    },
+    "identifier": {
+      "color": "#2C2C2E"
+    },
+    "operator": {
+      "color": "#5F5E5A"
+    }
+  }
+};
 // Applying any setting used to store the default stacks, so those profiles did not choose them.
 const PREVIOUS_DEFAULT_FONTS: Record<string, string> = {
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif': SYSTEM,
@@ -85,6 +142,11 @@ const PREVIOUS_DEFAULT_FONTS: Record<string, string> = {
 };
 const PREVIOUS_BUILT_IN_THEME = JSON.stringify(
   { name: "Oxide", themes: [{ name: "Oxide Dark", appearance: "dark", style: {} }] },
+  null,
+  2,
+);
+const PREVIOUS_DARK_ONLY_THEME = JSON.stringify(
+  { name: "Oxide", themes: [{ name: "Oxide Dark", appearance: "dark", style: TITANIUM_DARK }] },
   null,
   2,
 );
@@ -98,7 +160,10 @@ export const DEFAULT_APPEARANCE: Appearance = {
   themeJson: JSON.stringify(
     {
       name: "Oxide",
-      themes: [{ name: "Oxide Dark", appearance: "dark", style: TITANIUM_DARK }],
+      themes: [
+        { name: "Oxide Dark", appearance: "dark", style: TITANIUM_DARK },
+        { name: "Oxide Light", appearance: "light", style: TITANIUM_LIGHT },
+      ],
     },
     null,
     2,
@@ -274,7 +339,7 @@ function load(): Appearance {
     validateAppearance(stored);
     for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[])
       stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[stored.fonts[key]] ?? stored.fonts[key];
-    if (stored.themeJson === PREVIOUS_BUILT_IN_THEME)
+    if (stored.themeJson === PREVIOUS_BUILT_IN_THEME || stored.themeJson === PREVIOUS_DARK_ONLY_THEME)
       stored.themeJson = DEFAULT_APPEARANCE.themeJson;
     return stored;
   } catch {

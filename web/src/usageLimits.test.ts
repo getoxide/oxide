@@ -154,10 +154,11 @@ describe("usageView", () => {
     const argonView = ready(usageView(limitsWithPools, true, NOW, NOW, "antigravity", "Gemini 4 Argon (High)"));
     expect(argonView.activePoolKey).toBe("gemini-argon");
     expect(argonView.activePoolLabel).toBe("Gemini Argon");
-    // Weekly window uses Argon's 75%
-    expect(argonView.windows[1].fraction).toBe(0.75);
-    // 5-hour window falls back to gemini's 15%
-    expect(argonView.windows[0].fraction).toBe(0.15);
+    // Argon has no 5-hour quota — only Weekly is shown.
+    expect(argonView.windows.map((w) => w.key)).toEqual(["weekly"]);
+    expect(argonView.windows[0].fraction).toBe(0.75);
+    const argonPool = argonView.pools.find((p) => p.key === "gemini-argon");
+    expect(argonPool?.windows.map((w) => w.key)).toEqual(["weekly"]);
 
     const normalGeminiView = ready(usageView(limitsWithPools, true, NOW, NOW, "antigravity", "Gemini 3.8 Flash"));
     expect(normalGeminiView.activePoolKey).toBe("gemini");

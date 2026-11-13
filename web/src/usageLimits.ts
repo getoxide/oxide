@@ -219,13 +219,13 @@ export function resolveModelWindows(
   const pool = pools?.[poolKey];
   const poolLabel = pool?.label || poolDisplayName(poolKey, provider);
 
-  // For Antigravity third-party models, never fall back to the top-level Gemini limits once
-  // pool breakdowns are present. Gemini Argon shares Gemini's 5-hour window.
+  // Once pool breakdowns are present, third-party models and Gemini Argon do not fall back
+  // to top-level Gemini limits; Gemini Argon has only a Weekly quota.
   const isIsolatedThirdParty = hasPools && poolKey === "third-party";
+  const isArgonWithoutFiveHour = poolKey === "gemini-argon";
   const fiveHour =
     pool?.fiveHour ??
-    (poolKey === "gemini-argon" ? pools?.["gemini"]?.fiveHour : undefined) ??
-    (isIsolatedThirdParty ? undefined : limits?.fiveHour);
+    (isIsolatedThirdParty || isArgonWithoutFiveHour ? undefined : limits?.fiveHour);
   const weekly = pool?.weekly ?? (isIsolatedThirdParty ? undefined : limits?.weekly);
 
   return { fiveHour, weekly, poolKey, poolLabel };
@@ -270,8 +270,6 @@ export function usageView(
       const pWindows: UsageWindowView[] = [];
       if (poolData.fiveHour) {
         pWindows.push(windowView("five-hour", "5h", `${poolData.label || poolDisplayName(key, provider)} 5h`, poolData.fiveHour, nowMs));
-      } else if (key === "gemini-argon" && poolsObj["gemini"]?.fiveHour) {
-        pWindows.push(windowView("five-hour", "5h", `${poolData.label || poolDisplayName(key, provider)} 5h`, poolsObj["gemini"].fiveHour, nowMs));
       }
       if (poolData.weekly) {
         pWindows.push(windowView("weekly", "Weekly", `${poolData.label || poolDisplayName(key, provider)} Weekly`, poolData.weekly, nowMs));
@@ -299,15 +297,18 @@ export function usageView(
     });
   }
 
+  const windows: UsageWindowView[] = [];
+  if (poolKey !== "gemini-argon" || fiveHour) {
+    windows.push(windowView("five-hour", "5h", "5-hour limit", fiveHour, nowMs));
+  }
+  windows.push(windowView("weekly", "Weekly", "Weekly limit", weekly, nowMs));
+
   const newestMs = newest * 1000;
   return {
     kind: "ready",
     activePoolKey: poolKey,
     activePoolLabel: poolLabel,
-    windows: [
-      windowView("five-hour", "5h", "5-hour limit", fiveHour, nowMs),
-      windowView("weekly", "Weekly", "Weekly limit", weekly, nowMs),
-    ],
+    windows,
     pools: poolViews,
     updatedLabel:
       newestMs > 0 && newestMs < sessionStartMs ? `Updated ${duration((nowMs - newestMs) / 1000, false)} ago` : null,

@@ -2764,6 +2764,14 @@ fn delete_thread(
     })
 }
 
+/// Clears a Thread's Transcript and resets its Provider session in-place so `/clear` starts
+/// fresh without creating another Thread.
+#[tauri::command]
+#[specta::specta]
+fn clear_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
+    Ok(convert(&core.clear_thread(thread_id)?))
+}
+
 #[tauri::command]
 #[specta::specta]
 fn set_thread_permission_mode(
@@ -3389,6 +3397,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         get_project_threads_in_main_checkout,
         set_project_threads_in_main_checkout,
         continue_thread,
+        clear_thread,
         delete_thread,
         set_thread_permission_mode,
         set_thread_provider,

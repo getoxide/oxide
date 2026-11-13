@@ -116,6 +116,16 @@ it("gives a profile that stored the previous built-in theme the Titanium one", a
   expect(fresh.activeTheme().style.syntax).toEqual(kitDark.syntax);
 });
 
+it("offers built-in Oxide Light alongside Oxide Dark and applies Titanium Light tokens", () => {
+  const themes = parseThemePack(DEFAULT_APPEARANCE.themeJson).themes;
+  expect(themes.map((t) => t.name)).toEqual(["Oxide Dark", "Oxide Light"]);
+  saveAppearance({ ...DEFAULT_APPEARANCE, themeName: "Oxide Light" });
+  expect(activeTheme().appearance).toBe("light");
+  expect(document.documentElement.dataset.appearance).toBe("light");
+  expect(rootStyle().getPropertyValue("--bg")).toBe(kitLight.background);
+  expect(activeTheme().style.syntax).toEqual(kitLight.syntax);
+});
+
 it("imports both variants of the Titanium theme pack", () => {
   for (const variant of parseThemePack(kitThemeJson).themes) {
     saveAppearance({ ...getAppearance(), themeJson: kitThemeJson, themeName: variant.name });
