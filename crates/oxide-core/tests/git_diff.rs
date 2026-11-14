@@ -72,7 +72,10 @@ fn uncommitted_lists_staged_unstaged_and_untracked_changes_with_hunks() {
     std::fs::write(f.work.join("b.txt"), "keep\nmore\n").unwrap();
     std::fs::write(f.work.join("new.txt"), "x\ny\n").unwrap();
 
-    let diff = f.core.diff(f.project.id, DiffScope::Uncommitted).unwrap();
+    let diff = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Uncommitted)
+        .unwrap();
     let paths: Vec<_> = diff.files.iter().map(|d| d.path.as_str()).collect();
     assert_eq!(paths, ["a.txt", "b.txt", "new.txt"]);
 
@@ -109,7 +112,10 @@ fn uncommitted_reports_deletes_renames_and_binary_files() {
     git(&f.work, &["mv", "a.txt", "renamed.txt"]);
     std::fs::write(f.work.join("img.bin"), [0u8, 1, 2, 0]).unwrap();
 
-    let diff = f.core.diff(f.project.id, DiffScope::Uncommitted).unwrap();
+    let diff = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Uncommitted)
+        .unwrap();
     let find = |p: &str| diff.files.iter().find(|d| d.path == p).unwrap();
     assert_eq!(find("b.txt").status, DiffStatus::Deleted);
     assert_eq!(find("b.txt").removed, 1);
@@ -123,7 +129,10 @@ fn uncommitted_reports_deletes_renames_and_binary_files() {
 #[test]
 fn uncommitted_is_empty_for_a_clean_checkout() {
     let f = fixture();
-    let diff = f.core.diff(f.project.id, DiffScope::Uncommitted).unwrap();
+    let diff = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Uncommitted)
+        .unwrap();
     assert!(diff.files.is_empty());
 }
 
@@ -141,7 +150,10 @@ fn branch_shows_changes_since_the_merge_base_with_the_base_branch() {
     // Uncommitted work is not part of the Branch scope.
     std::fs::write(f.work.join("b.txt"), "dirty\n").unwrap();
 
-    let diff = f.core.diff(f.project.id, DiffScope::Branch).unwrap();
+    let diff = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Branch)
+        .unwrap();
     assert_eq!(diff.base.as_deref(), Some("main"));
     let paths: Vec<_> = diff.files.iter().map(|d| d.path.as_str()).collect();
     assert_eq!(paths, ["a.txt", "t.txt"]);
@@ -153,7 +165,10 @@ fn branch_shows_changes_since_the_merge_base_with_the_base_branch() {
 #[test]
 fn branch_prefers_the_remote_default_branch_and_is_empty_on_the_base_itself() {
     let f = fixture();
-    let on_base = f.core.diff(f.project.id, DiffScope::Branch).unwrap();
+    let on_base = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Branch)
+        .unwrap();
     assert!(on_base.files.is_empty());
 
     let remote = f.tmp.path().join("remote.git");
@@ -171,7 +186,10 @@ fn branch_prefers_the_remote_default_branch_and_is_empty_on_the_base_itself() {
     git(&f.work, &["checkout", "-q", "-b", "topic"]);
     commit_file(&f.work, "t.txt", "t\n");
 
-    let diff = f.core.diff(f.project.id, DiffScope::Branch).unwrap();
+    let diff = f
+        .core
+        .diff_in(f.project.id, None, DiffScope::Branch)
+        .unwrap();
     assert_eq!(diff.base.as_deref(), Some("origin/trunk"));
     assert_eq!(diff.files.len(), 1);
 }

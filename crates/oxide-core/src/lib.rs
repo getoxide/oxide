@@ -137,6 +137,18 @@ pub struct ProjectSummary {
     pub missing: bool,
 }
 
+fn parse_project_summary(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectSummary> {
+    let path: String = r.get(2)?;
+    Ok(ProjectSummary {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        missing: !Path::new(&path).exists(),
+        path,
+        hidden: r.get(3)?,
+        open: r.get(4)?,
+    })
+}
+
 /// The Project and Thread Oxide reopens on launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Selection {
@@ -426,17 +438,7 @@ impl Core {
         let mut stmt = db.prepare(
             "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
         )?;
-        let rows = stmt.query_map([], |r| {
-            let path: String = r.get(2)?;
-            Ok(ProjectSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                missing: !Path::new(&path).exists(),
-                path,
-                hidden: r.get(3)?,
-                open: r.get(4)?,
-            })
-        })?;
+        let rows = stmt.query_map([], parse_project_summary)?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
@@ -540,10 +542,12 @@ impl Core {
     }
 
     fn project(&self, id: u32) -> Result<ProjectSummary> {
-        self.list_projects()?
-            .into_iter()
-            .find(|p| p.id == id)
-            .ok_or(Error::Db(rusqlite::Error::QueryReturnedNoRows))
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects WHERE id = ?1",
+            [id],
+            parse_project_summary,
+        )?)
     }
 
     /// Lists the Project in the sidebar, or takes it out; it stays known either way, so
@@ -1086,42 +1090,27 @@ impl Core {
             if let Some(p) = self.fake_providers.lock().unwrap().remove(&thread_id) {
                 p
             } else if snapshot.thread.provider == "claude" {
+                if !self.detect_provider("claude").installed {
+                    return Err(Error::Provider("Claude Code is not installed".to_string()));
+                }
                 let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
                 claude.set_registry(Arc::clone(&self.processes));
                 claude.set_user_customizations(self.settings().settings.claude_customizations);
-                let detection = claude.detect().unwrap_or(oxide_provider::Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                });
-                if !detection.installed {
-                    return Err(Error::Provider("Claude Code is not installed".to_string()));
-                }
                 Box::new(claude)
             } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-                let mut agy = oxide_provider::agy::AgyProvider::new();
-                agy.set_registry(Arc::clone(&self.processes));
-                if !agy.detect().is_ok_and(|d| d.installed) {
+                if !self.detect_provider(&snapshot.thread.provider).installed {
                     return Err(Error::Provider(
                         "Antigravity CLI is not installed".to_string(),
                     ));
                 }
+                let mut agy = oxide_provider::agy::AgyProvider::new();
+                agy.set_registry(Arc::clone(&self.processes));
                 Box::new(agy)
             } else if snapshot.thread.provider == "codex" {
-                let codex = oxide_provider::codex::CodexProvider::new();
-                let detection = codex.detect().unwrap_or(oxide_provider::Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                });
-                if !detection.installed {
+                if !self.detect_provider("codex").installed {
                     return Err(Error::Provider("Codex is not installed".to_string()));
                 }
-                Box::new(codex)
+                Box::new(oxide_provider::codex::CodexProvider::new())
             } else {
                 Box::new(oxide_provider::FakeProvider::scripted())
             };
@@ -1192,25 +1181,17 @@ impl Core {
         thread_id: Option<u32>,
         refresh: bool,
     ) -> Result<Vec<oxide_provider::SlashCommandInfo>> {
-        let working_dir = if let Some(thread_id) = thread_id {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let path: String = db.query_row(
-                "SELECT COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1 AND p.id = ?2",
-                rusqlite::params![thread_id, project_id], |row| row.get(0),
-            )?;
-            PathBuf::from(path)
-        } else {
-            self.list_projects()?
-                .into_iter()
-                .find(|p| p.id == project_id)
-                .map(|p| PathBuf::from(p.path))
-                .ok_or_else(|| Error::Provider("Project not found".into()))?
-        };
+        let working_dir = PathBuf::from(self.checkout_path(project_id, thread_id)?);
         let customizations = self.settings().settings.claude_customizations;
 
         let key = serde_json::to_string(&(provider, format!("{customizations:?}"), &working_dir))
             .map_err(|e| Error::Provider(e.to_string()))?;
-        let cached = self.slash_catalogs.lock().unwrap().get(&key).cloned();
+        let cached = self
+            .slash_catalogs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned();
         if !refresh {
             return Ok(cached
                 .map(|catalog| {
@@ -1244,19 +1225,21 @@ impl Core {
         match reported {
             Ok(commands) => {
                 let catalog = slash_catalog::merge(commands);
-                let mut catalogs = self.slash_catalogs.lock().unwrap();
-                let mut updated = catalogs.clone();
-                updated.insert(key, catalog.clone());
+                let bytes = {
+                    let mut catalogs = self
+                        .slash_catalogs
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    catalogs.insert(key, catalog.clone());
+                    serde_json::to_vec(&*catalogs).map_err(|e| Error::Provider(e.to_string()))?
+                };
                 let folder = self.home.join("cache/slash-commands");
                 fs::create_dir_all(&folder).map_err(|source| Error::Io {
                     path: folder.clone(),
                     source,
                 })?;
                 let path = folder.join("catalogs.json");
-                let bytes =
-                    serde_json::to_vec(&updated).map_err(|e| Error::Provider(e.to_string()))?;
                 fs::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
-                *catalogs = updated;
                 Ok(catalog)
             }
             Err(error) => Err(Error::Provider(format!(
@@ -1507,12 +1490,8 @@ impl Core {
         self.language_servers.stop(id);
     }
 
-    /// Branch, ahead/behind and uncommitted-change counts of a Project's main checkout.
-    pub fn git_status(&self, project_id: u32) -> Result<GitStatus> {
-        self.git_status_in(project_id, None)
-    }
-
-    /// [`Core::git_status`] of the checkout a Thread works in (`None`: the Project's main one).
+    /// Branch, ahead/behind and uncommitted-change counts of the checkout a Thread works in
+    /// (`None`: the Project's main one).
     pub fn git_status_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitStatus> {
         let target = self.git_target(project_id, thread_id)?;
         let mut status = git::status(&target.root)?;
@@ -1520,12 +1499,8 @@ impl Core {
         Ok(status)
     }
 
-    /// The changes of a Project's main checkout in one scope, straight from Git.
-    pub fn diff(&self, project_id: u32, scope: DiffScope) -> Result<Diff> {
-        self.diff_in(project_id, None, scope)
-    }
-
-    /// [`Core::diff`] in the checkout of a Thread (`None`: the Project's main one).
+    /// The changes in the checkout of a Thread (`None`: the Project's main one) in one scope,
+    /// straight from Git.
     pub fn diff_in(
         &self,
         project_id: u32,
@@ -1780,12 +1755,7 @@ impl Core {
         checkpoint::start_tree(cwd, thread_id, turn_index)
     }
 
-    /// Local and remote branches of a Project's main checkout.
-    pub fn list_branches(&self, project_id: u32) -> Result<Vec<GitBranch>> {
-        self.list_branches_in(project_id, None)
-    }
-
-    /// [`Core::list_branches`] as seen from a Thread's checkout (`None`: the main one).
+    /// Local and remote branches as seen from a Thread's checkout (`None`: the Project's main one).
     pub fn list_branches_in(
         &self,
         project_id: u32,
@@ -1794,13 +1764,8 @@ impl Core {
         git::list_branches(&self.git_target(project_id, thread_id)?.root)
     }
 
-    /// Checks out a branch (`feature`, or `origin/feature` to track a remote
-    /// one). Git's own refusal, e.g. for uncommitted changes, is the error.
-    pub fn checkout_branch(&self, project_id: u32, name: &str) -> Result<()> {
-        self.checkout_branch_in(project_id, None, name)
-    }
-
-    /// [`Core::checkout_branch`] in a Thread's checkout (`None`: the main one).
+    /// Checks out a branch (`feature`, or `origin/feature` to track a remote one) in a Thread's
+    /// checkout (`None`: the main one). Git's own refusal, e.g. for uncommitted changes, is the error.
     pub fn checkout_branch_in(
         &self,
         project_id: u32,
@@ -1810,12 +1775,7 @@ impl Core {
         self.switch_branch(project_id, thread_id, |cwd| git::checkout(cwd, name))
     }
 
-    /// Creates a branch from HEAD and checks it out.
-    pub fn create_branch(&self, project_id: u32, name: &str) -> Result<()> {
-        self.create_branch_in(project_id, None, name)
-    }
-
-    /// [`Core::create_branch`] in a Thread's checkout (`None`: the main one).
+    /// Creates a branch from HEAD and checks it out in a Thread's checkout (`None`: the main one).
     pub fn create_branch_in(
         &self,
         project_id: u32,
@@ -1842,24 +1802,15 @@ impl Core {
         Ok(fetched)
     }
 
-    /// `git pull --ff-only`; a diverged branch fails with Git's message.
-    pub fn pull(&self, project_id: u32) -> Result<()> {
-        self.pull_in(project_id, None)
-    }
-
-    /// [`Core::pull`] in a Thread's checkout (`None`: the main one).
+    /// `git pull --ff-only` in a Thread's checkout (`None`: the main one); a diverged branch
+    /// fails with Git's message.
     pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
         // Pulling rewrites files like a checkout does, so it takes the same guard.
         self.switch_branch(project_id, thread_id, git::pull)
     }
 
-    /// Commits exactly the given files of the main checkout with `message`,
-    /// leaving other staged state alone.
-    pub fn commit(&self, project_id: u32, paths: &[String], message: &str) -> Result<()> {
-        self.commit_in(project_id, None, paths, message)
-    }
-
-    /// [`Core::commit`] in a Thread's checkout (`None`: the main one).
+    /// Commits exactly the given files of a Thread's checkout (`None`: the main one) with
+    /// `message`, leaving other staged state alone.
     pub fn commit_in(
         &self,
         project_id: u32,
@@ -1871,14 +1822,8 @@ impl Core {
         self.git.mutate(&cwd, || git::commit(&cwd, paths, message))
     }
 
-    /// Pushes the current branch (upstream set on the first push, never
-    /// forced). Pushing `main`/`master` needs `allow_protected`.
-    pub fn push(&self, project_id: u32, allow_protected: bool) -> Result<()> {
-        self.push_in(project_id, None, allow_protected)
-    }
-
-    /// [`Core::push`] from a Thread's checkout (`None`: the main one). After a successful push
-    /// from a Thread.
+    /// Pushes the current branch from a Thread's checkout (`None`: the main one); upstream is set
+    /// on the first push, never forced. Pushing `main`/`master` needs `allow_protected`.
     pub fn push_in(
         &self,
         project_id: u32,
@@ -1916,12 +1861,8 @@ impl Core {
         github::pull_request_base_branches(&self.gh, &self.main_checkout(project_id)?)
     }
 
-    /// Title, body and base prefilled for a new pull request of the current branch.
-    pub fn pull_request_draft(&self, project_id: u32) -> Result<PullRequestDraft> {
-        self.pull_request_draft_in(project_id, None)
-    }
-
-    /// [`Core::pull_request_draft`] for a Thread's checkout branch (`None`: the main one).
+    /// Title, body and base prefilled for a new pull request of a Thread's checkout branch (`None`:
+    /// the main one).
     pub fn pull_request_draft_in(
         &self,
         project_id: u32,
@@ -1935,16 +1876,8 @@ impl Core {
         Ok(draft)
     }
 
-    /// Pushes the current branch if needed, then opens a pull request for it.
-    pub fn create_pull_request(
-        &self,
-        project_id: u32,
-        input: &PullRequestInput,
-    ) -> Result<PullRequest> {
-        self.create_pull_request_in(project_id, None, input)
-    }
-
-    /// [`Core::create_pull_request`] for a Thread's checkout branch (`None`: the main one).
+    /// Pushes the current branch of a Thread's checkout (`None`: the main one) if needed, then
+    /// opens a pull request for it.
     pub fn create_pull_request_in(
         &self,
         project_id: u32,
@@ -2208,15 +2141,10 @@ impl Core {
         github::close_pull_request(&self.gh, &self.main_checkout(project_id)?, number)
     }
 
-    /// Checks a pull request's branch out in the main checkout, under the
-    /// branch picker's rules: Git's refusal is the error, and it is refused
-    /// while a Thread is working.
-    pub fn checkout_pull_request(&self, project_id: u32, number: u32) -> Result<()> {
-        self.checkout_pull_request_in(project_id, None, number)
-    }
-
-    /// [`Core::checkout_pull_request`] in a Thread's checkout (`None`: the main one). A Thread
-    /// of another Project or a deleted worktree is an error, never the main checkout.
+    /// Checks a pull request's branch out in a Thread's checkout (`None`: the main one), under the
+    /// branch picker's rules: Git's refusal is the error, and it is refused while a Thread is
+    /// working. A Thread of another Project or a deleted worktree is an error, never the main
+    /// checkout.
     pub fn checkout_pull_request_in(
         &self,
         project_id: u32,
@@ -2272,20 +2200,23 @@ impl Core {
                 worktree: None,
             });
         };
-        let worktree: Option<Option<String>> = {
+        let row: Option<(Option<u32>, Option<String>, String)> = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             rusqlite::OptionalExtension::optional(db.query_row(
-                "SELECT worktree_path FROM threads WHERE id = ?1 AND project_id = ?2",
-                rusqlite::params![thread_id, project_id],
-                |r| r.get(0),
+                "SELECT t.id, t.worktree_path, p.path
+                 FROM projects p
+                 LEFT JOIN threads t ON t.id = ?2 AND t.project_id = p.id
+                 WHERE p.id = ?1",
+                rusqlite::params![project_id, thread_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ))?
         };
-        let Some(worktree) = worktree else {
+        let Some((Some(_), worktree, project_path)) = row else {
             return Err(Error::Git(format!(
                 "Thread {thread_id} does not belong to Project {project_id}."
             )));
         };
-        let root = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
+        let root = PathBuf::from(worktree.as_deref().unwrap_or(&project_path));
         if !root.is_dir() {
             return Err(Error::Git(format!(
                 "The checkout of Thread {thread_id} is missing: {}",

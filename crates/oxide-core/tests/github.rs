@@ -200,7 +200,9 @@ fn input(title: &str, base: &str, draft: bool) -> PullRequestInput {
 #[test]
 fn pr_base_branches_come_from_github_and_request_all_pages() {
     let f = fixture();
-    f.core.create_branch(f.project.id, "local-only").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "local-only")
+        .unwrap();
     let mut state = ok_state();
     state["branches"] = serde_json::json!(["release/next", "main", "develop", "main"]);
     install_gh(&f, state);
@@ -241,7 +243,11 @@ fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
     assert!(state.guidance.unwrap().contains("Install"));
     assert!(state.pull_request.is_none());
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().branch.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .branch
+            .as_deref(),
         Some("main")
     );
 }
@@ -253,9 +259,15 @@ fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
     let state = f.core.pull_request_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::LoggedOut);
     assert!(state.guidance.unwrap().contains("gh auth login"));
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().branch.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .branch
+            .as_deref(),
         Some("feature")
     );
 }
@@ -311,7 +323,9 @@ fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
 fn state_reports_the_default_branch_and_the_open_pull_request_of_the_branch() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     let state = f.core.pull_request_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Ready);
     assert_eq!(state.default_branch.as_deref(), Some("main"));
@@ -340,13 +354,15 @@ fn state_reports_the_default_branch_and_the_open_pull_request_of_the_branch() {
 fn reloading_the_surface_asks_github_only_for_the_pull_request() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     f.core.pull_request_state(f.project.id).unwrap();
-    f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.pull_request_draft_in(f.project.id, None).unwrap();
     let before = f.gh_calls().len();
 
     f.core.pull_request_state(f.project.id).unwrap();
-    f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.pull_request_draft_in(f.project.id, None).unwrap();
 
     let again: Vec<_> = f.gh_calls()[before..]
         .iter()
@@ -363,7 +379,9 @@ fn reloading_the_surface_asks_github_only_for_the_pull_request() {
 fn a_merged_pull_request_does_not_count_as_the_branchs_pull_request() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     f.set_gh(serde_json::json!({
         "auth": "ok", "default_branch": "main",
         "prs": {"feature": {
@@ -384,15 +402,17 @@ fn a_merged_pull_request_does_not_count_as_the_branchs_pull_request() {
 fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "add-things").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "add-things")
+        .unwrap();
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    let one = f.core.pull_request_draft(f.project.id).unwrap();
+    let one = f.core.pull_request_draft_in(f.project.id, None).unwrap();
     assert_eq!(one.title, "Add b");
     assert_eq!(one.base, "main");
     assert_eq!(one.head, "add-things");
 
     commit_file(&f.work, "c.txt", "c\n", "Add c");
-    let two = f.core.pull_request_draft(f.project.id).unwrap();
+    let two = f.core.pull_request_draft_in(f.project.id, None).unwrap();
     assert_eq!(two.title, "Add things");
     assert_eq!(two.body, "- Add b\n- Add c");
 }
@@ -401,13 +421,20 @@ fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
 fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    assert!(f.core.git_status(f.project.id).unwrap().unpublished);
+    assert!(
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .unpublished
+    );
 
     let pr = f
         .core
-        .create_pull_request(f.project.id, &input("My PR", "main", true))
+        .create_pull_request_in(f.project.id, None, &input("My PR", "main", true))
         .unwrap();
 
     assert_eq!(pr.number, 7);
@@ -418,7 +445,12 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
             .trim()
             .is_empty()
     );
-    assert!(!f.core.git_status(f.project.id).unwrap().unpublished);
+    assert!(
+        !f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .unpublished
+    );
     assert_eq!(
         f.create_calls(),
         [[
@@ -435,11 +467,13 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
 fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
 
     let err = f
         .core
-        .create_pull_request(f.project.id, &input("Empty", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("Empty", "main", false))
         .unwrap_err();
 
     assert!(
@@ -458,14 +492,16 @@ fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
 fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    f.core.push(f.project.id, false).unwrap();
+    f.core.push_in(f.project.id, None, false).unwrap();
     let before = git(&f.remote, &["rev-parse", "feature"]);
 
     let pr = f
         .core
-        .create_pull_request(f.project.id, &input("Ready", "develop", false))
+        .create_pull_request_in(f.project.id, None, &input("Ready", "develop", false))
         .unwrap();
 
     assert!(!pr.draft);
@@ -479,22 +515,24 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
     let f = fixture();
     let err = f
         .core
-        .create_pull_request(f.project.id, &input("T", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("Install"), "{err}");
 
     install_gh(&f, ok_state());
     let err = f
         .core
-        .create_pull_request(f.project.id, &input("T", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("main"), "{err}");
     assert!(f.create_calls().is_empty());
 
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     let err = f
         .core
-        .create_pull_request(f.project.id, &input("  ", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("  ", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("title"), "{err}");
 }
@@ -503,12 +541,14 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
 fn open_pull_request_hands_its_url_to_the_system() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
     assert!(f.core.open_pull_request(f.project.id).is_err());
 
     commit_file(&f.work, "b.txt", "b\n", "Add b");
     f.core
-        .create_pull_request(f.project.id, &input("PR", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("PR", "main", false))
         .unwrap();
     f.core.open_pull_request(f.project.id).unwrap();
     assert_eq!(
@@ -521,9 +561,11 @@ fn open_pull_request_hands_its_url_to_the_system() {
 fn gh_is_only_called_when_asked_so_there_is_no_polling() {
     let f = fixture();
     install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
-    f.core.git_status(f.project.id).unwrap();
-    f.core.list_branches(f.project.id).unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "feature")
+        .unwrap();
+    f.core.git_status_in(f.project.id, None).unwrap();
+    f.core.list_branches_in(f.project.id, None).unwrap();
     assert!(f.gh_calls().is_empty());
     f.core.pull_request_state(f.project.id).unwrap();
     let after_one = f.gh_calls().len();
@@ -1070,9 +1112,11 @@ fn checkout_switches_the_main_checkout_to_the_pull_requests_branch() {
     publish_pr_branch(&f, "b.txt", "b\n");
     install_gh(&f, state_with_prs(&[detailed_pr()]));
 
-    f.core.checkout_pull_request(f.project.id, 5).unwrap();
+    f.core
+        .checkout_pull_request_in(f.project.id, None, 5)
+        .unwrap();
 
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!(status.branch.as_deref(), Some("add-b"));
     assert!(f.work.join("b.txt").exists());
 }
@@ -1085,11 +1129,18 @@ fn checkout_shows_gits_refusal() {
 
     // An uncommitted edit to the same file: Git refuses to overwrite it.
     std::fs::write(f.work.join("a.txt"), "local edit\n").unwrap();
-    let err = f.core.checkout_pull_request(f.project.id, 5).unwrap_err();
+    let err = f
+        .core
+        .checkout_pull_request_in(f.project.id, None, 5)
+        .unwrap_err();
 
     assert!(err.to_string().contains("a.txt"), "{err}");
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().branch.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .branch
+            .as_deref(),
         Some("main")
     );
 }
@@ -1423,12 +1474,12 @@ fn a_pull_request_from_an_issue_threads_branch_closes_the_issue() {
     git(&f.work, &["checkout", "-q", &branch]);
     commit_file(&f.work, "b.txt", "b\n", "Add b");
 
-    let draft = f.core.pull_request_draft(f.project.id).unwrap();
+    let draft = f.core.pull_request_draft_in(f.project.id, None).unwrap();
     assert!(draft.body.contains("Closes #51"), "{}", draft.body);
 
     let pr = f
         .core
-        .create_pull_request(f.project.id, &input("T", "main", false))
+        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
         .unwrap();
     assert_eq!(
         f.core
@@ -1474,7 +1525,10 @@ fn closes_is_not_repeated_when_the_body_already_has_it() {
 
     let mut with = input("T", "main", false);
     with.body = "Fixes it.\n\ncloses #51".into();
-    let pr = f.core.create_pull_request(f.project.id, &with).unwrap();
+    let pr = f
+        .core
+        .create_pull_request_in(f.project.id, None, &with)
+        .unwrap();
     assert_eq!(
         f.core
             .pull_request_detail(f.project.id, pr.number)

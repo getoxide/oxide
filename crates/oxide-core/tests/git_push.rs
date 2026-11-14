@@ -101,7 +101,12 @@ fn commit_includes_exactly_the_checked_files_and_keeps_other_staged_state() {
     git(&f.work, &["add", "staged.txt"]);
 
     f.core
-        .commit(f.project.id, &paths(&["a.txt", "new.txt"]), "Pick two")
+        .commit_in(
+            f.project.id,
+            None,
+            &paths(&["a.txt", "new.txt"]),
+            "Pick two",
+        )
         .unwrap();
 
     let committed = git(&f.work, &["show", "--name-only", "--format=%s", "HEAD"]);
@@ -127,18 +132,19 @@ fn commit_handles_deletions_and_renames_and_rejects_bad_input() {
     git(&f.work, &["mv", "a.txt", "b.txt"]);
 
     f.core
-        .commit(
+        .commit_in(
             f.project.id,
+            None,
             &paths(&["gone.txt", "a.txt", "b.txt"]),
             "Tidy",
         )
         .unwrap();
 
     assert!(git(&f.work, &["status", "--porcelain"]).trim().is_empty());
-    assert!(f.core.commit(f.project.id, &[], "msg").is_err());
+    assert!(f.core.commit_in(f.project.id, None, &[], "msg").is_err());
     assert!(
         f.core
-            .commit(f.project.id, &paths(&["b.txt"]), "  ")
+            .commit_in(f.project.id, None, &paths(&["b.txt"]), "  ")
             .is_err()
     );
 }
@@ -146,45 +152,56 @@ fn commit_handles_deletions_and_renames_and_rejects_bad_input() {
 #[test]
 fn a_new_branch_without_a_commit_of_its_own_has_nothing_to_publish() {
     let f = fixture();
-    f.core.create_branch(f.project.id, "topic").unwrap();
-    let status = f.core.git_status(f.project.id).unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "topic")
+        .unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert!(!status.unpublished && status.ahead == 0);
 
     commit_file(&f.work, "t.txt", "t\n");
-    assert!(f.core.git_status(f.project.id).unwrap().unpublished);
+    assert!(
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .unpublished
+    );
 }
 
 #[test]
 fn push_sets_upstream_on_first_push_and_publishes_commits() {
     let f = fixture();
-    f.core.create_branch(f.project.id, "topic").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "topic")
+        .unwrap();
     commit_file(&f.work, "t.txt", "t\n");
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert!(status.upstream.is_none() && status.unpublished);
 
-    f.core.push(f.project.id, false).unwrap();
+    f.core.push_in(f.project.id, None, false).unwrap();
 
     assert!(git(&f.remote, &["branch", "--format=%(refname:short)"]).contains("topic"));
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!(status.upstream.as_deref(), Some("origin/topic"));
     assert!(!status.unpublished);
 
     commit_file(&f.work, "u.txt", "u\n");
-    assert_eq!(f.core.git_status(f.project.id).unwrap().ahead, 1);
-    f.core.push(f.project.id, false).unwrap();
-    assert_eq!(f.core.git_status(f.project.id).unwrap().ahead, 0);
+    assert_eq!(f.core.git_status_in(f.project.id, None).unwrap().ahead, 1);
+    f.core.push_in(f.project.id, None, false).unwrap();
+    assert_eq!(f.core.git_status_in(f.project.id, None).unwrap().ahead, 0);
 }
 
 #[test]
 fn push_publishes_current_branch_even_with_an_inherited_upstream() {
     let f = fixture();
-    f.core.create_branch(f.project.id, "topic").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "topic")
+        .unwrap();
     git(&f.work, &["branch", "--set-upstream-to=origin/main"]);
     git(&f.work, &["config", "push.default", "upstream"]);
     commit_file(&f.work, "topic.txt", "topic\n");
     let main = git(&f.remote, &["rev-parse", "main"]);
 
-    f.core.push(f.project.id, false).unwrap();
+    f.core.push_in(f.project.id, None, false).unwrap();
 
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), main);
     assert_eq!(
@@ -192,7 +209,11 @@ fn push_publishes_current_branch_even_with_an_inherited_upstream() {
         git(&f.work, &["rev-parse", "HEAD"])
     );
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().upstream.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .upstream
+            .as_deref(),
         Some("origin/topic")
     );
 }
@@ -201,22 +222,24 @@ fn push_publishes_current_branch_even_with_an_inherited_upstream() {
 fn push_on_main_needs_explicit_consent() {
     let f = fixture();
     commit_file(&f.work, "m.txt", "m\n");
-    assert!(f.core.git_status(f.project.id).unwrap().protected);
+    assert!(f.core.git_status_in(f.project.id, None).unwrap().protected);
 
-    let err = f.core.push(f.project.id, false).unwrap_err();
+    let err = f.core.push_in(f.project.id, None, false).unwrap_err();
     assert!(err.to_string().contains("main"), "{err}");
-    assert_eq!(f.core.git_status(f.project.id).unwrap().ahead, 1);
+    assert_eq!(f.core.git_status_in(f.project.id, None).unwrap().ahead, 1);
 
-    f.core.push(f.project.id, true).unwrap();
-    assert_eq!(f.core.git_status(f.project.id).unwrap().ahead, 0);
+    f.core.push_in(f.project.id, None, true).unwrap();
+    assert_eq!(f.core.git_status_in(f.project.id, None).unwrap().ahead, 0);
 }
 
 #[test]
 fn push_is_refused_when_behind_and_ahead() {
     let f = fixture();
-    f.core.create_branch(f.project.id, "topic").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "topic")
+        .unwrap();
     commit_file(&f.work, "t.txt", "t\n");
-    f.core.push(f.project.id, false).unwrap();
+    f.core.push_in(f.project.id, None, false).unwrap();
     // Someone else advances the branch, and so do we.
     git(&f.other, &["fetch", "-q"]);
     git(&f.other, &["checkout", "-q", "topic"]);
@@ -227,10 +250,10 @@ fn push_is_refused_when_behind_and_ahead() {
     f.core
         .fetch_project_at(f.project.id, Instant::now() + FETCH_INTERVAL)
         .unwrap();
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!((status.ahead, status.behind), (1, 1));
 
-    let err = f.core.push(f.project.id, false).unwrap_err();
+    let err = f.core.push_in(f.project.id, None, false).unwrap_err();
 
     assert!(err.to_string().contains("fast-forward"), "{err}");
     assert_eq!(git(&f.remote, &["rev-parse", "topic"]), remote_head);
@@ -245,7 +268,7 @@ fn push_never_overwrites_a_remote_the_view_has_not_seen() {
     commit_file(&f.work, "w.txt", "w\n");
     let remote_head = git(&f.remote, &["rev-parse", "main"]);
 
-    assert!(f.core.push(f.project.id, true).is_err());
+    assert!(f.core.push_in(f.project.id, None, true).is_err());
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), remote_head);
 }
 

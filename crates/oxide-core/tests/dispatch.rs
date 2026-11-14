@@ -288,7 +288,9 @@ fn a_board_thread_does_not_block_branch_switching_in_the_main_checkout() {
     let thread = f.core.dispatch_thread(request(&f, "Long task")).unwrap();
     assert!(thread.worktree_path.is_some());
     git(&f.work, &["branch", "other"]);
-    f.core.checkout_branch(f.project.id, "other").unwrap();
+    f.core
+        .checkout_branch_in(f.project.id, None, "other")
+        .unwrap();
 }
 
 #[test]

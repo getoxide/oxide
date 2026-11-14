@@ -379,6 +379,21 @@ pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
     Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(Into::into)
 }
 
+/// Opens `db_path` once on demand with a 5 s busy timeout and runs `f` against the cached connection.
+pub(crate) fn with_conn<T>(
+    db_path: &Path,
+    slot: &std::sync::Mutex<Option<Connection>>,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        let conn = Connection::open(db_path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        *guard = Some(conn);
+    }
+    f(guard.as_ref().expect("connection opened above"))
+}
+
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing
 /// `<path>.bak-<version>` first, where `<version>` is the version being migrated away from.
 pub fn open(path: &Path, migrations: &[&str]) -> Result<Connection> {
