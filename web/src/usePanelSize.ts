@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
 
-export type PanelName = "sidebar" | "tools" | "terminal" | "files-width" | "files-height";
+export type PanelName = "sidebar" | "tools";
 const storageKey = (name: PanelName) => `oxide.layout.${name}`;
 
 function readSize(name: PanelName): number | null {

@@ -70,6 +70,7 @@ import { readableModel } from "./headerLines";
 import { filterSlashCommands, pickSlashCommand, slashQuery } from "./slashMenu";
 import {
   applyThreadEvent,
+  estimateTranscriptViewBytes,
   initialTranscriptState,
   SESSION_LOST_MESSAGE,
   turnIsRunning,
@@ -242,7 +243,7 @@ export function ThreadView({
   const pinnedAtRef = useRef<number | null>(null);
   const requestedPagesRef = useRef(new Set<number>());
   const savedViews = useRef(new LruCache<number, { transcript: TranscriptState; pages: TranscriptPages; top: number; following: boolean }>(16 * 1024 * 1024,
-    (view) => JSON.stringify([view.transcript, [...view.pages]]).length * 2));
+    (view) => estimateTranscriptViewBytes(view.transcript, view.pages)));
   const latestView = useRef({ transcript, pages });
   useLayoutEffect(() => {
     const views = savedViews.current;
