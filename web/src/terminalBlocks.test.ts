@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { BlockParser, commandSuggestions } from "./terminalBlocks";
+import { BlockParser } from "./terminalBlocks";
 
 it("preserves output and boundaries at every UTF-8 and marker split", () => {
   const wire = new TextEncoder().encode(
@@ -29,15 +29,4 @@ it("keeps non-Oxide ANSI sequences for the terminal emulator", () => {
   expect(new BlockParser().push("\x1b[6n\x1b[31mred\x1b[0m")).toEqual([
     { type: "output", text: "\x1b[6n\x1b[31mred\x1b[0m" },
   ]);
-});
-it("offers deduplicated history matches without executing or changing input", () => {
-  const history = [
-    { command: "git status", at: 1, exitCode: 0 },
-    { command: "git diff --stat", at: 2, exitCode: 0 },
-    { command: "git status", at: 3, exitCode: 0 },
-  ];
-  expect(commandSuggestions("git s", history)).toEqual(["git status"]);
-  expect(commandSuggestions("git d", history)[0]).toBe("git diff --stat");
-  expect(commandSuggestions("git status", history)).not.toContain("git status");
-  expect(commandSuggestions("echo first\necho second", history)).toEqual([]);
 });

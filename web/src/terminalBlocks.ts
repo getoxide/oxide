@@ -71,33 +71,3 @@ export function historyMatches(
   }
   return true;
 }
-export function commandSuggestions(
-  input: string,
-  history: CommandHistory[],
-): string[] {
-  const prefix = input.trimStart();
-  if (!prefix || prefix.includes("\n")) return [];
-  const builtins = [
-    "git status",
-    "git diff",
-    "git log --oneline -10",
-    "git branch",
-    "git fetch",
-    "pwd",
-    "ls",
-    "python --version",
-    "node --version",
-    "cargo test",
-    "npm test",
-  ];
-  return [
-    ...new Set(
-      [...history]
-        .reverse()
-        .map((h) => h.command)
-        .concat(builtins),
-    ),
-  ]
-    .filter((command) => command.startsWith(prefix) && command !== input)
-    .slice(0, 5);
-}

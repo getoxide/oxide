@@ -3,7 +3,7 @@ import { PlusIcon, ServerIcon, TerminalIcon, XIcon } from "@primer/octicons-reac
 import { TerminalWorkbench } from "./TerminalWorkbench";
 import { ServiceLogPanel } from "./ServiceLogPanel";
 import { isMismatched, type ProjectTerminals, type ServiceTab, type TerminalCheckout, type TerminalTab } from "./terminalTabs";
-import { terminalPath } from "./terminalPaths";
+import { readablePath } from "./headerLines";
 import type { ProjectService, ProjectServiceConflict } from "./bindings";
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
 }
 
 const folderName = (path: string) => {
-  const clean = terminalPath(path).replace(/[\\/]+$/, "");
+  const clean = readablePath(path).replace(/[\\/]+$/, "");
   return clean.split(/[\\/]/).pop() || clean;
 };
 

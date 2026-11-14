@@ -1,26 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelInfo } from "./bindings";
-import { displayPath, middleEllipsis, readableModel, threadHeaderLines } from "./headerLines";
-
-const model = (id: string, name: string): ModelInfo => ({
-  id,
-  name,
-  description: null,
-  supportedEfforts: [],
-  defaultEffort: null,
-  isLegacy: false,
-});
-
-const catalog = [model("claude-opus-5-5", "Opus 5.5"), model("claude-sonnet-5-5", "Sonnet 5.5")];
-
-const base = {
-  provider: "claude",
-  model: "claude-opus-5-5",
-  effort: "high",
-  thread: null,
-  projectPath: "/Users/lorenzo/Developer/project/oxide",
-  catalog,
-};
+import { displayPath, middleEllipsis, readableModel, readablePath } from "./headerLines";
 
 describe("displayPath", () => {
   it("shortens the home directory to ~", () => {
@@ -30,11 +9,14 @@ describe("displayPath", () => {
   });
 });
 
-it("shows Windows canonical paths without the extended-length prefix", () => {
-  const lines = threadHeaderLines({ ...base, projectPath: String.raw`\\?\C:\Users\mbena\Documents\spotify_analysis` });
-  expect(lines.folder.text).toBe(String.raw`C:\Users\mbena\Documents\spotify_analysis`);
-  expect(lines.folder.path).toBe(String.raw`C:\Users\mbena\Documents\spotify_analysis`);
-  expect(displayPath(String.raw`\\?\UNC\server\share\repo`)).toBe(String.raw`\\server\share\repo`);
+describe("readablePath", () => {
+  it("shows Windows canonical paths without the extended-length prefix", () => {
+    const winPath = String.raw`\\?\C:\Users\mbena\Documents\spotify_analysis`;
+    expect(displayPath(winPath)).toBe(String.raw`C:\Users\mbena\Documents\spotify_analysis`);
+    expect(readablePath(winPath)).toBe(String.raw`C:\Users\mbena\Documents\spotify_analysis`);
+    expect(displayPath(String.raw`\\?\UNC\server\share\repo`)).toBe(String.raw`\\server\share\repo`);
+    expect(readablePath(String.raw`\\?\Volume{1234}\work`)).toBe(String.raw`\\?\Volume{1234}\work`);
+  });
 });
 
 describe("middleEllipsis", () => {
@@ -51,97 +33,9 @@ describe("middleEllipsis", () => {
   });
 });
 
-describe("threadHeaderLines", () => {
-  it("names the Model readably and appends the Effort", () => {
-    expect(threadHeaderLines(base).modelLine).toBe("Opus 5.5 · high");
-  });
-
-  it("falls back to a humanized Model id when the catalog does not know it", () => {
-    expect(threadHeaderLines({ ...base, model: "claude-future-9" }).modelLine).toBe("Claude Future 9 · high");
-    expect(threadHeaderLines({ ...base, catalog: null }).modelLine).toBe("Claude Opus 5.5 · high");
-  });
-
-  it("leaves the Effort out when there is none", () => {
-    expect(threadHeaderLines({ ...base, effort: null }).modelLine).toBe("Opus 5.5");
-  });
-
-  it("names the Provider when no Model is picked yet", () => {
-    expect(threadHeaderLines({ ...base, model: null, effort: null }).modelLine).toBe("Claude Code");
-    expect(threadHeaderLines({ ...base, provider: "codex", model: null, effort: null }).modelLine).toBe("Codex");
-    expect(threadHeaderLines({ ...base, provider: "antigravity", model: null, effort: null }).modelLine).toBe(
-      "Antigravity",
-    );
-  });
-
-  it("finds an Antigravity Model through its effort-less family", () => {
-    const lines = threadHeaderLines({
-      ...base,
-      provider: "antigravity",
-      model: "gemini-pro-high",
-      effort: "high",
-      catalog: [model("gemini-pro-high", "Gemini Pro (high)")],
-    });
-    expect(lines.modelLine).toBe("Gemini Pro · high");
-  });
-
-  it("drops an effort the name carries in parentheses, as the Effort follows it", () => {
-    const lines = threadHeaderLines({
-      ...base,
-      provider: "antigravity",
-      model: "gemini-3-8-flash-high",
-      effort: "high",
-      catalog: [model("gemini-3-8-flash-high", "Gemini 3.8 Flash (High)")],
-    });
-    expect(lines.modelLine).toBe("Gemini 3.8 Flash · high");
-  });
-
-  it("keeps other parentheses in a Model name", () => {
-    const lines = threadHeaderLines({
-      ...base,
-      model: "claude-sonnet-4-6",
-      effort: null,
-      catalog: [model("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)")],
-    });
-    expect(lines.modelLine).toBe("Claude Sonnet 4.6 (Thinking)");
-  });
-
+describe("readableModel", () => {
   it("drops an effort the Model slug carries, even without a catalog", () => {
     expect(readableModel("gemini-3.8-flash-low", null)).toBe("Gemini 3.8 Flash");
     expect(readableModel("gpt-5-1-codex-high", null)).toBe("GPT 5.1 Codex");
-  });
-
-  it("keeps an Effort the Model carries when the Thread has no separate value", () => {
-    expect(
-      threadHeaderLines({ ...base, provider: "antigravity", model: "gemini-3.8-flash-low", effort: null, catalog: null })
-        .modelLine,
-    ).toBe("Gemini 3.8 Flash · low");
-    expect(
-      threadHeaderLines({
-        ...base,
-        model: "gemini-3.8-flash",
-        effort: null,
-        catalog: [model("gemini-3.8-flash", "Gemini 3.8 Flash (High)")],
-      }).modelLine,
-    ).toBe("Gemini 3.8 Flash · high");
-  });
-
-  it("shows the Project path for an ordinary Thread", () => {
-    expect(threadHeaderLines(base).folder).toEqual({
-      path: "/Users/lorenzo/Developer/project/oxide",
-      text: "~/Developer/project/oxide",
-      branch: null,
-    });
-  });
-
-  it("shows the worktree path and branch for a Board Thread", () => {
-    const lines = threadHeaderLines({
-      ...base,
-      thread: { worktreePath: "/Users/lorenzo/.oxide/worktrees/oxide-7", branch: "oxide/7-fix" },
-    });
-    expect(lines.folder).toEqual({
-      path: "/Users/lorenzo/.oxide/worktrees/oxide-7",
-      text: "~/.oxide/worktrees/oxide-7",
-      branch: "oxide/7-fix",
-    });
   });
 });

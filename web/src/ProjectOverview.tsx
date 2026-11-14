@@ -7,7 +7,8 @@ import {
 import type { Project, Thread } from "./bindings";
 import { ReviewLedgerSummary } from "./ReviewLedgerSummary";
 import { RuleSuggestions } from "./RuleSuggestions";
-import { relativeAge, threadTitle } from "./threadList";
+import { threadTitle } from "./threadList";
+import { relativeAge } from "./relativeTime";
 
 export function ProjectOverview({
   project,

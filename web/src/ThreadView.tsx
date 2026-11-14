@@ -1,3 +1,4 @@
+import { errorMessage } from "./errors";
 import { hasOpenDialog, isTypingTarget } from "./keyboardScope";
 import { Skeleton } from "./Skeleton";
 import { LruCache } from "./lru";
@@ -129,12 +130,6 @@ interface Outgoing {
 
 /** How a file offered as an Attachment fares once Core has looked at it. */
 type Stored = { attachment: Attachment } | { error: string };
-
-function errorMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
-  return "The file could not be attached.";
-}
 
 async function readBytes(file: File): Promise<Uint8Array> {
   if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
@@ -419,7 +414,7 @@ export function ThreadView({
             });
             return { attachment };
           } catch (error) {
-            return { error: errorMessage(error) };
+            return { error: errorMessage(error, "The file could not be attached.") };
           }
         },
       })),
