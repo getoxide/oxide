@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { App } from "./App";
 
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} unobserve() {} disconnect() {} } });
 Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });

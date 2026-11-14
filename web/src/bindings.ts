@@ -128,7 +128,6 @@ export const commands = {
 	dismissRuleSuggestion: (projectId: number, id: number) => typedError<null, AppError>(__TAURI_INVOKE("dismiss_rule_suggestion", { projectId, id })),
 	/**  Starts a Thread that proposes the rule in the Project's agent instructions. */
 	acceptRuleSuggestion: (projectId: number, id: number, provider: string) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("accept_rule_suggestion", { projectId, id, provider })),
-	startTerminal: (projectId: number, threadId: number | null, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_terminal", { projectId, threadId, onOutput })),
 	startBlockTerminal: (projectId: number, threadId: number | null, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, threadId, onOutput })),
 	writeFile: (projectId: number, threadId: number | null, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, threadId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
