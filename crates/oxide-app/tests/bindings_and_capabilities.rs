@@ -10,6 +10,10 @@ fn bindings_are_up_to_date() {
             && ts.contains("sendPrompt")
             && ts.contains("listTurns")
     );
+    assert!(
+        !ts.contains("start_terminal") && !ts.contains("startTerminal"),
+        "legacy non-block start_terminal command must not be exported"
+    );
 }
 
 #[test]

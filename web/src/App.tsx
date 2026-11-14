@@ -248,8 +248,8 @@ export function App() {
   const centreView = selected ? centreViews[selected.id] ?? "thread" : "thread";
   const maximized = wantsMaximized && canMaximize;
   const dockRequested = showTools && !showSettings;
-  const layout = workspaceLayout(bodySize.width, bodySize.height, {
-    sidebar: sidebarSize.preferred, tools: toolsSize.preferred, terminal: null,
+  const layout = workspaceLayout(bodySize.width, {
+    sidebar: sidebarSize.preferred, tools: toolsSize.preferred,
   }, dockRequested, { sidebarVisible: showSidebar, priority: regionPriority, maximized });
   const dockVisible = layout.toolsVisible;
   const [settingsSection, setSettingsSection] = useState<string | null>(null);

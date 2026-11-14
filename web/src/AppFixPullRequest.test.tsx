@@ -11,7 +11,6 @@ vi.mock("./ThreadView", () => ({ ThreadView: ({ threadId, draft }: { threadId: n
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 vi.mock("./PullRequestPanel", () => ({ PullRequestPanel: ({ onFixPullRequest }: { onFixPullRequest: (prompt: string) => Promise<void> }) =>
   <button onClick={() => void onFixPullRequest("Fix PR #42\nhttps://github.com/me/repo/pull/42").catch(onError)}>Fix PR</button>,
 }));
