@@ -6,7 +6,7 @@ use oxide_provider::{
     TurnStatus, service_notice, without_background_marker,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
@@ -65,7 +65,7 @@ pub struct ThreadActorHandle {
 impl ThreadActorHandle {
     pub fn new(
         thread_id: u32,
-        working_dir: std::path::PathBuf,
+        working_dir: PathBuf,
         provider: Box<dyn Provider>,
         storage: StorageHandle,
         real_time_ticker: bool,
@@ -91,16 +91,16 @@ impl ThreadActorHandle {
             .spawn(move || {
                 run_thread_actor(
                     thread_id,
-                    working_dir,
+                    &working_dir,
                     provider,
-                    storage,
+                    &storage,
                     clock,
                     services,
-                    rx,
+                    &rx,
                 );
             })
             .map_err(|e| Error::Io {
-                path: std::path::PathBuf::from(format!("thread-{thread_id}")),
+                path: PathBuf::from(format!("thread-{thread_id}")),
                 source: e,
             })?;
 
@@ -169,7 +169,7 @@ impl ThreadActorHandle {
             .sender
             .send(ThreadActorMsg::Subscribe { reply: reply_tx });
         reply_rx.recv().map_err(|_| Error::Io {
-            path: std::path::PathBuf::from("subscribe"),
+            path: PathBuf::from("subscribe"),
             source: std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "thread actor disconnected",
@@ -478,7 +478,7 @@ fn handle_provider_event(
         ProviderEvent::CommandRequested {
             item_index,
             command,
-        } => handle_command_requested(state, storage, provider, item_index, command),
+        } => handle_command_requested(state, storage, provider, item_index, &command),
         ProviderEvent::TurnCompleted {
             turn_index: _,
             status,
@@ -568,7 +568,7 @@ fn handle_command_requested(
     storage: &StorageHandle,
     provider: &mut dyn Provider,
     item_index: u32,
-    command: String,
+    command: &str,
 ) {
     // A request outside a running Turn, or a second one for the same Item, cannot be a new
     // service: the first request already ended the Turn.
@@ -581,7 +581,7 @@ fn handle_command_requested(
 
     // `&` is shell syntax, not part of the command: Project Services runs the command itself,
     // so a trailing marker would make the wrapper shell exit before the process is observed.
-    let command = without_background_marker(&command).to_string();
+    let command = without_background_marker(command).to_string();
 
     let checkout = state.checkout.to_string_lossy().to_string();
     let started = state.project_services.start(
@@ -767,12 +767,12 @@ fn provider_exited(
 
 fn run_thread_actor(
     thread_id: u32,
-    working_dir: std::path::PathBuf,
+    working_dir: &Path,
     mut provider: Box<dyn Provider>,
-    storage: StorageHandle,
+    storage: &StorageHandle,
     clock: Arc<dyn Clock>,
     services: ActorServices,
-    rx: Receiver<ThreadActorMsg>,
+    rx: &Receiver<ThreadActorMsg>,
 ) {
     let next_turn_index = storage
         .get_snapshot(thread_id, 0)
@@ -783,9 +783,9 @@ fn run_thread_actor(
     let caps = provider.capabilities();
     let mut state = ActorState::new(
         thread_id,
-        working_dir.clone(),
+        working_dir.to_path_buf(),
         next_turn_index,
-        caps.clone(),
+        caps,
         clock,
         services,
     );
@@ -876,7 +876,7 @@ fn run_thread_actor(
                         }
 
                         if let Err(e) = ensure_provider_started(
-                            &mut *provider, &mut state, &storage, &working_dir, &mut prx,
+                            &mut *provider, &mut state, storage, working_dir, &mut prx,
                         ) {
                             let _ = reply.send(Err(e));
                             continue;
@@ -921,7 +921,7 @@ fn run_thread_actor(
                         // `TurnCompleted { Interrupted }`.
                         let result = if state.current_turn.is_some() {
                             provider.interrupt().map_err(|e| Error::Io {
-                                path: std::path::PathBuf::from("provider"),
+                                path: PathBuf::from("provider"),
                                 source: std::io::Error::other(e.to_string()),
                             })
                         } else {
@@ -931,7 +931,7 @@ fn run_thread_actor(
                     }
                     ThreadActorMsg::RespondToApproval { approval_id, decision, reply } => {
                         let p_res = provider.respond_to_approval(&approval_id, decision).map_err(|e| Error::Io {
-                            path: std::path::PathBuf::from("provider"),
+                            path: PathBuf::from("provider"),
                             source: std::io::Error::other(e.to_string()),
                         });
                         let decided_at = if let Some(turn_id) = state.current_turn_id() {
@@ -955,7 +955,7 @@ fn run_thread_actor(
                         // Without a live Provider the stored mode applies when the next one starts.
                         let p_res = if state.provider_live {
                             provider.set_permission_mode(mode).map_err(|e| Error::Io {
-                                path: std::path::PathBuf::from("provider"),
+                                path: PathBuf::from("provider"),
                                 source: std::io::Error::other(e.to_string()),
                             })
                         } else {
@@ -1027,10 +1027,10 @@ fn run_thread_actor(
                     ThreadActorMsg::Tick => {
                         loop {
                             match prx.try_recv() {
-                                Ok(evt) => handle_provider_event(evt, &mut state, &storage, &mut *provider),
+                                Ok(evt) => handle_provider_event(evt, &mut state, storage, &mut *provider),
                                 Err(TryRecvError::Empty) => break,
                                 Err(TryRecvError::Disconnected) => {
-                                    provider_channel_closed(&mut prx, &mut state, &storage);
+                                    provider_channel_closed(&mut prx, &mut state, storage);
                                     break;
                                 }
                             }
@@ -1049,8 +1049,8 @@ fn run_thread_actor(
                 }
             }
             recv(prx) -> evt => match evt {
-                Ok(evt) => handle_provider_event(evt, &mut state, &storage, &mut *provider),
-                Err(_) => provider_channel_closed(&mut prx, &mut state, &storage),
+                Ok(evt) => handle_provider_event(evt, &mut state, storage, &mut *provider),
+                Err(_) => provider_channel_closed(&mut prx, &mut state, storage),
             }
         }
     }
@@ -1064,7 +1064,7 @@ fn ensure_provider_started(
     provider: &mut dyn Provider,
     state: &mut ActorState,
     storage: &StorageHandle,
-    working_dir: &std::path::Path,
+    working_dir: &Path,
     prx: &mut Receiver<ProviderEvent>,
 ) -> Result<()> {
     if state.provider_live {

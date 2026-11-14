@@ -139,7 +139,7 @@ fn dispatch_creates_a_worktree_on_an_oxide_branch_from_the_base_branch() {
         .unwrap();
 
     assert_eq!(thread.branch.as_deref(), Some("oxide/fix-the-login-bug"));
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     assert_eq!(
         worktree,
         f.home
@@ -232,7 +232,7 @@ fn the_setup_command_runs_in_the_worktree_with_the_project_root_and_its_output_i
 
     let thread = f.core.dispatch_thread(request(&f, "Setup me")).unwrap();
 
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     assert!(worktree.join(".setup-ran").exists());
     let output = thread.setup_output.clone().unwrap().replace("\\\\?\\", "");
     // `cmd.exe` may print an 8.3 short path for the current directory on CI,
@@ -354,7 +354,7 @@ fn deleting_a_board_thread_preserves_unsaved_buffers_and_stops_editor_processes_
             oxide_core::LanguageServerConfig {
                 command: "python".into(),
                 args: vec![
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
                         .join("fixtures/lsp.py")
                         .to_string_lossy()
                         .into_owned(),
@@ -526,7 +526,7 @@ fn read(path: PathBuf) -> String {
 fn file_writes_stay_in_their_checkout_and_a_deleted_worktree_never_falls_back_to_main() {
     let f = fixture();
     let thread = f.core.dispatch_thread(request(&f, "Edit files")).unwrap();
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     let (project, id) = (f.project.id, thread.id);
 
     // The same relative path is two documents: a write in the worktree leaves main alone.

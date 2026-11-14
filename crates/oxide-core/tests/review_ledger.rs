@@ -57,7 +57,7 @@ fn fixture() -> Fixture {
 }
 
 impl Fixture {
-    fn set_gh(&self, state: serde_json::Value) {
+    fn set_gh(&self, state: &serde_json::Value) {
         std::fs::write(self.gh_dir.join("state.json"), state.to_string()).unwrap();
     }
 
@@ -154,7 +154,7 @@ fn pr(branch: &str, number: u32, state: &str, merged_at: Option<&str>) -> serde_
 fn merged_thread(f: &Fixture, prompt: &str) -> oxide_core::thread::ThreadSummary {
     let thread = f.finished_thread(prompt);
     let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
         "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
@@ -210,7 +210,7 @@ fn a_merge_made_through_oxide_is_recorded() {
     let f = fixture();
     let thread = f.finished_thread("Add search");
     let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
         "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
@@ -402,8 +402,8 @@ fn fetch_detects_reverts_of_tracked_merge_within_30_days_from_default_branch() {
     let f = fixture();
     let thread = f.finished_thread("Implement feature");
 
-    let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    let branch = thread.branch.unwrap();
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
         "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
@@ -448,7 +448,7 @@ fn fetch_detects_candidate_follow_up_fixes_using_the_four_heuristics() {
     git(&wt, &["commit", "-qm", "feat: billing (#10)"]);
 
     // Push and merge PR #10
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
         "prs": { branch.clone(): pr(&branch, 10, "OPEN", None) },
     }));

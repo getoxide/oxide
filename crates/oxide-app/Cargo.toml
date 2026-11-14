@@ -39,3 +39,6 @@ tauri-build = { version = "2.7.4", features = [] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

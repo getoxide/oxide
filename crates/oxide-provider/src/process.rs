@@ -680,7 +680,7 @@ mod windows_tests {
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
     }
 
-    fn sleeper() -> std::process::Child {
+    fn sleeper() -> Child {
         let mut command = Command::new("cmd.exe");
         command
             .args(["/C", "ping -n 60 127.0.0.1 > NUL"])

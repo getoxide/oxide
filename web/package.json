@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:app": "node ../tools/build.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . && cd .. && node web/node_modules/eslint/bin/eslint.js --config web/eslint.config.js tools",
     "test": "vitest run",
     "tauri": "tauri"
   },

@@ -30,3 +30,6 @@ libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+
+[lints]
+workspace = true

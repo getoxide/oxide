@@ -8,6 +8,18 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+[workspace.lints.rust]
+dead_code = "deny"
+unused_imports = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+needless_pass_by_value = "warn"
+cloned_instead_of_copied = "warn"
+redundant_clone = "warn"
+inefficient_to_string = "warn"
+unnecessary_wraps = "warn"
+
 [workspace.dependencies]
 base64 = "0.23.1"
 crossbeam-channel = "0.5.17"
