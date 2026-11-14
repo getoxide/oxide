@@ -8,7 +8,7 @@ import "../src/appearance.css";
 import "../src/interactions.css";
 import { applyAppearance } from "../src/appearance";
 import { AppearanceSettings } from "../src/AppearanceSettings";
-import { WorkbenchLoading } from "../src/WorkbenchLoading";
+import { Skeleton } from "../src/Skeleton";
 applyAppearance();
 declare global {
   interface Window {
@@ -51,7 +51,7 @@ createRoot(document.getElementById("root")!).render(
       </aside>
     )}
     {location.search.includes("loading") ? (
-      <WorkbenchLoading mode="code" />
+      <Skeleton kind="code" label="Loading Terminal…" />
     ) : (
       <TerminalWorkbench
         projectId={1}
