@@ -6,7 +6,7 @@ use crate::{
     CommandRecord, Detection, ItemKind, ModelInfo, PermissionMode, PromptSegment, Provider,
     ProviderCapabilities, ProviderError, ProviderEvent, SlashCommandInfo, SlashRoute, StartContext,
     TurnStatus, UsageStatus, UsageWindow, UsageWindowKind, attachment_marker,
-    attachment_path_reference, is_background_command, render_prompt,
+    attachment_path_reference, is_background_command, render_flat_prompt, render_prompt,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,6 @@ pub struct CodexModelEntry {
     pub display_name: Option<String>,
     pub supported_reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: Option<String>,
-    pub is_default: bool,
 }
 
 #[derive(Default)]
@@ -126,18 +125,11 @@ pub fn parse_rate_limits(params: &serde_json::Value) -> Option<ProviderEvent> {
                 _ => return None,
             };
             let percent = window.get("usedPercent")?.as_f64()?;
-            let status = if percent >= 100.0 {
-                UsageStatus::Limited
-            } else if percent >= 80.0 {
-                UsageStatus::Warning
-            } else {
-                UsageStatus::Ok
-            };
             Some(UsageWindow {
                 kind,
                 percent_used: Some(percent),
                 resets_at: window.get("resetsAt").and_then(|v| v.as_i64()),
-                status,
+                status: UsageStatus::from_percent(percent),
                 pool: None,
             })
         })
@@ -232,6 +224,8 @@ impl CodexAppServer {
 
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin must be piped")));
         let stdout = child.stdout.take().expect("stdout must be piped");
+        let stderr = child.stderr.take().expect("stderr must be piped");
+        let stderr_reader = process::drain_stderr(stderr);
 
         let pending_requests: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_server_requests: ServerRequestsMap = Arc::new(Mutex::new(HashMap::new()));
@@ -620,11 +614,12 @@ impl CodexAppServer {
             }
 
             // Reader exited / EOF
+            let stderr_tail = stderr_reader.join().ok().flatten();
             let threads = threads_clone.lock().unwrap();
             for tx in threads.values() {
                 let _ = tx.send(ProviderEvent::Exited {
                     code: None,
-                    stderr_tail: None,
+                    stderr_tail: stderr_tail.clone(),
                 });
             }
         });
@@ -757,10 +752,6 @@ impl CodexAppServer {
                 .get("displayName")
                 .and_then(|s| s.as_str())
                 .map(|s| s.to_string());
-            let is_default = item
-                .get("isDefault")
-                .and_then(|b| b.as_bool())
-                .unwrap_or(false);
 
             let mut efforts = Vec::new();
             if let Some(arr) = item
@@ -782,7 +773,6 @@ impl CodexAppServer {
                     .get("defaultReasoningEffort")
                     .and_then(|v| v.as_str())
                     .map(str::to_owned),
-                is_default,
             });
         }
 
@@ -1051,10 +1041,6 @@ impl CodexProvider {
 
     pub fn app_server(&self) -> Arc<CodexAppServer> {
         self.app_server.clone()
-    }
-
-    pub fn models(&self) -> Vec<CodexModelEntry> {
-        self.app_server.models()
     }
 
     pub fn parse_version_string(raw: &str) -> Option<String> {
@@ -1332,7 +1318,7 @@ impl Provider for CodexProvider {
         let prompt = render_prompt(segments);
         let prompt = prompt.as_str();
         // Native requests take text only: every Attachment is a path reference there.
-        let flat = flat_prompt(segments);
+        let flat = render_flat_prompt(segments);
         let tid = self
             .thread_id
             .lock()
@@ -1558,42 +1544,20 @@ fn codex_command(itype: &str, item: &serde_json::Value) -> Option<CommandRecord>
     })
 }
 
-/// The prompt as text with every Attachment as a path reference.
-fn flat_prompt(segments: &[PromptSegment]) -> String {
-    segments
-        .iter()
-        .map(|segment| match segment {
-            PromptSegment::Text { text } => text.clone(),
-            PromptSegment::Attachment(a) => attachment_path_reference(a),
-        })
-        .collect()
-}
-
 /// The `turn/start` input: text items interleaved with `localImage` items for images; every
 /// other Attachment is a path reference in the text. Each is preceded by its name marker.
 fn codex_input(segments: &[PromptSegment]) -> Vec<serde_json::Value> {
-    fn push_text(items: &mut Vec<serde_json::Value>, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        if let Some(last) = items.last_mut()
-            && last["type"] == "text"
-        {
-            let joined = format!("{}{text}", last["text"].as_str().unwrap_or_default());
-            last["text"] = json!(joined);
-            return;
-        }
-        items.push(json!({"type": "text", "text": text}));
-    }
     let mut items = Vec::new();
     for segment in segments {
         match segment {
-            PromptSegment::Text { text } => push_text(&mut items, text),
+            PromptSegment::Text { text } => crate::push_text(&mut items, text),
             PromptSegment::Attachment(a) if a.kind == AttachmentKind::Image => {
-                push_text(&mut items, &attachment_marker(a));
+                crate::push_text(&mut items, &attachment_marker(a));
                 items.push(json!({"type": "localImage", "path": a.path.to_string_lossy()}));
             }
-            PromptSegment::Attachment(a) => push_text(&mut items, &attachment_path_reference(a)),
+            PromptSegment::Attachment(a) => {
+                crate::push_text(&mut items, &attachment_path_reference(a));
+            }
         }
     }
     if items.is_empty() {

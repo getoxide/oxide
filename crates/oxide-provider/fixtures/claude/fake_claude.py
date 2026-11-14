@@ -50,6 +50,8 @@ if len(sys.argv) >= 3 and sys.argv[1] == "auth" and sys.argv[2] == "status":
         sys.exit(1)
 
 # Stream-json mode
+sys.stderr.write("s" * int(os.environ.get("OXIDE_FAKE_STARTUP_LOG_BYTES", "0")))
+sys.stderr.flush()
 fixtures_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 1. Output system/init

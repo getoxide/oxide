@@ -330,6 +330,8 @@ impl ClaudeCodeProvider {
 
         let stdin = child.stdin.take().expect("stdin must be piped");
         let stdout = child.stdout.take().expect("stdout must be piped");
+        let stderr = child.stderr.take().expect("stderr must be piped");
+        let _stderr_reader = process::drain_stderr(stderr);
 
         if let Some(registry) = &self.registry {
             registry.register(child.id() as i32, &self.command);
@@ -1235,28 +1237,15 @@ fn build_content(segments: &[PromptSegment]) -> Result<serde_json::Value, Provid
     }
     let mut blocks: Vec<serde_json::Value> = Vec::new();
     let mut budget = MAX_INPUT_MESSAGE_BYTES;
-    let push_text = |blocks: &mut Vec<serde_json::Value>, text: &str| {
-        if text.is_empty() {
-            return;
-        }
-        if let Some(last) = blocks.last_mut()
-            && last["type"] == "text"
-        {
-            let joined = format!("{}{text}", last["text"].as_str().unwrap_or_default());
-            last["text"] = json!(joined);
-            return;
-        }
-        blocks.push(json!({"type": "text", "text": text}));
-    };
     for segment in segments {
         match segment {
-            PromptSegment::Text { text } => push_text(&mut blocks, text),
+            PromptSegment::Text { text } => crate::push_text(&mut blocks, text),
             PromptSegment::Attachment(attachment) => match native_block(attachment, &mut budget)? {
                 Some(block) => {
-                    push_text(&mut blocks, &attachment_marker(attachment));
+                    crate::push_text(&mut blocks, &attachment_marker(attachment));
                     blocks.push(block);
                 }
-                None => push_text(&mut blocks, &attachment_path_reference(attachment)),
+                None => crate::push_text(&mut blocks, &attachment_path_reference(attachment)),
             },
         }
     }

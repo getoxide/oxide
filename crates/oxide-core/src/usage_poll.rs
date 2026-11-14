@@ -17,16 +17,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 
-fn status_for(percent: f64) -> UsageStatus {
-    if percent >= 100.0 {
-        UsageStatus::Limited
-    } else if percent >= 80.0 {
-        UsageStatus::Warning
-    } else {
-        UsageStatus::Ok
-    }
-}
-
 fn window(
     kind: UsageWindowKind,
     percent: f64,
@@ -38,7 +28,7 @@ fn window(
         kind,
         percent_used: Some(percent),
         resets_at,
-        status: status_for(percent),
+        status: UsageStatus::from_percent(percent),
         pool,
     }
 }

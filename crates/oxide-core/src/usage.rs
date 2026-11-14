@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use oxide_provider::time::now_unix;
 use oxide_provider::{UsageStatus, UsageWindow, UsageWindowKind};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -139,13 +139,6 @@ fn state_key(provider: &str) -> String {
     format!("usage_limits:{provider}")
 }
 
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 impl UsageHub {
     pub(crate) fn new(db_path: PathBuf) -> Self {
         let limits = load_all(&db_path).unwrap_or_default();
@@ -194,7 +187,7 @@ impl UsageHub {
         let snapshot = {
             let mut limits = self.limits.lock().unwrap_or_else(|e| e.into_inner());
             let entry = limits.entry(provider.to_string()).or_default();
-            entry.merge(windows, now_secs());
+            entry.merge(windows, now_unix());
             entry.clone()
         };
         self.persist(provider, &snapshot);

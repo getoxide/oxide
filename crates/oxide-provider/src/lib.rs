@@ -439,6 +439,32 @@ pub fn attachment_path_reference(attachment: &Attachment) -> String {
     )
 }
 
+/// The prompt as text with every Attachment rendered as a path reference.
+pub fn render_flat_prompt(segments: &[PromptSegment]) -> String {
+    segments
+        .iter()
+        .map(|segment| match segment {
+            PromptSegment::Text { text } => text.clone(),
+            PromptSegment::Attachment(a) => attachment_path_reference(a),
+        })
+        .collect()
+}
+
+/// Appends `text` to a JSON content-block array, merging adjacent `{"type": "text", ...}` blocks.
+pub fn push_text(items: &mut Vec<serde_json::Value>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(last) = items.last_mut()
+        && last["type"] == "text"
+    {
+        let joined = format!("{}{text}", last["text"].as_str().unwrap_or_default());
+        last["text"] = serde_json::json!(joined);
+        return;
+    }
+    items.push(serde_json::json!({"type": "text", "text": text}));
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
@@ -471,6 +497,19 @@ pub enum UsageStatus {
     Ok,
     Warning,
     Limited,
+}
+
+impl UsageStatus {
+    /// Classifies a 0..=100 usage percentage using Oxide's shared warning/limit thresholds.
+    pub fn from_percent(percent: f64) -> Self {
+        if percent >= 100.0 {
+            Self::Limited
+        } else if percent >= 80.0 {
+            Self::Warning
+        } else {
+            Self::Ok
+        }
+    }
 }
 
 /// One Usage limit window as the Provider reported it.
@@ -1043,5 +1082,66 @@ impl Provider for FakeProvider {
 
     fn capabilities(&self) -> ProviderCapabilities {
         self.capabilities.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_status_classifies_thresholds() {
+        assert_eq!(UsageStatus::from_percent(0.0), UsageStatus::Ok);
+        assert_eq!(UsageStatus::from_percent(79.9), UsageStatus::Ok);
+        assert_eq!(UsageStatus::from_percent(80.0), UsageStatus::Warning);
+        assert_eq!(UsageStatus::from_percent(99.9), UsageStatus::Warning);
+        assert_eq!(UsageStatus::from_percent(100.0), UsageStatus::Limited);
+        assert_eq!(UsageStatus::from_percent(120.0), UsageStatus::Limited);
+    }
+
+    #[test]
+    fn render_flat_prompt_inlines_attachment_paths() {
+        let attachment = Attachment {
+            id: "a1".into(),
+            name: "spec.pdf".into(),
+            kind: AttachmentKind::Pdf,
+            media_type: "application/pdf".into(),
+            size_bytes: 12,
+            path: PathBuf::from("/tmp/spec.pdf"),
+        };
+        let rendered = render_flat_prompt(&[
+            PromptSegment::text("Read "),
+            PromptSegment::Attachment(attachment.clone()),
+            PromptSegment::text(" carefully"),
+        ]);
+        assert_eq!(
+            rendered,
+            format!("Read {} carefully", attachment_path_reference(&attachment))
+        );
+    }
+
+    #[test]
+    fn push_text_skips_empty_and_merges_adjacent_text_blocks() {
+        let mut blocks = Vec::new();
+        push_text(&mut blocks, "");
+        assert!(blocks.is_empty());
+
+        push_text(&mut blocks, "Hello ");
+        push_text(&mut blocks, "world");
+        assert_eq!(
+            blocks,
+            vec![serde_json::json!({"type": "text", "text": "Hello world"})]
+        );
+
+        blocks.push(serde_json::json!({"type": "image", "url": "x"}));
+        push_text(&mut blocks, "After");
+        assert_eq!(
+            blocks,
+            vec![
+                serde_json::json!({"type": "text", "text": "Hello world"}),
+                serde_json::json!({"type": "image", "url": "x"}),
+                serde_json::json!({"type": "text", "text": "After"}),
+            ]
+        );
     }
 }

@@ -38,6 +38,9 @@ active_threads = {}
 pending_approvals = {}
 skills_list_count = 0
 
+sys.stderr.write("s" * int(os.environ.get("OXIDE_FAKE_STARTUP_LOG_BYTES", "0")))
+sys.stderr.flush()
+
 for line in sys.stdin:
     line = line.strip()
     if not line:
