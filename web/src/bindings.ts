@@ -22,7 +22,6 @@ export const commands = {
 	/**  Clones one of the user's GitHub repositories into `parent` and registers it as a Project. */
 	cloneGithubRepository: (nameWithOwner: string, parent: string) => typedError<Project, AppError>(__TAURI_INVOKE("clone_github_repository", { nameWithOwner, parent })),
 	revealInFinder: (projectId: number, threadId: number | null) => typedError<null, AppError>(__TAURI_INVOKE("reveal_in_finder", { projectId, threadId })),
-	setProjectHidden: (id: number, hidden: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_hidden", { id, hidden })),
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
 	/**
@@ -60,14 +59,6 @@ export const commands = {
 	keepBlindReviewFinding: (id: number) => typedError<LineComment_Serialize | null, AppError>(__TAURI_INVOKE("keep_blind_review_finding", { id })),
 	/**  Dismisses one finding, so it never reaches the Thread. */
 	dismissBlindReviewFinding: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("dismiss_blind_review_finding", { id })),
-	getProjectSetupCommand: (projectId: number) => typedError<string | null, AppError>(__TAURI_INVOKE("get_project_setup_command", { projectId })),
-	setProjectSetupCommand: (projectId: number, command: string | null) => typedError<null, AppError>(__TAURI_INVOKE("set_project_setup_command", { projectId, command })),
-	/**
-	 *  Whether chat Threads of this Project stay in the main checkout instead of each
-	 *  getting its own worktree on their first prompt.
-	 */
-	getProjectThreadsInMainCheckout: (projectId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("get_project_threads_in_main_checkout", { projectId })),
-	setProjectThreadsInMainCheckout: (projectId: number, inMainCheckout: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_threads_in_main_checkout", { projectId, inMainCheckout })),
 	/**  Starts a new Thread that continues one whose Provider session is gone. */
 	continueThread: (threadId: number) => typedError<ContinuedThread_Serialize, AppError>(__TAURI_INVOKE("continue_thread", { threadId })),
 	/**
@@ -97,7 +88,6 @@ export const commands = {
 	 *  be accepted comes back with its reason; the others are stored regardless.
 	 */
 	attachPaths: (paths: string[]) => typedError<AttachOutcome_Serialize[], AppError>(__TAURI_INVOKE("attach_paths", { paths })),
-	attachmentPreview: (id: string) => typedError<string | null, AppError>(__TAURI_INVOKE("attachment_preview", { id })),
 	/**  Forgets an Attachment the user took out of a prompt before sending it. */
 	discardAttachment: (id: string) => __TAURI_INVOKE<void>("discard_attachment", { id }),
 	/**  The Slash command catalog the `/` menu offers for a Provider in a Project. */
@@ -109,7 +99,6 @@ export const commands = {
 	 */
 	listTurns: (threadId: number, offset: number, limit: number) => typedError<TurnPage_Serialize, AppError>(__TAURI_INVOKE("list_turns", { threadId, offset, limit })),
 	subscribeThread: (threadId: number, onEvent: Channel<SequencedThreadEvent_Deserialize>) => typedError<ThreadSnapshot_Serialize, AppError>(__TAURI_INVOKE("subscribe_thread", { threadId, onEvent })),
-	subscribeThreadDebug: (threadId: number, onEvent: Channel<DebugSequencedThreadEvent_Deserialize>) => typedError<ThreadSnapshot_Serialize, AppError>(__TAURI_INVOKE("subscribe_thread_debug", { threadId, onEvent })),
 	/**  The Project's Thread Board: its cards now, then every change on `on_event`. */
 	subscribeBoard: (projectId: number, onEvent: Channel<BoardEvent_Deserialize>) => typedError<BoardCard_Serialize[], AppError>(__TAURI_INVOKE("subscribe_board", { projectId, onEvent })),
 	/**  A Provider's Usage limits now (if Oxide has seen any), then every update on `on_event`. */
@@ -391,16 +380,12 @@ export type BoardCard = BoardCard_Serialize | BoardCard_Deserialize;
 export type BoardCard_Deserialize = {
 	thread: Thread_Deserialize,
 	pendingApprovals: PendingApproval_Deserialize[],
-	/**  The Thread's branch's pull request, once GitHub has been asked. */
-	pullRequest?: BranchPullRequest | null,
 };
 
 /**  A Thread on the Thread Board with the Approvals it is waiting on. */
 export type BoardCard_Serialize = {
 	thread: Thread_Serialize,
 	pendingApprovals: PendingApproval_Serialize[],
-	/**  The Thread's branch's pull request, once GitHub has been asked. */
-	pullRequest: BranchPullRequest | null,
 };
 
 export type BoardEvent = BoardEvent_Serialize | BoardEvent_Deserialize;
@@ -408,16 +393,6 @@ export type BoardEvent = BoardEvent_Serialize | BoardEvent_Deserialize;
 export type BoardEvent_Deserialize = { type: "ThreadChanged"; payload: BoardCard_Deserialize } | { type: "ThreadDeleted"; payload: number };
 
 export type BoardEvent_Serialize = { type: "ThreadChanged"; payload: BoardCard_Serialize } | { type: "ThreadDeleted"; payload: number };
-
-/**  A Board Thread's pull request: its state and a tally of its checks. */
-export type BranchPullRequest = {
-	number: number,
-	url: string,
-	phase: PullRequestPhase,
-	checksPassed: number,
-	checksFailed: number,
-	checksPending: number,
-};
 
 export type CheckState = "success" | "failure" | "pending";
 
@@ -462,20 +437,6 @@ export type ContinuedThread_Deserialize = {
 export type ContinuedThread_Serialize = {
 	thread: Thread_Serialize,
 	recap: string,
-};
-
-export type DebugSequencedThreadEvent = DebugSequencedThreadEvent_Serialize | DebugSequencedThreadEvent_Deserialize;
-
-export type DebugSequencedThreadEvent_Deserialize = {
-	seq: number,
-	event: ThreadEvent_Deserialize,
-	rawPayload?: string | null,
-};
-
-export type DebugSequencedThreadEvent_Serialize = {
-	seq: number,
-	event: ThreadEvent_Serialize,
-	rawPayload: string | null,
 };
 
 export type DeleteOutcome = "deleted" | "needs-confirmation";

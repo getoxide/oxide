@@ -67,45 +67,22 @@ fn chat_thread(core: &Core, project_id: u32) -> oxide_core::ThreadSummary {
         .unwrap()
 }
 
-#[test]
-fn new_projects_default_to_giving_chat_threads_their_own_worktree() {
-    let f = fixture();
-    assert!(
-        !f.core
-            .project_threads_in_main_checkout(f.project.id)
-            .unwrap()
-    );
+fn set_setup_command(home: &Path, project_id: u32, command: &str) {
+    let db = rusqlite::Connection::open(home.join("oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET setup_command = ?1 WHERE id = ?2",
+        rusqlite::params![command, project_id],
+    )
+    .unwrap();
 }
 
-#[test]
-fn threads_in_main_checkout_can_be_read_and_written() {
-    let f = fixture();
-    f.core
-        .set_project_threads_in_main_checkout(f.project.id, true)
-        .unwrap();
-    assert!(
-        f.core
-            .project_threads_in_main_checkout(f.project.id)
-            .unwrap()
-    );
-    f.core
-        .set_project_threads_in_main_checkout(f.project.id, false)
-        .unwrap();
-    assert!(
-        !f.core
-            .project_threads_in_main_checkout(f.project.id)
-            .unwrap()
-    );
-}
-
-#[test]
-fn setting_threads_in_main_checkout_on_an_unknown_project_fails() {
-    let f = fixture();
-    assert!(
-        f.core
-            .set_project_threads_in_main_checkout(99999, true)
-            .is_err()
-    );
+fn set_threads_in_main_checkout(home: &Path, project_id: u32, in_main_checkout: bool) {
+    let db = rusqlite::Connection::open(home.join("oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET threads_in_main_checkout = ?2 WHERE id = ?1",
+        rusqlite::params![project_id, in_main_checkout as i64],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -148,16 +125,15 @@ fn chat_thread_creates_its_worktree_on_its_first_prompt() {
 #[test]
 fn chat_thread_runs_the_setup_command_in_its_worktree() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "cd & echo root=%OXIDE_PROJECT_ROOT% & type nul > .setup-ran"
-            } else {
-                "pwd; echo root=$OXIDE_PROJECT_ROOT; touch .setup-ran"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "cd & echo root=%OXIDE_PROJECT_ROOT% & type nul > .setup-ran"
+        } else {
+            "pwd; echo root=$OXIDE_PROJECT_ROOT; touch .setup-ran"
+        },
+    );
 
     let thread = chat_thread(&f.core, f.project.id);
     f.core.send_prompt(thread.id, "Set up").unwrap();
@@ -177,16 +153,15 @@ fn chat_thread_runs_the_setup_command_in_its_worktree() {
 #[test]
 fn a_failing_setup_command_leaves_a_chat_thread_in_needs_input_without_a_turn() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "echo broken >&2 & exit /b 3"
-            } else {
-                "echo broken >&2; exit 3"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "echo broken >&2 & exit /b 3"
+        } else {
+            "echo broken >&2; exit 3"
+        },
+    );
 
     let thread = chat_thread(&f.core, f.project.id);
     f.core.send_prompt(thread.id, "Setup fails").unwrap();
@@ -200,9 +175,7 @@ fn a_failing_setup_command_leaves_a_chat_thread_in_needs_input_without_a_turn() 
 #[test]
 fn chat_thread_stays_in_the_main_checkout_when_the_project_opts_out() {
     let f = fixture();
-    f.core
-        .set_project_threads_in_main_checkout(f.project.id, true)
-        .unwrap();
+    set_threads_in_main_checkout(&f.home, f.project.id, true);
 
     let thread = chat_thread(&f.core, f.project.id);
     f.core.send_prompt(thread.id, "Stay put").unwrap();

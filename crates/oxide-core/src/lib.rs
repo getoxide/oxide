@@ -57,12 +57,12 @@ pub struct TurnPick {
 pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
 pub use git_diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus};
 pub use github::{
-    BranchPullRequest, CheckState, GithubAvailability, GithubRepository, IssueCloseReason,
-    IssueComment, IssueDetail, IssueEdit, IssueSummary, IssueTemplateFile, IssuesState,
-    MergeMethod, MergeState, PullRequest, PullRequestCandidates, PullRequestCheck,
-    PullRequestComment, PullRequestDetail, PullRequestDraft, PullRequestEdit, PullRequestInput,
-    PullRequestLabel, PullRequestPhase, PullRequestReviewThread, PullRequestReviewer,
-    PullRequestState, ReviewDecision, ReviewState, ReviewThreadComment,
+    CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueComment, IssueDetail,
+    IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
+    PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
+    PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
+    PullRequestReviewThread, PullRequestReviewer, PullRequestState, ReviewDecision, ReviewState,
+    ReviewThreadComment,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use line_comments::{CommentScope, CommentSide, LineComment};
@@ -111,9 +111,9 @@ pub use settings::{
     FieldError, PermissionMode, Provider, ProviderSettings, Providers, Settings, SettingsState,
 };
 pub use thread::{
-    ApprovalSnapshot, DebugSequencedThreadEvent, ItemSnapshot, SequencedThreadEvent,
-    ThreadCapabilities, ThreadEvent, ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError,
-    TurnPage, TurnSnapshot, UnknownEventSnapshot,
+    ApprovalSnapshot, ItemSnapshot, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
+    ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError, TurnPage, TurnSnapshot,
+    UnknownEventSnapshot,
 };
 pub use usage::{UsageLimitWindow, UsageLimits, UsagePoolLimits};
 
@@ -565,42 +565,15 @@ impl Core {
         Ok(())
     }
 
-    pub fn set_project_hidden(&self, id: u32, hidden: bool) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        db.execute(
-            "UPDATE projects SET hidden = ?2 WHERE id = ?1",
-            (id, hidden),
-        )?;
-        Ok(())
-    }
-
     /// Whether chat Threads of this Project stay in the main checkout instead of
     /// each getting its own worktree on its first prompt. Defaults to false.
-    pub fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
+    pub(crate) fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(db.query_row(
             "SELECT threads_in_main_checkout FROM projects WHERE id = ?1",
             [project_id],
             |r| Ok(r.get::<_, i64>(0)? != 0),
         )?)
-    }
-
-    /// Sets whether chat Threads of this Project stay in the main checkout instead
-    /// of each getting its own worktree on its first prompt.
-    pub fn set_project_threads_in_main_checkout(
-        &self,
-        project_id: u32,
-        in_main_checkout: bool,
-    ) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = db.execute(
-            "UPDATE projects SET threads_in_main_checkout = ?2 WHERE id = ?1",
-            (project_id, in_main_checkout as i64),
-        )?;
-        if changed == 0 {
-            return Err(Error::Db(rusqlite::Error::QueryReturnedNoRows));
-        }
-        Ok(())
     }
 
     pub fn default_settings_for_provider(
@@ -1311,10 +1284,6 @@ impl Core {
         self.attachment_store().remove(id);
     }
 
-    pub fn attachment_preview(&self, id: &str) -> Result<Option<String>> {
-        self.attachment_store().preview(id)
-    }
-
     fn attachment_store(&self) -> attachments::AttachmentStore {
         attachments::AttachmentStore::new(self.attachments_dir())
     }
@@ -1352,44 +1321,7 @@ impl Core {
         &self,
         project_id: u32,
     ) -> Result<(Vec<BoardCard>, crossbeam_channel::Receiver<BoardEvent>)> {
-        let subscription = self.board.subscribe(project_id)?;
-        self.refresh_board_pull_requests(project_id, &subscription.0);
-        Ok(subscription)
-    }
-
-    /// Looks up each Board Thread's pull request by branch, off-thread because `gh` is slow,
-    /// and publishes whatever it finds. Without a usable `gh` the cards simply show nothing.
-    fn refresh_board_pull_requests(&self, project_id: u32, cards: &[BoardCard]) {
-        let Ok(cwd) = self.main_checkout(project_id) else {
-            return;
-        };
-        let threads: Vec<(u32, String)> = cards
-            .iter()
-            .filter_map(|c| Some((c.thread.id, c.thread.branch.clone()?)))
-            .collect();
-        if threads.is_empty() {
-            return;
-        }
-        let (gh, board, ledger) = (
-            Arc::clone(&self.gh),
-            Arc::clone(&self.board),
-            Arc::clone(&self.ledger),
-        );
-        std::thread::spawn(move || {
-            for (thread_id, branch) in threads {
-                match github::branch_pull_request(&gh, &cwd, &branch) {
-                    Ok(found) => {
-                        if let Some((pr, Some(merged_at))) = &found
-                            && pr.phase == PullRequestPhase::Merged
-                        {
-                            let _ = ledger.record_merge(thread_id, pr.number, merged_at);
-                        }
-                        board.set_pull_request(thread_id, found.map(|(pr, _)| pr));
-                    }
-                    Err(_) => return,
-                }
-            }
-        });
+        self.board.subscribe(project_id)
     }
 
     /// The last Usage limits Oxide saw for a Provider, shared by all its Threads.
@@ -1430,21 +1362,6 @@ impl Core {
     )> {
         let actor = self.get_or_create_thread_actor(thread_id)?;
         actor.subscribe()
-    }
-
-    /// Like [`subscribe_thread`] but returns a debug channel where each event
-    /// is paired with the raw Provider payload that produced it.  Only open
-    /// this when the debug view is visible; raw payloads are never sent when
-    /// no debug subscriber is registered.
-    pub fn subscribe_thread_debug(
-        &self,
-        thread_id: u32,
-    ) -> Result<(
-        ThreadSnapshot,
-        crossbeam_channel::Receiver<DebugSequencedThreadEvent>,
-    )> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.subscribe_debug()
     }
 
     /// Starts a shell PTY in the Project's checkout. A terminal actor owns the

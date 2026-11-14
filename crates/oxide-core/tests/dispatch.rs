@@ -208,19 +208,27 @@ fn the_dispatched_thread_runs_its_first_turn() {
     assert_eq!(listed.branch.as_deref(), Some("oxide/do-it"));
 }
 
+fn set_setup_command(home: &Path, project_id: u32, command: &str) {
+    let db = rusqlite::Connection::open(home.join("oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET setup_command = ?1 WHERE id = ?2",
+        rusqlite::params![command, project_id],
+    )
+    .unwrap();
+}
+
 #[test]
 fn the_setup_command_runs_in_the_worktree_with_the_project_root_and_its_output_is_kept() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "cd & echo root=%OXIDE_PROJECT_ROOT% & echo oops 1>&2 & type nul > .setup-ran"
-            } else {
-                "pwd; echo root=$OXIDE_PROJECT_ROOT; echo oops >&2; touch .setup-ran"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "cd & echo root=%OXIDE_PROJECT_ROOT% & echo oops 1>&2 & type nul > .setup-ran"
+        } else {
+            "pwd; echo root=$OXIDE_PROJECT_ROOT; echo oops >&2; touch .setup-ran"
+        },
+    );
 
     let thread = f.core.dispatch_thread(request(&f, "Setup me")).unwrap();
 
@@ -250,16 +258,15 @@ fn the_setup_command_runs_in_the_worktree_with_the_project_root_and_its_output_i
 #[test]
 fn a_failing_setup_command_leaves_the_thread_in_needs_input_without_a_turn() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "echo installing & echo broken 1>&2 & exit /b 3"
-            } else {
-                "echo installing; echo broken >&2; exit 3"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "echo installing & echo broken 1>&2 & exit /b 3"
+        } else {
+            "echo installing; echo broken >&2; exit 3"
+        },
+    );
 
     let thread = f.core.dispatch_thread(request(&f, "Setup fails")).unwrap();
 
@@ -273,29 +280,6 @@ fn a_failing_setup_command_leaves_the_thread_in_needs_input_without_a_turn() {
     assert_eq!(snapshot.turn_count, 0);
     assert_eq!(snapshot.thread.status, ThreadStatus::NeedsInput);
     assert!(PathBuf::from(snapshot.thread.worktree_path.unwrap()).exists());
-}
-
-#[test]
-fn the_setup_command_is_stored_by_oxide_and_never_written_into_the_repository() {
-    let f = fixture();
-    assert_eq!(f.core.project_setup_command(f.project.id).unwrap(), None);
-
-    f.core
-        .set_project_setup_command(f.project.id, Some("npm install"))
-        .unwrap();
-    assert_eq!(
-        f.core
-            .project_setup_command(f.project.id)
-            .unwrap()
-            .as_deref(),
-        Some("npm install")
-    );
-    assert_eq!(git(&f.work, &["status", "--porcelain"]), "");
-
-    f.core
-        .set_project_setup_command(f.project.id, Some("  "))
-        .unwrap();
-    assert_eq!(f.core.project_setup_command(f.project.id).unwrap(), None);
 }
 
 #[test]

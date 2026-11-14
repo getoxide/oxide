@@ -148,27 +148,13 @@ fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
 
 impl Core {
     /// The Project's Setup command, kept by Oxide and never written into its repository.
-    pub fn project_setup_command(&self, project_id: u32) -> Result<Option<String>> {
+    pub(crate) fn project_setup_command(&self, project_id: u32) -> Result<Option<String>> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(db.query_row(
             "SELECT setup_command FROM projects WHERE id = ?1",
             [project_id],
             |r| r.get(0),
         )?)
-    }
-
-    /// Sets the Project's Setup command; blank clears it.
-    pub fn set_project_setup_command(&self, project_id: u32, command: Option<&str>) -> Result<()> {
-        let command = command.map(str::trim).filter(|c| !c.is_empty());
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = db.execute(
-            "UPDATE projects SET setup_command = ?1 WHERE id = ?2",
-            rusqlite::params![command, project_id],
-        )?;
-        if changed == 0 {
-            return Err(Error::Db(rusqlite::Error::QueryReturnedNoRows));
-        }
-        Ok(())
     }
 
     /// Hands a task off to a new background Thread: a worktree on a fresh `oxide/` branch cut from

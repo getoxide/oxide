@@ -60,18 +60,6 @@ pub enum PullRequestPhase {
     Closed,
 }
 
-/// A Board Thread's pull request: its number, state and a tally of its checks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchPullRequest {
-    pub number: u32,
-    pub url: String,
-    pub phase: PullRequestPhase,
-    pub checks_passed: u32,
-    pub checks_failed: u32,
-    pub checks_pending: u32,
-}
-
 /// How `gh pr merge` combines the commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -980,39 +968,6 @@ pub fn merged_branch_head(gh: &Gh, cwd: &Path, branch: &str) -> Result<Option<St
         return Ok(None);
     }
     Ok(v["headRefOid"].as_str().map(str::to_string))
-}
-
-/// The pull request of `branch`, whatever its state: an open one if there is one, else the
-/// latest, with its merge time (ISO 8601, UTC) when merged. `None` when the branch has none.
-pub fn branch_pull_request(
-    gh: &Gh,
-    cwd: &Path,
-    branch: &str,
-) -> Result<Option<(BranchPullRequest, Option<String>)>> {
-    let Some(v) = branch_pull_request_value(gh, cwd, branch)? else {
-        return Ok(None);
-    };
-    let phase = phase_from(&v);
-    let mut tally = [0u32; 3];
-    for check in v["statusCheckRollup"].as_array().into_iter().flatten() {
-        tally[match check_from(check).state {
-            CheckState::Success => 0,
-            CheckState::Failure => 1,
-            CheckState::Pending => 2,
-        }] += 1;
-    }
-    let merged_at = v["mergedAt"].as_str().map(str::to_string);
-    Ok(Some((
-        BranchPullRequest {
-            number: v["number"].as_u64().unwrap_or(0) as u32,
-            url: text(&v["url"]),
-            phase,
-            checks_passed: tally[0],
-            checks_failed: tally[1],
-            checks_pending: tally[2],
-        },
-        merged_at,
-    )))
 }
 
 /// The inline review threads of a pull request, as GitHub shows them on its diff.

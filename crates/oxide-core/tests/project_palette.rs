@@ -101,7 +101,9 @@ fn add_folder_expands_tilde_unhides_and_rejects_non_folders() {
     make_repo(&f.root().join("user/app"));
 
     let project = f.core.add_project("~/app").unwrap();
-    f.core.set_project_hidden(project.id, true).unwrap();
+    let db = rusqlite::Connection::open(f.root().join("home/oxide.db")).unwrap();
+    db.execute("UPDATE projects SET hidden = 1 WHERE id = ?1", [project.id])
+        .unwrap();
     let again = f.core.add_project("~/app").unwrap();
 
     assert!(!again.hidden);

@@ -77,10 +77,10 @@
   .modal-backdrop, .palette-backdrop, .pr-merged-overlay {
     animation: backdrop-in 140ms ease-out;
   }
-  .modal, .palette, .model-picker, .pr-merged-card {
+  .modal, .palette, .pr-merged-card {
     animation: modal-pop 160ms cubic-bezier(.16, 1, .3, 1);
   }
-  .settings-view, .pr-outcome, .approval-card, .turn-group {
+  .settings-view, .pr-outcome, .approval-card {
     animation: surface-reveal 140ms ease-out;
   }
   .pr-merged-circle {
@@ -91,7 +91,7 @@
     stroke-dashoffset: 40;
     animation: pr-draw-tick 220ms cubic-bezier(.16, 1, .3, 1) 180ms forwards;
   }
-  .icon-btn, .btn, .tab, .seg > button, .files-row, .terminal-tab, .sidebar-actions button {
+  .icon-btn, .btn, .tab, .files-row, .terminal-tab, .sidebar-actions button {
     transition: background-color 100ms ease-out, color 100ms ease-out, border-color 100ms ease-out, transform 100ms ease-out;
   }
   .tools-tab-strip { scroll-behavior: smooth; }
