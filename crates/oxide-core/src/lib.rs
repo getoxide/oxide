@@ -65,7 +65,7 @@ pub use github::{
     PullRequestState, ReviewDecision, ReviewState, ReviewThreadComment,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use line_comments::{CommentScope, CommentSide, LineComment, NewLineComment};
+pub use line_comments::{CommentScope, CommentSide, LineComment};
 use oxide_provider::Provider as ProviderTrait;
 use oxide_provider::process::ProcessRegistry;
 pub use project_services::{
@@ -1292,14 +1292,6 @@ impl Core {
         }
     }
 
-    /// Capabilities of a Provider, before any Thread of it exists.
-    pub fn provider_capabilities(&self, provider: &str) -> ThreadCapabilities {
-        let caps = self.get_provider_capabilities(provider);
-        ThreadCapabilities {
-            reasoning_text: caps.supports_reasoning,
-        }
-    }
-
     fn attachments_dir(&self) -> PathBuf {
         self.home.join("attachments")
     }
@@ -1626,23 +1618,21 @@ impl Core {
         git_diff::diff(&self.git_target(project_id, thread_id)?.root, scope)
     }
 
-    /// What one Turn changed: the diff between its two Checkpoints.
-    pub fn turn_diff(&self, thread_id: u32, turn_index: u32) -> Result<Diff> {
-        let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
-        let cwd = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
-        checkpoint::turn_diff(&cwd, thread_id, turn_index)
-    }
-
-    /// [`Core::turn_diff`] of the Thread's latest Turn; empty before the first.
-    pub fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
+    /// What the Thread's latest Turn changed: the diff between its two Checkpoints; empty before the first.
+    pub(crate) fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
         let snapshot = self.storage.get_snapshot(thread_id, 0)?;
-        match snapshot.turn_count.checked_sub(1) {
-            Some(latest) => self.turn_diff(thread_id, latest),
-            None => Ok(Diff {
+        let Some(latest) = snapshot.turn_count.checked_sub(1) else {
+            return Ok(Diff {
                 base: None,
                 files: Vec::new(),
-            }),
-        }
+            });
+        };
+        let cwd = PathBuf::from(self.checkout_path(snapshot.thread.project_id, Some(thread_id))?);
+        let files = match checkpoint::turn_revs(&cwd, thread_id, latest)? {
+            Some((start, end)) => git_diff::diff_against(&cwd, &[&start, &end])?,
+            None => Vec::new(),
+        };
+        Ok(Diff { base: None, files })
     }
 
     /// Every Turn of the Thread by position and prompt, for the Restore dialog.

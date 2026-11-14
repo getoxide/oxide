@@ -364,6 +364,10 @@ pub const MIGRATIONS: &[&str] = &[
     DROP TABLE pull_request_line_comments;
     DELETE FROM app_state WHERE key LIKE 'dossier_options:%';
 ",
+    // Verification commands were only used by the removed Verification Dossier.
+    "
+    ALTER TABLE projects DROP COLUMN verification_commands;
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:

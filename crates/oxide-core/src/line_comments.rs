@@ -52,19 +52,6 @@ impl CommentSide {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewLineComment {
-    pub scope: CommentScope,
-    pub path: String,
-    pub side: CommentSide,
-    /// 1-based line number on that side.
-    pub line: u32,
-    /// The code of the line, quoted as it was when commenting.
-    pub code: String,
-    pub body: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineComment {
@@ -115,39 +102,6 @@ pub(crate) fn prompt(comments: &[LineComment]) -> String {
 }
 
 impl Core {
-    pub fn add_line_comment(&self, thread_id: u32, new: NewLineComment) -> Result<LineComment> {
-        if new.body.trim().is_empty() {
-            return Err(Error::Editor("A comment can't be empty.".into()));
-        }
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        db.execute(
-            "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                thread_id,
-                new.scope.as_str(),
-                new.path,
-                new.side.as_str(),
-                new.line,
-                new.code,
-                new.body
-            ],
-        )?;
-        let id = db.last_insert_rowid() as u32;
-        Ok(LineComment {
-            id,
-            thread_id,
-            scope: new.scope,
-            path: new.path,
-            side: new.side,
-            line: new.line,
-            code: new.code,
-            body: new.body,
-            outdated: false,
-            provider: None,
-        })
-    }
-
     pub fn edit_line_comment(&self, id: u32, body: &str) -> Result<()> {
         if body.trim().is_empty() {
             return Err(Error::Editor("A comment can't be empty.".into()));

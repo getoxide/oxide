@@ -4,17 +4,12 @@
   font-size: var(--font-ui-size, 13px);
   font-weight: var(--font-ui-weight, 400);
 }
-.markdown-body,
 .message-content,
 .user-bubble,
 .composer-input {
   font-family: var(--font-chat, inherit);
   font-size: var(--font-chat-size, 14px);
   font-weight: var(--font-chat-weight, 400);
-}
-.markdown-body code,
-.markdown-body pre {
-  font-family: var(--font-code, monospace);
 }
 .terminal-workbench {
   --mono: var(--font-terminal, monospace);
@@ -25,7 +20,6 @@ html #root {
   background: var(--bg);
 }
 .xterm,
-.diff-content,
 .tool-detail,
 code,
 pre,

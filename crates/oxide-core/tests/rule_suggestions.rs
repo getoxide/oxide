@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use oxide_core::{
-    CommentScope, CommentSide, Core, NewLineComment, RuleSuggestion, ThreadSummary, TurnStatus,
-};
+use oxide_core::{Core, RuleSuggestion, ThreadSummary, TurnStatus};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -61,19 +59,13 @@ impl Fixture {
     }
 
     fn comment(&self, thread_id: u32, body: &str) {
-        self.core
-            .add_line_comment(
-                thread_id,
-                NewLineComment {
-                    scope: CommentScope::Uncommitted,
-                    path: "a.txt".into(),
-                    side: CommentSide::New,
-                    line: 1,
-                    code: "x".into(),
-                    body: body.into(),
-                },
-            )
-            .unwrap();
+        let db = rusqlite::Connection::open(self.core.home().join("oxide.db")).unwrap();
+        db.execute(
+            "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
+             VALUES (?1, 'uncommitted', 'a.txt', 'new', 1, 'x', ?2)",
+            rusqlite::params![thread_id, body],
+        )
+        .unwrap();
     }
 
     /// Sends one comment on a Thread of its own, so feedback spans Threads, then waits for the

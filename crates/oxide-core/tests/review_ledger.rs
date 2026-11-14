@@ -4,10 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use oxide_core::{
-    CommentScope, CommentSide, Core, DispatchRequest, MergeMethod, NewLineComment, ReviewLedger,
-    ReviewSizeBand,
-};
+use oxide_core::{Core, DispatchRequest, MergeMethod, ReviewLedger, ReviewSizeBand};
 use tempfile::TempDir;
 
 const FAKE_GH_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh");
@@ -292,15 +289,14 @@ fn clearing_removes_every_entry() {
     assert_eq!(ledger.median_secs, None);
 }
 
-fn comment(path: &str, code: &str, body: &str) -> NewLineComment {
-    NewLineComment {
-        scope: CommentScope::Uncommitted,
-        path: path.into(),
-        side: CommentSide::New,
-        line: 1,
-        code: code.into(),
-        body: body.into(),
-    }
+fn seed_comment(core: &Core, thread_id: u32, path: &str, code: &str, body: &str) {
+    let db = rusqlite::Connection::open(core.home().join("oxide.db")).unwrap();
+    db.execute(
+        "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
+         VALUES (?1, 'uncommitted', ?2, 'new', 1, ?3, ?4)",
+        rusqlite::params![thread_id, path, code, body],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -318,25 +314,23 @@ fn each_send_of_line_comments_counts_a_round_by_provider_model_and_kind() {
         "export const search = () => null;\n",
     );
 
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment("src/search.rs", "pub fn search() {}", "secret review text"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "src/search.rs",
+        "pub fn search() {}",
+        "secret review text",
+    );
     f.core.send_line_comments(thread.id).unwrap();
     f.wait_completed(thread.id);
 
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment(
-                "web/src/search.ts",
-                "export const search = () => null;",
-                "again",
-            ),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "web/src/search.ts",
+        "export const search = () => null;",
+        "again",
+    );
     f.core.send_line_comments(thread.id).unwrap();
 
     let ledger = f.ledger();
@@ -377,9 +371,7 @@ fn review_rounds_are_grouped_by_kind_of_work() {
     let f = fixture();
     let rust = f.finished_thread("Add the Rust search");
     f.write_change(&rust, "src/search.rs", "pub fn search() {}\n");
-    f.core
-        .add_line_comment(rust.id, comment("src/search.rs", "pub fn search() {}", "x"))
-        .unwrap();
+    seed_comment(&f.core, rust.id, "src/search.rs", "pub fn search() {}", "x");
     f.core.send_line_comments(rust.id).unwrap();
 
     let typescript = f.finished_thread("Add the web search");
@@ -388,16 +380,13 @@ fn review_rounds_are_grouped_by_kind_of_work() {
         "web/src/search.ts",
         "export const search = () => null;\n",
     );
-    f.core
-        .add_line_comment(
-            typescript.id,
-            comment(
-                "web/src/search.ts",
-                "export const search = () => null;",
-                "x",
-            ),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        typescript.id,
+        "web/src/search.ts",
+        "export const search = () => null;",
+        "x",
+    );
     f.core.send_line_comments(typescript.id).unwrap();
 
     let ledger = f.ledger();
@@ -422,12 +411,13 @@ fn review_rounds_survive_deleting_the_thread_and_clearing_removes_them() {
     let f = fixture();
     let thread = f.finished_thread("Add search");
     f.write_change(&thread, "src/search.rs", "pub fn search() {}\n");
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment("src/search.rs", "pub fn search() {}", "x"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "src/search.rs",
+        "pub fn search() {}",
+        "x",
+    );
     f.core.send_line_comments(thread.id).unwrap();
     let before = f.ledger();
     assert_eq!(
