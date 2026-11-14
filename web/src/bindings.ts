@@ -178,18 +178,12 @@ export const commands = {
 	commit: (projectId: number, threadId: number | null, paths: string[], message: string) => typedError<null, AppError>(__TAURI_INVOKE("commit", { projectId, threadId, paths, message })),
 	/**  Pushes the current branch; never forced. */
 	push: (projectId: number, threadId: number | null, allowProtected: boolean) => typedError<null, AppError>(__TAURI_INVOKE("push", { projectId, threadId, allowProtected })),
-	/**
-	 *  Whether `gh` works and the branch's open pull request. Runs `gh` only when
-	 *  asked; the Surface decides when to refresh.
-	 */
-	pullRequestState: (projectId: number, threadId: number | null) => typedError<PullRequestState_Serialize, AppError>(__TAURI_INVOKE("pull_request_state", { projectId, threadId })),
 	/**  The repository's branches on GitHub, for choosing a pull request's base. */
 	pullRequestBaseBranches: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("pull_request_base_branches", { projectId })),
 	/**  Title, body and base prefilled from the branch's commits. */
 	pullRequestDraft: (projectId: number, threadId: number | null) => typedError<PullRequestDraft, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId, threadId })),
 	/**  Pushes the branch if needed, then opens a pull request for it. */
 	createPullRequest: (projectId: number, threadId: number | null, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, threadId, pullRequest })),
-	openPullRequest: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("open_pull_request", { projectId })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
 	listPullRequests: (projectId: number, mine: boolean, search: string) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("list_pull_requests", { projectId, mine, search })),
 	/**  One pull request's description, checks, conversation and changed files. */
@@ -229,7 +223,6 @@ export const commands = {
 	reopenIssue: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("reopen_issue", { projectId, number })),
 	/**  Changes an issue's title, description, assignees and labels. */
 	editIssue: (projectId: number, number: number, edit: IssueEdit_Deserialize) => typedError<null, AppError>(__TAURI_INVOKE("edit_issue", { projectId, number, edit })),
-	openIssue: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("open_issue", { projectId, number })),
 	/**  The Project and Thread to reopen on launch. */
 	lastSelection: () => typedError<Selection_Serialize | null, AppError>(__TAURI_INVOKE("last_selection")),
 	rememberSelection: (projectId: number, threadId: number | null) => typedError<null, AppError>(__TAURI_INVOKE("remember_selection", { projectId, threadId })),
@@ -1082,8 +1075,8 @@ export type PullRequestDetail_Deserialize = {
 	defaultMergeMethod?: MergeMethod | null,
 	/**  Whether the repository deletes merged branches on its own. */
 	deleteBranchOnMerge: boolean,
-	/**  The changed files. */
-	diff: Diff_Deserialize,
+	/**  The number of changed files. */
+	changedFiles: number,
 };
 
 export type PullRequestDetail_Serialize = {
@@ -1109,8 +1102,8 @@ export type PullRequestDetail_Serialize = {
 	defaultMergeMethod: MergeMethod | null,
 	/**  Whether the repository deletes merged branches on its own. */
 	deleteBranchOnMerge: boolean,
-	/**  The changed files. */
-	diff: Diff_Serialize,
+	/**  The number of changed files. */
+	changedFiles: number,
 };
 
 export type PullRequestDraft = {
@@ -1169,26 +1162,6 @@ export type PullRequestReviewThread_Serialize = {
 export type PullRequestReviewer = {
 	login: string,
 	state: ReviewState,
-};
-
-export type PullRequestState = PullRequestState_Serialize | PullRequestState_Deserialize;
-
-export type PullRequestState_Deserialize = {
-	availability: GithubAvailability,
-	/**  How to get `gh` working, when it is not. */
-	guidance?: string | null,
-	branch?: string | null,
-	defaultBranch?: string | null,
-	pullRequest?: PullRequest | null,
-};
-
-export type PullRequestState_Serialize = {
-	availability: GithubAvailability,
-	/**  How to get `gh` working, when it is not. */
-	guidance: string | null,
-	branch: string | null,
-	defaultBranch: string | null,
-	pullRequest: PullRequest | null,
 };
 
 /**  What a restore does to one file. */

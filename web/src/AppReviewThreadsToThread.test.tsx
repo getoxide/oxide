@@ -28,7 +28,7 @@ const pullRequest = { number: 5, title: "Fix the thing", url: "https://github.co
 const detail = {
   pullRequest, phase: "open", body: "", comments: [], mergeState: "clean", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 0, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
-  checks: [], diff: { base: "main", files: [] },
+  checks: [], changedFiles: 0,
 };
 const reviewThreads = [
   {

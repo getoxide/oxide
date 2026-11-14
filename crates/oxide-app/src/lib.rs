@@ -1999,19 +1999,8 @@ pub struct PullRequestDetail {
     pub default_merge_method: Option<MergeMethod>,
     /// Whether the repository deletes merged branches on its own.
     pub delete_branch_on_merge: bool,
-    /// The changed files.
-    pub diff: Diff,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestState {
-    pub availability: GithubAvailability,
-    /// How to get `gh` working, when it is not.
-    pub guidance: Option<String>,
-    pub branch: Option<String>,
-    pub default_branch: Option<String>,
-    pub pull_request: Option<PullRequest>,
+    /// The number of changed files.
+    pub changed_files: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -2103,22 +2092,6 @@ pub struct NewPullRequest {
     pub body: String,
     pub base: String,
     pub draft: bool,
-}
-
-/// Whether `gh` works and the branch's open pull request. Runs `gh` only when
-/// asked; the Surface decides when to refresh.
-#[tauri::command]
-#[specta::specta]
-async fn pull_request_state(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    thread_id: Option<u32>,
-) -> Result<PullRequestState, AppError> {
-    git_blocking(&core, move |core| {
-        core.pull_request_state_in(project_id, thread_id)
-    })
-    .await
-    .map(|state| convert(&state))
 }
 
 /// The repository's branches on GitHub, for choosing a pull request's base.
@@ -2296,22 +2269,6 @@ async fn edit_issue(
         core.edit_issue(project_id, number, &convert(&edit))
     })
     .await
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn open_issue(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    number: u32,
-) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.open_issue(project_id, number)).await
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn open_pull_request(core: State<'_, Arc<Core>>, project_id: u32) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.open_pull_request(project_id)).await
 }
 
 /// Open pull requests; `mine` keeps the user's own, `search` is a GitHub query.
@@ -3329,11 +3286,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         pull,
         commit,
         push,
-        pull_request_state,
         pull_request_base_branches,
         pull_request_draft,
         create_pull_request,
-        open_pull_request,
         list_pull_requests,
         pull_request_detail,
         pull_request_review_threads,
@@ -3356,7 +3311,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         close_issue,
         reopen_issue,
         edit_issue,
-        open_issue,
         last_selection,
         remember_selection,
         confirm_quit,

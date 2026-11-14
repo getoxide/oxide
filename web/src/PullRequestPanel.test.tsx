@@ -194,7 +194,7 @@ const detail = (title: string): PullRequestDetail_Serialize => ({
   mergeMethods: ["merge"],
   defaultMergeMethod: "merge",
   deleteBranchOnMerge: false,
-  diff: { base: "main", files: [] },
+  changedFiles: 0,
 });
 
 it("renders the previous list at once on remount without asking GitHub again while fresh", async () => {

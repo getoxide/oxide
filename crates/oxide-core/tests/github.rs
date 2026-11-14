@@ -236,10 +236,9 @@ fn pr_base_branch_errors_are_not_reported_as_an_empty_list() {
 #[test]
 fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
     let f = fixture(); // nothing on the PATH
-    let state = f.core.pull_request_state(f.project.id).unwrap();
+    let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Missing);
     assert!(state.guidance.unwrap().contains("Install"));
-    assert!(state.pull_request.is_none());
     assert_eq!(
         f.core.git_status(f.project.id).unwrap().branch.as_deref(),
         Some("main")
@@ -250,7 +249,7 @@ fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
 fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
     let f = fixture();
     install_gh(&f, serde_json::json!({"auth": "logged_out"}));
-    let state = f.core.pull_request_state(f.project.id).unwrap();
+    let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::LoggedOut);
     assert!(state.guidance.unwrap().contains("gh auth login"));
     f.core.create_branch(f.project.id, "feature").unwrap();
@@ -266,9 +265,12 @@ fn gh_is_available_through_a_bat_shim() {
     let f = fixture();
     install_gh(&f, ok_state());
     std::fs::rename(f.gh_dir.join("gh.cmd"), f.gh_dir.join("gh.bat")).unwrap();
-    let state = f.core.pull_request_state(f.project.id).unwrap();
+    let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Ready);
-    assert_eq!(state.default_branch.as_deref(), Some("main"));
+    assert_eq!(
+        f.core.pull_request_draft(f.project.id).unwrap().base,
+        "main"
+    );
 }
 
 #[cfg(windows)]
@@ -299,54 +301,22 @@ fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
     )
     .unwrap();
     assert_eq!(
-        f.core
-            .pull_request_state(f.project.id)
-            .unwrap()
-            .availability,
+        f.core.issues_state(f.project.id).unwrap().availability,
         GithubAvailability::LoggedOut
     );
 }
 
 #[test]
-fn state_reports_the_default_branch_and_the_open_pull_request_of_the_branch() {
+fn reloading_the_surface_reuses_auth_status_and_default_branch() {
     let f = fixture();
     install_gh(&f, ok_state());
     f.core.create_branch(f.project.id, "feature").unwrap();
-    let state = f.core.pull_request_state(f.project.id).unwrap();
-    assert_eq!(state.availability, GithubAvailability::Ready);
-    assert_eq!(state.default_branch.as_deref(), Some("main"));
-    assert_eq!(state.branch.as_deref(), Some("feature"));
-    assert!(state.pull_request.is_none());
-
-    f.set_gh(serde_json::json!({
-        "auth": "ok", "default_branch": "main",
-        "prs": {"feature": {
-            "number": 3, "title": "Add feature", "url": "https://github.com/fake/repo/pull/3",
-            "state": "OPEN", "isDraft": true, "baseRefName": "main", "headRefName": "feature"
-        }}
-    }));
-    let pr = f
-        .core
-        .pull_request_state(f.project.id)
-        .unwrap()
-        .pull_request
-        .unwrap();
-    assert_eq!((pr.number, pr.title.as_str()), (3, "Add feature"));
-    assert!(pr.draft);
-    assert_eq!(pr.base, "main");
-}
-
-#[test]
-fn reloading_the_surface_asks_github_only_for_the_pull_request() {
-    let f = fixture();
-    install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
-    f.core.pull_request_state(f.project.id).unwrap();
     f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.list_pull_requests(f.project.id, false, "").unwrap();
     let before = f.gh_calls().len();
 
-    f.core.pull_request_state(f.project.id).unwrap();
     f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.list_pull_requests(f.project.id, false, "").unwrap();
 
     let again: Vec<_> = f.gh_calls()[before..]
         .iter()
@@ -354,29 +324,8 @@ fn reloading_the_surface_asks_github_only_for_the_pull_request() {
         .collect();
     assert_eq!(
         again,
-        ["pr view"],
+        ["pr list"],
         "auth status and the default branch are reused"
-    );
-}
-
-#[test]
-fn a_merged_pull_request_does_not_count_as_the_branchs_pull_request() {
-    let f = fixture();
-    install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
-    f.set_gh(serde_json::json!({
-        "auth": "ok", "default_branch": "main",
-        "prs": {"feature": {
-            "number": 3, "title": "Old", "url": "https://github.com/fake/repo/pull/3",
-            "state": "MERGED", "isDraft": false, "baseRefName": "main", "headRefName": "feature"
-        }}
-    }));
-    assert!(
-        f.core
-            .pull_request_state(f.project.id)
-            .unwrap()
-            .pull_request
-            .is_none()
     );
 }
 
@@ -426,9 +375,9 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
             "feature", "--draft"
         ]]
     );
-    // The new PR is what the Surface now shows.
-    let shown = f.core.pull_request_state(f.project.id).unwrap();
-    assert_eq!(shown.pull_request.unwrap().number, 7);
+    // The new PR is listed by the Surface.
+    let listed = f.core.list_pull_requests(f.project.id, false, "").unwrap();
+    assert_eq!(numbers(&listed), [7]);
 }
 
 #[test]
@@ -500,24 +449,6 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
 }
 
 #[test]
-fn open_pull_request_hands_its_url_to_the_system() {
-    let f = fixture();
-    install_gh(&f, ok_state());
-    f.core.create_branch(f.project.id, "feature").unwrap();
-    assert!(f.core.open_pull_request(f.project.id).is_err());
-
-    commit_file(&f.work, "b.txt", "b\n", "Add b");
-    f.core
-        .create_pull_request(f.project.id, &input("PR", "main", false))
-        .unwrap();
-    f.core.open_pull_request(f.project.id).unwrap();
-    assert_eq!(
-        *f.system.opened.lock().unwrap(),
-        ["https://github.com/fake/repo/pull/7"]
-    );
-}
-
-#[test]
 fn gh_is_only_called_when_asked_so_there_is_no_polling() {
     let f = fixture();
     install_gh(&f, ok_state());
@@ -525,7 +456,7 @@ fn gh_is_only_called_when_asked_so_there_is_no_polling() {
     f.core.git_status(f.project.id).unwrap();
     f.core.list_branches(f.project.id).unwrap();
     assert!(f.gh_calls().is_empty());
-    f.core.pull_request_state(f.project.id).unwrap();
+    f.core.list_pull_requests(f.project.id, false, "").unwrap();
     let after_one = f.gh_calls().len();
     assert!(after_one > 0);
     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -540,34 +471,6 @@ fn pr_json(number: u32, title: &str, head: &str, author: &str) -> serde_json::Va
     })
 }
 
-const PR_DIFF: &str = "diff --git a/b.txt b/b.txt
-new file mode 100644
-index 0000000..2f8e1a0
---- /dev/null
-+++ b/b.txt
-@@ -0,0 +1,2 @@
-+one
-+two
-diff --git a/a.txt b/a.txt
-index 5626abf..f719efd 100644
---- a/a.txt
-+++ b/a.txt
-@@ -1 +1 @@
--one
-+uno
-diff --git a/old.txt b/new.txt
-similarity index 100%
-rename from old.txt
-rename to new.txt
-diff --git a/gone.txt b/gone.txt
-deleted file mode 100644
-index 5626abf..0000000
---- a/gone.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--bye
-";
-
 fn state_with_prs(prs: &[serde_json::Value]) -> serde_json::Value {
     let by_head: serde_json::Map<String, serde_json::Value> = prs
         .iter()
@@ -579,7 +482,7 @@ fn state_with_prs(prs: &[serde_json::Value]) -> serde_json::Value {
 fn detailed_pr() -> serde_json::Value {
     let mut pr = pr_json(5, "Add b", "add-b", "other");
     pr["body"] = "Adds b.".into();
-    pr["diff"] = PR_DIFF.into();
+    pr["changedFiles"] = 4.into();
     pr["comments"] = serde_json::json!([
         {"author": {"login": "reviewer"}, "body": "Looks good", "createdAt": "2026-05-01T10:00:00Z"}
     ]);
@@ -679,24 +582,28 @@ fn detail_has_description_checks_comments_and_changed_files() {
     assert_eq!(detail.comments.len(), 1);
     assert_eq!(detail.comments[0].author, "reviewer");
     assert_eq!(detail.comments[0].body, "Looks good");
+    assert_eq!(detail.changed_files, 4);
 
-    let files: Vec<(&str, Option<&str>, u32, u32)> = detail
-        .diff
-        .files
-        .iter()
-        .map(|d| (d.path.as_str(), d.old_path.as_deref(), d.added, d.removed))
-        .collect();
-    assert_eq!(
-        files,
-        [
-            ("b.txt", None, 2, 0),
-            ("a.txt", None, 1, 1),
-            ("new.txt", Some("old.txt"), 0, 0),
-            ("gone.txt", None, 0, 1)
-        ]
+    let calls = f.gh_calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with(&["pr".into(), "diff".into()])),
+        "pull_request_detail must not spawn `gh pr diff`, calls were: {calls:?}"
     );
-    assert_eq!(detail.diff.files[0].hunks[0].lines[1].text, "two");
-    assert_eq!(detail.diff.base.as_deref(), Some("main"));
+    let view_call = calls
+        .iter()
+        .find(|c| c.starts_with(&["pr".into(), "view".into()]))
+        .expect("gh pr view call");
+    let json_fields = view_call
+        .windows(2)
+        .find(|w| w[0] == "--json")
+        .map(|w| w[1].as_str())
+        .unwrap_or("");
+    assert!(
+        json_fields.split(',').any(|field| field == "changedFiles"),
+        "expected changedFiles in gh pr view --json fields, got: {json_fields}"
+    );
 }
 
 #[test]
@@ -1228,13 +1135,6 @@ fn create_comment_and_close_issue_calling_gh() {
     let detail = f.core.issue_detail(f.project.id, 10).unwrap();
     assert_eq!(detail.comments.len(), 1);
     assert_eq!(detail.comments[0].body, "First thought");
-
-    // Open on GitHub
-    f.core.open_issue(f.project.id, 10).unwrap();
-    assert_eq!(
-        *f.system.opened.lock().unwrap(),
-        ["https://github.com/fake/repo/issues/10"]
-    );
 
     // Close: it leaves the open list and shows in the closed one, with its reason
     f.core

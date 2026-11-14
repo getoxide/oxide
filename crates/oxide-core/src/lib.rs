@@ -61,8 +61,7 @@ pub use github::{
     IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
     PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
     PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewThread, PullRequestReviewer, PullRequestState, ReviewDecision, ReviewState,
-    ReviewThreadComment,
+    PullRequestReviewThread, PullRequestReviewer, ReviewDecision, ReviewState, ReviewThreadComment,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use line_comments::{CommentScope, CommentSide, LineComment};
@@ -1896,21 +1895,6 @@ impl Core {
         self.gh.set_search_path(dirs);
     }
 
-    /// Whether `gh` works, and the branch's open pull request when it does.
-    /// Runs `gh` only when called: the Surface refreshes it, Core never polls.
-    pub fn pull_request_state(&self, project_id: u32) -> Result<PullRequestState> {
-        self.pull_request_state_in(project_id, None)
-    }
-
-    /// [`Core::pull_request_state`] of a Thread's checkout branch (`None`: the main one).
-    pub fn pull_request_state_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<PullRequestState> {
-        github::pull_request_state(&self.gh, &self.git_target(project_id, thread_id)?.root)
-    }
-
     /// Branches on GitHub that can be selected as a pull request's base.
     pub fn pull_request_base_branches(&self, project_id: u32) -> Result<Vec<String>> {
         github::pull_request_base_branches(&self.gh, &self.main_checkout(project_id)?)
@@ -2044,19 +2028,6 @@ impl Core {
     /// Changes an issue's title, description, assignees and labels.
     pub fn edit_issue(&self, project_id: u32, number: u32, edit: &IssueEdit) -> Result<()> {
         github::edit_issue(&self.gh, &self.main_checkout(project_id)?, number, edit)
-    }
-
-    /// Opens an issue in the system browser.
-    pub fn open_issue(&self, project_id: u32, number: u32) -> Result<()> {
-        let url = github::issue_url(&self.gh, &self.main_checkout(project_id)?, number)?;
-        self.activity.open_url(&url);
-        Ok(())
-    }
-
-    pub fn open_pull_request(&self, project_id: u32) -> Result<()> {
-        let url = github::pull_request_url(&self.gh, &self.main_checkout(project_id)?)?;
-        self.activity.open_url(&url);
-        Ok(())
     }
 
     /// Opens a GitHub link, such as a check's run, in the system browser.

@@ -30,7 +30,7 @@ function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
     mergeMethods: ["merge"],
     defaultMergeMethod: "merge",
     deleteBranchOnMerge: false,
-    diff: { base: "main", files: [] },
+    changedFiles: 0,
     ...overrides,
   };
 }
