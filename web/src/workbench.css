@@ -888,14 +888,9 @@
   scrollbar-width: thin;
 }
 .editor-tabs-bar > .editor-tree-toggle,
-.editor-tabs-bar .editor-files-menu-wrap > .icon-btn,
-.editor-tabs-actions > .icon-btn {
+.editor-tabs-bar .editor-files-menu-wrap > .icon-btn {
   align-self: center;
   margin: 0 6px;
-}
-.editor-tabs-actions {
-  display: flex;
-  margin-left: auto;
 }
 .editor-tab.preview > [role="tab"] > span:first-of-type {
   font-style: italic;

@@ -137,16 +137,21 @@ pub struct ProjectSummary {
     pub missing: bool,
 }
 
-fn parse_project_summary(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectSummary> {
-    let path: String = r.get(2)?;
-    Ok(ProjectSummary {
-        id: r.get(0)?,
-        name: r.get(1)?,
+type ProjectRow = (u32, String, String, bool, bool);
+
+fn parse_project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+}
+
+fn build_project_summary((id, name, path, hidden, open): ProjectRow) -> ProjectSummary {
+    ProjectSummary {
+        id,
+        name,
         missing: !Path::new(&path).exists(),
         path,
-        hidden: r.get(3)?,
-        open: r.get(4)?,
-    })
+        hidden,
+        open,
+    }
 }
 
 /// The Project and Thread Oxide reopens on launch.
@@ -434,12 +439,15 @@ impl Core {
     /// All Projects known to Oxide, hidden and missing ones included, most
     /// recently added first.
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = db.prepare(
-            "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
-        )?;
-        let rows = stmt.query_map([], parse_project_summary)?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let rows: Vec<ProjectRow> = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let mut stmt = db.prepare(
+                "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
+            )?;
+            let rows = stmt.query_map([], parse_project_row)?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        Ok(rows.into_iter().map(build_project_summary).collect())
     }
 
     /// Scans conventional folders in the user home for Git repositories, records new ones
@@ -542,12 +550,15 @@ impl Core {
     }
 
     fn project(&self, id: u32) -> Result<ProjectSummary> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(db.query_row(
-            "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects WHERE id = ?1",
-            [id],
-            parse_project_summary,
-        )?)
+        let row = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            db.query_row(
+                "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects WHERE id = ?1",
+                [id],
+                parse_project_row,
+            )?
+        };
+        Ok(build_project_summary(row))
     }
 
     /// Lists the Project in the sidebar, or takes it out; it stays known either way, so
