@@ -16,8 +16,7 @@
 .markdown-body pre {
   font-family: var(--font-code, monospace);
 }
-.terminal-workbench,
-.terminal {
+.terminal-workbench {
   --mono: var(--font-terminal, monospace);
 }
 /* index.html paints the splash dark before any theme is known; once the app runs, the theme decides. */
@@ -48,7 +47,6 @@ kbd {
   animation: none;
 }
 .terminal-block-output,
-.terminal,
 .terminal-workbench {
   background: var(--terminal-background, var(--bg));
 }
