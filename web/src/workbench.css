@@ -829,7 +829,7 @@
 /* The Thread remains central; presentation changes retain each tool instance. */
 .sidebar-region[hidden], .centre-column[hidden], .surface-content[hidden] { display: none; }
 .surface-content { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.surface-content > section, .surface-content > .pr-views, .surface-content > .issues-surface { flex: 1; min-height: 0; }
+.surface-content > section, .surface-content > .pr-views { flex: 1; min-height: 0; }
 .surface-content > .files { flex: 1; min-height: 0; }
 .tools > .code-workbench, .tools > .terminal-workbench { flex: 1; min-height: 0; min-width: 0; }
 .thread-restore-handle { flex: none; width: 32px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--bg2); color: var(--dim); display: flex; align-items: center; justify-content: center; }

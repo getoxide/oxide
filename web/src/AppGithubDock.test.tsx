@@ -35,10 +35,7 @@ const baseDetail = {
   pullRequest, phase: "open", body: "", headSha: "abc123", comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 1, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
   checks: [{ name: "web", state: "failure", url: null, required: true }],
-  diff: {
-    base: "main",
-    files: [{ path: "src/app.rs", oldPath: null, status: "modified", added: 1, removed: 0, binary: false, hunks: [{ header: "@@ -1,1 +1,1 @@", lines: [{ kind: "added", text: "    run();" }] }] }],
-  },
+  changedFiles: 1,
 };
 const reviewThreads = [
   {

@@ -3,7 +3,6 @@
 //! user asked: there is no polling.
 
 use crate::git;
-use crate::git_diff::{Diff, parse_patch};
 use crate::line_comments::CommentSide;
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
@@ -252,22 +251,8 @@ pub struct PullRequestDetail {
     pub default_merge_method: Option<MergeMethod>,
     /// Whether the repository deletes merged branches on its own.
     pub delete_branch_on_merge: bool,
-    /// The changed files.
-    pub diff: Diff,
-}
-
-/// What the Pull request Surface shows for the current branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestState {
-    pub availability: GithubAvailability,
-    /// How to get `gh` working, when it is not.
-    pub guidance: Option<String>,
-    /// `None` while HEAD is detached.
-    pub branch: Option<String>,
-    pub default_branch: Option<String>,
-    /// The branch's open pull request, if it has one.
-    pub pull_request: Option<PullRequest>,
+    /// The number of changed files.
+    pub changed_files: u32,
 }
 
 /// The form a new pull request starts from.
@@ -702,38 +687,6 @@ fn parse(json: &str) -> Result<serde_json::Value> {
     serde_json::from_str(json).map_err(|e| Error::Github(format!("unexpected gh output: {e}")))
 }
 
-pub fn pull_request_state(gh: &Gh, cwd: &Path) -> Result<PullRequestState> {
-    let branch = git::status(cwd)?.branch;
-    let (availability, guidance) = gh.availability(cwd);
-    let mut state = PullRequestState {
-        availability,
-        guidance,
-        branch,
-        default_branch: None,
-        pull_request: None,
-    };
-    if availability == GithubAvailability::Ready {
-        // Two independent round trips to GitHub: run them side by side.
-        let (default_branch, pull_request) = std::thread::scope(|scope| {
-            let pull_request = state
-                .branch
-                .is_some()
-                .then(|| scope.spawn(|| gh.current_pull_request(cwd)));
-            let default_branch = gh.default_branch(cwd);
-            let pull_request = match pull_request {
-                Some(handle) => handle
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-                None => Ok(None),
-            };
-            (default_branch, pull_request)
-        });
-        state.default_branch = Some(default_branch?);
-        state.pull_request = pull_request?;
-    }
-    Ok(state)
-}
-
 /// Branches that exist in the GitHub repository, including pages beyond the first.
 /// Local-only branches cannot receive a pull request.
 pub fn pull_request_base_branches(gh: &Gh, cwd: &Path) -> Result<Vec<String>> {
@@ -871,21 +824,6 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
     gh.run(cwd, &args)?;
     gh.current_pull_request(cwd)?
         .ok_or_else(|| Error::Github("The pull request was created but could not be read.".into()))
-}
-
-/// The URL of the branch's open pull request.
-pub fn pull_request_url(gh: &Gh, cwd: &Path) -> Result<String> {
-    gh.require_ready(cwd)?;
-    let pr = gh
-        .current_pull_request(cwd)?
-        .ok_or_else(|| Error::Github("This branch has no open pull request.".into()))?;
-    if !pr.url.starts_with("https://") {
-        return Err(Error::Github(format!(
-            "Unexpected pull request URL: {}",
-            pr.url
-        )));
-    }
-    Ok(pr.url)
 }
 
 /// Open pull requests of the repository, optionally only the user's own and
@@ -1039,19 +977,18 @@ fn review_thread_from(v: &serde_json::Value) -> PullRequestReviewThread {
 }
 
 /// One pull request with its description, checks, conversation, the merge
-/// methods the repository allows and its changed files.
+/// methods the repository allows and its changed-file count.
 pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
     let fields = format!(
         "{PR_FIELDS},body,headRefOid,comments,reviews,latestReviews,reviewRequests,assignees,labels,\
-         additions,deletions,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
+         additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
     );
     // Independent round trips to GitHub: run them side by side.
-    let (view, settings, patch, default_method, viewer, required) = std::thread::scope(|scope| {
+    let (view, settings, default_method, viewer, required) = std::thread::scope(|scope| {
         let required = scope.spawn(|| required_check_names(gh, cwd, number));
         let settings = scope.spawn(|| merge_settings(gh, cwd));
-        let patch = scope.spawn(|| gh.run(cwd, &["pr", "diff", &n, "--color=never"]));
         let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
         let viewer = scope.spawn(|| viewer_login(gh, cwd));
         let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
@@ -1063,7 +1000,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         (
             view,
             join(settings),
-            join(patch),
             join(default_method),
             join(viewer),
             join(required),
@@ -1071,7 +1007,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
     });
     let v = parse(&view?)?;
     let (merge_methods, delete_branch_on_merge) = settings?;
-    let patch = patch?;
 
     let pull_request = pull_request_from(&v);
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
@@ -1107,10 +1042,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         default_merge_method: default_method.filter(|m| merge_methods.contains(m)),
         merge_methods,
         delete_branch_on_merge,
-        diff: Diff {
-            base: Some(pull_request.base.clone()),
-            files: parse_patch(&patch),
-        },
+        changed_files: v["changedFiles"].as_u64().unwrap_or(0) as u32,
         pull_request,
     })
 }
@@ -1754,15 +1686,4 @@ pub fn edit_issue(gh: &Gh, cwd: &Path, number: u32, edit: &IssueEdit) -> Result<
     }
     gh.run(cwd, &args)?;
     Ok(())
-}
-
-pub fn issue_url(gh: &Gh, cwd: &Path, number: u32) -> Result<String> {
-    let detail = issue_detail(gh, cwd, number)?;
-    if !detail.url.starts_with("https://") {
-        return Err(Error::Github(format!(
-            "refusing to open unexpected issue URL: {}",
-            detail.url
-        )));
-    }
-    Ok(detail.url)
 }
