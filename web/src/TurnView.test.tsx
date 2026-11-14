@@ -4,13 +4,15 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ItemSnapshot, ModelInfo } from "./bindings";
 import type { TranscriptTurn } from "./transcript";
+import * as attachments from "./attachments";
+import * as transcriptView from "./transcriptView";
 import { TurnView } from "./TurnView";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const container = document.createElement("div");
 document.body.append(container);
 const root = createRoot(container);
-afterEach(async () => act(async () => root.render(null)));
+afterEach(async () => { await act(async () => root.render(null)); vi.restoreAllMocks(); });
 
 let nextId = 1;
 const item = (
@@ -251,4 +253,59 @@ it("draws Attachments as chips between the words of the prompt, the same for eve
   expect(bubble.querySelector("img")).toBeNull();
   expect(bubble.querySelectorAll("svg.attachment-chip-icon")).toHaveLength(2);
   expect(bubble.querySelector("button")).toBeNull();
+});
+
+it("memoizes turn item grouping, model/effort parts, and prompt plain text across re-renders", async () => {
+  const groupSpy = vi.spyOn(transcriptView, "groupTurnItems");
+  const modelSpy = vi.spyOn(transcriptView, "modelEffortParts");
+  const plainSpy = vi.spyOn(attachments, "plainText");
+
+  const items = [worked[0], worked[3]];
+  const segments = [{ kind: "text" as const, text: "Check this" }];
+  const baseTurn = turn({
+    status: "running",
+    completedAt: null,
+    model: "claude-opus-5-5",
+    effort: "high",
+    segments,
+    items,
+  });
+  const onRespond = vi.fn();
+
+  await act(async () =>
+    root.render(<TurnView turn={baseTurn} provider="claude" catalog={null} onRespond={onRespond} isWorking instant />),
+  );
+  expect(groupSpy).toHaveBeenCalledTimes(1);
+  expect(modelSpy).toHaveBeenCalledTimes(1);
+  expect(plainSpy).toHaveBeenCalledTimes(1);
+
+  groupSpy.mockClear();
+  modelSpy.mockClear();
+  plainSpy.mockClear();
+
+  // Re-render when turn status/completedAt and isWorking change, while items/segments/model/effort are unchanged.
+  const completedTurn = { ...baseTurn, status: "completed" as const, completedAt: "2026-10-22T10:00:42Z" };
+  await act(async () =>
+    root.render(<TurnView turn={completedTurn} provider="claude" catalog={null} onRespond={onRespond} isWorking={false} instant />),
+  );
+  expect(groupSpy).not.toHaveBeenCalled();
+  expect(modelSpy).not.toHaveBeenCalled();
+  expect(plainSpy).not.toHaveBeenCalled();
+
+  // Updating items recomputes only groupTurnItems.
+  await act(async () =>
+    root.render(
+      <TurnView
+        turn={{ ...completedTurn, items: [...items, item(4, "agent_message", "More")] }}
+        provider="claude"
+        catalog={null}
+        onRespond={onRespond}
+        isWorking={false}
+        instant
+      />,
+    ),
+  );
+  expect(groupSpy).toHaveBeenCalledTimes(1);
+  expect(modelSpy).not.toHaveBeenCalled();
+  expect(plainSpy).not.toHaveBeenCalled();
 });

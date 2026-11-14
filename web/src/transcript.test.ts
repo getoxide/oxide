@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { applyThreadEvent, initialTranscriptState, SESSION_LOST_MESSAGE } from "./transcript";
+import { describe, expect, it, vi } from "vitest";
+import { applyThreadEvent, estimateTranscriptViewBytes, initialTranscriptState, SESSION_LOST_MESSAGE } from "./transcript";
 import { getOfferedPermissionModes } from "./ThreadView";
 import type { SequencedThreadEvent, Thread, ThreadSnapshot } from "./bindings";
 
@@ -541,5 +541,68 @@ describe("command evidence", () => {
       outcome: "failed",
       exitCode: 1,
     });
+  });
+
+  it("estimates cached transcript and page memory arithmetically without JSON.stringify", () => {
+    const stringifySpy = vi.spyOn(JSON, "stringify");
+    const empty = initialTranscriptState(null);
+    const emptyBytes = estimateTranscriptViewBytes(empty, new Map());
+    expect(emptyBytes).toBeGreaterThan(0);
+
+    const populated = {
+      ...empty,
+      turns: [
+        {
+          id: 1,
+          turnIndex: 1,
+          prompt: "p".repeat(100),
+          model: null,
+          effort: null,
+          segments: [{ kind: "text" as const, text: "p".repeat(100) }],
+          status: "completed" as const,
+          startedAt: "2026-10-22T10:00:00Z",
+          completedAt: "2026-10-22T10:00:05Z",
+          items: [
+            {
+              id: 10,
+              itemIndex: 0,
+              kind: "agent_message" as const,
+              content: "a".repeat(2000),
+              parentItemIndex: null,
+              command: { line: "cmd", outcome: "unknown" as const, exitCode: null },
+              createdAt: "2026-10-22T10:00:02Z",
+            },
+          ],
+          error: { message: "err", stderrTail: "t".repeat(500) },
+          approvals: [],
+          unknownEvents: [],
+        },
+      ],
+    };
+    const pages = new Map([
+      [
+        0,
+        [
+          {
+            ...populated.turns[0],
+            id: 2,
+            turnIndex: 0,
+            items: [
+              {
+                ...populated.turns[0].items[0],
+                content: "b".repeat(3000),
+              },
+            ],
+          },
+        ],
+      ],
+    ]);
+
+    const bytes = estimateTranscriptViewBytes(populated, pages);
+    // 100 + 100 + 2000 + 3 + 3 + 500 + page(100 + 100 + 3000 + 3 + 3 + 500) = 6412 chars -> >= 12824 UTF-16 bytes
+    expect(bytes).toBeGreaterThanOrEqual(12824);
+    expect(bytes).toBeLessThan(20000);
+    expect(stringifySpy).not.toHaveBeenCalled();
+    stringifySpy.mockRestore();
   });
 });
