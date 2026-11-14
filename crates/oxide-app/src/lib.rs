@@ -1,6 +1,7 @@
 //! The App shell: a thin Tauri layer that exposes [`oxide_core::Core`] to the webview.
 //! The webview talks only to the TypeScript bindings generated from here.
 
+mod conversions;
 #[cfg(target_os = "macos")]
 mod shell_path;
 mod system;
@@ -128,7 +129,7 @@ async fn search_github_repositories(
 ) -> Result<Vec<GithubRepository>, AppError> {
     git_blocking(&core, move |core| core.search_github_repositories(&query))
         .await
-        .map(|list| list.iter().map(convert).collect())
+        .map(|list| list.into_iter().map(GithubRepository::from).collect())
 }
 
 /// Clones one of the user's GitHub repositories into `parent` and registers it as a Project.
@@ -249,17 +250,10 @@ pub struct SettingsState {
     errors: Vec<FieldError>,
 }
 
-/// Mirrors are identical in shape to the Core types; converting through JSON
-/// keeps the field lists in one place (the serde derives on each side).
-fn convert<A: Serialize, B: serde::de::DeserializeOwned>(a: &A) -> B {
-    serde_json::from_value(serde_json::to_value(a).expect("serialize"))
-        .expect("App and Core settings types out of sync")
-}
-
 impl From<&oxide_core::SettingsState> for SettingsState {
     fn from(s: &oxide_core::SettingsState) -> Self {
         Self {
-            settings: convert(&s.settings),
+            settings: (&s.settings).into(),
             errors: s
                 .errors
                 .iter()
@@ -285,7 +279,7 @@ fn get_settings(core: State<'_, Arc<Core>>) -> SettingsState {
 #[specta::specta]
 async fn save_settings(core: State<'_, Arc<Core>>, settings: Settings) -> Result<(), AppError> {
     let core = core.inner().clone();
-    let settings: oxide_core::Settings = convert(&settings);
+    let settings: oxide_core::Settings = settings.into();
     tauri::async_runtime::spawn_blocking(move || core.save_settings(&settings))
         .await
         .map_err(|e| AppError {
@@ -895,7 +889,7 @@ fn start_block_terminal(
             }
         }
     });
-    Ok(convert(&terminal))
+    Ok(terminal.into())
 }
 
 #[tauri::command]
@@ -1004,7 +998,7 @@ async fn start_project_service(
     .map_err(|e| AppError {
         message: e.to_string(),
     })??;
-    Ok(convert(&outcome))
+    Ok(outcome.into())
 }
 
 /// The running Project Services of a Project.
@@ -1016,8 +1010,8 @@ fn list_project_services(
 ) -> Result<Vec<ProjectService>, AppError> {
     Ok(core
         .list_project_services(project_id)?
-        .iter()
-        .map(convert)
+        .into_iter()
+        .map(ProjectService::from)
         .collect())
 }
 
@@ -1028,7 +1022,7 @@ fn project_service(
     core: State<'_, Arc<Core>>,
     id: u32,
 ) -> Result<Option<ProjectService>, AppError> {
-    Ok(core.project_service(id)?.as_ref().map(convert))
+    Ok(core.project_service(id)?.map(ProjectService::from))
 }
 
 /// Stops a Project Service, sending SIGTERM and then SIGKILL.
@@ -1057,7 +1051,7 @@ async fn restart_project_service(
         .map_err(|e| AppError {
             message: e.to_string(),
         })??;
-    Ok(convert(&outcome))
+    Ok(outcome.into())
 }
 
 /// Empties a Project Service's log buffer.
@@ -1084,12 +1078,15 @@ fn subscribe_project_service_logs(
     let (backlog, rx) = core.subscribe_project_service_logs(id)?;
     std::thread::spawn(move || {
         while let Ok(line) = rx.recv() {
-            if on_line.send(convert(&line)).is_err() {
+            if on_line.send(line.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(backlog.iter().map(convert).collect())
+    Ok(backlog
+        .into_iter()
+        .map(ProjectServiceLogLine::from)
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -1126,7 +1123,7 @@ async fn list_dir(
         .map_err(|e| AppError {
             message: e.to_string(),
         })?
-        .map(|entries| entries.iter().map(convert).collect())
+        .map(|entries| entries.into_iter().map(FileEntry::from).collect())
         .map_err(AppError::from)
 }
 
@@ -1205,7 +1202,10 @@ pub struct LanguageServer {
 #[tauri::command]
 #[specta::specta]
 fn language_tools(core: State<'_, Arc<Core>>) -> Vec<LanguageTool> {
-    convert(&core.language_tools())
+    core.language_tools()
+        .into_iter()
+        .map(LanguageTool::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -1233,11 +1233,16 @@ async fn system_fonts() -> Result<Vec<String>, AppError> {
 #[tauri::command]
 #[specta::specta]
 async fn developer_tools() -> Result<Vec<DeveloperTool>, AppError> {
-    tauri::async_runtime::spawn_blocking(|| convert(&oxide_core::desktop_tools::developer_tools()))
-        .await
-        .map_err(|e| AppError {
-            message: e.to_string(),
-        })
+    tauri::async_runtime::spawn_blocking(|| {
+        oxide_core::desktop_tools::developer_tools()
+            .into_iter()
+            .map(DeveloperTool::from)
+            .collect()
+    })
+    .await
+    .map_err(|e| AppError {
+        message: e.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -1270,7 +1275,7 @@ async fn install_language_support(
     .map_err(|e| AppError {
         message: e.to_string(),
     })??;
-    Ok(convert(&tool))
+    Ok(tool.into())
 }
 
 #[tauri::command]
@@ -1363,7 +1368,7 @@ async fn start_language_server(
             }
         }
     });
-    Ok(convert(&summary))
+    Ok(summary.into())
 }
 #[tauri::command]
 #[specta::specta]
@@ -1443,7 +1448,7 @@ async fn git_status(
 ) -> Result<GitStatus, AppError> {
     git_blocking(&core, move |core| core.git_status_in(project_id, thread_id))
         .await
-        .map(|status| convert(&status))
+        .map(GitStatus::from)
 }
 
 #[tauri::command]
@@ -1457,7 +1462,7 @@ async fn list_branches(
         core.list_branches_in(project_id, thread_id)
     })
     .await
-    .map(|branches| branches.iter().map(convert).collect())
+    .map(|branches| branches.into_iter().map(GitBranch::from).collect())
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -1529,10 +1534,10 @@ async fn git_diff(
     scope: DiffScope,
 ) -> Result<Diff, AppError> {
     git_blocking(&core, move |core| {
-        core.diff_in(project_id, thread_id, convert(&scope))
+        core.diff_in(project_id, thread_id, scope.into())
     })
     .await
-    .map(|diff| convert(&diff))
+    .map(Diff::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
@@ -1591,7 +1596,7 @@ async fn list_line_comments(
 ) -> Result<Vec<LineComment>, AppError> {
     git_blocking(&core, move |core| core.list_line_comments(thread_id))
         .await
-        .map(|c| c.iter().map(convert).collect())
+        .map(|c| c.into_iter().map(LineComment::from).collect())
 }
 
 /// Sends every draft to the Thread as one prompt.
@@ -1712,7 +1717,7 @@ async fn restore_preview(
         core.restore_preview(thread_id, turn_index)
     })
     .await
-    .map(|preview| convert(&preview))
+    .map(RestorePreview::from)
 }
 
 /// Puts a Thread's files back to how they were before a Turn.
@@ -1725,7 +1730,7 @@ async fn restore_turn(
 ) -> Result<RestoreOutcome, AppError> {
     git_blocking(&core, move |core| core.restore_turn(thread_id, turn_index))
         .await
-        .map(|outcome| convert(&outcome))
+        .map(RestoreOutcome::from)
 }
 
 /// Undoes a Thread's latest restore, putting the files back to its safety Checkpoint.
@@ -1737,7 +1742,7 @@ async fn undo_restore(
 ) -> Result<RestoreOutcome, AppError> {
     git_blocking(&core, move |core| core.undo_restore(thread_id))
         .await
-        .map(|outcome| convert(&outcome))
+        .map(RestoreOutcome::from)
 }
 
 /// The restore of a Thread that can still be undone, if there is one.
@@ -1749,7 +1754,7 @@ async fn pending_restore(
 ) -> Result<Option<PendingRestore>, AppError> {
     git_blocking(&core, move |core| core.pending_restore(thread_id))
         .await
-        .map(|pending| pending.map(|pending| convert(&pending)))
+        .map(|pending| pending.map(PendingRestore::from))
 }
 
 /// Checks out a branch; a remote one (`origin/x`) becomes a tracking branch.
@@ -2119,7 +2124,7 @@ async fn pull_request_draft(
         core.pull_request_draft_in(project_id, thread_id)
     })
     .await
-    .map(|draft| convert(&draft))
+    .map(PullRequestDraft::from)
 }
 
 /// Pushes the branch if needed, then opens a pull request for it.
@@ -2144,7 +2149,7 @@ async fn create_pull_request(
         )
     })
     .await
-    .map(|pr| convert(&pr))
+    .map(PullRequest::from)
 }
 
 /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
@@ -2156,7 +2161,7 @@ async fn issues_state(
 ) -> Result<IssuesState, AppError> {
     git_blocking(&core, move |core| core.issues_state(project_id))
         .await
-        .map(|state| convert(&state))
+        .map(IssuesState::from)
 }
 
 /// The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none.
@@ -2168,7 +2173,7 @@ async fn issue_templates(
 ) -> Result<Vec<IssueTemplateFile>, AppError> {
     git_blocking(&core, move |core| core.issue_templates(project_id))
         .await
-        .map(|files| convert(&files))
+        .map(|files| files.into_iter().map(IssueTemplateFile::from).collect())
 }
 
 #[tauri::command]
@@ -2184,7 +2189,7 @@ async fn list_issues(
         core.list_issues(project_id, closed, mine, &search)
     })
     .await
-    .map(|list| list.iter().map(convert).collect())
+    .map(|list| list.into_iter().map(IssueSummary::from).collect())
 }
 
 #[tauri::command]
@@ -2196,7 +2201,7 @@ async fn issue_detail(
 ) -> Result<IssueDetail, AppError> {
     git_blocking(&core, move |core| core.issue_detail(project_id, number))
         .await
-        .map(|detail| convert(&detail))
+        .map(IssueDetail::from)
 }
 
 #[tauri::command]
@@ -2213,7 +2218,7 @@ async fn create_issue(
         core.create_issue(project_id, &title, &body, &assignees, &labels)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(IssueSummary::from)
 }
 
 #[tauri::command]
@@ -2241,7 +2246,7 @@ async fn close_issue(
     comment: String,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| {
-        core.close_issue(project_id, number, convert(&reason), &comment)
+        core.close_issue(project_id, number, reason.into(), &comment)
     })
     .await
 }
@@ -2265,8 +2270,9 @@ async fn edit_issue(
     number: u32,
     edit: IssueEdit,
 ) -> Result<(), AppError> {
+    let edit: oxide_core::IssueEdit = edit.into();
     git_blocking(&core, move |core| {
-        core.edit_issue(project_id, number, &convert(&edit))
+        core.edit_issue(project_id, number, &edit)
     })
     .await
 }
@@ -2284,7 +2290,7 @@ async fn list_pull_requests(
         core.list_pull_requests(project_id, mine, &search)
     })
     .await
-    .map(|prs| convert(&prs))
+    .map(|prs| prs.into_iter().map(PullRequest::from).collect())
 }
 
 /// One pull request's description, checks, conversation and changed files.
@@ -2299,7 +2305,7 @@ async fn pull_request_detail(
         core.pull_request_detail(project_id, number)
     })
     .await
-    .map(|detail| convert(&detail))
+    .map(PullRequestDetail::from)
 }
 
 #[tauri::command]
@@ -2313,7 +2319,12 @@ async fn pull_request_review_threads(
         core.pull_request_review_threads(project_id, number)
     })
     .await
-    .map(|threads| convert(&threads))
+    .map(|threads| {
+        threads
+            .into_iter()
+            .map(PullRequestReviewThread::from)
+            .collect()
+    })
 }
 
 #[tauri::command]
@@ -2341,7 +2352,7 @@ async fn merge_pull_request(
     auto: bool,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| {
-        core.merge_pull_request(project_id, number, convert(&method), delete_branch, auto)
+        core.merge_pull_request(project_id, number, method.into(), delete_branch, auto)
     })
     .await
 }
@@ -2413,7 +2424,7 @@ async fn pull_request_candidates(
 ) -> Result<PullRequestCandidates, AppError> {
     git_blocking(&core, move |core| core.pull_request_candidates(project_id))
         .await
-        .map(|candidates| convert(&candidates))
+        .map(PullRequestCandidates::from)
 }
 
 /// Changes a pull request's reviewers, assignees and labels.
@@ -2425,8 +2436,9 @@ async fn edit_pull_request(
     number: u32,
     edit: PullRequestEdit,
 ) -> Result<(), AppError> {
+    let edit: oxide_core::PullRequestEdit = edit.into();
     git_blocking(&core, move |core| {
-        core.edit_pull_request(project_id, number, &convert(&edit))
+        core.edit_pull_request(project_id, number, &edit)
     })
     .await
 }
@@ -2456,12 +2468,12 @@ async fn create_thread(
     effort: Option<String>,
     permission_mode: Option<PermissionMode>,
 ) -> Result<Thread, AppError> {
-    let mode: Option<oxide_core::PermissionMode> = permission_mode.map(|m| convert(&m));
+    let mode: Option<oxide_core::PermissionMode> = permission_mode.map(Into::into);
     git_blocking(&core, move |core| {
         core.create_thread(project_id, &provider, model, effort, mode)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 /// A Board Thread handed off from the Thread Board.
@@ -2491,10 +2503,10 @@ async fn dispatch_thread(
     core: State<'_, Arc<Core>>,
     request: DispatchRequest,
 ) -> Result<Thread, AppError> {
-    let request: oxide_core::DispatchRequest = convert(&request);
+    let request: oxide_core::DispatchRequest = request.into();
     git_blocking(&core, move |core| core.dispatch_thread(request))
         .await
-        .map(|thread| convert(&thread))
+        .map(Thread::from)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -2568,10 +2580,10 @@ async fn start_blind_review(
     core: State<'_, Arc<Core>>,
     request: BlindReviewRequest,
 ) -> Result<Thread, AppError> {
-    let req: oxide_core::BlindReviewRequest = convert(&request);
+    let req: oxide_core::BlindReviewRequest = request.into();
     git_blocking(&core, move |core| core.start_blind_review(req))
         .await
-        .map(|thread| convert(&thread))
+        .map(Thread::from)
 }
 
 /// The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
@@ -2586,7 +2598,7 @@ async fn list_blind_review_findings(
         core.list_blind_review_findings(thread_id)
     })
     .await
-    .map(|findings| convert(&findings))
+    .map(|findings| findings.into_iter().map(BlindReviewFinding::from).collect())
 }
 
 /// Keeps one finding: an anchored finding becomes a draft Line comment on the reviewed Thread.
@@ -2598,7 +2610,7 @@ async fn keep_blind_review_finding(
 ) -> Result<Option<LineComment>, AppError> {
     git_blocking(&core, move |core| core.keep_blind_review_finding(id))
         .await
-        .map(|comment| comment.as_ref().map(convert))
+        .map(|comment| comment.map(LineComment::from))
 }
 
 /// Dismisses one finding, so it never reaches the Thread.
@@ -2615,7 +2627,7 @@ fn continue_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
 ) -> Result<ContinuedThread, AppError> {
-    Ok(convert(&core.continue_thread(thread_id)?))
+    Ok(core.continue_thread(thread_id)?.into())
 }
 
 /// Deletes a Thread and its Transcript. Deleting a Board Thread removes its worktree; with
@@ -2638,7 +2650,7 @@ fn delete_thread(
 #[tauri::command]
 #[specta::specta]
 fn clear_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
-    Ok(convert(&core.clear_thread(thread_id)?))
+    Ok(core.clear_thread(thread_id)?.into())
 }
 
 #[tauri::command]
@@ -2648,7 +2660,7 @@ fn set_thread_permission_mode(
     thread_id: u32,
     permission_mode: PermissionMode,
 ) -> Result<(), AppError> {
-    let mode: oxide_core::PermissionMode = convert(&permission_mode);
+    let mode: oxide_core::PermissionMode = permission_mode.into();
     Ok(core.set_thread_permission_mode(thread_id, mode)?)
 }
 
@@ -2663,7 +2675,7 @@ async fn set_thread_provider(
         core.set_thread_provider(thread_id, &provider)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 #[tauri::command]
@@ -2684,7 +2696,7 @@ fn respond_to_approval(
     approval_id: String,
     decision: ApprovalDecision,
 ) -> Result<(), AppError> {
-    let dec: oxide_core::ApprovalDecision = convert(&decision);
+    let dec: oxide_core::ApprovalDecision = decision.into();
     Ok(core.respond_to_approval(thread_id, &approval_id, dec)?)
 }
 
@@ -2706,7 +2718,7 @@ async fn detect_provider(
 ) -> Result<Detection, AppError> {
     git_blocking(&core, move |core| Ok(core.detect_provider(&provider)))
         .await
-        .map(|det| convert(&det))
+        .map(Detection::from)
 }
 
 #[tauri::command]
@@ -2715,8 +2727,7 @@ fn get_provider_capabilities(
     core: State<'_, Arc<Core>>,
     provider: String,
 ) -> Result<ProviderCapabilities, AppError> {
-    let caps = core.get_provider_capabilities(&provider);
-    Ok(convert(&caps))
+    Ok(core.get_provider_capabilities(&provider).into())
 }
 
 #[tauri::command]
@@ -2730,7 +2741,7 @@ async fn get_model_catalog(
         core.get_model_catalog(&provider, refresh)
     })
     .await
-    .map(|models| convert(&models))
+    .map(|models| models.into_iter().map(ModelInfo::from).collect())
 }
 
 #[tauri::command]
@@ -2768,7 +2779,7 @@ fn list_threads(core: State<'_, Arc<Core>>, project_id: u32) -> Result<Vec<Threa
     // Listing a Project's Threads is what opening it does.
     core.open_project(project_id)?;
     let list = core.list_threads(project_id)?;
-    Ok(convert(&list))
+    Ok(list.into_iter().map(Thread::from).collect())
 }
 
 #[tauri::command]
@@ -2778,7 +2789,7 @@ async fn send_prompt(
     thread_id: u32,
     segments: Vec<PromptInput>,
 ) -> Result<(), AppError> {
-    let input: Vec<oxide_core::PromptInput> = convert(&segments);
+    let input: Vec<oxide_core::PromptInput> = segments.into_iter().map(Into::into).collect();
     git_blocking(&core, move |core| {
         core.send_prompt_segments(thread_id, &input)
     })
@@ -2799,7 +2810,7 @@ async fn attach_paths(
             .map(|path| match core.attach_path(std::path::Path::new(&path)) {
                 Ok(attachment) => AttachOutcome {
                     path,
-                    attachment: Some(convert(&attachment)),
+                    attachment: Some(attachment.into()),
                     error: None,
                 },
                 Err(error) => AttachOutcome {
@@ -2844,7 +2855,7 @@ async fn attach_bytes(
         core.attach_bytes(name.as_deref(), &bytes)
     })
     .await
-    .map(|attachment| convert(&attachment))
+    .map(Attachment::from)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -2899,7 +2910,7 @@ async fn list_slash_commands(
         core.thread_slash_commands(&provider, project_id, thread_id, refresh)
     })
     .await
-    .map(|commands| commands.iter().map(convert).collect())
+    .map(|commands| commands.into_iter().map(SlashCommand::from).collect())
 }
 
 #[tauri::command]
@@ -2925,7 +2936,7 @@ async fn list_turns(
             .map_err(|e| AppError {
                 message: e.to_string(),
             })??;
-    Ok(convert(&page))
+    Ok(page.into())
 }
 
 #[tauri::command]
@@ -2940,7 +2951,7 @@ fn subscribe_thread(
     let app_clone = app.clone();
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
-            let app_evt: SequencedThreadEvent = convert(&evt);
+            let app_evt: SequencedThreadEvent = evt.into();
             if let ThreadEvent::ThreadStatusChanged { status } = app_evt.event {
                 let _ = app_clone.emit(
                     THREAD_STATUS_CHANGED,
@@ -2952,14 +2963,14 @@ fn subscribe_thread(
             }
         }
     });
-    Ok(convert(&snapshot))
+    Ok(snapshot.into())
 }
 
 /// The Review ledger of a Project: median wait and recent entries.
 #[tauri::command]
 #[specta::specta]
 fn review_ledger(core: State<'_, Arc<Core>>, project_id: u32) -> Result<ReviewLedger, AppError> {
-    Ok(convert(&core.review_ledger(project_id)?))
+    Ok(core.review_ledger(project_id)?.into())
 }
 
 /// Removes every entry of the Review ledger.
@@ -3002,8 +3013,8 @@ fn rule_suggestions(
 ) -> Result<Vec<RuleSuggestion>, AppError> {
     Ok(core
         .rule_suggestions(project_id)?
-        .iter()
-        .map(convert)
+        .into_iter()
+        .map(RuleSuggestion::from)
         .collect())
 }
 
@@ -3031,7 +3042,7 @@ async fn accept_rule_suggestion(
         core.accept_rule_suggestion(project_id, id, &provider)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 /// A Provider's Usage limits now (if Oxide has seen any), then every update on `on_event`.
@@ -3045,12 +3056,12 @@ fn subscribe_usage_limits(
     let (current, rx) = core.subscribe_usage_limits(&provider);
     std::thread::spawn(move || {
         while let Ok(limits) = rx.recv() {
-            if on_event.send(convert(&limits)).is_err() {
+            if on_event.send(limits.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(current.as_ref().map(convert))
+    Ok(current.map(UsageLimits::from))
 }
 
 /// The Project's Thread Board: its cards now, then every change on `on_event`.
@@ -3064,12 +3075,12 @@ fn subscribe_board(
     let (cards, rx) = core.subscribe_board(project_id)?;
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
-            if on_event.send(convert(&evt)).is_err() {
+            if on_event.send(evt.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(convert(&cards))
+    Ok(cards.into_iter().map(BoardCard::from).collect())
 }
 
 /// Emitted when ⌘N is pressed (even with the window hidden): start a new Thread.
@@ -3428,7 +3439,7 @@ pub fn run() {
             core.subscribe_settings(move |state| {
                 let _ = handle.emit(SETTINGS_CHANGED, SettingsState::from(state));
             });
-            core.set_system(Arc::new(system::MacSystem::new(app.handle().clone())));
+            core.set_system(Arc::new(system::HostSystem::new(app.handle().clone())));
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                 #[cfg(target_os = "windows")]
                 {
@@ -3579,7 +3590,7 @@ mod tests {
             last_seq: 7,
             supported_permission_modes: vec![],
         };
-        let app: ThreadSnapshot = convert(&core);
+        let app: ThreadSnapshot = core.into();
         let turn_error = app.turns[0].error.as_ref().unwrap();
         assert_eq!(turn_error.stderr_tail.as_deref(), Some("panicked"));
 
@@ -3591,17 +3602,18 @@ mod tests {
                 error: Some(error),
             },
         };
-        let app: SequencedThreadEvent = convert(&event);
+        let app: SequencedThreadEvent = event.into();
         assert!(matches!(
             app.event,
             ThreadEvent::TurnCompleted { error: Some(_), .. }
         ));
-        let app: SequencedThreadEvent = convert(&oxide_core::SequencedThreadEvent {
+        let app: SequencedThreadEvent = oxide_core::SequencedThreadEvent {
             seq: 9,
             event: oxide_core::ThreadEvent::ProviderRetrying {
                 message: "rate limited".into(),
             },
-        });
+        }
+        .into();
         assert!(matches!(app.event, ThreadEvent::ProviderRetrying { .. }));
     }
 

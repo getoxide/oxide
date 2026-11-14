@@ -96,8 +96,8 @@ pub use db::MIGRATIONS;
 pub use error::{Error, Result};
 pub use oxide_provider::{
     ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
-    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities, TurnStatus,
-    UsageStatus,
+    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
+    SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
 };
 pub use restore::{PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
 pub use review_ledger::{
@@ -108,6 +108,7 @@ pub use rule_suggestions::RuleSuggestion;
 use settings::SettingsStore;
 pub use settings::{
     FieldError, PermissionMode, Provider, ProviderSettings, Providers, Settings, SettingsState,
+    Shortcuts,
 };
 pub use thread::{
     ApprovalSnapshot, ItemSnapshot, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,

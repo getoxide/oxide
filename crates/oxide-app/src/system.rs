@@ -13,8 +13,6 @@ pub struct HostSystem {
     activity: std::sync::Mutex<Option<WindowsActivityToken>>,
 }
 
-pub type MacSystem = HostSystem;
-
 impl HostSystem {
     pub fn new(app: AppHandle) -> Self {
         Self {
