@@ -738,13 +738,13 @@ mod tests {
     use super::*;
     use std::process::Stdio;
 
-    fn spawn_sleeper(program: &str) -> std::process::Child {
+    fn spawn_sleeper(program: &str) -> Child {
         let mut cmd = Command::new(program);
         cmd.arg("300").stdout(Stdio::null()).stderr(Stdio::null());
         spawn_in_own_group(&mut cmd).spawn().unwrap()
     }
 
-    fn wait_gone(pgid: i32, child: &mut std::process::Child) -> bool {
+    fn wait_gone(pgid: i32, child: &mut Child) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             let _ = child.try_wait();

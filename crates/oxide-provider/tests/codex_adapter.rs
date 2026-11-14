@@ -139,7 +139,7 @@ fn two_threads_share_one_app_server_process_each_with_its_own_cwd() {
 
     let rx1 = p1
         .start(&StartContext {
-            working_dir: cwd1.clone(),
+            working_dir: cwd1,
             model: Some("gpt-5".into()),
             effort: None,
             permission_mode: PermissionMode::AutoEdit,
@@ -148,7 +148,7 @@ fn two_threads_share_one_app_server_process_each_with_its_own_cwd() {
 
     let rx2 = p2
         .start(&StartContext {
-            working_dir: cwd2.clone(),
+            working_dir: cwd2,
             model: Some("gpt-5".into()),
             effort: None,
             permission_mode: PermissionMode::Ask,
@@ -192,7 +192,7 @@ fn two_threads_share_one_app_server_process_each_with_its_own_cwd() {
     );
 
     // Read wire log
-    let wire_contents = std::fs::read_to_string(&wire_log_path).unwrap();
+    let wire_contents = fs::read_to_string(&wire_log_path).unwrap();
     let mut argv_count = 0;
     for line in wire_contents.lines() {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line)
@@ -337,7 +337,7 @@ fn server_initiated_approval_answered_while_client_request_in_flight_no_deadlock
     );
 
     // Verify wire log confirms approval answered while in flight
-    let wire_contents = std::fs::read_to_string(&wire_log_path).unwrap();
+    let wire_contents = fs::read_to_string(&wire_log_path).unwrap();
     assert!(
         wire_contents.contains("deadlock_approval_answered_in_flight"),
         "approval was answered in flight"
