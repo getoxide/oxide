@@ -90,13 +90,19 @@ fn creates_and_checks_out_branches_with_remote_ones_tracked() {
     git(&f.other, &["push", "-q", "origin", "feature"]);
     f.core.fetch_project(f.project.id).unwrap();
 
-    f.core.create_branch(f.project.id, "topic").unwrap();
+    f.core
+        .create_branch_in(f.project.id, None, "topic")
+        .unwrap();
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().branch.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .branch
+            .as_deref(),
         Some("topic")
     );
 
-    let branches = f.core.list_branches(f.project.id).unwrap();
+    let branches = f.core.list_branches_in(f.project.id, None).unwrap();
     let find = |name: &str| branches.iter().find(|b| b.name == name).cloned();
     assert!(find("topic").unwrap().current);
     assert!(!find("main").unwrap().remote);
@@ -105,23 +111,37 @@ fn creates_and_checks_out_branches_with_remote_ones_tracked() {
     assert!(find("origin/HEAD").is_none());
 
     f.core
-        .checkout_branch(f.project.id, "origin/feature")
+        .checkout_branch_in(f.project.id, None, "origin/feature")
         .unwrap();
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!(status.branch.as_deref(), Some("feature"));
     assert_eq!(status.upstream.as_deref(), Some("origin/feature"));
     assert!(f.work.join("f.txt").exists());
 
-    f.core.checkout_branch(f.project.id, "main").unwrap();
+    f.core
+        .checkout_branch_in(f.project.id, None, "main")
+        .unwrap();
     assert!(!f.work.join("f.txt").exists());
 }
 
 #[test]
 fn rejects_option_like_and_invalid_branch_names() {
     let f = fixture();
-    assert!(f.core.create_branch(f.project.id, "--orphan").is_err());
-    assert!(f.core.create_branch(f.project.id, "bad name").is_err());
-    assert!(f.core.checkout_branch(f.project.id, "nope").is_err());
+    assert!(
+        f.core
+            .create_branch_in(f.project.id, None, "--orphan")
+            .is_err()
+    );
+    assert!(
+        f.core
+            .create_branch_in(f.project.id, None, "bad name")
+            .is_err()
+    );
+    assert!(
+        f.core
+            .checkout_branch_in(f.project.id, None, "nope")
+            .is_err()
+    );
 }
 
 #[test]
@@ -132,14 +152,21 @@ fn blocked_checkout_surfaces_gits_own_message() {
     git(&f.work, &["checkout", "-q", "main"]);
     std::fs::write(f.work.join("a.txt"), "uncommitted\n").unwrap();
 
-    let err = f.core.checkout_branch(f.project.id, "other").unwrap_err();
+    let err = f
+        .core
+        .checkout_branch_in(f.project.id, None, "other")
+        .unwrap_err();
 
     assert!(
         err.to_string().contains("would be overwritten by checkout"),
         "{err}"
     );
     assert_eq!(
-        f.core.git_status(f.project.id).unwrap().branch.as_deref(),
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .branch
+            .as_deref(),
         Some("main")
     );
     assert_eq!(
@@ -152,7 +179,13 @@ fn blocked_checkout_surfaces_gits_own_message() {
 #[test]
 fn chip_counts_match_git_diff_including_untracked_files() {
     let f = fixture();
-    assert_eq!(f.core.git_status(f.project.id).unwrap().changed_files, 0);
+    assert_eq!(
+        f.core
+            .git_status_in(f.project.id, None)
+            .unwrap()
+            .changed_files,
+        0
+    );
 
     // a.txt: +2 −1; staged.txt: +2; untracked: +2 and +1 (binary counts 0).
     std::fs::write(f.work.join("a.txt"), "one\nTWO\nthree\nfour\n").unwrap();
@@ -164,7 +197,7 @@ fn chip_counts_match_git_diff_including_untracked_files() {
     std::fs::write(f.work.join("tail.txt"), "no newline").unwrap();
     std::fs::write(f.work.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
 
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
 
     git(&f.work, &["add", "-N", "."]);
     let numstat = git(&f.work, &["diff", "--numstat", "HEAD"]);
@@ -187,7 +220,7 @@ fn fetch_is_throttled_and_the_clock_is_injectable() {
     git(&f.other, &["push", "-q", "origin", "late"]);
     let remote_branches = |f: &Fixture| {
         f.core
-            .list_branches(f.project.id)
+            .list_branches_in(f.project.id, None)
             .unwrap()
             .iter()
             .any(|b| b.name == "origin/late")
@@ -199,7 +232,7 @@ fn fetch_is_throttled_and_the_clock_is_injectable() {
     git(&f.other, &["push", "-q", "origin", "late:later"]);
     let later_seen = |f: &Fixture| {
         f.core
-            .list_branches(f.project.id)
+            .list_branches_in(f.project.id, None)
             .unwrap()
             .iter()
             .any(|b| b.name == "origin/later")
@@ -222,12 +255,12 @@ fn pull_fast_forwards_when_behind_and_reports_failure_when_diverged() {
     commit_file(&f.other, "b.txt", "b\n");
     git(&f.other, &["push", "-q"]);
     f.core.fetch_project(f.project.id).unwrap();
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!((status.ahead, status.behind), (0, 1));
 
-    f.core.pull(f.project.id).unwrap();
+    f.core.pull_in(f.project.id, None).unwrap();
 
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!((status.ahead, status.behind), (0, 0));
     assert!(f.work.join("b.txt").exists());
 
@@ -238,10 +271,10 @@ fn pull_fast_forwards_when_behind_and_reports_failure_when_diverged() {
     f.core
         .fetch_project_at(f.project.id, Instant::now() + FETCH_INTERVAL)
         .unwrap();
-    let status = f.core.git_status(f.project.id).unwrap();
+    let status = f.core.git_status_in(f.project.id, None).unwrap();
     assert_eq!((status.ahead, status.behind), (1, 1));
 
-    let err = f.core.pull(f.project.id).unwrap_err();
+    let err = f.core.pull_in(f.project.id, None).unwrap_err();
 
     assert!(err.to_string().contains("fast-forward"), "{err}");
     assert!(!f.work.join("c.txt").exists());
@@ -252,7 +285,7 @@ fn picker_is_disabled_with_a_reason_while_a_thread_turn_is_working() {
     let f = fixture();
     assert_eq!(
         f.core
-            .git_status(f.project.id)
+            .git_status_in(f.project.id, None)
             .unwrap()
             .picker_disabled_reason,
         None

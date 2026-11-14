@@ -570,7 +570,7 @@ fn review_state_from(state: Option<&str>) -> Option<ReviewState> {
 
 /// People asked for a review, and the latest verdict of those who gave one.
 fn reviewers_from(v: &serde_json::Value) -> Vec<PullRequestReviewer> {
-    let list = |key: &str| v[key].as_array().cloned().unwrap_or_default();
+    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
     let mut reviewers: Vec<PullRequestReviewer> = Vec::new();
     for review in list("latestReviews") {
         if let Some(state) = review_state_from(review["state"].as_str()) {
@@ -611,7 +611,7 @@ fn labels_from(value: &serde_json::Value) -> Vec<PullRequestLabel> {
 
 /// Comments and the reviews that said something, oldest first, as the web conversation shows them.
 fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
-    let list = |key: &str| v[key].as_array().cloned().unwrap_or_default();
+    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
     let mut entries: Vec<PullRequestComment> = list("comments")
         .iter()
         .map(|c| PullRequestComment {
@@ -886,7 +886,7 @@ fn branch_pull_request_value(
             "pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", &fields,
         ],
     )?)?;
-    let prs = list.as_array().cloned().unwrap_or_default();
+    let prs = list.as_array().map(Vec::as_slice).unwrap_or_default();
     let open = |v: &&serde_json::Value| v["state"].as_str() == Some("OPEN");
     Ok(prs
         .iter()
@@ -1009,7 +1009,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
     let (merge_methods, delete_branch_on_merge) = settings?;
 
     let pull_request = pull_request_from(&v);
-    let list = |key: &str| v[key].as_array().cloned().unwrap_or_default();
+    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
     Ok(PullRequestDetail {
         phase: phase_from(&v),
         body: text(&v["body"]),
@@ -1537,7 +1537,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         )
     });
     let v = parse(&view?)?;
-    let list = |key: &str| v[key].as_array().cloned().unwrap_or_default();
+    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
     Ok(IssueDetail {
         number: v["number"].as_u64().unwrap_or(0) as u32,
         title: text(&v["title"]),

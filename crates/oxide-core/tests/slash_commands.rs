@@ -59,3 +59,31 @@ fn slash_catalog_refresh_is_thread_scoped_and_persisted_outside_the_project() {
         catalog
     );
 }
+
+#[test]
+fn thread_slash_commands_without_thread_uses_project_checkout_and_rejects_missing_project() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    let oxide_home = temp.path().join("oxide");
+    let core = Core::open(&oxide_home).unwrap();
+    let project_id = core.add_project(project.to_str().unwrap()).unwrap().id;
+
+    assert!(
+        core.thread_slash_commands("fake", 9999, None, false)
+            .is_err()
+    );
+    let catalog = core
+        .thread_slash_commands("fake", project_id, None, true)
+        .unwrap();
+    assert!(catalog.iter().any(|c| c.name == "reload-cache"));
+    drop(core);
+
+    let reopened = Core::open(&oxide_home).unwrap();
+    assert_eq!(
+        reopened
+            .thread_slash_commands("fake", project_id, None, false)
+            .unwrap(),
+        catalog
+    );
+}
