@@ -254,17 +254,6 @@ pub struct SequencedThreadEvent {
     pub event: ThreadEvent,
 }
 
-/// A sequenced event on the debug subscriber channel, paired with the raw
-/// Provider payload that produced it.  `raw_payload` is `None` only for
-/// synthesised events (e.g. `ThreadStatusChanged`) that have no backing
-/// Provider event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DebugSequencedThreadEvent {
-    pub seq: u32,
-    pub event: ThreadEvent,
-    pub raw_payload: Option<String>,
-}
-
 pub fn truncate_title(prompt: &str) -> String {
     let first_line = prompt
         .lines()

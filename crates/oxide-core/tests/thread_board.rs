@@ -176,3 +176,78 @@ fn renaming_and_stopping_a_thread_reach_the_board() {
         }
     }
 }
+
+#[test]
+fn subscribing_to_the_board_spawns_no_gh_subprocesses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("my-project");
+    std::fs::create_dir_all(&work).unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.name", "T"],
+        &["config", "user.email", "t@example.com"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&work)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    std::fs::write(work.join("a.txt"), "x\n").unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&work)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .args(["commit", "-qm", "first"])
+            .current_dir(&work)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let fake_gh_dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh"));
+    let gh_dir = tmp.path().join("gh");
+    std::fs::create_dir_all(&gh_dir).unwrap();
+    for name in ["gh", "gh.cmd", "gh.py"] {
+        std::fs::copy(fake_gh_dir.join(name), gh_dir.join(name)).unwrap();
+    }
+    std::fs::write(gh_dir.join("state.json"), r#"{"auth":"ok","prs":{}}"#).unwrap();
+
+    let core = Core::open(tmp.path().join("home")).unwrap();
+    core.set_real_time_ticker(false);
+    core.set_gh_search_path(Some(vec![gh_dir.clone()]));
+    let project = core.add_project(&work.to_string_lossy()).unwrap();
+    let _thread = core
+        .dispatch_thread(oxide_core::DispatchRequest {
+            project_id: project.id,
+            prompt: "Add search".into(),
+            provider: "fake".into(),
+            model: None,
+            effort: None,
+            permission_mode: None,
+            base_branch: Some("main".into()),
+            issue_number: None,
+            issue_title: None,
+            issue_url: None,
+            issue_labels: Vec::new(),
+        })
+        .unwrap();
+
+    let (_snapshot, _rx) = core.subscribe_board(project.id).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let calls_dir = gh_dir.join("calls");
+    let count = std::fs::read_dir(&calls_dir)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(count, 0, "subscribe_board should not spawn gh subprocesses");
+}

@@ -53,8 +53,12 @@ fn fixture() -> Fixture {
     core.set_real_time_ticker(false);
     let project_id = core.add_project(&work.to_string_lossy()).unwrap().id;
     // Checkpoints are tested against the main checkout, so keep Threads out of worktrees here.
-    core.set_project_threads_in_main_checkout(project_id, true)
-        .unwrap();
+    let db = rusqlite::Connection::open(root.join("home/oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET threads_in_main_checkout = 1 WHERE id = ?1",
+        [project_id],
+    )
+    .unwrap();
     Fixture {
         _tmp: tmp,
         core,

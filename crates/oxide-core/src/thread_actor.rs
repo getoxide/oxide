@@ -19,8 +19,7 @@ use crate::project_services::{
 };
 use crate::storage_actor::{NewItem, StorageHandle};
 use crate::thread::{
-    DebugSequencedThreadEvent, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
-    ThreadSnapshot, ThreadStatus, TurnError,
+    SequencedThreadEvent, ThreadCapabilities, ThreadEvent, ThreadSnapshot, ThreadStatus, TurnError,
 };
 use crate::usage::{ActorServices, UsageHub};
 
@@ -48,9 +47,6 @@ pub enum ThreadActorMsg {
     },
     Subscribe {
         reply: mpsc::Sender<(ThreadSnapshot, Receiver<SequencedThreadEvent>)>,
-    },
-    SubscribeDebug {
-        reply: mpsc::Sender<(ThreadSnapshot, Receiver<DebugSequencedThreadEvent>)>,
     },
     Tick,
     Rename {
@@ -181,20 +177,6 @@ impl ThreadActorHandle {
         })
     }
 
-    pub fn subscribe_debug(&self) -> Result<(ThreadSnapshot, Receiver<DebugSequencedThreadEvent>)> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self
-            .sender
-            .send(ThreadActorMsg::SubscribeDebug { reply: reply_tx });
-        reply_rx.recv().map_err(|_| Error::Io {
-            path: std::path::PathBuf::from("subscribe-debug"),
-            source: std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "thread actor disconnected",
-            ),
-        })
-    }
-
     pub fn tick(&self) {
         let _ = self.sender.send(ThreadActorMsg::Tick);
     }
@@ -231,7 +213,7 @@ struct ActorState {
     checkout: PathBuf,
     next_turn_index: u32,
     current_turn: Option<CurrentTurn>,
-    pending_deltas: HashMap<u32, PendingDelta>,
+    pending_deltas: HashMap<u32, String>,
     capabilities: ProviderCapabilities,
     /// The prompt in flight, claimed by the Turn it starts.
     pending_segments: Option<Vec<PromptSegment>>,
@@ -240,7 +222,6 @@ struct ActorState {
     pending_approval_id: Option<String>,
     seq: u32,
     subscribers: Vec<Sender<SequencedThreadEvent>>,
-    debug_subscribers: Vec<Sender<DebugSequencedThreadEvent>>,
     clock: Arc<dyn Clock>,
     activity: Arc<Activity>,
     usage: Arc<UsageHub>,
@@ -268,12 +249,6 @@ struct ActorState {
     provider_exited: bool,
     /// Since when no Turn has been in flight. `None` while a prompt is on its way.
     idle_since: Option<Instant>,
-}
-
-#[derive(Default)]
-struct PendingDelta {
-    text: String,
-    raw_payloads: Vec<String>,
 }
 
 impl ActorState {
@@ -320,7 +295,6 @@ impl ActorState {
             pending_approval_id: None,
             seq: 0,
             subscribers: Vec::new(),
-            debug_subscribers: Vec::new(),
         }
     }
 
@@ -328,38 +302,16 @@ impl ActorState {
         self.current_turn.as_ref().and_then(|t| t.id)
     }
 
-    fn has_any_subscriber(&self) -> bool {
-        !self.subscribers.is_empty() || !self.debug_subscribers.is_empty()
-    }
-
-    fn broadcast_with_raw(&mut self, event: ThreadEvent, raw_payload: Option<String>) {
-        if !self.has_any_subscriber() {
+    fn broadcast(&mut self, event: ThreadEvent) {
+        if self.subscribers.is_empty() {
             return;
         }
         self.seq += 1;
-        let seq = self.seq;
-
-        if !self.subscribers.is_empty() {
-            let seq_evt = SequencedThreadEvent {
-                seq,
-                event: event.clone(),
-            };
-            self.subscribers.retain(|s| s.send(seq_evt.clone()).is_ok());
-        }
-
-        if !self.debug_subscribers.is_empty() {
-            let dbg_evt = DebugSequencedThreadEvent {
-                seq,
-                event,
-                raw_payload,
-            };
-            self.debug_subscribers
-                .retain(|s| s.send(dbg_evt.clone()).is_ok());
-        }
-    }
-
-    fn broadcast(&mut self, event: ThreadEvent) {
-        self.broadcast_with_raw(event, None);
+        let seq_evt = SequencedThreadEvent {
+            seq: self.seq,
+            event,
+        };
+        self.subscribers.retain(|s| s.send(seq_evt.clone()).is_ok());
     }
 
     fn broadcast_status(&mut self, status: ThreadStatus) {
@@ -368,25 +320,14 @@ impl ActorState {
     }
 
     fn flush_pending_deltas(&mut self) {
-        if !self.has_any_subscriber() {
+        if self.subscribers.is_empty() {
             self.pending_deltas.clear();
             return;
         }
         let deltas = std::mem::take(&mut self.pending_deltas);
         for (item_index, delta) in deltas {
-            if !delta.text.is_empty() && !self.dropped_items.contains(&item_index) {
-                let raw_payload = if delta.raw_payloads.is_empty() {
-                    None
-                } else {
-                    serde_json::to_string(&delta.raw_payloads).ok()
-                };
-                self.broadcast_with_raw(
-                    ThreadEvent::ItemDeltaBatch {
-                        item_index,
-                        delta: delta.text,
-                    },
-                    raw_payload,
-                );
+            if !delta.is_empty() && !self.dropped_items.contains(&item_index) {
+                self.broadcast(ThreadEvent::ItemDeltaBatch { item_index, delta });
             }
         }
     }
@@ -398,12 +339,6 @@ fn handle_provider_event(
     storage: &StorageHandle,
     provider: &mut dyn Provider,
 ) {
-    let raw = if !state.debug_subscribers.is_empty() {
-        serde_json::to_string(&evt).ok()
-    } else {
-        None
-    };
-
     // Once Oxide has detached a command and finished the Turn itself, the Provider's own
     // finish (usually `TurnCompleted { Interrupted }`) and any late Item events describe a
     // Turn that is already over. Keep them out of the Transcript and the Thread status.
@@ -467,17 +402,14 @@ fn handle_provider_event(
                 error_message: None,
             });
             let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
-            state.broadcast_with_raw(
-                ThreadEvent::TurnStarted {
-                    turn_index,
-                    prompt,
-                    model,
-                    effort,
-                    permission_mode,
-                    segments,
-                },
-                raw,
-            );
+            state.broadcast(ThreadEvent::TurnStarted {
+                turn_index,
+                prompt,
+                model,
+                effort,
+                permission_mode,
+                segments,
+            });
             if let Some(title) = new_title {
                 state.broadcast(ThreadEvent::ThreadRenamed { title });
             }
@@ -493,25 +425,22 @@ fn handle_provider_event(
                 state.dropped_items.insert(item_index);
                 return;
             }
-            state.broadcast_with_raw(
-                ThreadEvent::ItemStarted {
-                    item_index,
-                    kind,
-                    parent_item_index,
-                    category,
-                },
-                raw,
-            );
+            state.broadcast(ThreadEvent::ItemStarted {
+                item_index,
+                kind,
+                parent_item_index,
+                category,
+            });
         }
         ProviderEvent::ItemDelta { item_index, delta } => {
             if state.dropped_items.contains(&item_index) {
                 return;
             }
-            let pending = state.pending_deltas.entry(item_index).or_default();
-            pending.text.push_str(&delta);
-            if let Some(raw) = raw {
-                pending.raw_payloads.push(raw);
-            }
+            state
+                .pending_deltas
+                .entry(item_index)
+                .or_default()
+                .push_str(&delta);
         }
         ProviderEvent::ItemCompleted {
             item_index,
@@ -537,17 +466,14 @@ fn handle_provider_event(
                     command: command.clone(),
                 });
             }
-            state.broadcast_with_raw(
-                ThreadEvent::ItemCompleted {
-                    item_index,
-                    kind,
-                    content,
-                    parent_item_index,
-                    category,
-                    command,
-                },
-                raw,
-            );
+            state.broadcast(ThreadEvent::ItemCompleted {
+                item_index,
+                kind,
+                content,
+                parent_item_index,
+                category,
+                command,
+            });
         }
         ProviderEvent::CommandRequested {
             item_index,
@@ -556,7 +482,7 @@ fn handle_provider_event(
         ProviderEvent::TurnCompleted {
             turn_index: _,
             status,
-        } => finish_turn(state, storage, status, None, raw),
+        } => finish_turn(state, storage, status, None),
         ProviderEvent::ApprovalRequested {
             id,
             kind,
@@ -574,15 +500,12 @@ fn handle_provider_event(
                 );
             }
             let _ = storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput);
-            state.broadcast_with_raw(
-                ThreadEvent::ApprovalRequested {
-                    id,
-                    kind,
-                    summary,
-                    options,
-                },
-                raw,
-            );
+            state.broadcast(ThreadEvent::ApprovalRequested {
+                id,
+                kind,
+                summary,
+                options,
+            });
             state.broadcast_status(ThreadStatus::NeedsInput);
         }
         ProviderEvent::Error {
@@ -590,7 +513,7 @@ fn handle_provider_event(
             code: _,
             retrying: true,
         } => {
-            state.broadcast_with_raw(ThreadEvent::ProviderRetrying { message }, raw);
+            state.broadcast(ThreadEvent::ProviderRetrying { message });
         }
         ProviderEvent::Error {
             message,
@@ -601,12 +524,12 @@ fn handle_provider_event(
                 turn.error_message = Some(message);
             } else {
                 let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Error);
-                state.broadcast_with_raw(ThreadEvent::Error { message }, raw);
+                state.broadcast(ThreadEvent::Error { message });
                 state.broadcast_status(ThreadStatus::Error);
             }
         }
         ProviderEvent::Exited { code, stderr_tail } => {
-            provider_exited(state, storage, code, stderr_tail, raw)
+            provider_exited(state, storage, code, stderr_tail)
         }
         ProviderEvent::UsageLimits { windows } => {
             state.usage.report(&state.provider_name, &windows);
@@ -616,14 +539,9 @@ fn handle_provider_event(
         }
         ProviderEvent::Unknown { raw: raw_str } => {
             if let Some(turn_id) = state.current_turn_id() {
-                let _ = storage.write_unknown_event(turn_id, raw_str.clone());
+                let _ = storage.write_unknown_event(turn_id, raw_str);
             }
-            let debug_raw = if !state.debug_subscribers.is_empty() {
-                Some(raw_str.clone())
-            } else {
-                None
-            };
-            state.broadcast_with_raw(ThreadEvent::Unknown, debug_raw);
+            state.broadcast(ThreadEvent::Unknown);
         }
     }
 }
@@ -702,7 +620,7 @@ fn handle_command_requested(
             }
             // Stop the Provider's own copy of the command; the Project Service keeps running.
             let _ = provider.interrupt();
-            finish_turn(state, storage, TurnStatus::Completed, None, None);
+            finish_turn(state, storage, TurnStatus::Completed, None);
         }
         Ok(ProjectServiceStartOutcome::Conflict(conflict)) => {
             // A conflict is a normal outcome: the incumbent keeps running and the agent gets a
@@ -733,7 +651,7 @@ fn handle_command_requested(
             }
             // Stop the Provider's own copy too: it would only collide with the incumbent.
             let _ = provider.interrupt();
-            finish_turn(state, storage, TurnStatus::Completed, None, None);
+            finish_turn(state, storage, TurnStatus::Completed, None);
         }
         Err(error) => {
             // A crash during startup is a real Turn error, not something to retry in the CLI.
@@ -741,7 +659,7 @@ fn handle_command_requested(
                 turn.error_message = Some(error.to_string());
             }
             let _ = provider.interrupt();
-            finish_turn(state, storage, TurnStatus::Error, None, None);
+            finish_turn(state, storage, TurnStatus::Error, None);
         }
     }
 }
@@ -774,7 +692,6 @@ fn finish_turn(
     storage: &StorageHandle,
     status: TurnStatus,
     exit_error: Option<TurnError>,
-    raw: Option<String>,
 ) {
     state.flush_pending_deltas();
     resolve_pending_approvals_if_any(state, storage);
@@ -816,14 +733,11 @@ fn finish_turn(
         TurnStatus::Running => ThreadStatus::Working,
     };
     let _ = storage.update_thread_status(state.thread_id, final_thread_status);
-    state.broadcast_with_raw(
-        ThreadEvent::TurnCompleted {
-            turn_index: turn.index,
-            status,
-            error,
-        },
-        raw,
-    );
+    state.broadcast(ThreadEvent::TurnCompleted {
+        turn_index: turn.index,
+        status,
+        error,
+    });
     state.broadcast_status(final_thread_status);
 }
 
@@ -833,7 +747,6 @@ fn provider_exited(
     storage: &StorageHandle,
     code: Option<i32>,
     stderr_tail: Option<String>,
-    raw: Option<String>,
 ) {
     state.provider_live = false;
     state.provider_exited = true;
@@ -849,7 +762,6 @@ fn provider_exited(
             message,
             stderr_tail,
         }),
-        raw,
     );
 }
 
@@ -1112,20 +1024,6 @@ fn run_thread_actor(
                         state.subscribers.push(sub_tx);
                         let _ = reply.send((snapshot, sub_rx));
                     }
-                    ThreadActorMsg::SubscribeDebug { reply } => {
-                        let (sub_tx, sub_rx) = crossbeam_channel::unbounded();
-                        let mut snapshot = match storage.get_snapshot(thread_id, u32::MAX) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                eprintln!("failed to get snapshot for thread {thread_id}: {e}");
-                                continue;
-                            }
-                        };
-                        snapshot.last_seq = state.seq;
-                        snapshot.supported_permission_modes = provider.capabilities().supported_permission_modes;
-                        state.debug_subscribers.push(sub_tx);
-                        let _ = reply.send((snapshot, sub_rx));
-                    }
                     ThreadActorMsg::Tick => {
                         loop {
                             match prx.try_recv() {
@@ -1260,7 +1158,7 @@ fn provider_channel_closed(
     storage: &StorageHandle,
 ) {
     *prx = crossbeam_channel::never();
-    provider_exited(state, storage, None, None, None);
+    provider_exited(state, storage, None, None);
 }
 
 /// The name of the Slash command Oxide itself runs that `text` starts with, if any.

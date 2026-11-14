@@ -156,12 +156,6 @@ fn reveal_in_finder(
     Ok(core.reveal_in_finder(project_id, thread_id)?)
 }
 
-#[tauri::command]
-#[specta::specta]
-fn set_project_hidden(core: State<'_, Arc<Core>>, id: u32, hidden: bool) -> Result<(), AppError> {
-    Ok(core.set_project_hidden(id, hidden)?)
-}
-
 /// Lists the Project in the sidebar, or takes it out (it stays in the Project palette).
 #[tauri::command]
 #[specta::specta]
@@ -567,8 +561,6 @@ pub struct PendingApproval {
 pub struct BoardCard {
     pub thread: Thread,
     pub pending_approvals: Vec<PendingApproval>,
-    /// The Thread's branch's pull request, once GitHub has been asked.
-    pub pull_request: Option<BranchPullRequest>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -578,18 +570,6 @@ pub enum PullRequestPhase {
     Open,
     Merged,
     Closed,
-}
-
-/// A Board Thread's pull request: its state and a tally of its checks.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchPullRequest {
-    pub number: u32,
-    pub url: String,
-    pub phase: PullRequestPhase,
-    pub checks_passed: u32,
-    pub checks_failed: u32,
-    pub checks_pending: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -834,14 +814,6 @@ pub enum ThreadEvent {
 pub struct SequencedThreadEvent {
     pub seq: u32,
     pub event: ThreadEvent,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DebugSequencedThreadEvent {
-    pub seq: u32,
-    pub event: ThreadEvent,
-    pub raw_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -2699,46 +2671,6 @@ async fn dismiss_blind_review_finding(core: State<'_, Arc<Core>>, id: u32) -> Re
     git_blocking(&core, move |core| core.dismiss_blind_review_finding(id)).await
 }
 
-#[tauri::command]
-#[specta::specta]
-fn get_project_setup_command(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-) -> Result<Option<String>, AppError> {
-    Ok(core.project_setup_command(project_id)?)
-}
-
-#[tauri::command]
-#[specta::specta]
-fn set_project_setup_command(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    command: Option<String>,
-) -> Result<(), AppError> {
-    Ok(core.set_project_setup_command(project_id, command.as_deref())?)
-}
-
-/// Whether chat Threads of this Project stay in the main checkout instead of each
-/// getting its own worktree on their first prompt.
-#[tauri::command]
-#[specta::specta]
-fn get_project_threads_in_main_checkout(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-) -> Result<bool, AppError> {
-    Ok(core.project_threads_in_main_checkout(project_id)?)
-}
-
-#[tauri::command]
-#[specta::specta]
-fn set_project_threads_in_main_checkout(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    in_main_checkout: bool,
-) -> Result<(), AppError> {
-    Ok(core.set_project_threads_in_main_checkout(project_id, in_main_checkout)?)
-}
-
 /// Starts a new Thread that continues one whose Provider session is gone.
 #[tauri::command]
 #[specta::specta]
@@ -2949,15 +2881,6 @@ async fn attach_paths(
 #[specta::specta]
 fn discard_attachment(core: State<'_, Arc<Core>>, id: String) {
     core.discard_attachment(&id);
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn attachment_preview(
-    core: State<'_, Arc<Core>>,
-    id: String,
-) -> Result<Option<String>, AppError> {
-    git_blocking(&core, move |core| core.attachment_preview(&id)).await
 }
 
 /// Stores pasted bytes. The bytes travel as the raw request body rather than JSON, and the
@@ -3202,49 +3125,14 @@ fn subscribe_board(
     on_event: tauri::ipc::Channel<BoardEvent>,
 ) -> Result<Vec<BoardCard>, AppError> {
     let (cards, rx) = core.subscribe_board(project_id)?;
-    let core = Arc::clone(&core);
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
-            // "Delete merged branches": a Thread whose pull request just showed up merged has
-            // its worktree and branch removed. Off the feed's thread, because `gh` is slow, and
-            // the removal publishes the Thread again, now without a branch.
-            if let oxide_core::BoardEvent::ThreadChanged(card) = &evt
-                && card.thread.branch.is_some()
-                && card
-                    .pull_request
-                    .as_ref()
-                    .is_some_and(|pr| pr.phase == oxide_core::PullRequestPhase::Merged)
-            {
-                let (core, thread_id) = (Arc::clone(&core), card.thread.id);
-                std::thread::spawn(move || {
-                    let _ = core.clean_up_merged_thread(thread_id);
-                });
-            }
             if on_event.send(convert(&evt)).is_err() {
                 break;
             }
         }
     });
     Ok(convert(&cards))
-}
-
-#[tauri::command]
-#[specta::specta]
-fn subscribe_thread_debug(
-    core: State<'_, Arc<Core>>,
-    thread_id: u32,
-    on_event: tauri::ipc::Channel<DebugSequencedThreadEvent>,
-) -> Result<ThreadSnapshot, AppError> {
-    let (snapshot, rx) = core.subscribe_thread_debug(thread_id)?;
-    std::thread::spawn(move || {
-        while let Ok(evt) = rx.recv() {
-            let app_evt: DebugSequencedThreadEvent = convert(&evt);
-            if on_event.send(app_evt).is_err() {
-                break;
-            }
-        }
-    });
-    Ok(convert(&snapshot))
 }
 
 /// Emitted when ⌘N is pressed (even with the window hidden): start a new Thread.
@@ -3374,7 +3262,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         search_github_repositories,
         clone_github_repository,
         reveal_in_finder,
-        set_project_hidden,
         set_project_open,
         start_project_service,
         list_project_services,
@@ -3392,10 +3279,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_blind_review_findings,
         keep_blind_review_finding,
         dismiss_blind_review_finding,
-        get_project_setup_command,
-        set_project_setup_command,
-        get_project_threads_in_main_checkout,
-        set_project_threads_in_main_checkout,
         continue_thread,
         clear_thread,
         delete_thread,
@@ -3412,13 +3295,11 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_threads,
         send_prompt,
         attach_paths,
-        attachment_preview,
         discard_attachment,
         list_slash_commands,
         interrupt_thread,
         list_turns,
         subscribe_thread,
-        subscribe_thread_debug,
         subscribe_board,
         subscribe_usage_limits,
         review_ledger,

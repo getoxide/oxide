@@ -612,29 +612,6 @@ mod discovery {
     }
 
     #[test]
-    fn hidden_projects_stay_hidden_across_rescans_until_unhidden() {
-        let f = fixture();
-        repo(&f.root.join("keep"));
-        repo(&f.root.join("hide"));
-        let id = f
-            .core
-            .rescan_projects()
-            .unwrap()
-            .iter()
-            .find(|p| p.name == "hide")
-            .unwrap()
-            .id;
-
-        f.core.set_project_hidden(id, true).unwrap();
-        let after = f.core.rescan_projects().unwrap();
-        let hidden: Vec<_> = after.iter().filter(|p| p.hidden).map(|p| &p.name).collect();
-        assert_eq!(hidden, ["hide"]);
-
-        f.core.set_project_hidden(id, false).unwrap();
-        assert!(f.core.list_projects().unwrap().iter().all(|p| !p.hidden));
-    }
-
-    #[test]
     fn a_deleted_folder_shows_as_missing_and_keeps_its_record() {
         let f = fixture();
         repo(&f.root.join("gone"));
