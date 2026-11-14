@@ -133,7 +133,7 @@ impl EventHub {
         receiver
     }
 
-    fn deliver(&self, event: ProjectServiceEvent) {
+    fn deliver(&self, event: &ProjectServiceEvent) {
         let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
         subscribers.retain(|sender| sender.try_send(event.clone()).is_ok());
     }
@@ -201,13 +201,13 @@ impl Service {
             }
         };
         if let Some(event) = event {
-            self.events.deliver(event);
+            self.events.deliver(&event);
         }
     }
 
     fn emit(&self, kind: ProjectServiceEventKind) {
         let summary = self.summary();
-        self.events.deliver(ProjectServiceEvent {
+        self.events.deliver(&ProjectServiceEvent {
             kind,
             project_id: summary.project_id,
             service: summary,
@@ -644,7 +644,7 @@ fn launch(service: &Arc<Service>) -> Result<()> {
         drained,
     );
     let supervised = Arc::clone(service);
-    std::thread::spawn(move || supervise(supervised, child, drain));
+    std::thread::spawn(move || supervise(&supervised, child, &drain));
     Ok(())
 }
 
@@ -688,7 +688,7 @@ fn spawn_reader(
     });
 }
 
-fn supervise(service: Arc<Service>, mut child: Child, drained: Receiver<()>) {
+fn supervise(service: &Arc<Service>, mut child: Child, drained: &Receiver<()>) {
     let status = child.wait().ok();
     let early = {
         let state = service.state.lock().unwrap_or_else(|e| e.into_inner());

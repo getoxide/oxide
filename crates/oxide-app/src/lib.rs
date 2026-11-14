@@ -56,6 +56,7 @@ impl From<ProjectSummary> for Project {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_projects(core: State<'_, Arc<Core>>) -> Result<Vec<Project>, AppError> {
     Ok(core
         .list_projects()?
@@ -149,6 +150,7 @@ async fn clone_github_repository(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn reveal_in_finder(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -160,6 +162,7 @@ fn reveal_in_finder(
 /// Lists the Project in the sidebar, or takes it out (it stays in the Project palette).
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_project_open(core: State<'_, Arc<Core>>, id: u32, open: bool) -> Result<(), AppError> {
     Ok(core.set_project_open(id, open)?)
 }
@@ -271,6 +274,7 @@ pub const SETTINGS_CHANGED: &str = "settings-changed";
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn get_settings(core: State<'_, Arc<Core>>) -> SettingsState {
     (&core.settings()).into()
 }
@@ -874,6 +878,7 @@ async fn complete_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn start_block_terminal(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -894,6 +899,7 @@ fn start_block_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn write_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -904,6 +910,7 @@ fn write_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn resize_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -915,6 +922,7 @@ fn resize_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), AppError> {
     Ok(core.close_terminal(terminal_id)?)
 }
@@ -1004,6 +1012,7 @@ async fn start_project_service(
 /// The running Project Services of a Project.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_project_services(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -1018,6 +1027,7 @@ fn list_project_services(
 /// One Project Service, including one that has stopped or failed.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn project_service(
     core: State<'_, Arc<Core>>,
     id: u32,
@@ -1070,6 +1080,7 @@ async fn clear_project_service_logs(core: State<'_, Arc<Core>>, id: u32) -> Resu
 /// A Project Service's buffered log, then every new line on `on_line`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_project_service_logs(
     core: State<'_, Arc<Core>>,
     id: u32,
@@ -1201,6 +1212,7 @@ pub struct LanguageServer {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn language_tools(core: State<'_, Arc<Core>>) -> Vec<LanguageTool> {
     core.language_tools()
         .into_iter()
@@ -1312,12 +1324,14 @@ async fn find_files(
 }
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_editor_dirty(core: State<'_, Arc<Core>>, id: String, dirty: bool) {
     core.set_editor_dirty(id, dirty);
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn run_terminal_block(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -1329,6 +1343,7 @@ fn run_terminal_block(
 }
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn configure_language_server(
     core: State<'_, Arc<Core>>,
     language: String,
@@ -2382,6 +2397,7 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppErr
 /// loopback `http` addresses are accepted; the webview never opens pages itself.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn open_local_url(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppError> {
     Ok(core.open_local_url(&url)?)
 }
@@ -2558,6 +2574,7 @@ pub struct BlindReviewFinding {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn blind_review_providers(
     core: State<'_, Arc<Core>>,
     current_provider: Option<String>,
@@ -2623,6 +2640,7 @@ async fn dismiss_blind_review_finding(core: State<'_, Arc<Core>>, id: u32) -> Re
 /// Starts a new Thread that continues one whose Provider session is gone.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn continue_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2634,6 +2652,7 @@ fn continue_thread(
 /// uncommitted changes that waits for `discard_changes`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn delete_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2649,12 +2668,14 @@ fn delete_thread(
 /// fresh without creating another Thread.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn clear_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
     Ok(core.clear_thread(thread_id)?.into())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_thread_permission_mode(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2680,6 +2701,7 @@ async fn set_thread_provider(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn rename_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2690,6 +2712,7 @@ fn rename_thread(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn respond_to_approval(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2723,6 +2746,7 @@ async fn detect_provider(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn get_provider_capabilities(
     core: State<'_, Arc<Core>>,
     provider: String,
@@ -2746,12 +2770,14 @@ async fn get_model_catalog(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn get_favourite_models(core: State<'_, Arc<Core>>) -> Result<Vec<String>, AppError> {
     Ok(core.get_favourite_models()?)
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_favourite_models(
     core: State<'_, Arc<Core>>,
     favourites: Vec<String>,
@@ -2775,6 +2801,7 @@ async fn set_thread_model_and_effort(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_threads(core: State<'_, Arc<Core>>, project_id: u32) -> Result<Vec<Thread>, AppError> {
     // Listing a Project's Threads is what opening it does.
     core.open_project(project_id)?;
@@ -2827,6 +2854,7 @@ async fn attach_paths(
 /// Forgets an Attachment the user took out of a prompt before sending it.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn discard_attachment(core: State<'_, Arc<Core>>, id: String) {
     core.discard_attachment(&id);
 }
@@ -2915,6 +2943,7 @@ async fn list_slash_commands(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn interrupt_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
     Ok(core.interrupt_thread(thread_id)?)
 }
@@ -2941,6 +2970,7 @@ async fn list_turns(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_thread(
     core: State<'_, Arc<Core>>,
     app: tauri::AppHandle,
@@ -2948,12 +2978,11 @@ fn subscribe_thread(
     on_event: tauri::ipc::Channel<SequencedThreadEvent>,
 ) -> Result<ThreadSnapshot, AppError> {
     let (snapshot, rx) = core.subscribe_thread(thread_id)?;
-    let app_clone = app.clone();
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
             let app_evt: SequencedThreadEvent = evt.into();
             if let ThreadEvent::ThreadStatusChanged { status } = app_evt.event {
-                let _ = app_clone.emit(
+                let _ = app.emit(
                     THREAD_STATUS_CHANGED,
                     ThreadStatusChangedPayload { thread_id, status },
                 );
@@ -2969,6 +2998,7 @@ fn subscribe_thread(
 /// The Review ledger of a Project: median wait and recent entries.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn review_ledger(core: State<'_, Arc<Core>>, project_id: u32) -> Result<ReviewLedger, AppError> {
     Ok(core.review_ledger(project_id)?.into())
 }
@@ -2976,6 +3006,7 @@ fn review_ledger(core: State<'_, Arc<Core>>, project_id: u32) -> Result<ReviewLe
 /// Removes every entry of the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn clear_review_ledger(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
     Ok(core.clear_review_ledger()?)
 }
@@ -2983,6 +3014,7 @@ fn clear_review_ledger(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
 /// Confirms a candidate follow-up fix in the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn confirm_follow_up(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -2995,6 +3027,7 @@ fn confirm_follow_up(
 /// Dismisses a candidate follow-up fix in the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn dismiss_follow_up(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3007,6 +3040,7 @@ fn dismiss_follow_up(
 /// Recurring Line comments the app offers to turn into a rule for the Project's agent instructions.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn rule_suggestions(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3021,6 +3055,7 @@ fn rule_suggestions(
 /// Dismisses a rule suggestion for good.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn dismiss_rule_suggestion(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3048,6 +3083,7 @@ async fn accept_rule_suggestion(
 /// A Provider's Usage limits now (if Oxide has seen any), then every update on `on_event`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn subscribe_usage_limits(
     core: State<'_, Arc<Core>>,
     provider: String,
@@ -3067,6 +3103,7 @@ fn subscribe_usage_limits(
 /// The Project's Thread Board: its cards now, then every change on `on_event`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_board(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3105,6 +3142,7 @@ pub struct Selection {
 /// The Project and Thread to reopen on launch.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn last_selection(core: State<'_, Arc<Core>>) -> Result<Option<Selection>, AppError> {
     Ok(core.last_selection()?.map(|s| Selection {
         project_id: s.project_id,
@@ -3114,6 +3152,7 @@ fn last_selection(core: State<'_, Arc<Core>>) -> Result<Option<Selection>, AppEr
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn remember_selection(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3125,6 +3164,7 @@ fn remember_selection(
 /// The user confirmed quitting: interrupt every Thread and exit.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn confirm_quit(
     core: State<'_, Arc<Core>>,
     app: tauri::AppHandle,

@@ -1413,12 +1413,12 @@ pub fn clone_repository(gh: &Gh, name_with_owner: &str, dest: &Path) -> Result<(
     Ok(())
 }
 
-pub fn issues_state(gh: &Gh, cwd: &Path) -> Result<IssuesState> {
+pub fn issues_state(gh: &Gh, cwd: &Path) -> IssuesState {
     let (availability, guidance) = gh.availability(cwd);
-    Ok(IssuesState {
+    IssuesState {
         availability,
         guidance,
-    })
+    }
 }
 
 /// Issues of the repository, open or closed, optionally only those the user opened and

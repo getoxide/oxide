@@ -651,7 +651,7 @@ impl CodexAppServer {
     fn send_request(
         &self,
         method: &str,
-        params: serde_json::Value,
+        params: &serde_json::Value,
     ) -> Result<serde_json::Value, ProviderError> {
         self.ensure_running()?;
         let guard = self.inner.lock().unwrap();
@@ -707,7 +707,7 @@ impl CodexAppServer {
             }
         });
 
-        let res = self.send_request("initialize", params)?;
+        let res = self.send_request("initialize", &params)?;
         let user_agent = res.get("userAgent").and_then(|s| s.as_str()).unwrap_or("");
 
         let parsed_ver = CodexProvider::parse_version_string(user_agent);
@@ -734,7 +734,7 @@ impl CodexAppServer {
     }
 
     fn fetch_model_catalog(&self) -> Result<Vec<CodexModelEntry>, ProviderError> {
-        let res = self.send_request("model/list", json!({}))?;
+        let res = self.send_request("model/list", &json!({}))?;
         let data = res
             .get("data")
             .and_then(|d| d.as_array())
@@ -888,7 +888,7 @@ impl CodexAppServer {
         &self,
         thread_id: &str,
         method: &str,
-        params: serde_json::Value,
+        params: &serde_json::Value,
     ) -> Result<(), ProviderError> {
         let response = self.send_request(method, params)?;
         // A caller may interrupt immediately after send_prompt returns, before turn/started.
@@ -927,7 +927,7 @@ impl CodexAppServer {
         if let Some(turn_id) = turn_id {
             self.send_request(
                 "turn/interrupt",
-                json!({
+                &json!({
                     "threadId": thread_id,
                     "turnId": turn_id,
                 }),
@@ -984,7 +984,7 @@ impl CodexProvider {
     fn request_usage_limits(&self, tx: Sender<ProviderEvent>) {
         let app_server = self.app_server.clone();
         std::thread::spawn(move || {
-            if let Ok(res) = app_server.send_request("account/rateLimits/read", json!({}))
+            if let Ok(res) = app_server.send_request("account/rateLimits/read", &json!({}))
                 && let Some(event) = parse_rate_limits(&res)
             {
                 let _ = tx.send(event);
@@ -1065,7 +1065,7 @@ impl CodexProvider {
     ) -> Result<Vec<serde_json::Value>, ProviderError> {
         let result = self.app_server.send_request(
             "skills/list",
-            json!({"cwds": [working_dir.to_string_lossy()]}),
+            &json!({"cwds": [working_dir.to_string_lossy()]}),
         )?;
         let skills: Vec<_> = result["data"]
             .as_array()
@@ -1246,7 +1246,7 @@ impl Provider for CodexProvider {
         *self.active_effort.lock().unwrap() = context.effort.clone();
         *self.working_dir.lock().unwrap() = context.working_dir.clone();
 
-        let res = self.app_server.send_request("thread/start", params)?;
+        let res = self.app_server.send_request("thread/start", &params)?;
         let tid = res
             .get("thread")
             .and_then(|t| t.get("id"))
@@ -1293,7 +1293,7 @@ impl Provider for CodexProvider {
         *self.active_effort.lock().unwrap() = context.effort.clone();
         *self.working_dir.lock().unwrap() = context.working_dir.clone();
 
-        let _res = self.app_server.send_request("thread/resume", params)?;
+        let _res = self.app_server.send_request("thread/resume", &params)?;
 
         *self.thread_id.lock().unwrap() = Some(session_id.to_string());
 
@@ -1339,7 +1339,7 @@ impl Provider for CodexProvider {
         if prompt.trim() == "/compact" {
             let result = self
                 .app_server
-                .send_request("thread/compact/start", json!({"threadId": tid}))
+                .send_request("thread/compact/start", &json!({"threadId": tid}))
                 .map(|_| ());
             return self.finish_native_request(&tid, turn_index, result);
         }
@@ -1355,7 +1355,7 @@ impl Provider for CodexProvider {
             let result = self.app_server.start_turn(
                 &tid,
                 "review/start",
-                json!({"threadId": tid, "target": target, "delivery": "inline"}),
+                &json!({"threadId": tid, "target": target, "delivery": "inline"}),
             );
             return self.finish_native_request(&tid, turn_index, result);
         }
@@ -1410,7 +1410,7 @@ impl Provider for CodexProvider {
             params["effort"] = json!(eff);
         }
 
-        self.app_server.start_turn(&tid, "turn/start", params)?;
+        self.app_server.start_turn(&tid, "turn/start", &params)?;
         Ok(())
     }
 

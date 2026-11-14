@@ -796,7 +796,7 @@ struct PendingCommand {
 
 /// Completes every command still waiting for a `tool_result`, with the outcome left unknown.
 fn flush_pending_commands(
-    tx: &crossbeam_channel::Sender<ProviderEvent>,
+    tx: &Sender<ProviderEvent>,
     pending: &mut HashMap<String, PendingCommand>,
 ) {
     let mut remaining: Vec<_> = pending.drain().map(|(_, item)| item).collect();

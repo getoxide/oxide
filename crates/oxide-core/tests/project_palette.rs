@@ -67,7 +67,7 @@ fn make_repo(dir: &Path) {
     git(dir, &["commit", "-qm", "Seed"]);
 }
 
-fn install_gh(f: &Fixture, repos: serde_json::Value) {
+fn install_gh(f: &Fixture, repos: &serde_json::Value) {
     let bin = f.root().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for name in ["gh", "gh.py", "gh.cmd"] {
@@ -179,7 +179,7 @@ fn github_search_filters_repositories_through_gh_and_clones_the_pick() {
     make_repo(&origin);
     install_gh(
         &f,
-        serde_json::json!([
+        &serde_json::json!([
             {"nameWithOwner": "me/gadgets", "description": "Tiny tools", "isPrivate": false,
              "source": origin.to_str().unwrap()},
             {"nameWithOwner": "me/other", "description": "", "isPrivate": true, "source": "/x"},

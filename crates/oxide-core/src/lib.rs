@@ -183,8 +183,8 @@ pub struct Core {
     ledger: Arc<review_ledger::LedgerStore>,
     usage: Arc<usage::UsageHub>,
     usage_poller: Mutex<Option<usage_poll::PollerHandle>>,
-    model_catalogs: Mutex<HashMap<String, Vec<oxide_provider::ModelInfo>>>,
-    slash_catalogs: Mutex<HashMap<String, Vec<oxide_provider::SlashCommandInfo>>>,
+    model_catalogs: Mutex<HashMap<String, Vec<ModelInfo>>>,
+    slash_catalogs: Mutex<HashMap<String, Vec<SlashCommandInfo>>>,
     detections: detection_cache::DetectionCache,
 }
 
@@ -450,7 +450,7 @@ impl Core {
         let found = discovery::find_repositories(&roots);
         {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             for path in &found {
                 let name = path
                     .file_name()
@@ -621,7 +621,14 @@ impl Core {
         let model = model.or(def_model);
         let effort = effort.or(def_effort);
         let permission_mode = permission_mode.into().unwrap_or(def_perm);
-        self.insert_thread(project_id, provider, model, effort, permission_mode, None)
+        self.insert_thread(
+            project_id,
+            provider,
+            model.as_deref(),
+            effort.as_deref(),
+            permission_mode,
+            None,
+        )
     }
 
     /// Starts a new Thread that continues one whose Provider session is gone: same Project,
@@ -643,8 +650,8 @@ impl Core {
         let thread = self.insert_thread(
             t.project_id,
             &t.provider,
-            t.model.clone(),
-            t.effort.clone(),
+            t.model.as_deref(),
+            t.effort.as_deref(),
             t.permission_mode,
             Some(thread_id),
         )?;
@@ -658,8 +665,8 @@ impl Core {
         &self,
         project_id: u32,
         provider: &str,
-        model: Option<String>,
-        effort: Option<String>,
+        model: Option<&str>,
+        effort: Option<&str>,
         permission_mode: PermissionMode,
         continued_from: Option<u32>,
     ) -> Result<ThreadSummary> {
@@ -704,10 +711,7 @@ impl Core {
         Ok(thread)
     }
 
-    fn collect_thread_attachments(
-        db: &rusqlite::Connection,
-        thread_id: u32,
-    ) -> Result<Vec<PathBuf>> {
+    fn collect_thread_attachments(db: &Connection, thread_id: u32) -> Result<Vec<PathBuf>> {
         let mut stmt =
             db.prepare("SELECT segments, attachments FROM turns WHERE thread_id = ?1")?;
         let attachments = stmt
@@ -755,7 +759,7 @@ impl Core {
         let (summary, attachments) = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             Self::clear_thread_history_tx(&tx, thread_id)?;
             tx.execute(
                 "UPDATE threads
@@ -799,7 +803,7 @@ impl Core {
                 |r| r.get(0),
             )?;
             let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             Self::clear_thread_history_tx(&tx, thread_id)?;
             // A Blind review's findings die with the review or with the change it reviewed.
             tx.execute(
@@ -849,16 +853,16 @@ impl Core {
         actor.respond_to_approval(approval_id.to_string(), decision)
     }
 
-    pub fn detect_provider(&self, provider: &str) -> oxide_provider::Detection {
+    pub fn detect_provider(&self, provider: &str) -> Detection {
         self.detections
             .get_or_detect(provider, || self.detect_provider_uncached(provider))
     }
 
-    fn detect_provider_uncached(&self, provider: &str) -> oxide_provider::Detection {
+    fn detect_provider_uncached(&self, provider: &str) -> Detection {
         let det = match provider {
             "claude" => oxide_provider::claude::ClaudeCodeProvider::new()
                 .detect()
-                .unwrap_or(oxide_provider::Detection {
+                .unwrap_or(Detection {
                     available: false,
                     installed: false,
                     version: None,
@@ -867,7 +871,7 @@ impl Core {
                 }),
             "codex" => oxide_provider::codex::CodexProvider::new()
                 .detect()
-                .unwrap_or(oxide_provider::Detection {
+                .unwrap_or(Detection {
                     available: false,
                     installed: false,
                     version: None,
@@ -878,7 +882,7 @@ impl Core {
                 let (det, models) = oxide_provider::agy::AgyProvider::new()
                     .detect_with_models()
                     .unwrap_or((
-                        oxide_provider::Detection {
+                        Detection {
                             available: false,
                             installed: false,
                             version: None,
@@ -895,14 +899,14 @@ impl Core {
                 }
                 det
             }
-            "fake" => oxide_provider::Detection {
+            "fake" => Detection {
                 available: true,
                 installed: true,
                 version: Some("0.1.0-fake".into()),
                 authenticated: true,
                 warning: None,
             },
-            _ => oxide_provider::Detection {
+            _ => Detection {
                 available: false,
                 installed: false,
                 version: None,
@@ -916,10 +920,7 @@ impl Core {
         det
     }
 
-    pub fn get_provider_capabilities(
-        &self,
-        provider: &str,
-    ) -> oxide_provider::ProviderCapabilities {
+    pub fn get_provider_capabilities(&self, provider: &str) -> ProviderCapabilities {
         match provider {
             "claude" => {
                 let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
@@ -928,7 +929,7 @@ impl Core {
             }
             "codex" => oxide_provider::codex::CodexProvider::new().capabilities(),
             "agy" | "antigravity" => oxide_provider::agy::AgyProvider::new().capabilities(),
-            _ => oxide_provider::ProviderCapabilities {
+            _ => ProviderCapabilities {
                 supported_permission_modes: vec![
                     PermissionMode::Ask,
                     PermissionMode::AutoEdit,
@@ -943,11 +944,7 @@ impl Core {
         }
     }
 
-    pub fn get_model_catalog(
-        &self,
-        provider: &str,
-        refresh: bool,
-    ) -> Result<Vec<oxide_provider::ModelInfo>> {
+    pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
         if !refresh {
             let cache = self.model_catalogs.lock().unwrap();
             if let Some(models) = cache.get(provider) {
@@ -1128,7 +1125,7 @@ impl Core {
             usage::ActorServices {
                 activity: Arc::clone(&self.activity),
                 usage: Arc::clone(&self.usage),
-                provider: snapshot.thread.provider.clone(),
+                provider: snapshot.thread.provider,
                 project_id,
                 project_services: Arc::clone(&self.project_services),
                 processes: Arc::clone(&self.processes),
@@ -1169,7 +1166,7 @@ impl Core {
         provider: &str,
         project_id: u32,
         thread_id: Option<u32>,
-    ) -> Result<Vec<oxide_provider::SlashCommandInfo>> {
+    ) -> Result<Vec<SlashCommandInfo>> {
         self.thread_slash_commands(provider, project_id, thread_id, true)
     }
 
@@ -1180,7 +1177,7 @@ impl Core {
         project_id: u32,
         thread_id: Option<u32>,
         refresh: bool,
-    ) -> Result<Vec<oxide_provider::SlashCommandInfo>> {
+    ) -> Result<Vec<SlashCommandInfo>> {
         let working_dir = PathBuf::from(self.checkout_path(project_id, thread_id)?);
         let customizations = self.settings().settings.claude_customizations;
 
@@ -1198,7 +1195,7 @@ impl Core {
                     slash_catalog::merge(
                         catalog
                             .into_iter()
-                            .filter(|c| c.route != oxide_provider::SlashRoute::Oxide)
+                            .filter(|c| c.route != SlashRoute::Oxide)
                             .collect(),
                     )
                 })
@@ -1882,7 +1879,10 @@ impl Core {
 
     /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
     pub fn issues_state(&self, project_id: u32) -> Result<IssuesState> {
-        github::issues_state(&self.gh, &self.main_checkout(project_id)?)
+        Ok(github::issues_state(
+            &self.gh,
+            &self.main_checkout(project_id)?,
+        ))
     }
 
     /// Open or closed issues of the repository, optionally only the user's own and

@@ -84,7 +84,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn set_gh(&self, state: serde_json::Value) {
+    fn set_gh(&self, state: &serde_json::Value) {
         std::fs::write(self.gh_dir.join("state.json"), state.to_string()).unwrap();
     }
 
@@ -171,7 +171,7 @@ fn fixture() -> Fixture {
     }
 }
 
-fn install_gh(f: &Fixture, state: serde_json::Value) {
+fn install_gh(f: &Fixture, state: &serde_json::Value) {
     let names = if cfg!(windows) {
         vec!["gh", "gh.py", "gh.cmd"]
     } else {
@@ -205,7 +205,7 @@ fn pr_base_branches_come_from_github_and_request_all_pages() {
         .unwrap();
     let mut state = ok_state();
     state["branches"] = serde_json::json!(["release/next", "main", "develop", "main"]);
-    install_gh(&f, state);
+    install_gh(&f, &state);
     assert_eq!(
         f.core.pull_request_base_branches(f.project.id).unwrap(),
         vec!["develop", "main", "release/next"]
@@ -225,7 +225,7 @@ fn pr_base_branch_errors_are_not_reported_as_an_empty_list() {
     let f = fixture();
     let mut state = ok_state();
     state["branches_error"] = serde_json::json!("HTTP 403: Resource not accessible");
-    install_gh(&f, state);
+    install_gh(&f, &state);
     assert!(
         f.core
             .pull_request_base_branches(f.project.id)
@@ -254,7 +254,7 @@ fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
 #[test]
 fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
     let f = fixture();
-    install_gh(&f, serde_json::json!({"auth": "logged_out"}));
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
     let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::LoggedOut);
     assert!(state.guidance.unwrap().contains("gh auth login"));
@@ -275,7 +275,7 @@ fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
 #[test]
 fn gh_is_available_through_a_bat_shim() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     std::fs::rename(f.gh_dir.join("gh.cmd"), f.gh_dir.join("gh.bat")).unwrap();
     let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Ready);
@@ -292,7 +292,7 @@ fn gh_is_available_through_a_bat_shim() {
 #[test]
 fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     let extensions = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
     let first = extensions
         .split(';')
@@ -324,7 +324,7 @@ fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
 #[test]
 fn reloading_the_surface_reuses_auth_status_and_default_branch() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "feature")
         .unwrap();
@@ -349,7 +349,7 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
 #[test]
 fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "add-things")
         .unwrap();
@@ -368,7 +368,7 @@ fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
 #[test]
 fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "feature")
         .unwrap();
@@ -414,7 +414,7 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
 #[test]
 fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "feature")
         .unwrap();
@@ -439,7 +439,7 @@ fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
 #[test]
 fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "feature")
         .unwrap();
@@ -467,7 +467,7 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
         .unwrap_err();
     assert!(err.to_string().contains("Install"), "{err}");
 
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     let err = f
         .core
         .create_pull_request_in(f.project.id, None, &input("T", "main", false))
@@ -488,7 +488,7 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
 #[test]
 fn gh_is_only_called_when_asked_so_there_is_no_polling() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .create_branch_in(f.project.id, None, "feature")
         .unwrap();
@@ -565,7 +565,7 @@ fn list_shows_open_pull_requests_mine_or_all_and_searches_them() {
     merged["state"] = "MERGED".into();
     install_gh(
         &f,
-        state_with_prs(&[
+        &state_with_prs(&[
             pr_json(1, "Fix login", "fix-login", "me"),
             pr_json(2, "Add search", "add-search", "other"),
             merged,
@@ -599,7 +599,7 @@ fn list_without_gh_explains_how_to_get_it() {
 #[test]
 fn detail_has_description_checks_comments_and_changed_files() {
     let f = fixture();
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
 
     assert_eq!(detail.pull_request.title, "Add b");
@@ -650,7 +650,7 @@ fn review_threads_carry_their_lines_authors_and_state() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
     state["review_threads"] = review_threads();
-    install_gh(&f, state);
+    install_gh(&f, &state);
 
     let threads = f.core.pull_request_review_threads(f.project.id, 5).unwrap();
 
@@ -695,7 +695,7 @@ fn review_thread_errors_are_reported_as_github_errors() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
     state["review_threads_error"] = "GraphQL: Resource not accessible".into();
-    install_gh(&f, state);
+    install_gh(&f, &state);
 
     let err = f
         .core
@@ -712,7 +712,7 @@ fn detail_offers_only_the_merge_methods_the_repository_allows() {
         "mergeCommitAllowed": false, "squashMergeAllowed": true,
         "rebaseMergeAllowed": false, "deleteBranchOnMerge": true,
     });
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
     assert_eq!(detail.merge_methods, [oxide_core::MergeMethod::Squash]);
     assert!(detail.delete_branch_on_merge);
@@ -721,7 +721,7 @@ fn detail_offers_only_the_merge_methods_the_repository_allows() {
 #[test]
 fn comment_sends_the_body_and_shows_up_on_the_next_view() {
     let f = fixture();
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
     f.core
         .comment_pull_request(f.project.id, 5, "  Thanks!  ")
         .unwrap();
@@ -746,7 +746,7 @@ fn merge_uses_an_allowed_method_and_can_delete_the_branch() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
     state["repo"] = serde_json::json!({"rebaseMergeAllowed": false});
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let merge_calls = || -> Vec<Vec<String>> {
         f.gh_calls()
             .into_iter()
@@ -780,7 +780,7 @@ fn merge_uses_an_allowed_method_and_can_delete_the_branch() {
 #[test]
 fn closing_a_pull_request_leaves_the_open_list_without_merging() {
     let f = fixture();
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
     f.core.close_pull_request(f.project.id, 5).unwrap();
     let closes: Vec<_> = f
         .gh_calls()
@@ -822,7 +822,7 @@ fn detail_reports_who_reviews_who_is_assigned_and_whether_it_can_merge() {
     let mut state = state_with_prs(&[pr]);
     state["viewer"] = "lorenzo".into();
     state["default_merge"] = "SQUASH".into();
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
 
     assert_eq!(detail.pull_request.created_at, "2026-05-01T09:00:00Z");
@@ -880,7 +880,7 @@ fn checks_carry_the_link_to_their_run() {
         {"__typename": "StatusContext", "context": "ci/odd", "state": "FAILURE",
          "targetUrl": "javascript:alert(1)"},
     ]);
-    install_gh(&f, state_with_prs(&[pr]));
+    install_gh(&f, &state_with_prs(&[pr]));
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
     let urls: Vec<Option<&str>> = detail.checks.iter().map(|c| c.url.as_deref()).collect();
     assert_eq!(
@@ -900,7 +900,7 @@ fn the_default_merge_method_is_github_s_pick_only_when_the_repository_allows_it(
     let mut state = state_with_prs(&[detailed_pr()]);
     state["default_merge"] = "SQUASH".into();
     state["repo"] = serde_json::json!({"squashMergeAllowed": false});
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
     assert_eq!(detail.default_merge_method, None);
     assert!(detail.merge_methods.contains(&MergeMethod::Merge));
@@ -911,7 +911,7 @@ fn a_draft_is_marked_ready_and_back_through_gh() {
     let f = fixture();
     let mut pr = detailed_pr();
     pr["isDraft"] = true.into();
-    install_gh(&f, state_with_prs(&[pr]));
+    install_gh(&f, &state_with_prs(&[pr]));
     f.core
         .set_pull_request_draft(f.project.id, 5, false)
         .unwrap();
@@ -942,7 +942,7 @@ fn settings_edit_reviewers_assignees_and_labels_in_one_call() {
         "assignableUsers": [{"login": "Zed"}, {"login": "ana"}],
         "labels": [{"name": "bug", "color": "d73a4a"}],
     });
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let candidates = f.core.pull_request_candidates(f.project.id).unwrap();
     assert_eq!(candidates.users, ["ana", "Zed"]);
     assert_eq!(candidates.labels[0].name, "bug");
@@ -992,7 +992,7 @@ fn settings_edit_reviewers_assignees_and_labels_in_one_call() {
 #[test]
 fn only_https_links_reach_the_browser() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     f.core
         .open_link("https://github.com/fake/repo/actions/runs/1")
         .unwrap();
@@ -1014,7 +1014,7 @@ fn publish_pr_branch(f: &Fixture, file: &str, content: &str) {
 fn checkout_switches_the_main_checkout_to_the_pull_requests_branch() {
     let f = fixture();
     publish_pr_branch(&f, "b.txt", "b\n");
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
 
     f.core
         .checkout_pull_request_in(f.project.id, None, 5)
@@ -1029,7 +1029,7 @@ fn checkout_switches_the_main_checkout_to_the_pull_requests_branch() {
 fn checkout_shows_gits_refusal() {
     let f = fixture();
     publish_pr_branch(&f, "a.txt", "changed upstream\n");
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
 
     // An uncommitted edit to the same file: Git refuses to overwrite it.
     std::fs::write(f.work.join("a.txt"), "local edit\n").unwrap();
@@ -1054,7 +1054,7 @@ fn list_and_search_issues_against_fake_gh() {
     let f = fixture();
     install_gh(
         &f,
-        serde_json::json!({
+        &serde_json::json!({
             "auth": "ok",
             "default_branch": "main",
             "next_number": 3,
@@ -1104,7 +1104,7 @@ fn view_issue_detail_with_comments() {
     let f = fixture();
     install_gh(
         &f,
-        serde_json::json!({
+        &serde_json::json!({
             "auth": "ok",
             "default_branch": "main",
             "next_number": 3,
@@ -1146,7 +1146,7 @@ fn create_comment_and_close_issue_calling_gh() {
     let f = fixture();
     install_gh(
         &f,
-        serde_json::json!({
+        &serde_json::json!({
             "auth": "ok",
             "default_branch": "main",
             "next_number": 10,
@@ -1224,7 +1224,7 @@ fn edit_issue_changes_text_assignees_and_labels() {
     let f = fixture();
     install_gh(
         &f,
-        serde_json::json!({
+        &serde_json::json!({
             "auth": "ok",
             "default_branch": "main",
             "viewer": "me",
@@ -1305,7 +1305,7 @@ fn issues_state_reports_guidance_when_missing_or_logged_out() {
     assert_eq!(missing.availability, GithubAvailability::Missing);
     assert!(missing.guidance.as_ref().unwrap().contains("Install"));
 
-    install_gh(&f, serde_json::json!({"auth": "logged_out"}));
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
     let logged_out = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(logged_out.availability, GithubAvailability::LoggedOut);
     assert!(
@@ -1316,7 +1316,7 @@ fn issues_state_reports_guidance_when_missing_or_logged_out() {
             .contains("gh auth login")
     );
 
-    f.set_gh(serde_json::json!({"auth": "ok", "issues": []}));
+    f.set_gh(&serde_json::json!({"auth": "ok", "issues": []}));
     let ready = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(ready.availability, GithubAvailability::Ready);
     assert!(ready.guidance.is_none());
@@ -1325,7 +1325,7 @@ fn issues_state_reports_guidance_when_missing_or_logged_out() {
 #[test]
 fn issue_templates_are_read_from_github_and_a_missing_directory_means_none() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     assert!(f.core.issue_templates(f.project.id).unwrap().is_empty());
 
     let mut state = ok_state();
@@ -1334,7 +1334,7 @@ fn issue_templates_are_read_from_github_and_a_missing_directory_means_none() {
         "config.yml": "blank_issues_enabled: false\n",
         "notes.txt": "not a template",
     });
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let files = f.core.issue_templates(f.project.id).unwrap();
     let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
     assert_eq!(names, ["bug_report.yml", "config.yml"]);
@@ -1345,7 +1345,7 @@ fn issue_templates_are_read_from_github_and_a_missing_directory_means_none() {
 #[test]
 fn a_pull_request_from_an_issue_threads_branch_closes_the_issue() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     let thread = f
         .core
         .dispatch_thread(oxide_core::DispatchRequest {
@@ -1390,7 +1390,7 @@ fn a_pull_request_from_an_issue_threads_branch_closes_the_issue() {
 #[test]
 fn closes_is_not_repeated_when_the_body_already_has_it() {
     let f = fixture();
-    install_gh(&f, ok_state());
+    install_gh(&f, &ok_state());
     let thread = f
         .core
         .dispatch_thread(oxide_core::DispatchRequest {
@@ -1440,7 +1440,7 @@ fn checks_know_whether_branch_protection_requires_them() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
     state["required_checks"] = serde_json::json!(["rust", "web"]);
-    install_gh(&f, state);
+    install_gh(&f, &state);
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
     let required: Vec<(&str, bool)> = detail
         .checks
@@ -1462,7 +1462,7 @@ fn checks_know_whether_branch_protection_requires_them() {
 fn checkout_in_a_thread_switches_only_that_threads_worktree() {
     let f = fixture();
     publish_pr_branch(&f, "b.txt", "b\n");
-    install_gh(&f, state_with_prs(&[detailed_pr()]));
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
     let thread = f
         .core
         .dispatch_thread(oxide_core::DispatchRequest {
@@ -1505,7 +1505,7 @@ fn checkout_in_a_thread_switches_only_that_threads_worktree() {
 /// A dispatched Thread whose Turn has settled, with its pull request recorded in the fake `gh`
 /// as merged at `merged_oid` (its branch tip when `None`).
 fn merged_thread(f: &Fixture, merged_oid: Option<&str>) -> oxide_core::ThreadSummary {
-    install_gh(f, ok_state());
+    install_gh(f, &ok_state());
     let thread = f
         .core
         .dispatch_thread(oxide_core::DispatchRequest {
@@ -1534,7 +1534,7 @@ fn merged_thread(f: &Fixture, merged_oid: Option<&str>) -> oxide_core::ThreadSum
         Path::new(&thread.worktree_path.clone().unwrap()),
         &["rev-parse", "HEAD"],
     );
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok", "default_branch": "main", "next_number": 8,
         "prs": {"7": {
             "number": 7, "title": "T", "url": "https://example.test/pull/7", "state": "MERGED",

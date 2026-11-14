@@ -56,7 +56,7 @@ fn scenario_prompt_streams_events_and_persists_turn_and_items() {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
-                kind: oxide_provider::ItemKind::AgentMessage,
+                kind: ItemKind::AgentMessage,
             });
             let _ = s.send(ProviderEvent::ItemDelta {
                 item_index: 0,
@@ -70,13 +70,13 @@ fn scenario_prompt_streams_events_and_persists_turn_and_items() {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
-                kind: oxide_provider::ItemKind::AgentMessage,
+                kind: ItemKind::AgentMessage,
                 content: "Hello world!".into(),
                 command: None,
             });
             let _ = s.send(ProviderEvent::TurnCompleted {
                 turn_index: 0,
-                status: oxide_provider::TurnStatus::Completed,
+                status: TurnStatus::Completed,
             });
         });
     });
@@ -157,19 +157,19 @@ fn resubscribing_after_simulated_gap_returns_consistent_snapshot() {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
-                kind: oxide_provider::ItemKind::AgentMessage,
+                kind: ItemKind::AgentMessage,
             });
             let _ = s.send(ProviderEvent::ItemCompleted {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
-                kind: oxide_provider::ItemKind::AgentMessage,
+                kind: ItemKind::AgentMessage,
                 content: "First answer".into(),
                 command: None,
             });
             let _ = s.send(ProviderEvent::TurnCompleted {
                 turn_index: 0,
-                status: oxide_provider::TurnStatus::Completed,
+                status: TurnStatus::Completed,
             });
         });
     });
@@ -238,7 +238,7 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
             parent_item_index: None,
             category: None,
             item_index: 0,
-            kind: oxide_provider::ItemKind::AgentMessage,
+            kind: ItemKind::AgentMessage,
         })
         .unwrap();
 
@@ -312,7 +312,7 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
             parent_item_index: None,
             category: None,
             item_index: 0,
-            kind: oxide_provider::ItemKind::AgentMessage,
+            kind: ItemKind::AgentMessage,
             content: "foobarbaz".into(),
             command: None,
         })
@@ -320,7 +320,7 @@ fn delta_batching_tested_with_injected_time_never_sleeps() {
     sender
         .send(ProviderEvent::TurnCompleted {
             turn_index: 0,
-            status: oxide_provider::TurnStatus::Completed,
+            status: TurnStatus::Completed,
         })
         .unwrap();
 
@@ -680,7 +680,7 @@ fn core_with_project() -> (tempfile::TempDir, Core, u32) {
     (dir, core, id)
 }
 
-fn wait_turn_completed(rx: &crossbeam_channel::Receiver<oxide_core::SequencedThreadEvent>) {
+fn wait_turn_completed(rx: &crossbeam_channel::Receiver<SequencedThreadEvent>) {
     while let Ok(e) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
         if matches!(e.event, ThreadEvent::TurnCompleted { .. }) {
             return;
@@ -817,7 +817,7 @@ fn thread_with_answering_provider(core: &Core, dir: &std::path::Path) -> oxide_c
         });
         let _ = sender.send(ProviderEvent::ItemCompleted {
             item_index: 0,
-            kind: oxide_provider::ItemKind::AgentMessage,
+            kind: ItemKind::AgentMessage,
             content: format!("answer to {prompt}"),
             parent_item_index: None,
             category: None,
@@ -825,7 +825,7 @@ fn thread_with_answering_provider(core: &Core, dir: &std::path::Path) -> oxide_c
         });
         let _ = sender.send(ProviderEvent::TurnCompleted {
             turn_index: 0,
-            status: oxide_provider::TurnStatus::Completed,
+            status: TurnStatus::Completed,
         });
     });
     let thread = core
@@ -1046,13 +1046,13 @@ fn command_evidence_is_stored_and_broadcast_with_its_item() {
                 let index = index as u32;
                 let _ = s.send(ProviderEvent::ItemStarted {
                     item_index: index,
-                    kind: oxide_provider::ItemKind::ToolCall,
+                    kind: ItemKind::ToolCall,
                     parent_item_index: None,
                     category: Some(oxide_provider::ActivityCategory::Run),
                 });
                 let _ = s.send(ProviderEvent::ItemCompleted {
                     item_index: index,
-                    kind: oxide_provider::ItemKind::ToolCall,
+                    kind: ItemKind::ToolCall,
                     content: command.line.clone().unwrap_or_default(),
                     parent_item_index: None,
                     category: Some(oxide_provider::ActivityCategory::Run),

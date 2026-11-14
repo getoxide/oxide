@@ -62,6 +62,7 @@ pub struct LanguageServerSummary {
     pub initialization_options: String,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn failure(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
 }

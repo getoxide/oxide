@@ -42,7 +42,7 @@ impl PermissionMode {
 impl std::str::FromStr for PermissionMode {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ask" => Ok(PermissionMode::Ask),
             "auto-edit" => Ok(PermissionMode::AutoEdit),
@@ -71,7 +71,7 @@ impl ApprovalDecision {
 impl std::str::FromStr for ApprovalDecision {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "allow" => Ok(ApprovalDecision::Allow),
             "deny" => Ok(ApprovalDecision::Deny),
@@ -105,7 +105,7 @@ impl ApprovalKind {
 impl std::str::FromStr for ApprovalKind {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "command" => Ok(ApprovalKind::Command),
             "file-change" | "file_change" => Ok(ApprovalKind::FileChange),
@@ -147,7 +147,7 @@ impl ItemKind {
 impl std::str::FromStr for ItemKind {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "agent_message" => Ok(ItemKind::AgentMessage),
             "reasoning" => Ok(ItemKind::Reasoning),
@@ -188,7 +188,7 @@ impl ActivityCategory {
 impl std::str::FromStr for ActivityCategory {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "explore" => Ok(ActivityCategory::Explore),
             "edit" => Ok(ActivityCategory::Edit),
@@ -223,7 +223,7 @@ impl CommandOutcome {
 impl std::str::FromStr for CommandOutcome {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "succeeded" => Ok(CommandOutcome::Succeeded),
             "failed" => Ok(CommandOutcome::Failed),
@@ -284,7 +284,7 @@ impl TurnStatus {
 impl std::str::FromStr for TurnStatus {
     type Err = ();
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "running" => Ok(TurnStatus::Running),
             "completed" => Ok(TurnStatus::Completed),
@@ -840,7 +840,7 @@ pub struct FakeProvider {
     capabilities: ProviderCapabilities,
     detection: Detection,
     event_sender: Arc<Mutex<Option<crossbeam_channel::Sender<ProviderEvent>>>>,
-    event_receiver: Arc<Mutex<crossbeam_channel::Receiver<ProviderEvent>>>,
+    event_receiver: Arc<Mutex<Receiver<ProviderEvent>>>,
     prompt_handler: Arc<Mutex<Option<PromptHandler>>>,
     recorder: FakeRecorder,
     approval_handler: Arc<Mutex<Option<ApprovalHandler>>>,

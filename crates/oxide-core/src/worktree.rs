@@ -201,8 +201,8 @@ impl Core {
         let thread = self.insert_thread(
             project.id,
             &request.provider,
-            request.model.or(def_model),
-            request.effort.or(def_effort),
+            request.model.or(def_model).as_deref(),
+            request.effort.or(def_effort).as_deref(),
             request.permission_mode.unwrap_or(def_perm),
             None,
         )?;

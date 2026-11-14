@@ -499,12 +499,12 @@ fn blind_review_prompt_contains_only_diff_issue_and_required_format_delimited() 
     .unwrap();
 
     let recorded_prompts = Arc::new(Mutex::new(Vec::new()));
-    let (seen, sender_slot) = (recorded_prompts.clone(), Arc::new(Mutex::new(None)));
+    let (seen, sender_slot) = (recorded_prompts, Arc::new(Mutex::new(None)));
     let fake = FakeProvider::default();
     let sender = fake.sender();
     *sender_slot.lock().unwrap() = Some(sender.clone());
 
-    let (seen_clone, sender_clone) = (seen.clone(), sender.clone());
+    let (seen_clone, sender_clone) = (seen.clone(), sender);
     fake.on_prompt(move |prompt| {
         seen_clone.lock().unwrap().push(prompt.to_string());
         let _ = sender_clone.send(ProviderEvent::TurnStarted {

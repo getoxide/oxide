@@ -48,6 +48,7 @@ pub struct Updates {
     busy: AtomicBool,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn error(message: impl ToString) -> AppError {
     AppError {
         message: message.to_string(),
@@ -89,6 +90,7 @@ impl Updates {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 pub fn app_update_status(app: AppHandle, updates: State<'_, Arc<Updates>>) -> UpdateStatus {
     updates.status(&app)
 }
@@ -196,7 +198,7 @@ pub async fn install_app_update(
         let _ = on_progress.send(updates.status(&app));
         // Verify the signature again, then invoke the platform installer.
         update.verify(&bytes).map_err(error)?;
-        tauri::async_runtime::spawn_blocking(move || install_verified_update(update, bytes))
+        tauri::async_runtime::spawn_blocking(move || install_verified_update(&update, bytes))
             .await
             .map_err(error)?
             .map_err(error)?;
@@ -210,7 +212,7 @@ pub async fn install_app_update(
     app.restart();
 }
 
-fn install_verified_update(update: Update, bytes: Vec<u8>) -> Result<(), String> {
+fn install_verified_update(update: &Update, bytes: Vec<u8>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if !is_gzip(&bytes) {
         return macos_dmg::install(&bytes);

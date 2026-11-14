@@ -50,7 +50,7 @@ fn wait_for_turns(core: &Core, thread: u32, count: usize) {
     panic!("the Turns never completed");
 }
 
-fn message(error: oxide_core::Error) -> String {
+fn message(error: &oxide_core::Error) -> String {
     error.to_string()
 }
 
@@ -149,7 +149,7 @@ fn too_large_folders_and_unreadable_files_are_refused_each_with_its_own_reason()
     let (dir, core, _) = core_with_thread();
 
     let big = vec![0u8; 25 * 1024 * 1024 + 1];
-    let too_large = message(core.attach_bytes(Some("huge.bin"), &big).unwrap_err());
+    let too_large = message(&core.attach_bytes(Some("huge.bin"), &big).unwrap_err());
     assert!(
         too_large.contains("huge.bin") && too_large.contains("too large"),
         "{too_large}"
@@ -157,13 +157,13 @@ fn too_large_folders_and_unreadable_files_are_refused_each_with_its_own_reason()
 
     let folder = dir.path().join("a-folder");
     std::fs::create_dir(&folder).unwrap();
-    let is_folder = message(core.attach_path(&folder).unwrap_err());
+    let is_folder = message(&core.attach_path(&folder).unwrap_err());
     assert!(
         is_folder.contains("a-folder") && is_folder.contains("folder"),
         "{is_folder}"
     );
 
-    let gone = message(core.attach_path(&dir.path().join("gone.txt")).unwrap_err());
+    let gone = message(&core.attach_path(&dir.path().join("gone.txt")).unwrap_err());
     assert!(
         gone.contains("gone.txt") && gone.contains("can't be read"),
         "{gone}"
@@ -187,7 +187,7 @@ fn a_file_without_permission_is_refused_as_unreadable() {
     if std::fs::read(&secret).is_ok() {
         return; // running as root: permissions don't apply
     }
-    let error = message(core.attach_path(&secret).unwrap_err());
+    let error = message(&core.attach_path(&secret).unwrap_err());
     assert!(
         error.contains("secret.txt") && error.contains("permission denied"),
         "{error}"
@@ -204,7 +204,7 @@ fn a_prompt_with_too_many_attachments_is_refused_before_a_turn_starts() {
         prompt.push(attachment(&a.id));
     }
 
-    let error = message(core.send_prompt_segments(thread, &prompt).unwrap_err());
+    let error = message(&core.send_prompt_segments(thread, &prompt).unwrap_err());
 
     assert!(error.contains("at most 10"), "{error}");
     assert!(recorder.prompts().is_empty());
@@ -256,9 +256,9 @@ fn a_sent_prompt_reaches_the_provider_and_the_transcript_as_ordered_segments() {
     let sent = &recorder.segments()[0];
     assert_eq!(sent.len(), 4);
     assert_eq!(sent[0], PromptSegment::text("Ciao prova "));
-    assert_eq!(sent[1], PromptSegment::Attachment(image.clone()));
+    assert_eq!(sent[1], PromptSegment::Attachment(image));
     assert_eq!(sent[2], PromptSegment::text(" 123!!! e "));
-    assert_eq!(sent[3], PromptSegment::Attachment(doc.clone()));
+    assert_eq!(sent[3], PromptSegment::Attachment(doc));
 
     let snapshot = core.get_thread_snapshot(thread).unwrap();
     let turn = &snapshot.turns[0];
@@ -308,7 +308,7 @@ fn oxide_run_slash_commands_refuse_attachments_but_provider_ones_take_them() {
             .unwrap_err();
         let word = command.split_whitespace().next().unwrap();
         assert!(
-            message(error).contains(&format!("can't be sent with {word}")),
+            message(&error).contains(&format!("can't be sent with {word}")),
             "{command}"
         );
     }
@@ -330,7 +330,8 @@ fn a_provider_that_cannot_read_the_files_fails_the_send_before_any_turn_starts()
     let a = core.attach_bytes(Some("a.txt"), b"x").unwrap();
 
     let error = message(
-        core.send_prompt_segments(thread, &[text("see "), attachment(&a.id)])
+        &core
+            .send_prompt_segments(thread, &[text("see "), attachment(&a.id)])
             .unwrap_err(),
     );
 

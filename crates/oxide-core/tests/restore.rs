@@ -121,7 +121,6 @@ fn checkout(f: &Fixture, thread_id: u32) -> PathBuf {
         snapshot
             .thread
             .worktree_path
-            .clone()
             .unwrap_or_else(|| f.work.to_string_lossy().into_owned()),
     )
 }

@@ -29,7 +29,7 @@ impl std::fmt::Display for ThreadStatus {
 impl std::str::FromStr for ThreadStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "working" => Ok(ThreadStatus::Working),
             "needs-input" | "needs_input" => Ok(ThreadStatus::NeedsInput),

@@ -179,7 +179,7 @@ fn renaming_and_stopping_a_thread_reach_the_board() {
 
 #[test]
 fn subscribing_to_the_board_spawns_no_gh_subprocesses() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir().unwrap();
     let work = tmp.path().join("my-project");
     std::fs::create_dir_all(&work).unwrap();
     for args in [

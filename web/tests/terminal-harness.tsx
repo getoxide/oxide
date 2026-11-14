@@ -20,11 +20,12 @@ declare global {
 let callback: number;
 let index = 0;
 mockIPC(async (cmd, args) => {
+  const params = (args ?? {}) as Record<string, unknown>;
   if (cmd === "start_block_terminal") {
     callback =
-      typeof args!.onOutput === "object"
-        ? (args!.onOutput as { id: number }).id
-        : Number(String(args!.onOutput).split(":")[1]);
+      typeof params.onOutput === "object"
+        ? (params.onOutput as { id: number }).id
+        : Number(String(params.onOutput).split(":")[1]);
   }
   return await window.nativeTerminal(cmd, args!);
 });
