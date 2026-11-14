@@ -307,3 +307,76 @@ fn deleting_a_thread_deletes_its_drafts() {
     f.core.delete_thread(f.thread_id, true).unwrap();
     assert!(f.core.list_line_comments(f.thread_id).unwrap().is_empty());
 }
+
+#[test]
+fn listing_checks_multiple_comments_in_the_same_file_and_missing_files() {
+    let f = fixture();
+    let keep = seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "ok",
+    );
+    let stale = seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        4,
+        "wrong",
+        "stale",
+    );
+    let gone = seed_comment(
+        &f.core,
+        f.thread_id,
+        "missing.txt",
+        CommentSide::New,
+        1,
+        "hi",
+        "missing",
+    );
+
+    let listed = f.core.list_line_comments(f.thread_id).unwrap();
+    assert_eq!(listed.len(), 3);
+    assert!(!listed.iter().find(|c| c.id == keep).unwrap().outdated);
+    assert!(listed.iter().find(|c| c.id == stale).unwrap().outdated);
+    assert!(listed.iter().find(|c| c.id == gone).unwrap().outdated);
+}
+
+#[test]
+fn sending_clears_only_the_target_threads_drafts() {
+    let f = fixture();
+    let other = f
+        .core
+        .create_thread(f.project_id, "fake", None, None, PermissionMode::Ask)
+        .unwrap()
+        .id;
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "send me",
+    );
+    seed_comment(
+        &f.core,
+        other,
+        "a.txt",
+        CommentSide::New,
+        4,
+        "four",
+        "keep me",
+    );
+
+    f.core.send_line_comments(f.thread_id).unwrap();
+
+    assert!(f.core.list_line_comments(f.thread_id).unwrap().is_empty());
+    let other_comments = f.core.list_line_comments(other).unwrap();
+    assert_eq!(other_comments.len(), 1);
+    assert_eq!(other_comments[0].body, "keep me");
+}

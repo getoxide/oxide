@@ -122,6 +122,7 @@ pub struct ActorServices {
 
 pub struct UsageHub {
     db_path: PathBuf,
+    conn: Mutex<Option<Connection>>,
     limits: Mutex<HashMap<String, UsageLimits>>,
     subscribers: Mutex<Vec<(String, crossbeam_channel::Sender<UsageLimits>)>>,
 }
@@ -141,9 +142,11 @@ fn state_key(provider: &str) -> String {
 
 impl UsageHub {
     pub(crate) fn new(db_path: PathBuf) -> Self {
-        let limits = load_all(&db_path).unwrap_or_default();
+        let conn = Mutex::new(None);
+        let limits = load_all(&db_path, &conn).unwrap_or_default();
         Self {
             db_path,
+            conn,
             limits: Mutex::new(limits),
             subscribers: Mutex::new(Vec::new()),
         }
@@ -201,28 +204,33 @@ impl UsageHub {
         let Ok(value) = serde_json::to_string(snapshot) else {
             return;
         };
-        if let Ok(conn) = Connection::open(&self.db_path) {
-            let _ = conn.execute(
+        let _ = crate::db::with_conn(&self.db_path, &self.conn, |conn| {
+            conn.execute(
                 "INSERT INTO app_state (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 [state_key(provider), value],
-            );
-        }
+            )?;
+            Ok(())
+        });
     }
 }
 
-fn load_all(db_path: &PathBuf) -> rusqlite::Result<HashMap<String, UsageLimits>> {
-    let conn = Connection::open(db_path)?;
-    let mut stmt =
-        conn.prepare("SELECT key, value FROM app_state WHERE key LIKE 'usage_limits:%'")?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    Ok(rows
-        .filter_map(|r| r.ok())
-        .filter_map(|(key, value)| {
-            let provider = canonical(key.strip_prefix("usage_limits:")?).to_string();
-            Some((provider, serde_json::from_str(&value).ok()?))
-        })
-        .collect())
+fn load_all(
+    db_path: &std::path::Path,
+    conn_slot: &Mutex<Option<Connection>>,
+) -> crate::Result<HashMap<String, UsageLimits>> {
+    crate::db::with_conn(db_path, conn_slot, |conn| {
+        let mut stmt =
+            conn.prepare("SELECT key, value FROM app_state WHERE key LIKE 'usage_limits:%'")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows
+            .filter_map(|r| r.ok())
+            .filter_map(|(key, value)| {
+                let provider = canonical(key.strip_prefix("usage_limits:")?).to_string();
+                Some((provider, serde_json::from_str(&value).ok()?))
+            })
+            .collect())
+    })
 }
 
 #[cfg(test)]
@@ -247,5 +255,40 @@ mod tests {
         );
         assert!(rx.try_recv().is_ok());
         assert!(hub.get("antigravity").is_some());
+    }
+
+    #[test]
+    fn usage_hub_reuses_busy_timeout_connection_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("oxide.db");
+        drop(crate::db::open(&db_path, crate::MIGRATIONS).unwrap());
+
+        let hub = UsageHub::new(db_path.clone());
+        let timeout: i64 = crate::db::with_conn(&hub.db_path, &hub.conn, |conn| {
+            Ok(conn.pragma_query_value(None, "busy_timeout", |r| r.get(0))?)
+        })
+        .unwrap();
+        assert_eq!(timeout, 5000);
+
+        hub.report(
+            "claude",
+            &[UsageWindow {
+                kind: UsageWindowKind::FiveHour,
+                percent_used: Some(33.0),
+                resets_at: None,
+                status: UsageStatus::Ok,
+                pool: None,
+            }],
+        );
+        drop(hub);
+
+        let reopened = UsageHub::new(db_path);
+        assert_eq!(
+            reopened
+                .get("claude")
+                .and_then(|l| l.five_hour)
+                .and_then(|w| w.percent_used),
+            Some(33.0)
+        );
     }
 }

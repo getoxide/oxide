@@ -257,8 +257,9 @@ fn invalid_missing_and_stale_contexts_fail_without_falling_back_to_main() {
     git(&other_dir, &["commit", "-qm", "x"]);
     let other = f.core.add_project(&other_dir.to_string_lossy()).unwrap();
 
-    // A Thread of another Project, and an unknown Thread.
+    // A Thread of another Project, a missing Project, and an unknown Thread.
     assert!(f.core.git_status_in(other.id, Some(f.one.id)).is_err());
+    assert!(f.core.git_status_in(9999, Some(f.one.id)).is_err());
     assert!(f.core.git_status_in(f.project.id, Some(9999)).is_err());
     assert!(
         f.core

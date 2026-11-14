@@ -252,13 +252,7 @@ impl LedgerStore {
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_none() {
-            let conn = Connection::open(&self.db_path)?;
-            conn.busy_timeout(std::time::Duration::from_secs(5))?;
-            *guard = Some(conn);
-        }
-        f(guard.as_ref().expect("connection opened above"))
+        crate::db::with_conn(&self.db_path, &self.conn, f)
     }
 
     /// Records the merge of `pull_request`, opened from the Thread's branch, at `merged_at` (an

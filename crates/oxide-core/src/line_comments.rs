@@ -150,15 +150,28 @@ impl Core {
         }
         let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
         let root = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
+        let mut files: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
         let mut diffs = std::collections::HashMap::new();
         for c in &mut comments {
             c.outdated = match c.side {
-                CommentSide::New => !std::fs::read_to_string(root.join(&c.path))
-                    .map(|text| {
-                        text.lines().nth(c.line as usize - 1).map(str::to_owned)
-                            == Some(c.code.clone())
-                    })
-                    .unwrap_or(false),
+                CommentSide::New => {
+                    if !files.contains_key(&c.path) {
+                        files.insert(
+                            c.path.clone(),
+                            std::fs::read_to_string(root.join(&c.path)).ok(),
+                        );
+                    }
+                    !files
+                        .get(&c.path)
+                        .and_then(|opt| opt.as_deref())
+                        .is_some_and(|text| {
+                            c.line
+                                .checked_sub(1)
+                                .and_then(|idx| text.lines().nth(idx as usize))
+                                == Some(c.code.as_str())
+                        })
+                }
                 CommentSide::Old => {
                     let scope = c.scope;
                     let diff = diffs.entry(scope.as_str()).or_insert_with(|| match scope {
@@ -205,10 +218,10 @@ impl Core {
             self.record_review_round(thread_id, &kind);
         }
         self.remember_line_comments(snapshot.thread.project_id, thread_id, &comments);
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        for c in &comments {
-            db.execute("DELETE FROM line_comments WHERE id = ?1", [c.id])?;
-        }
+        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            "DELETE FROM line_comments WHERE thread_id = ?1",
+            [thread_id],
+        )?;
         Ok(())
     }
 
