@@ -788,17 +788,6 @@ html.macos .header,
 .error-summary { border: 1px solid color-mix(in srgb, var(--red) 40%, transparent); border-radius: 8px; padding: 8px 12px; color: var(--red); }
 .error-summary p { margin: 0; }
 
-/* ── Terminal ─────────────────────────────────────────────── */
-.terminal-region { position: relative; display: flex; flex-direction: column; height: var(--terminal-height, 200px); min-height: 140px; flex: none; }
-.terminal-region[hidden] { display: none; }
-section.terminal { height: 100%; min-height: 0; flex: 1; border-top: 1px solid var(--line); display: flex; flex-direction: column; background: var(--terminal-background, var(--bg)); }
-section.terminal.terminal-hidden { display: none; }
-.terminal-label { display: inline-flex; align-items: center; gap: 8px; padding: 0 8px; color: var(--dim); font-size: 12px; }
-.terminal-error { color: var(--red); font-size: 12px; margin-left: 8px; }
-.terminal-host { flex: 1; min-height: 0; padding: 6px 10px; background: var(--terminal-background, var(--bg)); }
-.terminal-host .xterm { height: 100%; }
-.terminal-host .xterm-viewport { background: var(--terminal-background, var(--bg)) !important; }
-
 /* ── Tools panel and its Surfaces ─────────────────────────── */
 .tools { position: relative; width: var(--tools-width, clamp(496px, 32vw, 600px)); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); container-type: inline-size; }
 .tools > section, .tools > .pr-views, .tools > .issues-surface { flex: 1; min-height: 0; }
@@ -878,27 +867,6 @@ section.terminal.terminal-hidden { display: none; }
 .files-icon.dir { color: var(--acc2); }
 .files-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .files-note { padding: 4px 8px; color: var(--dim); }
-.files-viewer { min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; background: var(--bg); }
-.files-viewer-empty { align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--faint); }
-.files-viewer-title { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
-.files-viewer-path { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.files-viewer .code-block { margin: 0; flex: 1; }
-.files-viewer .code-block pre { border: 0; border-radius: 0; min-height: 100%; background-color: var(--bg) !important; padding: 8px 0; }
-.code-block.numbered code { counter-reset: line; display: block; min-width: max-content; }
-.code-block.numbered .line { display: inline-block; width: 100%; padding-right: 16px; }
-.code-block.numbered .line::before {
-  counter-increment: line;
-  content: counter(line);
-  display: inline-block;
-  width: 3.5em;
-  margin-right: 14px;
-  padding-right: 8px;
-  text-align: right;
-  color: var(--faint) !important;
-  user-select: none;
-}
-.files[data-split-axis="y"] { grid-template-columns: minmax(0, 1fr); }
-.files[data-split-axis="y"] .files-tree { border-right: 0; border-bottom: 1px solid var(--line); }
 
 .diff-files { list-style: none; margin: 0; padding: 4px 0; overflow: auto; max-height: 40vh; }
 .diff-file-row { display: flex; align-items: center; gap: 7px; padding: 4px 8px; cursor: pointer; font-size: 12.5px; }

@@ -49,10 +49,6 @@
 .centre[hidden] {
   display: none;
 }
-.workbench-loading {
-  padding: 32px;
-  color: var(--dim);
-}
 
 .code-workbench {
   display: grid;
@@ -252,18 +248,6 @@
 .editor-welcome p {
   margin: 0 0 8px;
   color: var(--dim);
-}
-.editor-loading {
-  position: absolute;
-  right: 16px;
-  top: 16px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 10px;
-  background: var(--bg2);
-  color: var(--dim);
-  font-size: 12px;
 }
 .editor-error {
   flex: none;
@@ -842,19 +826,6 @@
   background: var(--bg);
   pointer-events: none;
 }
-.workbench-loading {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-.workbench-loading > .skeleton {
-  width: 100%;
-}
-.code-loading-layout { padding: 0; }
-.code-loading-layout > aside { width: 200px; flex: none; border-right: 1px solid var(--line); background: var(--bg2); }
-.code-loading-layout > div { flex: 1; min-width: 0; }
-@container (max-width: 440px) { .code-loading-layout > aside { display: none; } }
 /* The Thread remains central; presentation changes retain each tool instance. */
 .sidebar-region[hidden], .centre-column[hidden], .surface-content[hidden] { display: none; }
 .surface-content { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }

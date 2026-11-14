@@ -8,7 +8,6 @@ import { App } from "./App";
 
 vi.mock("./ThreadView", () => ({ ThreadView: () => <div data-thread-view /> }));
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 vi.mock("./TerminalSurface", () => ({
   TerminalSurface: ({ terminals }: { terminals: { tabs: { id: number; kind: string; serviceId?: number }[] } }) => (
     <div data-terminal-surface>

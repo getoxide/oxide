@@ -880,26 +880,6 @@ async fn complete_terminal(
 
 #[tauri::command]
 #[specta::specta]
-fn start_terminal(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    thread_id: Option<u32>,
-    on_output: tauri::ipc::Channel<Vec<u8>>,
-) -> Result<Terminal, AppError> {
-    let terminal = core.start_terminal(project_id, thread_id)?;
-    let rx = core.subscribe_terminal(terminal.id)?;
-    std::thread::spawn(move || {
-        while let Ok(chunk) = rx.recv() {
-            if on_output.send(chunk).is_err() {
-                break;
-            }
-        }
-    });
-    Ok(convert(&terminal))
-}
-
-#[tauri::command]
-#[specta::specta]
 fn start_block_terminal(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3309,7 +3289,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         rule_suggestions,
         dismiss_rule_suggestion,
         accept_rule_suggestion,
-        start_terminal,
         start_block_terminal,
         write_file,
         language_tools,

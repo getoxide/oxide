@@ -13,7 +13,6 @@ vi.mock("./ThreadView", () => ({ ThreadView: ({ threadId, draft }: { threadId: n
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 // jsdom does not implement HTMLCanvasElement.getContext(); some components touch it during render.
 class MockCanvasElement extends HTMLElement {
