@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkUpdateFeed, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
-  checkAppLaunch, localPlan, previousReleaseTag, releaseNotes, updateManifest,
+  localPlan, previousReleaseTag, releaseNotes, updateManifest,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -503,21 +503,6 @@ describe("localPlan", () => {
         assert.ok(workflows.some((workflow) => workflow.includes(line)), `${line} is not in .github/workflows/`);
       }
     }
-  });
-});
-
-
-describe("checkAppLaunch", () => {
-  test("an app still running, or closed normally, started", () => {
-    assert.equal(checkAppLaunch({ app: "oxide-app.exe", running: true, seconds: 15 }).ok, true);
-    assert.match(checkAppLaunch({ app: "oxide-app.exe", running: true, seconds: 15 }).message, /still running after 15 s/);
-    assert.equal(checkAppLaunch({ app: "oxide-app.exe", running: false, exitCode: 0, seconds: 15 }).ok, true);
-  });
-
-  test("an app that could not start, or died during startup, fails with the reason", () => {
-    assert.match(checkAppLaunch({ app: "oxide-app.exe", running: false, exitCode: 0xc0000135, seconds: 15 }).message, /exited 0xc0000135 during startup/);
-    assert.match(checkAppLaunch({ app: "oxide-app.exe", running: false, error: "spawn EACCES", seconds: 15 }).message, /could not start: spawn EACCES/);
-    assert.match(checkAppLaunch({ running: false, seconds: 15 }).message, /no app executable/);
   });
 });
 

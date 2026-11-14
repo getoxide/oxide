@@ -12,7 +12,7 @@ import {
   type TerminalBlock as Block,
 } from "./TerminalCommandBlock";
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput";
-import { terminalPath } from "./terminalPaths";
+import { readablePath } from "./headerLines";
 import { commands, type ProjectServiceConflict } from "./bindings";
 import { errorMessage } from "./errors";
 import { backgroundCommand } from "./projectServiceCommands";
@@ -112,7 +112,7 @@ export function TerminalWorkbench({
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const [generation, setGeneration] = useState(0);
-  const [cwd, setCwd] = useState(terminalPath(rootPath));
+  const [cwd, setCwd] = useState(readablePath(rootPath));
   const [fullscreen, setFullscreen] = useState<string | null>(null);
   const launched = useRef(new Set<string>());
   const [running, setRunning] = useState(false);
@@ -211,7 +211,7 @@ export function TerminalWorkbench({
                   : b,
               ),
             );
-            if (event.cwd) setCwd(terminalPath(event.cwd));
+            if (event.cwd) setCwd(readablePath(event.cwd));
             setHistory((old) =>
               old.map((h, index) =>
                 index === old.length - 1
@@ -485,7 +485,7 @@ export function TerminalWorkbench({
             className="btn sm"
             onClick={() => {
               setSessionId(null);
-              setCwd(terminalPath(rootPath));
+              setCwd(readablePath(rootPath));
               setGeneration((n) => n + 1);
             }}
           >

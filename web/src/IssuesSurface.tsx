@@ -11,7 +11,7 @@ import { IssueDetailView } from "./IssueDetailView";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { issuePhase } from "./issueView";
 import { LabelChip } from "./PullRequestPeople";
-import { relativeTime } from "./pullRequestReview";
+import { relativeTime } from "./relativeTime";
 import { useAutoRefresh } from "./useAutoRefresh";
 import { GithubSetup } from "./GithubSetup";
 

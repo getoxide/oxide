@@ -330,19 +330,6 @@ export function checkUpdateFeed(feed, tag) {
   return { ok: true, message: `The update feed serves ${tag} for ${platforms.map(([platform]) => platform).join(", ")}.`, urls };
 }
 
-/**
- * Whether the installed app started.
- * `running` means it was still up after `seconds`; otherwise `exitCode` or
- * `error` says how it ended.
- */
-export function checkAppLaunch({ app, running, exitCode, error, seconds }) {
-  if (!app) return { ok: false, message: "There is no app executable to launch." };
-  if (running) return { ok: true, message: `${app} started and was still running after ${seconds} s` };
-  if (error) return { ok: false, message: `${app} could not start: ${error}` };
-  if (exitCode === 0) return { ok: true, message: `${app} started and exited normally` };
-  return { ok: false, message: `${app} exited 0x${(exitCode >>> 0).toString(16)} during startup` };
-}
-
 // Node platform names and how the plan names them.
 const OS_NAMES = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 const EVERY_OS = Object.keys(OS_NAMES);

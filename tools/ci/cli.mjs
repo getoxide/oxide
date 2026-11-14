@@ -15,7 +15,6 @@
 // Untrusted values (titles, file lists) arrive through files and environment
 // variables, never through workflow expressions in a shell script.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

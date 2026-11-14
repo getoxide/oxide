@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { TerminalInput, type TerminalInputHandle } from "./TerminalInput";
-import { terminalPath } from "./terminalPaths";
+import { readablePath } from "./headerLines";
 import { historyMatches } from "./terminalBlocks";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -122,7 +122,7 @@ it("Up opens searchable history and navigates older commands without executing t
   expect(run).toHaveBeenCalledWith("git diff");
 });
 it("normalizes extended drive and UNC paths without losing the network share", () => {
-  expect(terminalPath("\\\\?\\C:\\work")).toBe("C:\\work");
-  expect(terminalPath("\\\\?\\UNC\\server\\share")).toBe("\\\\server\\share");
-  expect(terminalPath("/home/work")).toBe("/home/work");
+  expect(readablePath("\\\\?\\C:\\work")).toBe("C:\\work");
+  expect(readablePath("\\\\?\\UNC\\server\\share")).toBe("\\\\server\\share");
+  expect(readablePath("/home/work")).toBe("/home/work");
 });
