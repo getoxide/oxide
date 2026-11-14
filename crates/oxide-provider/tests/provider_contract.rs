@@ -391,10 +391,28 @@ fn fake_provider_handles_approval_and_permission_mode() {
     );
 }
 
+fn wait_for_turn_completed(
+    rx: &crossbeam_channel::Receiver<ProviderEvent>,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(ProviderEvent::TurnCompleted {
+                status: TurnStatus::Completed,
+                ..
+            }) => return true,
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 #[test]
 fn claude_drains_large_stderr_without_blocking() {
     use oxide_provider::StartContext;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let fake_cli = support::fake_cli("claude");
     let mut provider = oxide_provider::claude::ClaudeCodeProvider::with_command(fake_cli.command());
@@ -409,21 +427,7 @@ fn claude_drains_large_stderr_without_blocking() {
         .unwrap();
     provider.send_prompt("Hello").unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut completed = false;
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(remaining) {
-            Ok(ProviderEvent::TurnCompleted {
-                status: TurnStatus::Completed,
-                ..
-            }) => {
-                completed = true;
-                break;
-            }
-            Ok(_) => continue,
-            Err(_) => break,
-        }
-    }
+    let completed = wait_for_turn_completed(&rx, Duration::from_secs(5));
     provider.shutdown().unwrap();
     assert!(
         completed,
@@ -436,7 +440,7 @@ fn codex_drains_large_stderr_without_blocking() {
     use oxide_provider::StartContext;
     use oxide_provider::codex::CodexAppServer;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let fake_cli = support::fake_cli("codex");
     let mut app_server = CodexAppServer::with_command(fake_cli.command());
@@ -456,21 +460,7 @@ fn codex_drains_large_stderr_without_blocking() {
             })
             .unwrap();
         provider.send_prompt("Hello").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut completed = false;
-        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-            match rx.recv_timeout(remaining) {
-                Ok(ProviderEvent::TurnCompleted {
-                    status: TurnStatus::Completed,
-                    ..
-                }) => {
-                    completed = true;
-                    break;
-                }
-                Ok(_) => continue,
-                Err(_) => break,
-            }
-        }
+        let completed = wait_for_turn_completed(&rx, Duration::from_secs(5));
         provider.shutdown().unwrap();
         let _ = done_tx.send(completed);
     });

@@ -253,22 +253,6 @@ pub struct SettingsState {
     errors: Vec<FieldError>,
 }
 
-impl From<&oxide_core::SettingsState> for SettingsState {
-    fn from(s: &oxide_core::SettingsState) -> Self {
-        Self {
-            settings: (&s.settings).into(),
-            errors: s
-                .errors
-                .iter()
-                .map(|e| FieldError {
-                    path: e.path.clone(),
-                    message: e.message.clone(),
-                })
-                .collect(),
-        }
-    }
-}
-
 /// Event emitted whenever the Settings state changes; payload is [`SettingsState`].
 pub const SETTINGS_CHANGED: &str = "settings-changed";
 
@@ -276,7 +260,7 @@ pub const SETTINGS_CHANGED: &str = "settings-changed";
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 fn get_settings(core: State<'_, Arc<Core>>) -> SettingsState {
-    (&core.settings()).into()
+    core.settings().into()
 }
 
 #[tauri::command]

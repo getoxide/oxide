@@ -40,6 +40,16 @@ impl From<PermissionMode> for oxide_core::PermissionMode {
     }
 }
 
+impl From<oxide_core::ProviderSettings> for ProviderSettings {
+    fn from(p: oxide_core::ProviderSettings) -> Self {
+        Self {
+            model: p.model,
+            effort: p.effort,
+            permission_mode: p.permission_mode.into(),
+        }
+    }
+}
+
 impl From<&oxide_core::ProviderSettings> for ProviderSettings {
     fn from(p: &oxide_core::ProviderSettings) -> Self {
         Self {
@@ -56,6 +66,16 @@ impl From<ProviderSettings> for oxide_core::ProviderSettings {
             model: p.model,
             effort: p.effort,
             permission_mode: p.permission_mode.into(),
+        }
+    }
+}
+
+impl From<oxide_core::Providers> for Providers {
+    fn from(p: oxide_core::Providers) -> Self {
+        Self {
+            claude: p.claude.into(),
+            codex: p.codex.into(),
+            antigravity: p.antigravity.into(),
         }
     }
 }
@@ -104,6 +124,27 @@ impl From<ClaudeCustomizations> for oxide_core::ClaudeCustomizations {
     }
 }
 
+impl From<oxide_core::Shortcuts> for Shortcuts {
+    fn from(s: oxide_core::Shortcuts) -> Self {
+        Self {
+            new_thread: s.new_thread,
+            open_project: s.open_project,
+            model_picker: s.model_picker,
+            pull_requests: s.pull_requests,
+            issues: s.issues,
+            terminal: s.terminal,
+            files: s.files,
+            previous_thread: s.previous_thread,
+            next_thread: s.next_thread,
+            close_thread: s.close_thread,
+            toggle_tools: s.toggle_tools,
+            open_settings: s.open_settings,
+            toggle_sidebar: s.toggle_sidebar,
+            maximize_surface: s.maximize_surface,
+        }
+    }
+}
+
 impl From<&oxide_core::Shortcuts> for Shortcuts {
     fn from(s: &oxide_core::Shortcuts) -> Self {
         Self {
@@ -146,6 +187,19 @@ impl From<Shortcuts> for oxide_core::Shortcuts {
     }
 }
 
+impl From<oxide_core::Settings> for Settings {
+    fn from(s: oxide_core::Settings) -> Self {
+        Self {
+            default_provider: s.default_provider.into(),
+            providers: s.providers.into(),
+            confirm_quit: s.confirm_quit,
+            delete_merged_branches: s.delete_merged_branches,
+            claude_customizations: s.claude_customizations.into(),
+            shortcuts: s.shortcuts.into(),
+        }
+    }
+}
+
 impl From<&oxide_core::Settings> for Settings {
     fn from(s: &oxide_core::Settings) -> Self {
         Self {
@@ -168,6 +222,42 @@ impl From<Settings> for oxide_core::Settings {
             delete_merged_branches: s.delete_merged_branches,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
+        }
+    }
+}
+
+impl From<oxide_core::FieldError> for FieldError {
+    fn from(e: oxide_core::FieldError) -> Self {
+        Self {
+            path: e.path,
+            message: e.message,
+        }
+    }
+}
+
+impl From<&oxide_core::FieldError> for FieldError {
+    fn from(e: &oxide_core::FieldError) -> Self {
+        Self {
+            path: e.path.clone(),
+            message: e.message.clone(),
+        }
+    }
+}
+
+impl From<oxide_core::SettingsState> for SettingsState {
+    fn from(s: oxide_core::SettingsState) -> Self {
+        Self {
+            settings: s.settings.into(),
+            errors: s.errors.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<&oxide_core::SettingsState> for SettingsState {
+    fn from(s: &oxide_core::SettingsState) -> Self {
+        Self {
+            settings: (&s.settings).into(),
+            errors: s.errors.iter().map(Into::into).collect(),
         }
     }
 }
@@ -1545,6 +1635,11 @@ mod tests {
         };
 
         let app_state = SettingsState::from(&core_state);
+        let owned_app_state = SettingsState::from(core_state);
+        assert_eq!(
+            serde_json::to_value(&owned_app_state).unwrap(),
+            serde_json::to_value(&app_state).unwrap()
+        );
         let json = serde_json::to_value(&app_state).unwrap();
         assert_eq!(json["settings"]["defaultProvider"], json!("codex"));
         assert_eq!(
