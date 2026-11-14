@@ -289,3 +289,48 @@ export function applyThreadEvent(
     supportedPermissionModes: state.supportedPermissionModes,
   };
 }
+
+function estimateTurnBytes(turn: TranscriptTurn): number {
+  let bytes = 256 + (turn.prompt?.length ?? 0) * 2 + (turn.retryNotice?.length ?? 0) * 2;
+  if (turn.segments) {
+    for (const seg of turn.segments) {
+      bytes += seg.kind === "text"
+        ? (seg.text?.length ?? 0) * 2
+        : 128 + ((seg.name?.length ?? 0) + (seg.path?.length ?? 0)) * 2;
+    }
+  }
+  if (turn.items) {
+    for (const item of turn.items) {
+      bytes += 128 + (item.content?.length ?? 0) * 2 + (item.command?.line?.length ?? 0) * 2;
+    }
+  }
+  if (turn.error) {
+    bytes += 64 + (turn.error.message?.length ?? 0) * 2 + (turn.error.stderrTail?.length ?? 0) * 2;
+  }
+  if (turn.approvals) {
+    for (const approval of turn.approvals) {
+      bytes += 128 + (approval.summary?.length ?? 0) * 2;
+    }
+  }
+  if (turn.unknownEvents) {
+    bytes += turn.unknownEvents.length * 128;
+  }
+  return bytes;
+}
+
+/** Arithmetic UTF-16 memory estimate for a cached Thread transcript and its paged turns. */
+export function estimateTranscriptViewBytes(
+  transcript: TranscriptState,
+  pages: ReadonlyMap<number, TurnSnapshot[]>,
+): number {
+  let bytes = 512 + (transcript.thread?.title?.length ?? 0) * 2;
+  for (const turn of transcript.turns) {
+    bytes += estimateTurnBytes(turn);
+  }
+  for (const page of pages.values()) {
+    for (const turn of page) {
+      bytes += estimateTurnBytes(turn);
+    }
+  }
+  return bytes;
+}
