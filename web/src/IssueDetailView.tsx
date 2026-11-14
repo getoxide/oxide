@@ -25,7 +25,7 @@ import { Popover } from "./Popover";
 import { Markdown } from "./PullRequestMarkdown";
 import { Working } from "./PullRequestMerge";
 import { Field, LabelChip, Picker, useCandidates } from "./PullRequestPeople";
-import { relativeTime } from "./pullRequestReview";
+import { relativeTime } from "./relativeTime";
 import { shortcutLabel } from "./shortcuts";
 import type { Thread } from "./bindings";
 import type { DispatchIssue } from "./dispatch";

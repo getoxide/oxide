@@ -6,7 +6,7 @@ import { commands, type ProjectService, type ProjectServiceConflict, type Projec
 import { PROJECT_SERVICES_CHANGED } from "./ProjectServices";
 import { errorMessage } from "./errors";
 import type { TerminalCheckout } from "./terminalTabs";
-import { terminalPath } from "./terminalPaths";
+import { readablePath } from "./headerLines";
 
 /** How many lines the view keeps; the Core owns the authoritative 10,000-line buffer. */
 export const MAX_SERVICE_LOG_LINES = 10_000;
@@ -244,7 +244,7 @@ function ServiceLogView({ projectId, serviceId, checkout, visible, onServiceChan
         <strong className="service-log-title">{command}</strong>
         {status && <span className={`service-status ${status}`} role="status">{status === "running" ? "Running" : status === "failed" ? "Failed" : "Stopped"}</span>}
         {port !== null && <span className="service-port">:{port}</span>}
-        <span className="service-log-cwd mono" title={checkout.rootPath}>{terminalPath(checkout.rootPath)}</span>
+        <span className="service-log-cwd mono" title={checkout.rootPath}>{readablePath(checkout.rootPath)}</span>
       </header>
       <div className="service-log-actions">
         {url && (

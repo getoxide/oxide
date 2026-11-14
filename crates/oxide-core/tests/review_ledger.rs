@@ -4,10 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use oxide_core::{
-    CommentScope, CommentSide, Core, DispatchRequest, MergeMethod, NewLineComment, ReviewLedger,
-    ReviewSizeBand,
-};
+use oxide_core::{Core, DispatchRequest, MergeMethod, ReviewLedger, ReviewSizeBand};
 use tempfile::TempDir;
 
 const FAKE_GH_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh");
@@ -60,7 +57,7 @@ fn fixture() -> Fixture {
 }
 
 impl Fixture {
-    fn set_gh(&self, state: serde_json::Value) {
+    fn set_gh(&self, state: &serde_json::Value) {
         std::fs::write(self.gh_dir.join("state.json"), state.to_string()).unwrap();
     }
 
@@ -153,26 +150,17 @@ fn pr(branch: &str, number: u32, state: &str, merged_at: Option<&str>) -> serde_
     })
 }
 
-const LATER: &str = "2099-01-01T00:00:00Z";
-
-/// A Thread with a merged pull request on its branch, seen by opening the Board.
+/// A Thread whose pull request was merged through Oxide.
 fn merged_thread(f: &Fixture, prompt: &str) -> oxide_core::thread::ThreadSummary {
-    merged_thread_at(f, prompt, LATER)
-}
-
-fn merged_thread_at(
-    f: &Fixture,
-    prompt: &str,
-    merged_at: &str,
-) -> oxide_core::thread::ThreadSummary {
     let thread = f.finished_thread(prompt);
     let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some(merged_at)) },
+        "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
-    let _board = f.core.subscribe_board(f.project).unwrap();
-    wait_until(|| !f.ledger().entries.is_empty());
+    f.core
+        .merge_pull_request(f.project, 4, MergeMethod::Squash, false, false)
+        .unwrap();
     thread
 }
 
@@ -185,7 +173,7 @@ fn an_empty_ledger_has_no_median() {
 }
 
 #[test]
-fn a_merge_seen_on_the_board_refresh_is_recorded_without_transcript_text() {
+fn a_merge_is_recorded_without_transcript_text() {
     let f = fixture();
     let thread = merged_thread(&f, "Add the secret search feature");
 
@@ -196,7 +184,7 @@ fn a_merge_seen_on_the_board_refresh_is_recorded_without_transcript_text() {
     assert_eq!(entry.pull_request, 4);
     assert_eq!(entry.provider, "fake");
     assert_eq!(entry.model.as_deref(), Some("fake-model"));
-    assert!(entry.merged_at > entry.turn_completed_at);
+    assert!(entry.merged_at >= entry.turn_completed_at);
     assert_eq!(
         ledger.median_secs,
         Some(entry.merged_at - entry.turn_completed_at)
@@ -210,42 +198,11 @@ fn seeing_the_same_merge_twice_records_it_once() {
     let f = fixture();
     merged_thread(&f, "Add search");
 
-    let _again = f.core.subscribe_board(f.project).unwrap();
-    std::thread::sleep(Duration::from_secs(2));
+    f.core
+        .merge_pull_request(f.project, 4, MergeMethod::Squash, false, false)
+        .unwrap();
 
     assert_eq!(f.ledger().entries.len(), 1);
-}
-
-#[test]
-fn a_pull_request_that_is_still_open_records_nothing() {
-    let f = fixture();
-    let thread = f.finished_thread("Add search");
-    let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
-        "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
-    }));
-
-    let _board = f.core.subscribe_board(f.project).unwrap();
-    std::thread::sleep(Duration::from_secs(2));
-
-    assert!(f.ledger().entries.is_empty());
-}
-
-#[test]
-fn a_merge_dated_before_any_finished_turn_records_nothing() {
-    let f = fixture();
-    let thread = f.finished_thread("Add search");
-    let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
-        "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some("2001-01-01T00:00:00Z")) },
-    }));
-
-    let _board = f.core.subscribe_board(f.project).unwrap();
-    std::thread::sleep(Duration::from_secs(2));
-
-    assert!(f.ledger().entries.is_empty());
 }
 
 #[test]
@@ -253,7 +210,7 @@ fn a_merge_made_through_oxide_is_recorded() {
     let f = fixture();
     let thread = f.finished_thread("Add search");
     let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
         "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
@@ -292,15 +249,14 @@ fn clearing_removes_every_entry() {
     assert_eq!(ledger.median_secs, None);
 }
 
-fn comment(path: &str, code: &str, body: &str) -> NewLineComment {
-    NewLineComment {
-        scope: CommentScope::Uncommitted,
-        path: path.into(),
-        side: CommentSide::New,
-        line: 1,
-        code: code.into(),
-        body: body.into(),
-    }
+fn seed_comment(core: &Core, thread_id: u32, path: &str, code: &str, body: &str) {
+    let db = rusqlite::Connection::open(core.home().join("oxide.db")).unwrap();
+    db.execute(
+        "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
+         VALUES (?1, 'uncommitted', ?2, 'new', 1, ?3, ?4)",
+        rusqlite::params![thread_id, path, code, body],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -318,25 +274,23 @@ fn each_send_of_line_comments_counts_a_round_by_provider_model_and_kind() {
         "export const search = () => null;\n",
     );
 
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment("src/search.rs", "pub fn search() {}", "secret review text"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "src/search.rs",
+        "pub fn search() {}",
+        "secret review text",
+    );
     f.core.send_line_comments(thread.id).unwrap();
     f.wait_completed(thread.id);
 
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment(
-                "web/src/search.ts",
-                "export const search = () => null;",
-                "again",
-            ),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "web/src/search.ts",
+        "export const search = () => null;",
+        "again",
+    );
     f.core.send_line_comments(thread.id).unwrap();
 
     let ledger = f.ledger();
@@ -377,9 +331,7 @@ fn review_rounds_are_grouped_by_kind_of_work() {
     let f = fixture();
     let rust = f.finished_thread("Add the Rust search");
     f.write_change(&rust, "src/search.rs", "pub fn search() {}\n");
-    f.core
-        .add_line_comment(rust.id, comment("src/search.rs", "pub fn search() {}", "x"))
-        .unwrap();
+    seed_comment(&f.core, rust.id, "src/search.rs", "pub fn search() {}", "x");
     f.core.send_line_comments(rust.id).unwrap();
 
     let typescript = f.finished_thread("Add the web search");
@@ -388,16 +340,13 @@ fn review_rounds_are_grouped_by_kind_of_work() {
         "web/src/search.ts",
         "export const search = () => null;\n",
     );
-    f.core
-        .add_line_comment(
-            typescript.id,
-            comment(
-                "web/src/search.ts",
-                "export const search = () => null;",
-                "x",
-            ),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        typescript.id,
+        "web/src/search.ts",
+        "export const search = () => null;",
+        "x",
+    );
     f.core.send_line_comments(typescript.id).unwrap();
 
     let ledger = f.ledger();
@@ -422,12 +371,13 @@ fn review_rounds_survive_deleting_the_thread_and_clearing_removes_them() {
     let f = fixture();
     let thread = f.finished_thread("Add search");
     f.write_change(&thread, "src/search.rs", "pub fn search() {}\n");
-    f.core
-        .add_line_comment(
-            thread.id,
-            comment("src/search.rs", "pub fn search() {}", "x"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        thread.id,
+        "src/search.rs",
+        "pub fn search() {}",
+        "x",
+    );
     f.core.send_line_comments(thread.id).unwrap();
     let before = f.ledger();
     assert_eq!(
@@ -451,16 +401,15 @@ fn review_rounds_survive_deleting_the_thread_and_clearing_removes_them() {
 fn fetch_detects_reverts_of_tracked_merge_within_30_days_from_default_branch() {
     let f = fixture();
     let thread = f.finished_thread("Implement feature");
-    let turns = f.core.list_turns(thread.id, 0, 10).unwrap();
-    let turn_completed_at = turns.turns[0].completed_at.as_ref().unwrap();
 
-    let branch = thread.branch.clone().unwrap();
-    f.set_gh(serde_json::json!({
+    let branch = thread.branch.unwrap();
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 4, "MERGED", Some(turn_completed_at)) },
+        "prs": { branch.clone(): pr(&branch, 4, "OPEN", None) },
     }));
-    let _board = f.core.subscribe_board(f.project).unwrap();
-    wait_until(|| !f.ledger().entries.is_empty());
+    f.core
+        .merge_pull_request(f.project, 4, MergeMethod::Squash, false, false)
+        .unwrap();
 
     // Commit a revert of PR #4 on main
     git(
@@ -488,8 +437,6 @@ fn fetch_detects_reverts_of_tracked_merge_within_30_days_from_default_branch() {
 fn fetch_detects_candidate_follow_up_fixes_using_the_four_heuristics() {
     let f = fixture();
     let thread = f.finished_thread("Fix billing calculations");
-    let turns = f.core.list_turns(thread.id, 0, 10).unwrap();
-    let turn_completed_at = turns.turns[0].completed_at.as_ref().unwrap();
     let branch = thread.branch.clone().unwrap();
 
     // The PR touched a source file and a boilerplate file
@@ -501,12 +448,13 @@ fn fetch_detects_candidate_follow_up_fixes_using_the_four_heuristics() {
     git(&wt, &["commit", "-qm", "feat: billing (#10)"]);
 
     // Push and merge PR #10
-    f.set_gh(serde_json::json!({
+    f.set_gh(&serde_json::json!({
         "auth": "ok",
-        "prs": { branch.clone(): pr(&branch, 10, "MERGED", Some(turn_completed_at)) },
+        "prs": { branch.clone(): pr(&branch, 10, "OPEN", None) },
     }));
-    let _board = f.core.subscribe_board(f.project).unwrap();
-    wait_until(|| !f.ledger().entries.is_empty());
+    f.core
+        .merge_pull_request(f.project, 10, MergeMethod::Squash, false, false)
+        .unwrap();
 
     // Commit on main modifying the co-modified non-boilerplate file src/billing.rs
     std::fs::create_dir_all(f.work.join("src")).unwrap();

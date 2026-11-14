@@ -10,6 +10,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
+#[allow(clippy::needless_pass_by_value)]
 fn error(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
 }
@@ -296,6 +297,7 @@ fn find_executable(root: &Path, name: &str, depth: usize) -> Option<PathBuf> {
     }
     None
 }
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 fn make_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {

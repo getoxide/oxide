@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { HistoryIcon, PersonIcon } from "@primer/octicons-react";
 import type { ApprovalDecision, ApprovalSnapshot, ModelInfo } from "./bindings";
 import { AttachmentChip } from "./AttachmentChip";
@@ -178,9 +178,15 @@ export const TurnView = memo(function TurnView({
   const [justSent] = useState(
     () => !instant && turn.status === "running" && Date.now() - Date.parse(turn.startedAt) < JUST_SENT_MS
   );
-  const model = modelEffortParts(turn.model ?? null, turn.effort ?? null, catalog);
-  const blocks = groupTurnItems(turn.items);
-  const promptText = turn.segments.length > 0 ? plainText(turn.segments) : turn.prompt;
+  const model = useMemo(
+    () => modelEffortParts(turn.model ?? null, turn.effort ?? null, catalog),
+    [turn.model, turn.effort, catalog],
+  );
+  const blocks = useMemo(() => groupTurnItems(turn.items), [turn.items]);
+  const promptText = useMemo(
+    () => (turn.segments.length > 0 ? plainText(turn.segments) : turn.prompt),
+    [turn.segments, turn.prompt],
+  );
   const approvals = turn.approvals ?? [];
   const activityBlock = blocks.find((b) => b.type === "activity");
   const activity = activityBlock?.type === "activity" ? activityBlock.activity : null;

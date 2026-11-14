@@ -2,7 +2,7 @@
  *  It shows what matters (headings, lists, checkboxes, code, link text) and drops what is
  *  noise in a narrow panel: HTML comments, bot metadata, raw tags. Output is data, never HTML. */
 
-import { relativeTime } from "./pullRequestReview";
+import { relativeTime } from "./relativeTime";
 
 export interface Inline {
   kind: "text" | "code" | "link" | "strong";

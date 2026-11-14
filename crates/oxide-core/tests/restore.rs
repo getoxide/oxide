@@ -121,7 +121,6 @@ fn checkout(f: &Fixture, thread_id: u32) -> PathBuf {
         snapshot
             .thread
             .worktree_path
-            .clone()
             .unwrap_or_else(|| f.work.to_string_lossy().into_owned()),
     )
 }
@@ -254,9 +253,12 @@ fn a_restore_leaves_head_the_branches_the_index_and_the_ignored_files_alone() {
     let f = fixture();
     // The Threads of this Project work in the Project's own checkout, where the
     // user's own Git state lives.
-    f.core
-        .set_project_threads_in_main_checkout(f.project_id, true)
-        .unwrap();
+    let db = rusqlite::Connection::open(f._tmp.path().join("home/oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET threads_in_main_checkout = 1 WHERE id = ?1",
+        [f.project_id],
+    )
+    .unwrap();
     let thread_id = new_thread(&f);
     // An ignored file of the user's own, a staged change and a branch.
     std::fs::write(f.work.join(".gitignore"), "ignored.txt\n").unwrap();
@@ -307,9 +309,12 @@ fn nothing_is_restored_while_another_working_thread_shares_the_checkout() {
     let f = fixture();
     // The Threads of this Project work in the Project's own checkout, so they
     // share it.
-    f.core
-        .set_project_threads_in_main_checkout(f.project_id, true)
-        .unwrap();
+    let db = rusqlite::Connection::open(f._tmp.path().join("home/oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET threads_in_main_checkout = 1 WHERE id = ?1",
+        [f.project_id],
+    )
+    .unwrap();
     let first = new_thread(&f);
     let second = new_thread(&f);
     // The first Thread has a Turn to go back to.

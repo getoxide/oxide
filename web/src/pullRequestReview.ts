@@ -58,17 +58,6 @@ export function countChecks(checks: PullRequestCheck[]): CheckCounts {
   return counts;
 }
 
-/** One line on the checks, putting what needs attention first. */
-export function summarizeChecks(checks: PullRequestCheck[]): string {
-  if (checks.length === 0) return "No checks";
-  const { failing, pending, passing } = countChecks(checks);
-  const parts: string[] = [];
-  if (failing > 0) parts.push(`${failing} failing`);
-  if (pending > 0) parts.push(`${pending} running`);
-  if (passing > 0) parts.push(`${passing} passing`);
-  return parts.join(", ");
-}
-
 export type Tone = "ok" | "warn" | "bad" | "neutral";
 
 /** One line of the merge box: what stands between the pull request and the base branch. */
@@ -157,23 +146,4 @@ export function unresolvedReviewThreads(threads: PullRequestReviewThread[]): Pul
 /** Where a user's avatar is served from. Bots log in as `app/name` through `gh`. */
 export function avatarUrl(login: string, size = 40): string {
   return `https://github.com/${encodeURIComponent(login.replace(/^app\//, ""))}.png?size=${size}`;
-}
-
-/** "5m", "3h", "2d", "4w", "8mo", "2y": short enough for a narrow row. */
-export function relativeTime(iso: string, now: number = Date.now()): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "";
-  const s = Math.max(0, Math.round((now - then) / 1000));
-  if (s < 60) return "now";
-  const steps: [number, string][] = [
-    [60, "m"],
-    [3600, "h"],
-    [86400, "d"],
-    [604800, "w"],
-    [2592000, "mo"],
-    [31536000, "y"],
-  ];
-  let unit = steps[0];
-  for (const step of steps) if (s >= step[0]) unit = step;
-  return `${Math.floor(s / unit[0])}${unit[1]}`;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -8,7 +8,7 @@ import {
 import { commands, type FileEntry } from "./bindings";
 import { Skeleton } from "./Skeleton";
 
-export function EditorFileTree({
+export const EditorFileTree = memo(function EditorFileTree({
   projectId,
   threadId,
   selected,
@@ -162,4 +162,4 @@ export function EditorFileTree({
       {render("", 0)}
     </div>
   );
-}
+});

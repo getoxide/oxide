@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { formatElapsed, liveStatus, STATUS_PHRASES, statusPhrase, summaryText, type Activity } from "./activity";
-import { groupTurnItems, splitHeadline, formatTime, modelEffortLabel } from "./transcriptView";
+import { groupTurnItems, splitHeadline, formatTime, modelEffortParts } from "./transcriptView";
 
 let nextId = 1;
 function item(
@@ -183,48 +183,49 @@ describe("labels", () => {
   ];
 
   it("formats Model · Effort, omitting what is unknown", () => {
-    expect(modelEffortLabel("Opus 5.5", "high")).toBe("Opus 5.5 · High");
-    expect(modelEffortLabel("Opus 5.5", null)).toBe("Opus 5.5");
-    expect(modelEffortLabel(null, null)).toBe("default model");
+    expect(modelEffortParts("Opus 5.5", "high")).toEqual({ model: "Opus 5.5", effort: "High" });
+    expect(modelEffortParts("Opus 5.5", null)).toEqual({ model: "Opus 5.5", effort: null });
+    expect(modelEffortParts(null, null)).toEqual({ model: "default model", effort: null });
   });
 
   it("uses the catalog's name for the Model", () => {
-    expect(modelEffortLabel("claude-opus-5-5", "high", catalog)).toBe("Opus 5.5 · High");
+    expect(modelEffortParts("claude-opus-5-5", "high", catalog)).toEqual({ model: "Opus 5.5", effort: "High" });
   });
 
   it("humanizes a raw slug when the catalog does not know the Model", () => {
-    expect(modelEffortLabel("gemini-3.8-flash-low", "low", null)).toBe("Gemini 3.8 Flash · Low");
-    expect(modelEffortLabel("claude-future-9", null, null)).toBe("Claude Future 9");
+    expect(modelEffortParts("gemini-3.8-flash-low", "low", null)).toEqual({ model: "Gemini 3.8 Flash", effort: "Low" });
+    expect(modelEffortParts("claude-future-9", null, null)).toEqual({ model: "Claude Future 9", effort: null });
   });
 
   it("keeps the Effort the Model carries when the Turn has no separate value", () => {
-    expect(modelEffortLabel("gemini-3.8-flash-low", null, null)).toBe("Gemini 3.8 Flash · Low");
-    expect(modelEffortLabel("gpt-5-1-codex-high", null, null)).toBe("GPT 5.1 Codex · High");
-    expect(modelEffortLabel("gemini-3.8-flash-high", null, catalog)).toBe("Gemini 3.8 Flash · High");
+    expect(modelEffortParts("gemini-3.8-flash-low", null, null)).toEqual({ model: "Gemini 3.8 Flash", effort: "Low" });
+    expect(modelEffortParts("gpt-5-1-codex-high", null, null)).toEqual({ model: "GPT 5.1 Codex", effort: "High" });
+    expect(modelEffortParts("gemini-3.8-flash-high", null, catalog)).toEqual({ model: "Gemini 3.8 Flash", effort: "High" });
     expect(
-      modelEffortLabel("gemini-3.8-flash", null, [
+      modelEffortParts("gemini-3.8-flash", null, [
         { ...catalog[0]!, id: "gemini-3.8-flash", name: "Gemini 3.8 Flash (XHigh)" },
       ]),
-    ).toBe("Gemini 3.8 Flash · Extra High");
+    ).toEqual({ model: "Gemini 3.8 Flash", effort: "Extra High" });
     expect(
-      modelEffortLabel("claude-opus-5-5", null, [
+      modelEffortParts("claude-opus-5-5", null, [
         { ...catalog[1]!, name: "Opus 5.5 · max" },
       ]),
-    ).toBe("Opus 5.5 · Max");
+    ).toEqual({ model: "Opus 5.5", effort: "Max" });
   });
 
   it("never repeats the Effort the Model name carries", () => {
-    expect(modelEffortLabel("gemini-3.8-flash-low", "low", catalog)).toBe("Gemini 3.8 Flash · Low");
-    expect(modelEffortLabel("gemini-3.8-flash-high", "high", [{ ...catalog[0]!, id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash - High" }])).toBe(
-      "Gemini 3.8 Flash · High",
-    );
+    expect(modelEffortParts("gemini-3.8-flash-low", "low", catalog)).toEqual({ model: "Gemini 3.8 Flash", effort: "Low" });
+    expect(modelEffortParts("gemini-3.8-flash-high", "high", [{ ...catalog[0]!, id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash - High" }])).toEqual({
+      model: "Gemini 3.8 Flash",
+      effort: "High",
+    });
   });
 
   it("capitalizes every Effort level", () => {
-    expect(modelEffortLabel("Opus 5.5", "low")).toBe("Opus 5.5 · Low");
-    expect(modelEffortLabel("Opus 5.5", "medium")).toBe("Opus 5.5 · Medium");
-    expect(modelEffortLabel("Opus 5.5", "high")).toBe("Opus 5.5 · High");
-    expect(modelEffortLabel("Opus 5.5", "max")).toBe("Opus 5.5 · Max");
+    expect(modelEffortParts("Opus 5.5", "low")).toEqual({ model: "Opus 5.5", effort: "Low" });
+    expect(modelEffortParts("Opus 5.5", "medium")).toEqual({ model: "Opus 5.5", effort: "Medium" });
+    expect(modelEffortParts("Opus 5.5", "high")).toEqual({ model: "Opus 5.5", effort: "High" });
+    expect(modelEffortParts("Opus 5.5", "max")).toEqual({ model: "Opus 5.5", effort: "Max" });
   });
 
   it("formats an ISO time as HH:MM", () => {

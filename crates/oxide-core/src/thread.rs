@@ -29,7 +29,7 @@ impl std::fmt::Display for ThreadStatus {
 impl std::str::FromStr for ThreadStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "working" => Ok(ThreadStatus::Working),
             "needs-input" | "needs_input" => Ok(ThreadStatus::NeedsInput),
@@ -252,17 +252,6 @@ pub enum ThreadEvent {
 pub struct SequencedThreadEvent {
     pub seq: u32,
     pub event: ThreadEvent,
-}
-
-/// A sequenced event on the debug subscriber channel, paired with the raw
-/// Provider payload that produced it.  `raw_payload` is `None` only for
-/// synthesised events (e.g. `ThreadStatusChanged`) that have no backing
-/// Provider event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DebugSequencedThreadEvent {
-    pub seq: u32,
-    pub event: ThreadEvent,
-    pub raw_payload: Option<String>,
 }
 
 pub fn truncate_title(prompt: &str) -> String {

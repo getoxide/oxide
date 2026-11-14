@@ -148,27 +148,13 @@ fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
 
 impl Core {
     /// The Project's Setup command, kept by Oxide and never written into its repository.
-    pub fn project_setup_command(&self, project_id: u32) -> Result<Option<String>> {
+    pub(crate) fn project_setup_command(&self, project_id: u32) -> Result<Option<String>> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(db.query_row(
             "SELECT setup_command FROM projects WHERE id = ?1",
             [project_id],
             |r| r.get(0),
         )?)
-    }
-
-    /// Sets the Project's Setup command; blank clears it.
-    pub fn set_project_setup_command(&self, project_id: u32, command: Option<&str>) -> Result<()> {
-        let command = command.map(str::trim).filter(|c| !c.is_empty());
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = db.execute(
-            "UPDATE projects SET setup_command = ?1 WHERE id = ?2",
-            rusqlite::params![command, project_id],
-        )?;
-        if changed == 0 {
-            return Err(Error::Db(rusqlite::Error::QueryReturnedNoRows));
-        }
-        Ok(())
     }
 
     /// Hands a task off to a new background Thread: a worktree on a fresh `oxide/` branch cut from
@@ -198,10 +184,6 @@ impl Core {
             base
         };
 
-        let parent = self
-            .home
-            .join("worktrees")
-            .join(slugify(&project.name, "project"));
         let slug = match request.issue_number {
             Some(n) => {
                 let title = request.issue_title.as_deref().unwrap_or(prompt);
@@ -212,36 +194,15 @@ impl Core {
             }
             None => slugify(&crate::thread::truncate_title(prompt), "thread"),
         };
-        let (branch, worktree) = self.git.mutate(&root, || {
-            std::fs::create_dir_all(&parent).map_err(|source| Error::Io {
-                path: parent.clone(),
-                source,
-            })?;
-            let name = free_name(&root, &parent, &slug);
-            let branch = format!("oxide/{name}");
-            let worktree = parent.join(&name);
-            git::run(
-                &root,
-                &[
-                    "worktree",
-                    "add",
-                    "-q",
-                    "-b",
-                    &branch,
-                    &worktree.to_string_lossy(),
-                    &base,
-                ],
-            )?;
-            Ok((branch, worktree))
-        })?;
+        let (branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
 
         let (def_model, def_effort, def_perm) =
             self.default_settings_for_provider(&request.provider);
         let thread = self.insert_thread(
             project.id,
             &request.provider,
-            request.model.or(def_model),
-            request.effort.or(def_effort),
+            request.model.or(def_model).as_deref(),
+            request.effort.or(def_effort).as_deref(),
             request.permission_mode.unwrap_or(def_perm),
             None,
         )?;
@@ -258,28 +219,9 @@ impl Core {
             ],
         )?;
 
-        if let Some(command) = self.project_setup_command(project.id)? {
-            let run = run_setup(&command, &worktree, &root);
-            let status = if run.success {
-                None
-            } else {
-                Some(ThreadStatus::NeedsInput)
-            };
-            {
-                let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-                db.execute(
-                    "UPDATE threads SET setup_output = ?1, status = COALESCE(?2, status) WHERE id = ?3",
-                    rusqlite::params![run.output, status.map(|s| s.to_string()), thread.id],
-                )?;
-            }
-            if !run.success {
-                self.board.publish(thread.id);
-                return self.thread_summary(thread.id);
-            }
+        if self.run_setup_in(project.id, &worktree, &root, thread.id)? {
+            self.send_prompt(thread.id, prompt)?;
         }
-        self.board.publish(thread.id);
-
-        self.send_prompt(thread.id, prompt)?;
         self.thread_summary(thread.id)
     }
 
@@ -334,11 +276,11 @@ impl Core {
             .home
             .join("worktrees")
             .join(slugify(&project.name, "project"));
-        std::fs::create_dir_all(&parent).map_err(|source| Error::Io {
-            path: parent.clone(),
-            source,
-        })?;
-        let (branch, worktree) = self.git.mutate(root, || {
+        self.git.mutate(root, || {
+            std::fs::create_dir_all(&parent).map_err(|source| Error::Io {
+                path: parent.clone(),
+                source,
+            })?;
             let name = free_name(root, &parent, slug);
             let branch = format!("oxide/{name}");
             let worktree = parent.join(&name);
@@ -355,8 +297,7 @@ impl Core {
                 ],
             )?;
             Ok((branch, worktree))
-        })?;
-        Ok((branch, worktree))
+        })
     }
 
     /// Deletes a Thread and everything Oxide keeps of it. A running Turn is stopped. A Thread
@@ -504,21 +445,7 @@ impl Core {
         // A Board Thread's worktree deleted by hand: recreate it from its branch.
         if let (Some(branch), Some(worktree)) = (branch.as_deref(), worktree.as_ref()) {
             if !worktree.exists() {
-                self.git.mutate(&root, || {
-                    // Drop the stale registration, or `add` refuses the branch as checked out elsewhere.
-                    git::run(&root, &["worktree", "prune"])?;
-                    if let Some(parent) = worktree.parent() {
-                        std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-                            path: parent.to_path_buf(),
-                            source,
-                        })?;
-                    }
-                    git::run(
-                        &root,
-                        &["worktree", "add", "-q", &worktree.to_string_lossy(), branch],
-                    )?;
-                    Ok(())
-                })?;
+                self.recreate_worktree(&root, worktree, branch)?;
             }
             return Ok(true);
         }
@@ -547,22 +474,27 @@ impl Core {
 
         // A chat Thread whose worktree was deleted by hand: recreate it from the main checkout.
         if let Some(worktree) = worktree.filter(|w| !w.exists()) {
-            self.git.mutate(&root, || {
-                git::run(&root, &["worktree", "prune"])?;
-                if let Some(parent) = worktree.parent() {
-                    std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-                        path: parent.to_path_buf(),
-                        source,
-                    })?;
-                }
-                git::run(
-                    &root,
-                    &["worktree", "add", "-q", &worktree.to_string_lossy(), "HEAD"],
-                )?;
-                Ok(())
-            })?;
+            self.recreate_worktree(&root, &worktree, "HEAD")?;
         }
         Ok(true)
+    }
+
+    fn recreate_worktree(&self, root: &Path, worktree: &Path, rev: &str) -> Result<()> {
+        self.git.mutate(root, || {
+            // Drop the stale registration, or `add` refuses the branch as checked out elsewhere.
+            git::run(root, &["worktree", "prune"])?;
+            if let Some(parent) = worktree.parent() {
+                std::fs::create_dir_all(parent).map_err(|source| Error::Io {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            git::run(
+                root,
+                &["worktree", "add", "-q", &worktree.to_string_lossy(), rev],
+            )?;
+            Ok(())
+        })
     }
 
     /// Runs the Project's Setup command in `worktree`, remembers its output, and reports whether
@@ -581,11 +513,13 @@ impl Core {
             } else {
                 Some(ThreadStatus::NeedsInput)
             };
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            db.execute(
-                "UPDATE threads SET setup_output = ?1, status = COALESCE(?2, status) WHERE id = ?3",
-                rusqlite::params![run.output, status.map(|s| s.to_string()), thread_id],
-            )?;
+            {
+                let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+                db.execute(
+                    "UPDATE threads SET setup_output = ?1, status = COALESCE(?2, status) WHERE id = ?3",
+                    rusqlite::params![run.output, status.map(|s| s.to_string()), thread_id],
+                )?;
+            }
             if !run.success {
                 self.board.publish(thread_id);
                 return Ok(false);

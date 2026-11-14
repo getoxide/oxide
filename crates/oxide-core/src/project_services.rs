@@ -7,6 +7,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, spawn_in_own_group, terminate_group,
 };
+use oxide_provider::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read};
@@ -14,7 +15,7 @@ use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// How long a freshly spawned service must stay alive before it counts as running. An immediate
 /// crash (a missing dependency, a syntax error) is reported back to the caller instead of being
@@ -132,7 +133,7 @@ impl EventHub {
         receiver
     }
 
-    fn deliver(&self, event: ProjectServiceEvent) {
+    fn deliver(&self, event: &ProjectServiceEvent) {
         let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
         subscribers.retain(|sender| sender.try_send(event.clone()).is_ok());
     }
@@ -200,13 +201,13 @@ impl Service {
             }
         };
         if let Some(event) = event {
-            self.events.deliver(event);
+            self.events.deliver(&event);
         }
     }
 
     fn emit(&self, kind: ProjectServiceEventKind) {
         let summary = self.summary();
-        self.events.deliver(ProjectServiceEvent {
+        self.events.deliver(&ProjectServiceEvent {
             kind,
             project_id: summary.project_id,
             service: summary,
@@ -643,7 +644,7 @@ fn launch(service: &Arc<Service>) -> Result<()> {
         drained,
     );
     let supervised = Arc::clone(service);
-    std::thread::spawn(move || supervise(supervised, child, drain));
+    std::thread::spawn(move || supervise(&supervised, child, &drain));
     Ok(())
 }
 
@@ -687,7 +688,7 @@ fn spawn_reader(
     });
 }
 
-fn supervise(service: Arc<Service>, mut child: Child, drained: Receiver<()>) {
+fn supervise(service: &Arc<Service>, mut child: Child, drained: &Receiver<()>) {
     let status = child.wait().ok();
     let early = {
         let state = service.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -776,36 +777,6 @@ fn startup_error(service: &Arc<Service>) -> Error {
 
 fn humantime(duration: Duration) -> String {
     format!("{:.1}s", duration.as_secs_f64())
-}
-
-fn now_rfc3339() -> String {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = elapsed.as_secs();
-    let (year, month, day) = civil_from_days((secs / 86_400) as i64);
-    let rest = secs % 86_400;
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        rest / 3_600,
-        (rest % 3_600) / 60,
-        rest % 60,
-        elapsed.subsec_millis()
-    )
-}
-
-/// Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (year + i64::from(month <= 2), month, day)
 }
 
 /// The port a Project Service command line asks for (`--port N`, `--port=N`, `-p N`, `-p=N`,

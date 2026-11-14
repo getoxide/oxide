@@ -22,12 +22,12 @@ fn open_core_with_project(dir: &Path) -> (Core, u32) {
     (core, project_id)
 }
 
-fn wait_for(rx: &Receiver<SequencedThreadEvent>, wanted: ThreadEvent) {
+fn wait_for(rx: &Receiver<SequencedThreadEvent>, wanted: &ThreadEvent) {
     loop {
         let evt = rx
             .recv_timeout(Duration::from_secs(3))
             .unwrap_or_else(|_| panic!("timed out waiting for {wanted:?}"));
-        if evt.event == wanted {
+        if evt.event == *wanted {
             return;
         }
     }
@@ -92,7 +92,7 @@ fn thread_with_session(core: &Core, project_id: u32, dir: &Path) -> u32 {
     let (_, rx) = core.subscribe_thread(thread.id).unwrap();
     core.send_prompt(thread.id, "fix the bug").unwrap();
     core.tick_thread(thread.id);
-    wait_for(&rx, completed());
+    wait_for(&rx, &completed());
     Connection::open(dir.join("oxide.db"))
         .unwrap()
         .execute(
@@ -141,7 +141,7 @@ fn resuming_a_vanished_session_sends_the_thread_to_error() {
     assert!(err.to_string().contains(SESSION_GONE), "{err}");
     wait_for(
         &rx,
-        ThreadEvent::Error {
+        &ThreadEvent::Error {
             message: SESSION_GONE.into(),
         },
     );
@@ -194,10 +194,10 @@ fn the_recap_is_cut_to_the_length_cap_keeping_the_latest_exchange() {
     core.send_prompt(thread.id, &"x".repeat(RECAP_MAX_CHARS))
         .unwrap();
     core.tick_thread(thread.id);
-    wait_for(&rx, completed());
+    wait_for(&rx, &completed());
     core.send_prompt(thread.id, "latest question").unwrap();
     core.tick_thread(thread.id);
-    wait_for(&rx, completed());
+    wait_for(&rx, &completed());
 
     lose_session(thread.id, dir.path());
     let recap = core.continue_thread(thread.id).unwrap().recap;

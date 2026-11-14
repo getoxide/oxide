@@ -1,7 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use oxide_core::{
-    Core, DiffStatus, PermissionMode, SequencedThreadEvent, ThreadEvent, ThreadStatus,
-};
+use oxide_core::{Core, PermissionMode, SequencedThreadEvent, ThreadEvent, ThreadStatus};
 use oxide_provider::{FakeProvider, ProviderEvent, TurnStatus};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -53,8 +51,12 @@ fn fixture() -> Fixture {
     core.set_real_time_ticker(false);
     let project_id = core.add_project(&work.to_string_lossy()).unwrap().id;
     // Checkpoints are tested against the main checkout, so keep Threads out of worktrees here.
-    core.set_project_threads_in_main_checkout(project_id, true)
-        .unwrap();
+    let db = rusqlite::Connection::open(root.join("home/oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET threads_in_main_checkout = 1 WHERE id = ?1",
+        [project_id],
+    )
+    .unwrap();
     Fixture {
         _tmp: tmp,
         core,
@@ -171,35 +173,6 @@ fn checkpoint_refs(work: &Path) -> Vec<String> {
 }
 
 #[test]
-fn a_turn_makes_two_checkpoints_and_the_turn_scope_shows_exactly_what_changed_between_them() {
-    let f = fixture();
-    let thread_id = new_thread(&f);
-    // Dirty before the Turn: not the Turn's change.
-    std::fs::write(f.work.join("b.txt"), "keep\nbefore\n").unwrap();
-    let work = f.work.clone();
-    run_turn(&f, thread_id, move || {
-        std::fs::write(work.join("a.txt"), "one\ntwo\n").unwrap();
-        std::fs::write(work.join("new.txt"), "fresh\n").unwrap();
-    });
-
-    assert_eq!(checkpoint_refs(&f.work).len(), 2);
-    let diff = f.core.turn_diff(thread_id, 0).unwrap();
-    let mut files: Vec<_> = diff
-        .files
-        .iter()
-        .map(|d| (d.path.as_str(), d.status, d.added))
-        .collect();
-    files.sort_by_key(|(p, ..)| *p);
-    assert_eq!(
-        files,
-        [
-            ("a.txt", DiffStatus::Modified, 1),
-            ("new.txt", DiffStatus::Added, 1)
-        ]
-    );
-}
-
-#[test]
 fn checkpoints_leave_index_stash_head_and_branches_byte_for_byte_unchanged() {
     let f = fixture();
     let thread_id = new_thread(&f);
@@ -217,41 +190,6 @@ fn checkpoints_leave_index_stash_head_and_branches_byte_for_byte_unchanged() {
 
     assert_eq!(checkpoint_refs(&f.work).len(), 2);
     assert_eq!(user_state(&f.work), before);
-    assert!(f.core.turn_diff(thread_id, 0).unwrap().files.is_empty());
-}
-
-#[test]
-fn each_turn_is_diffed_on_its_own() {
-    let f = fixture();
-    let thread_id = new_thread(&f);
-    let work = f.work.clone();
-    run_turn(&f, thread_id, move || {
-        std::fs::write(work.join("a.txt"), "one\nfirst\n").unwrap()
-    });
-    let work = f.work.clone();
-    run_turn(&f, thread_id, move || {
-        std::fs::write(work.join("b.txt"), "keep\nsecond\n").unwrap()
-    });
-
-    assert_eq!(checkpoint_refs(&f.work).len(), 4);
-    let paths = |turn| -> Vec<String> {
-        f.core
-            .turn_diff(thread_id, turn)
-            .unwrap()
-            .files
-            .into_iter()
-            .map(|d| d.path)
-            .collect()
-    };
-    assert_eq!(paths(0), ["a.txt"]);
-    assert_eq!(paths(1), ["b.txt"]);
-}
-
-#[test]
-fn a_turn_without_checkpoints_has_an_empty_diff() {
-    let f = fixture();
-    let thread_id = new_thread(&f);
-    assert!(f.core.turn_diff(thread_id, 7).unwrap().files.is_empty());
 }
 
 #[test]

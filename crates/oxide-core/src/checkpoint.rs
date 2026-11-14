@@ -6,7 +6,6 @@
 
 use crate::Result;
 use crate::git::{run, run_with_env};
-use crate::git_diff::{Diff, diff_against};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -97,15 +96,6 @@ pub(crate) fn turn_revs(
         None => snapshot(cwd)?,
     };
     Ok(Some((start, end)))
-}
-
-/// What the Turn changed: its two Checkpoints diffed.
-pub(crate) fn turn_diff(cwd: &Path, thread_id: u32, turn_index: u32) -> Result<Diff> {
-    let files = match turn_revs(cwd, thread_id, turn_index)? {
-        Some((start, end)) => diff_against(cwd, &[&start, &end])?,
-        None => Vec::new(),
-    };
-    Ok(Diff { base: None, files })
 }
 
 /// A parentless commit of the working tree, written without touching the real index.

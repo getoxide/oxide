@@ -13,7 +13,6 @@ vi.mock("./ThreadView", () => ({ ThreadView: ({ threadId, draft }: { threadId: n
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
 
@@ -29,7 +28,7 @@ const pullRequest = { number: 5, title: "Fix the thing", url: "https://github.co
 const detail = {
   pullRequest, phase: "open", body: "", comments: [], mergeState: "clean", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 0, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
-  checks: [], diff: { base: "main", files: [] },
+  checks: [], changedFiles: 0,
 };
 const reviewThreads = [
   {

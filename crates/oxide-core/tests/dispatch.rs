@@ -139,7 +139,7 @@ fn dispatch_creates_a_worktree_on_an_oxide_branch_from_the_base_branch() {
         .unwrap();
 
     assert_eq!(thread.branch.as_deref(), Some("oxide/fix-the-login-bug"));
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     assert_eq!(
         worktree,
         f.home
@@ -208,23 +208,31 @@ fn the_dispatched_thread_runs_its_first_turn() {
     assert_eq!(listed.branch.as_deref(), Some("oxide/do-it"));
 }
 
+fn set_setup_command(home: &Path, project_id: u32, command: &str) {
+    let db = rusqlite::Connection::open(home.join("oxide.db")).unwrap();
+    db.execute(
+        "UPDATE projects SET setup_command = ?1 WHERE id = ?2",
+        rusqlite::params![command, project_id],
+    )
+    .unwrap();
+}
+
 #[test]
 fn the_setup_command_runs_in_the_worktree_with_the_project_root_and_its_output_is_kept() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "cd & echo root=%OXIDE_PROJECT_ROOT% & echo oops 1>&2 & type nul > .setup-ran"
-            } else {
-                "pwd; echo root=$OXIDE_PROJECT_ROOT; echo oops >&2; touch .setup-ran"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "cd & echo root=%OXIDE_PROJECT_ROOT% & echo oops 1>&2 & type nul > .setup-ran"
+        } else {
+            "pwd; echo root=$OXIDE_PROJECT_ROOT; echo oops >&2; touch .setup-ran"
+        },
+    );
 
     let thread = f.core.dispatch_thread(request(&f, "Setup me")).unwrap();
 
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     assert!(worktree.join(".setup-ran").exists());
     let output = thread.setup_output.clone().unwrap().replace("\\\\?\\", "");
     // `cmd.exe` may print an 8.3 short path for the current directory on CI,
@@ -250,16 +258,15 @@ fn the_setup_command_runs_in_the_worktree_with_the_project_root_and_its_output_i
 #[test]
 fn a_failing_setup_command_leaves_the_thread_in_needs_input_without_a_turn() {
     let f = fixture();
-    f.core
-        .set_project_setup_command(
-            f.project.id,
-            Some(if cfg!(windows) {
-                "echo installing & echo broken 1>&2 & exit /b 3"
-            } else {
-                "echo installing; echo broken >&2; exit 3"
-            }),
-        )
-        .unwrap();
+    set_setup_command(
+        &f.home,
+        f.project.id,
+        if cfg!(windows) {
+            "echo installing & echo broken 1>&2 & exit /b 3"
+        } else {
+            "echo installing; echo broken >&2; exit 3"
+        },
+    );
 
     let thread = f.core.dispatch_thread(request(&f, "Setup fails")).unwrap();
 
@@ -276,35 +283,14 @@ fn a_failing_setup_command_leaves_the_thread_in_needs_input_without_a_turn() {
 }
 
 #[test]
-fn the_setup_command_is_stored_by_oxide_and_never_written_into_the_repository() {
-    let f = fixture();
-    assert_eq!(f.core.project_setup_command(f.project.id).unwrap(), None);
-
-    f.core
-        .set_project_setup_command(f.project.id, Some("npm install"))
-        .unwrap();
-    assert_eq!(
-        f.core
-            .project_setup_command(f.project.id)
-            .unwrap()
-            .as_deref(),
-        Some("npm install")
-    );
-    assert_eq!(git(&f.work, &["status", "--porcelain"]), "");
-
-    f.core
-        .set_project_setup_command(f.project.id, Some("  "))
-        .unwrap();
-    assert_eq!(f.core.project_setup_command(f.project.id).unwrap(), None);
-}
-
-#[test]
 fn a_board_thread_does_not_block_branch_switching_in_the_main_checkout() {
     let f = fixture();
     let thread = f.core.dispatch_thread(request(&f, "Long task")).unwrap();
     assert!(thread.worktree_path.is_some());
     git(&f.work, &["branch", "other"]);
-    f.core.checkout_branch(f.project.id, "other").unwrap();
+    f.core
+        .checkout_branch_in(f.project.id, None, "other")
+        .unwrap();
 }
 
 #[test]
@@ -368,7 +354,7 @@ fn deleting_a_board_thread_preserves_unsaved_buffers_and_stops_editor_processes_
             oxide_core::LanguageServerConfig {
                 command: "python".into(),
                 args: vec![
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
                         .join("fixtures/lsp.py")
                         .to_string_lossy()
                         .into_owned(),
@@ -540,7 +526,7 @@ fn read(path: PathBuf) -> String {
 fn file_writes_stay_in_their_checkout_and_a_deleted_worktree_never_falls_back_to_main() {
     let f = fixture();
     let thread = f.core.dispatch_thread(request(&f, "Edit files")).unwrap();
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    let worktree = PathBuf::from(thread.worktree_path.unwrap());
     let (project, id) = (f.project.id, thread.id);
 
     // The same relative path is two documents: a write in the worktree leaves main alone.

@@ -53,8 +53,10 @@ import { useShortcuts } from "./useShortcuts";
 import { useModifierHeld } from "./useModifierHeld";
 import { getDraft, isUnusedThread, setDraft } from "./threadDrafts";
 import { createDefaultThread } from "./createDefaultThread";
-import { filterThreads, relativeAge, sidebarProjects, threadTitle } from "./threadList";
+import { filterThreads, sidebarProjects, threadTitle } from "./threadList";
+import { relativeAge } from "./relativeTime";
 import { rovingTab } from "./editorTabs";
+import { runEditCommand, type EditCommand } from "./editCommand";
 
 
 const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
@@ -84,10 +86,6 @@ const TOOL_TAB_ACTION: Record<string, ShortcutAction> = {
 };
 
 export function App() {
-  const legacySurface = useRef<string | null>((() => {
-    try { const mode = localStorage.getItem("oxide:work-mode"); return mode === "code" ? "Files" : mode === "terminal" ? "Terminal" : null; }
-    catch { return null; }
-  })());
   const [showSidebar, setShowSidebar] = useState(true);
   const [regionPriority, setRegionPriority] = useState<"sidebar" | "tools">("tools");
   const [wantsMaximized, setMaximized] = useState(false);
@@ -250,8 +248,8 @@ export function App() {
   const centreView = selected ? centreViews[selected.id] ?? "thread" : "thread";
   const maximized = wantsMaximized && canMaximize;
   const dockRequested = showTools && !showSettings;
-  const layout = workspaceLayout(bodySize.width, bodySize.height, {
-    sidebar: sidebarSize.preferred, tools: toolsSize.preferred, terminal: null,
+  const layout = workspaceLayout(bodySize.width, {
+    sidebar: sidebarSize.preferred, tools: toolsSize.preferred,
   }, dockRequested, { sidebarVisible: showSidebar, priority: regionPriority, maximized });
   const dockVisible = layout.toolsVisible;
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
@@ -364,11 +362,6 @@ export function App() {
     setShowSettings(false);
     selectSurface("Files");
   };
-  useEffect(() => {
-    if (!selected || threads === null) return;
-    if (legacySurface.current) { setActiveTool(legacySurface.current); setShowTools(true); legacySurface.current = null; }
-    try { localStorage.removeItem("oxide:work-mode"); } catch { /* Presentation still migrates without storage. */ }
-  }, [selected, threads, setActiveTool]);
   const currentThreadRef = useRef(currentThreadId);
   const currentProjectRef = useRef(selectedId);
   useEffect(() => {
@@ -400,7 +393,6 @@ export function App() {
     setGitRevision((n) => n + 1);
     // The user's own commit, push, pull or checkout: what Git views remember is now wrong.
     if (selectedId !== null) {
-      invalidateQueries(`p${selectedId}:diff:`, { drop: true });
       invalidateQueries(`p${selectedId}:branches`);
       invalidateQueries(`p${selectedId}:prs:`);
     }
@@ -1627,8 +1619,8 @@ function AppMenu({ onNewThread }: { onNewThread: () => void }) {
     Oxide: [{ label: "Quit Oxide", action: () => { void win.close(); } }],
     File: [{ label: "New Thread", action: onNewThread }],
     Edit: ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"].map((label) => ({ label, action: () => {
-      const command = label === "Select All" ? "selectAll" : label.toLowerCase();
-      if (window.dispatchEvent(new CustomEvent("oxide-editor-edit", { detail: command, cancelable: true }))) document.execCommand(command);
+      const command = (label === "Select All" ? "selectAll" : label.toLowerCase()) as EditCommand;
+      runEditCommand(command);
     } })),
     Window: [{ label: "Minimize", action: () => { void win.minimize(); } }, { label: "Maximize / Restore", action: () => { void win.toggleMaximize(); } }],
   };

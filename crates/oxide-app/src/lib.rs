@@ -1,6 +1,7 @@
 //! The App shell: a thin Tauri layer that exposes [`oxide_core::Core`] to the webview.
 //! The webview talks only to the TypeScript bindings generated from here.
 
+mod conversions;
 #[cfg(target_os = "macos")]
 mod shell_path;
 mod system;
@@ -55,6 +56,7 @@ impl From<ProjectSummary> for Project {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_projects(core: State<'_, Arc<Core>>) -> Result<Vec<Project>, AppError> {
     Ok(core
         .list_projects()?
@@ -128,7 +130,7 @@ async fn search_github_repositories(
 ) -> Result<Vec<GithubRepository>, AppError> {
     git_blocking(&core, move |core| core.search_github_repositories(&query))
         .await
-        .map(|list| list.iter().map(convert).collect())
+        .map(|list| list.into_iter().map(GithubRepository::from).collect())
 }
 
 /// Clones one of the user's GitHub repositories into `parent` and registers it as a Project.
@@ -148,6 +150,7 @@ async fn clone_github_repository(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn reveal_in_finder(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -156,15 +159,10 @@ fn reveal_in_finder(
     Ok(core.reveal_in_finder(project_id, thread_id)?)
 }
 
-#[tauri::command]
-#[specta::specta]
-fn set_project_hidden(core: State<'_, Arc<Core>>, id: u32, hidden: bool) -> Result<(), AppError> {
-    Ok(core.set_project_hidden(id, hidden)?)
-}
-
 /// Lists the Project in the sidebar, or takes it out (it stays in the Project palette).
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_project_open(core: State<'_, Arc<Core>>, id: u32, open: bool) -> Result<(), AppError> {
     Ok(core.set_project_open(id, open)?)
 }
@@ -255,43 +253,21 @@ pub struct SettingsState {
     errors: Vec<FieldError>,
 }
 
-/// Mirrors are identical in shape to the Core types; converting through JSON
-/// keeps the field lists in one place (the serde derives on each side).
-fn convert<A: Serialize, B: serde::de::DeserializeOwned>(a: &A) -> B {
-    serde_json::from_value(serde_json::to_value(a).expect("serialize"))
-        .expect("App and Core settings types out of sync")
-}
-
-impl From<&oxide_core::SettingsState> for SettingsState {
-    fn from(s: &oxide_core::SettingsState) -> Self {
-        Self {
-            settings: convert(&s.settings),
-            errors: s
-                .errors
-                .iter()
-                .map(|e| FieldError {
-                    path: e.path.clone(),
-                    message: e.message.clone(),
-                })
-                .collect(),
-        }
-    }
-}
-
 /// Event emitted whenever the Settings state changes; payload is [`SettingsState`].
 pub const SETTINGS_CHANGED: &str = "settings-changed";
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn get_settings(core: State<'_, Arc<Core>>) -> SettingsState {
-    (&core.settings()).into()
+    core.settings().into()
 }
 
 #[tauri::command]
 #[specta::specta]
 async fn save_settings(core: State<'_, Arc<Core>>, settings: Settings) -> Result<(), AppError> {
     let core = core.inner().clone();
-    let settings: oxide_core::Settings = convert(&settings);
+    let settings: oxide_core::Settings = settings.into();
     tauri::async_runtime::spawn_blocking(move || core.save_settings(&settings))
         .await
         .map_err(|e| AppError {
@@ -567,8 +543,6 @@ pub struct PendingApproval {
 pub struct BoardCard {
     pub thread: Thread,
     pub pending_approvals: Vec<PendingApproval>,
-    /// The Thread's branch's pull request, once GitHub has been asked.
-    pub pull_request: Option<BranchPullRequest>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -578,18 +552,6 @@ pub enum PullRequestPhase {
     Open,
     Merged,
     Closed,
-}
-
-/// A Board Thread's pull request: its state and a tally of its checks.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchPullRequest {
-    pub number: u32,
-    pub url: String,
-    pub phase: PullRequestPhase,
-    pub checks_passed: u32,
-    pub checks_failed: u32,
-    pub checks_pending: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -838,14 +800,6 @@ pub struct SequencedThreadEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct DebugSequencedThreadEvent {
-    pub seq: u32,
-    pub event: ThreadEvent,
-    pub raw_payload: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct ThreadStatusChangedPayload {
     pub thread_id: u32,
     pub status: ThreadStatus,
@@ -908,26 +862,7 @@ async fn complete_terminal(
 
 #[tauri::command]
 #[specta::specta]
-fn start_terminal(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    thread_id: Option<u32>,
-    on_output: tauri::ipc::Channel<Vec<u8>>,
-) -> Result<Terminal, AppError> {
-    let terminal = core.start_terminal(project_id, thread_id)?;
-    let rx = core.subscribe_terminal(terminal.id)?;
-    std::thread::spawn(move || {
-        while let Ok(chunk) = rx.recv() {
-            if on_output.send(chunk).is_err() {
-                break;
-            }
-        }
-    });
-    Ok(convert(&terminal))
-}
-
-#[tauri::command]
-#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn start_block_terminal(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -943,11 +878,12 @@ fn start_block_terminal(
             }
         }
     });
-    Ok(convert(&terminal))
+    Ok(terminal.into())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn write_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -958,6 +894,7 @@ fn write_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn resize_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -969,6 +906,7 @@ fn resize_terminal(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), AppError> {
     Ok(core.close_terminal(terminal_id)?)
 }
@@ -1052,31 +990,33 @@ async fn start_project_service(
     .map_err(|e| AppError {
         message: e.to_string(),
     })??;
-    Ok(convert(&outcome))
+    Ok(outcome.into())
 }
 
 /// The running Project Services of a Project.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_project_services(
     core: State<'_, Arc<Core>>,
     project_id: u32,
 ) -> Result<Vec<ProjectService>, AppError> {
     Ok(core
         .list_project_services(project_id)?
-        .iter()
-        .map(convert)
+        .into_iter()
+        .map(ProjectService::from)
         .collect())
 }
 
 /// One Project Service, including one that has stopped or failed.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn project_service(
     core: State<'_, Arc<Core>>,
     id: u32,
 ) -> Result<Option<ProjectService>, AppError> {
-    Ok(core.project_service(id)?.as_ref().map(convert))
+    Ok(core.project_service(id)?.map(ProjectService::from))
 }
 
 /// Stops a Project Service, sending SIGTERM and then SIGKILL.
@@ -1105,7 +1045,7 @@ async fn restart_project_service(
         .map_err(|e| AppError {
             message: e.to_string(),
         })??;
-    Ok(convert(&outcome))
+    Ok(outcome.into())
 }
 
 /// Empties a Project Service's log buffer.
@@ -1124,6 +1064,7 @@ async fn clear_project_service_logs(core: State<'_, Arc<Core>>, id: u32) -> Resu
 /// A Project Service's buffered log, then every new line on `on_line`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_project_service_logs(
     core: State<'_, Arc<Core>>,
     id: u32,
@@ -1132,12 +1073,15 @@ fn subscribe_project_service_logs(
     let (backlog, rx) = core.subscribe_project_service_logs(id)?;
     std::thread::spawn(move || {
         while let Ok(line) = rx.recv() {
-            if on_line.send(convert(&line)).is_err() {
+            if on_line.send(line.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(backlog.iter().map(convert).collect())
+    Ok(backlog
+        .into_iter()
+        .map(ProjectServiceLogLine::from)
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -1174,7 +1118,7 @@ async fn list_dir(
         .map_err(|e| AppError {
             message: e.to_string(),
         })?
-        .map(|entries| entries.iter().map(convert).collect())
+        .map(|entries| entries.into_iter().map(FileEntry::from).collect())
         .map_err(AppError::from)
 }
 
@@ -1252,8 +1196,12 @@ pub struct LanguageServer {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn language_tools(core: State<'_, Arc<Core>>) -> Vec<LanguageTool> {
-    convert(&core.language_tools())
+    core.language_tools()
+        .into_iter()
+        .map(LanguageTool::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -1281,11 +1229,16 @@ async fn system_fonts() -> Result<Vec<String>, AppError> {
 #[tauri::command]
 #[specta::specta]
 async fn developer_tools() -> Result<Vec<DeveloperTool>, AppError> {
-    tauri::async_runtime::spawn_blocking(|| convert(&oxide_core::desktop_tools::developer_tools()))
-        .await
-        .map_err(|e| AppError {
-            message: e.to_string(),
-        })
+    tauri::async_runtime::spawn_blocking(|| {
+        oxide_core::desktop_tools::developer_tools()
+            .into_iter()
+            .map(DeveloperTool::from)
+            .collect()
+    })
+    .await
+    .map_err(|e| AppError {
+        message: e.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -1318,7 +1271,7 @@ async fn install_language_support(
     .map_err(|e| AppError {
         message: e.to_string(),
     })??;
-    Ok(convert(&tool))
+    Ok(tool.into())
 }
 
 #[tauri::command]
@@ -1355,12 +1308,14 @@ async fn find_files(
 }
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_editor_dirty(core: State<'_, Arc<Core>>, id: String, dirty: bool) {
     core.set_editor_dirty(id, dirty);
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn run_terminal_block(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -1372,6 +1327,7 @@ fn run_terminal_block(
 }
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn configure_language_server(
     core: State<'_, Arc<Core>>,
     language: String,
@@ -1411,7 +1367,7 @@ async fn start_language_server(
             }
         }
     });
-    Ok(convert(&summary))
+    Ok(summary.into())
 }
 #[tauri::command]
 #[specta::specta]
@@ -1491,7 +1447,7 @@ async fn git_status(
 ) -> Result<GitStatus, AppError> {
     git_blocking(&core, move |core| core.git_status_in(project_id, thread_id))
         .await
-        .map(|status| convert(&status))
+        .map(GitStatus::from)
 }
 
 #[tauri::command]
@@ -1505,7 +1461,7 @@ async fn list_branches(
         core.list_branches_in(project_id, thread_id)
     })
     .await
-    .map(|branches| branches.iter().map(convert).collect())
+    .map(|branches| branches.into_iter().map(GitBranch::from).collect())
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -1577,10 +1533,10 @@ async fn git_diff(
     scope: DiffScope,
 ) -> Result<Diff, AppError> {
     git_blocking(&core, move |core| {
-        core.diff_in(project_id, thread_id, convert(&scope))
+        core.diff_in(project_id, thread_id, scope.into())
     })
     .await
-    .map(|diff| convert(&diff))
+    .map(Diff::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
@@ -1639,7 +1595,7 @@ async fn list_line_comments(
 ) -> Result<Vec<LineComment>, AppError> {
     git_blocking(&core, move |core| core.list_line_comments(thread_id))
         .await
-        .map(|c| c.iter().map(convert).collect())
+        .map(|c| c.into_iter().map(LineComment::from).collect())
 }
 
 /// Sends every draft to the Thread as one prompt.
@@ -1760,7 +1716,7 @@ async fn restore_preview(
         core.restore_preview(thread_id, turn_index)
     })
     .await
-    .map(|preview| convert(&preview))
+    .map(RestorePreview::from)
 }
 
 /// Puts a Thread's files back to how they were before a Turn.
@@ -1773,7 +1729,7 @@ async fn restore_turn(
 ) -> Result<RestoreOutcome, AppError> {
     git_blocking(&core, move |core| core.restore_turn(thread_id, turn_index))
         .await
-        .map(|outcome| convert(&outcome))
+        .map(RestoreOutcome::from)
 }
 
 /// Undoes a Thread's latest restore, putting the files back to its safety Checkpoint.
@@ -1785,7 +1741,7 @@ async fn undo_restore(
 ) -> Result<RestoreOutcome, AppError> {
     git_blocking(&core, move |core| core.undo_restore(thread_id))
         .await
-        .map(|outcome| convert(&outcome))
+        .map(RestoreOutcome::from)
 }
 
 /// The restore of a Thread that can still be undone, if there is one.
@@ -1797,7 +1753,7 @@ async fn pending_restore(
 ) -> Result<Option<PendingRestore>, AppError> {
     git_blocking(&core, move |core| core.pending_restore(thread_id))
         .await
-        .map(|pending| pending.map(|pending| convert(&pending)))
+        .map(|pending| pending.map(PendingRestore::from))
 }
 
 /// Checks out a branch; a remote one (`origin/x`) becomes a tracking branch.
@@ -2047,19 +2003,8 @@ pub struct PullRequestDetail {
     pub default_merge_method: Option<MergeMethod>,
     /// Whether the repository deletes merged branches on its own.
     pub delete_branch_on_merge: bool,
-    /// The changed files.
-    pub diff: Diff,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestState {
-    pub availability: GithubAvailability,
-    /// How to get `gh` working, when it is not.
-    pub guidance: Option<String>,
-    pub branch: Option<String>,
-    pub default_branch: Option<String>,
-    pub pull_request: Option<PullRequest>,
+    /// The number of changed files.
+    pub changed_files: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -2153,22 +2098,6 @@ pub struct NewPullRequest {
     pub draft: bool,
 }
 
-/// Whether `gh` works and the branch's open pull request. Runs `gh` only when
-/// asked; the Surface decides when to refresh.
-#[tauri::command]
-#[specta::specta]
-async fn pull_request_state(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    thread_id: Option<u32>,
-) -> Result<PullRequestState, AppError> {
-    git_blocking(&core, move |core| {
-        core.pull_request_state_in(project_id, thread_id)
-    })
-    .await
-    .map(|state| convert(&state))
-}
-
 /// The repository's branches on GitHub, for choosing a pull request's base.
 #[tauri::command]
 #[specta::specta]
@@ -2194,7 +2123,7 @@ async fn pull_request_draft(
         core.pull_request_draft_in(project_id, thread_id)
     })
     .await
-    .map(|draft| convert(&draft))
+    .map(PullRequestDraft::from)
 }
 
 /// Pushes the branch if needed, then opens a pull request for it.
@@ -2219,7 +2148,7 @@ async fn create_pull_request(
         )
     })
     .await
-    .map(|pr| convert(&pr))
+    .map(PullRequest::from)
 }
 
 /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
@@ -2231,7 +2160,7 @@ async fn issues_state(
 ) -> Result<IssuesState, AppError> {
     git_blocking(&core, move |core| core.issues_state(project_id))
         .await
-        .map(|state| convert(&state))
+        .map(IssuesState::from)
 }
 
 /// The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none.
@@ -2243,7 +2172,7 @@ async fn issue_templates(
 ) -> Result<Vec<IssueTemplateFile>, AppError> {
     git_blocking(&core, move |core| core.issue_templates(project_id))
         .await
-        .map(|files| convert(&files))
+        .map(|files| files.into_iter().map(IssueTemplateFile::from).collect())
 }
 
 #[tauri::command]
@@ -2259,7 +2188,7 @@ async fn list_issues(
         core.list_issues(project_id, closed, mine, &search)
     })
     .await
-    .map(|list| list.iter().map(convert).collect())
+    .map(|list| list.into_iter().map(IssueSummary::from).collect())
 }
 
 #[tauri::command]
@@ -2271,7 +2200,7 @@ async fn issue_detail(
 ) -> Result<IssueDetail, AppError> {
     git_blocking(&core, move |core| core.issue_detail(project_id, number))
         .await
-        .map(|detail| convert(&detail))
+        .map(IssueDetail::from)
 }
 
 #[tauri::command]
@@ -2288,7 +2217,7 @@ async fn create_issue(
         core.create_issue(project_id, &title, &body, &assignees, &labels)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(IssueSummary::from)
 }
 
 #[tauri::command]
@@ -2316,7 +2245,7 @@ async fn close_issue(
     comment: String,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| {
-        core.close_issue(project_id, number, convert(&reason), &comment)
+        core.close_issue(project_id, number, reason.into(), &comment)
     })
     .await
 }
@@ -2340,26 +2269,11 @@ async fn edit_issue(
     number: u32,
     edit: IssueEdit,
 ) -> Result<(), AppError> {
+    let edit: oxide_core::IssueEdit = edit.into();
     git_blocking(&core, move |core| {
-        core.edit_issue(project_id, number, &convert(&edit))
+        core.edit_issue(project_id, number, &edit)
     })
     .await
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn open_issue(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    number: u32,
-) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.open_issue(project_id, number)).await
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn open_pull_request(core: State<'_, Arc<Core>>, project_id: u32) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.open_pull_request(project_id)).await
 }
 
 /// Open pull requests; `mine` keeps the user's own, `search` is a GitHub query.
@@ -2375,7 +2289,7 @@ async fn list_pull_requests(
         core.list_pull_requests(project_id, mine, &search)
     })
     .await
-    .map(|prs| convert(&prs))
+    .map(|prs| prs.into_iter().map(PullRequest::from).collect())
 }
 
 /// One pull request's description, checks, conversation and changed files.
@@ -2390,7 +2304,7 @@ async fn pull_request_detail(
         core.pull_request_detail(project_id, number)
     })
     .await
-    .map(|detail| convert(&detail))
+    .map(PullRequestDetail::from)
 }
 
 #[tauri::command]
@@ -2404,7 +2318,12 @@ async fn pull_request_review_threads(
         core.pull_request_review_threads(project_id, number)
     })
     .await
-    .map(|threads| convert(&threads))
+    .map(|threads| {
+        threads
+            .into_iter()
+            .map(PullRequestReviewThread::from)
+            .collect()
+    })
 }
 
 #[tauri::command]
@@ -2432,7 +2351,7 @@ async fn merge_pull_request(
     auto: bool,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| {
-        core.merge_pull_request(project_id, number, convert(&method), delete_branch, auto)
+        core.merge_pull_request(project_id, number, method.into(), delete_branch, auto)
     })
     .await
 }
@@ -2462,6 +2381,7 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppErr
 /// loopback `http` addresses are accepted; the webview never opens pages itself.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn open_local_url(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppError> {
     Ok(core.open_local_url(&url)?)
 }
@@ -2504,7 +2424,7 @@ async fn pull_request_candidates(
 ) -> Result<PullRequestCandidates, AppError> {
     git_blocking(&core, move |core| core.pull_request_candidates(project_id))
         .await
-        .map(|candidates| convert(&candidates))
+        .map(PullRequestCandidates::from)
 }
 
 /// Changes a pull request's reviewers, assignees and labels.
@@ -2516,8 +2436,9 @@ async fn edit_pull_request(
     number: u32,
     edit: PullRequestEdit,
 ) -> Result<(), AppError> {
+    let edit: oxide_core::PullRequestEdit = edit.into();
     git_blocking(&core, move |core| {
-        core.edit_pull_request(project_id, number, &convert(&edit))
+        core.edit_pull_request(project_id, number, &edit)
     })
     .await
 }
@@ -2547,12 +2468,12 @@ async fn create_thread(
     effort: Option<String>,
     permission_mode: Option<PermissionMode>,
 ) -> Result<Thread, AppError> {
-    let mode: Option<oxide_core::PermissionMode> = permission_mode.map(|m| convert(&m));
+    let mode: Option<oxide_core::PermissionMode> = permission_mode.map(Into::into);
     git_blocking(&core, move |core| {
         core.create_thread(project_id, &provider, model, effort, mode)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 /// A Board Thread handed off from the Thread Board.
@@ -2582,10 +2503,10 @@ async fn dispatch_thread(
     core: State<'_, Arc<Core>>,
     request: DispatchRequest,
 ) -> Result<Thread, AppError> {
-    let request: oxide_core::DispatchRequest = convert(&request);
+    let request: oxide_core::DispatchRequest = request.into();
     git_blocking(&core, move |core| core.dispatch_thread(request))
         .await
-        .map(|thread| convert(&thread))
+        .map(Thread::from)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -2637,6 +2558,7 @@ pub struct BlindReviewFinding {
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn blind_review_providers(
     core: State<'_, Arc<Core>>,
     current_provider: Option<String>,
@@ -2659,10 +2581,10 @@ async fn start_blind_review(
     core: State<'_, Arc<Core>>,
     request: BlindReviewRequest,
 ) -> Result<Thread, AppError> {
-    let req: oxide_core::BlindReviewRequest = convert(&request);
+    let req: oxide_core::BlindReviewRequest = request.into();
     git_blocking(&core, move |core| core.start_blind_review(req))
         .await
-        .map(|thread| convert(&thread))
+        .map(Thread::from)
 }
 
 /// The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
@@ -2677,7 +2599,7 @@ async fn list_blind_review_findings(
         core.list_blind_review_findings(thread_id)
     })
     .await
-    .map(|findings| convert(&findings))
+    .map(|findings| findings.into_iter().map(BlindReviewFinding::from).collect())
 }
 
 /// Keeps one finding: an anchored finding becomes a draft Line comment on the reviewed Thread.
@@ -2689,7 +2611,7 @@ async fn keep_blind_review_finding(
 ) -> Result<Option<LineComment>, AppError> {
     git_blocking(&core, move |core| core.keep_blind_review_finding(id))
         .await
-        .map(|comment| comment.as_ref().map(convert))
+        .map(|comment| comment.map(LineComment::from))
 }
 
 /// Dismisses one finding, so it never reaches the Thread.
@@ -2699,60 +2621,22 @@ async fn dismiss_blind_review_finding(core: State<'_, Arc<Core>>, id: u32) -> Re
     git_blocking(&core, move |core| core.dismiss_blind_review_finding(id)).await
 }
 
-#[tauri::command]
-#[specta::specta]
-fn get_project_setup_command(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-) -> Result<Option<String>, AppError> {
-    Ok(core.project_setup_command(project_id)?)
-}
-
-#[tauri::command]
-#[specta::specta]
-fn set_project_setup_command(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    command: Option<String>,
-) -> Result<(), AppError> {
-    Ok(core.set_project_setup_command(project_id, command.as_deref())?)
-}
-
-/// Whether chat Threads of this Project stay in the main checkout instead of each
-/// getting its own worktree on their first prompt.
-#[tauri::command]
-#[specta::specta]
-fn get_project_threads_in_main_checkout(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-) -> Result<bool, AppError> {
-    Ok(core.project_threads_in_main_checkout(project_id)?)
-}
-
-#[tauri::command]
-#[specta::specta]
-fn set_project_threads_in_main_checkout(
-    core: State<'_, Arc<Core>>,
-    project_id: u32,
-    in_main_checkout: bool,
-) -> Result<(), AppError> {
-    Ok(core.set_project_threads_in_main_checkout(project_id, in_main_checkout)?)
-}
-
 /// Starts a new Thread that continues one whose Provider session is gone.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn continue_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
 ) -> Result<ContinuedThread, AppError> {
-    Ok(convert(&core.continue_thread(thread_id)?))
+    Ok(core.continue_thread(thread_id)?.into())
 }
 
 /// Deletes a Thread and its Transcript. Deleting a Board Thread removes its worktree; with
 /// uncommitted changes that waits for `discard_changes`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn delete_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2768,18 +2652,20 @@ fn delete_thread(
 /// fresh without creating another Thread.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn clear_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
-    Ok(convert(&core.clear_thread(thread_id)?))
+    Ok(core.clear_thread(thread_id)?.into())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_thread_permission_mode(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
     permission_mode: PermissionMode,
 ) -> Result<(), AppError> {
-    let mode: oxide_core::PermissionMode = convert(&permission_mode);
+    let mode: oxide_core::PermissionMode = permission_mode.into();
     Ok(core.set_thread_permission_mode(thread_id, mode)?)
 }
 
@@ -2794,11 +2680,12 @@ async fn set_thread_provider(
         core.set_thread_provider(thread_id, &provider)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn rename_thread(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
@@ -2809,13 +2696,14 @@ fn rename_thread(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn respond_to_approval(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
     approval_id: String,
     decision: ApprovalDecision,
 ) -> Result<(), AppError> {
-    let dec: oxide_core::ApprovalDecision = convert(&decision);
+    let dec: oxide_core::ApprovalDecision = decision.into();
     Ok(core.respond_to_approval(thread_id, &approval_id, dec)?)
 }
 
@@ -2837,17 +2725,17 @@ async fn detect_provider(
 ) -> Result<Detection, AppError> {
     git_blocking(&core, move |core| Ok(core.detect_provider(&provider)))
         .await
-        .map(|det| convert(&det))
+        .map(Detection::from)
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn get_provider_capabilities(
     core: State<'_, Arc<Core>>,
     provider: String,
 ) -> Result<ProviderCapabilities, AppError> {
-    let caps = core.get_provider_capabilities(&provider);
-    Ok(convert(&caps))
+    Ok(core.get_provider_capabilities(&provider).into())
 }
 
 #[tauri::command]
@@ -2861,17 +2749,19 @@ async fn get_model_catalog(
         core.get_model_catalog(&provider, refresh)
     })
     .await
-    .map(|models| convert(&models))
+    .map(|models| models.into_iter().map(ModelInfo::from).collect())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn get_favourite_models(core: State<'_, Arc<Core>>) -> Result<Vec<String>, AppError> {
     Ok(core.get_favourite_models()?)
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn set_favourite_models(
     core: State<'_, Arc<Core>>,
     favourites: Vec<String>,
@@ -2895,11 +2785,12 @@ async fn set_thread_model_and_effort(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn list_threads(core: State<'_, Arc<Core>>, project_id: u32) -> Result<Vec<Thread>, AppError> {
     // Listing a Project's Threads is what opening it does.
     core.open_project(project_id)?;
     let list = core.list_threads(project_id)?;
-    Ok(convert(&list))
+    Ok(list.into_iter().map(Thread::from).collect())
 }
 
 #[tauri::command]
@@ -2909,7 +2800,7 @@ async fn send_prompt(
     thread_id: u32,
     segments: Vec<PromptInput>,
 ) -> Result<(), AppError> {
-    let input: Vec<oxide_core::PromptInput> = convert(&segments);
+    let input: Vec<oxide_core::PromptInput> = segments.into_iter().map(Into::into).collect();
     git_blocking(&core, move |core| {
         core.send_prompt_segments(thread_id, &input)
     })
@@ -2930,7 +2821,7 @@ async fn attach_paths(
             .map(|path| match core.attach_path(std::path::Path::new(&path)) {
                 Ok(attachment) => AttachOutcome {
                     path,
-                    attachment: Some(convert(&attachment)),
+                    attachment: Some(attachment.into()),
                     error: None,
                 },
                 Err(error) => AttachOutcome {
@@ -2947,17 +2838,9 @@ async fn attach_paths(
 /// Forgets an Attachment the user took out of a prompt before sending it.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn discard_attachment(core: State<'_, Arc<Core>>, id: String) {
     core.discard_attachment(&id);
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn attachment_preview(
-    core: State<'_, Arc<Core>>,
-    id: String,
-) -> Result<Option<String>, AppError> {
-    git_blocking(&core, move |core| core.attachment_preview(&id)).await
 }
 
 /// Stores pasted bytes. The bytes travel as the raw request body rather than JSON, and the
@@ -2984,7 +2867,7 @@ async fn attach_bytes(
         core.attach_bytes(name.as_deref(), &bytes)
     })
     .await
-    .map(|attachment| convert(&attachment))
+    .map(Attachment::from)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -3039,11 +2922,12 @@ async fn list_slash_commands(
         core.thread_slash_commands(&provider, project_id, thread_id, refresh)
     })
     .await
-    .map(|commands| commands.iter().map(convert).collect())
+    .map(|commands| commands.into_iter().map(SlashCommand::from).collect())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn interrupt_thread(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
     Ok(core.interrupt_thread(thread_id)?)
 }
@@ -3065,11 +2949,12 @@ async fn list_turns(
             .map_err(|e| AppError {
                 message: e.to_string(),
             })??;
-    Ok(convert(&page))
+    Ok(page.into())
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_thread(
     core: State<'_, Arc<Core>>,
     app: tauri::AppHandle,
@@ -3077,12 +2962,11 @@ fn subscribe_thread(
     on_event: tauri::ipc::Channel<SequencedThreadEvent>,
 ) -> Result<ThreadSnapshot, AppError> {
     let (snapshot, rx) = core.subscribe_thread(thread_id)?;
-    let app_clone = app.clone();
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
-            let app_evt: SequencedThreadEvent = convert(&evt);
+            let app_evt: SequencedThreadEvent = evt.into();
             if let ThreadEvent::ThreadStatusChanged { status } = app_evt.event {
-                let _ = app_clone.emit(
+                let _ = app.emit(
                     THREAD_STATUS_CHANGED,
                     ThreadStatusChangedPayload { thread_id, status },
                 );
@@ -3092,19 +2976,21 @@ fn subscribe_thread(
             }
         }
     });
-    Ok(convert(&snapshot))
+    Ok(snapshot.into())
 }
 
 /// The Review ledger of a Project: median wait and recent entries.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn review_ledger(core: State<'_, Arc<Core>>, project_id: u32) -> Result<ReviewLedger, AppError> {
-    Ok(convert(&core.review_ledger(project_id)?))
+    Ok(core.review_ledger(project_id)?.into())
 }
 
 /// Removes every entry of the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn clear_review_ledger(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
     Ok(core.clear_review_ledger()?)
 }
@@ -3112,6 +2998,7 @@ fn clear_review_ledger(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
 /// Confirms a candidate follow-up fix in the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn confirm_follow_up(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3124,6 +3011,7 @@ fn confirm_follow_up(
 /// Dismisses a candidate follow-up fix in the Review ledger.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn dismiss_follow_up(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3136,20 +3024,22 @@ fn dismiss_follow_up(
 /// Recurring Line comments the app offers to turn into a rule for the Project's agent instructions.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn rule_suggestions(
     core: State<'_, Arc<Core>>,
     project_id: u32,
 ) -> Result<Vec<RuleSuggestion>, AppError> {
     Ok(core
         .rule_suggestions(project_id)?
-        .iter()
-        .map(convert)
+        .into_iter()
+        .map(RuleSuggestion::from)
         .collect())
 }
 
 /// Dismisses a rule suggestion for good.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn dismiss_rule_suggestion(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3171,12 +3061,13 @@ async fn accept_rule_suggestion(
         core.accept_rule_suggestion(project_id, id, &provider)
     })
     .await
-    .map(|summary| convert(&summary))
+    .map(Thread::from)
 }
 
 /// A Provider's Usage limits now (if Oxide has seen any), then every update on `on_event`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn subscribe_usage_limits(
     core: State<'_, Arc<Core>>,
     provider: String,
@@ -3185,66 +3076,32 @@ fn subscribe_usage_limits(
     let (current, rx) = core.subscribe_usage_limits(&provider);
     std::thread::spawn(move || {
         while let Ok(limits) = rx.recv() {
-            if on_event.send(convert(&limits)).is_err() {
+            if on_event.send(limits.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(current.as_ref().map(convert))
+    Ok(current.map(UsageLimits::from))
 }
 
 /// The Project's Thread Board: its cards now, then every change on `on_event`.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn subscribe_board(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     on_event: tauri::ipc::Channel<BoardEvent>,
 ) -> Result<Vec<BoardCard>, AppError> {
     let (cards, rx) = core.subscribe_board(project_id)?;
-    let core = Arc::clone(&core);
     std::thread::spawn(move || {
         while let Ok(evt) = rx.recv() {
-            // "Delete merged branches": a Thread whose pull request just showed up merged has
-            // its worktree and branch removed. Off the feed's thread, because `gh` is slow, and
-            // the removal publishes the Thread again, now without a branch.
-            if let oxide_core::BoardEvent::ThreadChanged(card) = &evt
-                && card.thread.branch.is_some()
-                && card
-                    .pull_request
-                    .as_ref()
-                    .is_some_and(|pr| pr.phase == oxide_core::PullRequestPhase::Merged)
-            {
-                let (core, thread_id) = (Arc::clone(&core), card.thread.id);
-                std::thread::spawn(move || {
-                    let _ = core.clean_up_merged_thread(thread_id);
-                });
-            }
-            if on_event.send(convert(&evt)).is_err() {
+            if on_event.send(evt.into()).is_err() {
                 break;
             }
         }
     });
-    Ok(convert(&cards))
-}
-
-#[tauri::command]
-#[specta::specta]
-fn subscribe_thread_debug(
-    core: State<'_, Arc<Core>>,
-    thread_id: u32,
-    on_event: tauri::ipc::Channel<DebugSequencedThreadEvent>,
-) -> Result<ThreadSnapshot, AppError> {
-    let (snapshot, rx) = core.subscribe_thread_debug(thread_id)?;
-    std::thread::spawn(move || {
-        while let Ok(evt) = rx.recv() {
-            let app_evt: DebugSequencedThreadEvent = convert(&evt);
-            if on_event.send(app_evt).is_err() {
-                break;
-            }
-        }
-    });
-    Ok(convert(&snapshot))
+    Ok(cards.into_iter().map(BoardCard::from).collect())
 }
 
 /// Emitted when ⌘N is pressed (even with the window hidden): start a new Thread.
@@ -3269,6 +3126,7 @@ pub struct Selection {
 /// The Project and Thread to reopen on launch.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn last_selection(core: State<'_, Arc<Core>>) -> Result<Option<Selection>, AppError> {
     Ok(core.last_selection()?.map(|s| Selection {
         project_id: s.project_id,
@@ -3278,6 +3136,7 @@ fn last_selection(core: State<'_, Arc<Core>>) -> Result<Option<Selection>, AppEr
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn remember_selection(
     core: State<'_, Arc<Core>>,
     project_id: u32,
@@ -3289,6 +3148,7 @@ fn remember_selection(
 /// The user confirmed quitting: interrupt every Thread and exit.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 fn confirm_quit(
     core: State<'_, Arc<Core>>,
     app: tauri::AppHandle,
@@ -3374,7 +3234,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         search_github_repositories,
         clone_github_repository,
         reveal_in_finder,
-        set_project_hidden,
         set_project_open,
         start_project_service,
         list_project_services,
@@ -3392,10 +3251,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_blind_review_findings,
         keep_blind_review_finding,
         dismiss_blind_review_finding,
-        get_project_setup_command,
-        set_project_setup_command,
-        get_project_threads_in_main_checkout,
-        set_project_threads_in_main_checkout,
         continue_thread,
         clear_thread,
         delete_thread,
@@ -3412,13 +3267,11 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_threads,
         send_prompt,
         attach_paths,
-        attachment_preview,
         discard_attachment,
         list_slash_commands,
         interrupt_thread,
         list_turns,
         subscribe_thread,
-        subscribe_thread_debug,
         subscribe_board,
         subscribe_usage_limits,
         review_ledger,
@@ -3428,7 +3281,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         rule_suggestions,
         dismiss_rule_suggestion,
         accept_rule_suggestion,
-        start_terminal,
         start_block_terminal,
         write_file,
         language_tools,
@@ -3469,11 +3321,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         pull,
         commit,
         push,
-        pull_request_state,
         pull_request_base_branches,
         pull_request_draft,
         create_pull_request,
-        open_pull_request,
         list_pull_requests,
         pull_request_detail,
         pull_request_review_threads,
@@ -3496,7 +3346,6 @@ pub fn builder() -> Builder<tauri::Wry> {
         close_issue,
         reopen_issue,
         edit_issue,
-        open_issue,
         last_selection,
         remember_selection,
         confirm_quit,
@@ -3614,7 +3463,7 @@ pub fn run() {
             core.subscribe_settings(move |state| {
                 let _ = handle.emit(SETTINGS_CHANGED, SettingsState::from(state));
             });
-            core.set_system(Arc::new(system::MacSystem::new(app.handle().clone())));
+            core.set_system(Arc::new(system::HostSystem::new(app.handle().clone())));
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                 #[cfg(target_os = "windows")]
                 {
@@ -3765,7 +3614,7 @@ mod tests {
             last_seq: 7,
             supported_permission_modes: vec![],
         };
-        let app: ThreadSnapshot = convert(&core);
+        let app: ThreadSnapshot = core.into();
         let turn_error = app.turns[0].error.as_ref().unwrap();
         assert_eq!(turn_error.stderr_tail.as_deref(), Some("panicked"));
 
@@ -3777,17 +3626,18 @@ mod tests {
                 error: Some(error),
             },
         };
-        let app: SequencedThreadEvent = convert(&event);
+        let app: SequencedThreadEvent = event.into();
         assert!(matches!(
             app.event,
             ThreadEvent::TurnCompleted { error: Some(_), .. }
         ));
-        let app: SequencedThreadEvent = convert(&oxide_core::SequencedThreadEvent {
+        let app: SequencedThreadEvent = oxide_core::SequencedThreadEvent {
             seq: 9,
             event: oxide_core::ThreadEvent::ProviderRetrying {
                 message: "rate limited".into(),
             },
-        });
+        }
+        .into();
         assert!(matches!(app.event, ThreadEvent::ProviderRetrying { .. }));
     }
 

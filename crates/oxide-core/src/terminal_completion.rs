@@ -1,6 +1,7 @@
 use crate::terminal::TerminalSession;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(any(not(windows), test))]
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +76,7 @@ pub fn complete(
 }
 
 /// Files and PATH commands, without evaluating user input. Also used to test quoting on every OS.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg(any(not(windows), test))]
 fn path_completion(line: &str, cursor: usize, cwd: &Path) -> TerminalCompletion {
     let mut units = 0;
     let end = line

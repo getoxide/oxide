@@ -1,7 +1,6 @@
 //! The Thread Board's feed. The Board stores nothing of its own: a card is a Thread row plus its
 //! pending Approvals, read fresh whenever a Thread changes and pushed to that Project's subscribers.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -9,7 +8,6 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::github::BranchPullRequest;
 use crate::thread::{self, ThreadSummary};
 use oxide_provider::ApprovalKind;
 
@@ -28,8 +26,6 @@ pub struct PendingApproval {
 pub struct BoardCard {
     pub thread: ThreadSummary,
     pub pending_approvals: Vec<PendingApproval>,
-    /// The Thread's branch's pull request, as last refreshed; `None` when it has none.
-    pub pull_request: Option<BranchPullRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,8 +41,6 @@ pub(crate) struct BoardHub {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
     subscribers: Mutex<Vec<(u32, crossbeam_channel::Sender<BoardEvent>)>>,
-    /// Pull requests by Thread, kept in memory: GitHub owns them, the Board only shows them.
-    pull_requests: Mutex<HashMap<u32, BranchPullRequest>>,
 }
 
 impl BoardHub {
@@ -55,31 +49,7 @@ impl BoardHub {
             db_path,
             conn: Mutex::new(None),
             subscribers: Mutex::new(Vec::new()),
-            pull_requests: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Records what GitHub says about the Thread's pull request and tells subscribers.
-    pub(crate) fn set_pull_request(&self, thread_id: u32, pr: Option<BranchPullRequest>) {
-        let changed = {
-            let mut map = self.pull_requests.lock().unwrap_or_else(|e| e.into_inner());
-            let previous = match &pr {
-                Some(pr) => map.insert(thread_id, pr.clone()),
-                None => map.remove(&thread_id),
-            };
-            previous != pr
-        };
-        if changed {
-            self.publish(thread_id);
-        }
-    }
-
-    fn pull_request(&self, thread_id: u32) -> Option<BranchPullRequest> {
-        self.pull_requests
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&thread_id)
-            .cloned()
     }
 
     /// Every Thread of the Project, newest activity first, and a feed of what changes next.
@@ -144,12 +114,8 @@ impl BoardHub {
             });
     }
 
-    /// Tells the Project's subscribers that the Thread is gone, and forgets its pull request.
+    /// Tells the Project's subscribers that the Thread is gone.
     pub(crate) fn publish_deleted(&self, project_id: u32, thread_id: u32) {
-        self.pull_requests
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id);
         self.subscribers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -159,13 +125,7 @@ impl BoardHub {
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let mut guard = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_none() {
-            let conn = Connection::open(&self.db_path)?;
-            conn.busy_timeout(std::time::Duration::from_secs(5))?;
-            *guard = Some(conn);
-        }
-        f(guard.as_ref().expect("connection opened above"))
+        crate::db::with_conn(&self.db_path, &self.conn, f)
     }
 
     fn card(&self, conn: &Connection, thread: ThreadSummary) -> Result<BoardCard> {
@@ -194,7 +154,6 @@ impl BoardHub {
             Vec::new()
         };
         Ok(BoardCard {
-            pull_request: self.pull_request(thread.id),
             thread,
             pending_approvals,
         })

@@ -13,7 +13,6 @@ vi.mock("./ThreadView", () => ({ ThreadView: ({ threadId, draft }: { threadId: n
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 // jsdom does not implement HTMLCanvasElement.getContext(); some components touch it during render.
 class MockCanvasElement extends HTMLElement {
@@ -36,10 +35,7 @@ const baseDetail = {
   pullRequest, phase: "open", body: "", headSha: "abc123", comments: [], mergeState: "conflicting", reviewDecision: null, reviewers: [], assignees: [],
   labels: [], additions: 1, deletions: 0, viewer: "me", mergeMethods: ["merge"], defaultMergeMethod: "merge", deleteBranchOnMerge: false,
   checks: [{ name: "web", state: "failure", url: null, required: true }],
-  diff: {
-    base: "main",
-    files: [{ path: "src/app.rs", oldPath: null, status: "modified", added: 1, removed: 0, binary: false, hunks: [{ header: "@@ -1,1 +1,1 @@", lines: [{ kind: "added", text: "    run();" }] }] }],
-  },
+  changedFiles: 1,
 };
 const reviewThreads = [
   {

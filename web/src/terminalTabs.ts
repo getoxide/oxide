@@ -8,7 +8,7 @@ export interface TerminalCheckout {
 }
 
 /** An interactive shell tab, the only kind that runs commands. */
-export interface ShellTab extends TerminalCheckout {
+interface ShellTab extends TerminalCheckout {
   kind: "shell";
   id: number;
   /** The command a Command block is running now, if any. */
@@ -87,12 +87,12 @@ export function setRunning(state: TerminalsByProject, projectId: number, tabId: 
 }
 
 /** The tabs a Board Thread's worktree owns: what deleting that Thread closes. */
-export function tabsOfThread(state: TerminalsByProject, projectId: number, threadId: number): TerminalTab[] {
+function tabsOfThread(state: TerminalsByProject, projectId: number, threadId: number): TerminalTab[] {
   return projectTerminals(state, projectId).tabs.filter((tab) => tab.threadId === threadId);
 }
 
 /** Drops the tabs of a deleted Board Thread's worktree and leaves every sibling alone. */
-export function removeThreadTabs(state: TerminalsByProject, projectId: number, threadId: number): TerminalsByProject {
+function removeThreadTabs(state: TerminalsByProject, projectId: number, threadId: number): TerminalsByProject {
   return tabsOfThread(state, projectId, threadId).reduce((next, tab) => closeTab(next, projectId, tab.id), state);
 }
 

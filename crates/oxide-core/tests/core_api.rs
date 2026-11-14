@@ -612,29 +612,6 @@ mod discovery {
     }
 
     #[test]
-    fn hidden_projects_stay_hidden_across_rescans_until_unhidden() {
-        let f = fixture();
-        repo(&f.root.join("keep"));
-        repo(&f.root.join("hide"));
-        let id = f
-            .core
-            .rescan_projects()
-            .unwrap()
-            .iter()
-            .find(|p| p.name == "hide")
-            .unwrap()
-            .id;
-
-        f.core.set_project_hidden(id, true).unwrap();
-        let after = f.core.rescan_projects().unwrap();
-        let hidden: Vec<_> = after.iter().filter(|p| p.hidden).map(|p| &p.name).collect();
-        assert_eq!(hidden, ["hide"]);
-
-        f.core.set_project_hidden(id, false).unwrap();
-        assert!(f.core.list_projects().unwrap().iter().all(|p| !p.hidden));
-    }
-
-    #[test]
     fn a_deleted_folder_shows_as_missing_and_keeps_its_record() {
         let f = fixture();
         repo(&f.root.join("gone"));
@@ -706,4 +683,40 @@ fn items_and_turns_stored_before_command_evidence_read_as_unknown() {
         assert_eq!(item.command.line, None);
         assert_eq!(item.command.exit_code, None);
     }
+}
+
+#[test]
+fn migration_28_drops_verification_commands_from_projects() {
+    let tmp = tempfile::tempdir().unwrap();
+    let drop_at = oxide_core::MIGRATIONS
+        .iter()
+        .position(|m| m.contains("DROP COLUMN verification_commands"))
+        .expect("Migration 28 must drop verification_commands");
+    drop(Core::open_with_migrations(tmp.path(), &oxide_core::MIGRATIONS[..drop_at]).unwrap());
+    let db_path = tmp.path().join("oxide.db");
+    {
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, path, verification_commands) VALUES (1, 'p', '/p', '[\"cargo test\"]')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let core = Core::open(tmp.path()).unwrap();
+    let projects = core.list_projects().unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].name, "p");
+
+    let conn = Connection::open(&db_path).unwrap();
+    let mut stmt = conn.prepare("PRAGMA table_info(projects)").unwrap();
+    let columns: Vec<String> = stmt
+        .query_map([], |r| r.get(1))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert!(
+        !columns.iter().any(|c| c == "verification_commands"),
+        "projects still has verification_commands: {columns:?}"
+    );
 }

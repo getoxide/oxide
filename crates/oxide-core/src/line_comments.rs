@@ -52,19 +52,6 @@ impl CommentSide {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewLineComment {
-    pub scope: CommentScope,
-    pub path: String,
-    pub side: CommentSide,
-    /// 1-based line number on that side.
-    pub line: u32,
-    /// The code of the line, quoted as it was when commenting.
-    pub code: String,
-    pub body: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineComment {
@@ -115,39 +102,6 @@ pub(crate) fn prompt(comments: &[LineComment]) -> String {
 }
 
 impl Core {
-    pub fn add_line_comment(&self, thread_id: u32, new: NewLineComment) -> Result<LineComment> {
-        if new.body.trim().is_empty() {
-            return Err(Error::Editor("A comment can't be empty.".into()));
-        }
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        db.execute(
-            "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                thread_id,
-                new.scope.as_str(),
-                new.path,
-                new.side.as_str(),
-                new.line,
-                new.code,
-                new.body
-            ],
-        )?;
-        let id = db.last_insert_rowid() as u32;
-        Ok(LineComment {
-            id,
-            thread_id,
-            scope: new.scope,
-            path: new.path,
-            side: new.side,
-            line: new.line,
-            code: new.code,
-            body: new.body,
-            outdated: false,
-            provider: None,
-        })
-    }
-
     pub fn edit_line_comment(&self, id: u32, body: &str) -> Result<()> {
         if body.trim().is_empty() {
             return Err(Error::Editor("A comment can't be empty.".into()));
@@ -196,15 +150,28 @@ impl Core {
         }
         let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
         let root = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
+        let mut files: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
         let mut diffs = std::collections::HashMap::new();
         for c in &mut comments {
             c.outdated = match c.side {
-                CommentSide::New => !std::fs::read_to_string(root.join(&c.path))
-                    .map(|text| {
-                        text.lines().nth(c.line as usize - 1).map(str::to_owned)
-                            == Some(c.code.clone())
-                    })
-                    .unwrap_or(false),
+                CommentSide::New => {
+                    if !files.contains_key(&c.path) {
+                        files.insert(
+                            c.path.clone(),
+                            std::fs::read_to_string(root.join(&c.path)).ok(),
+                        );
+                    }
+                    !files
+                        .get(&c.path)
+                        .and_then(|opt| opt.as_deref())
+                        .is_some_and(|text| {
+                            c.line
+                                .checked_sub(1)
+                                .and_then(|idx| text.lines().nth(idx as usize))
+                                == Some(c.code.as_str())
+                        })
+                }
                 CommentSide::Old => {
                     let scope = c.scope;
                     let diff = diffs.entry(scope.as_str()).or_insert_with(|| match scope {
@@ -251,10 +218,10 @@ impl Core {
             self.record_review_round(thread_id, &kind);
         }
         self.remember_line_comments(snapshot.thread.project_id, thread_id, &comments);
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        for c in &comments {
-            db.execute("DELETE FROM line_comments WHERE id = ?1", [c.id])?;
-        }
+        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            "DELETE FROM line_comments WHERE thread_id = ?1",
+            [thread_id],
+        )?;
         Ok(())
     }
 

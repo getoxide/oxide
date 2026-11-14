@@ -6,21 +6,21 @@
 //! offered (ADR-0004), and Oxide never touches `agy`'s settings file.
 
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
-use crate::time::parse_rfc3339;
+use crate::time::{now_unix, parse_rfc3339};
 use crate::{
     ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, Detection, ItemKind,
     ModelInfo, PermissionMode, PromptSegment, Provider, ProviderCapabilities, ProviderError,
     ProviderEvent, SlashCommandInfo, SlashRoute, StartContext, TurnStatus, UsageStatus,
-    UsageWindow, UsageWindowKind, attachment_path_reference, is_background_command,
+    UsageWindow, UsageWindowKind, is_background_command, render_flat_prompt,
 };
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub const DEFAULT_AGY_COMMAND: &str = "agy";
 
@@ -103,7 +103,6 @@ const AGY_CLI_COMMANDS: &[&str] = &[
 ];
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-const STDERR_TAIL_LINES: usize = 20;
 
 /// Tools whose steps are reported as file changes.
 const FILE_CHANGE_TOOLS: &[&str] = &[
@@ -340,7 +339,7 @@ fn quota_window(
         kind,
         percent_used: Some(used),
         resets_at: reset_at(bucket, now_unix),
-        status: usage_status(used),
+        status: UsageStatus::from_percent(used),
         pool: None,
     })
 }
@@ -375,23 +374,6 @@ fn reset_at(bucket: &Value, now_unix: i64) -> Option<i64> {
                 .filter(|seconds| *seconds >= 0)
                 .map(|seconds| now_unix.saturating_add(seconds))
         })
-}
-
-fn usage_status(percent: f64) -> UsageStatus {
-    if percent >= 100.0 {
-        UsageStatus::Limited
-    } else if percent >= 80.0 {
-        UsageStatus::Warning
-    } else {
-        UsageStatus::Ok
-    }
-}
-
-fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// One entry of `agy models`.
@@ -742,13 +724,7 @@ impl Provider for AgyProvider {
         segments: &[PromptSegment],
     ) -> Result<(), ProviderError> {
         // The CLI takes text only: each Attachment is a path reference at its place.
-        let prompt = segments
-            .iter()
-            .map(|segment| match segment {
-                PromptSegment::Text { text } => text.clone(),
-                PromptSegment::Attachment(a) => attachment_path_reference(a),
-            })
-            .collect::<String>();
+        let prompt = render_flat_prompt(segments);
         let prompt = prompt.as_str();
         let (context, conversation) = {
             let session = self.session.lock().unwrap();
@@ -1035,16 +1011,7 @@ impl TurnRun {
                 sent
             })
         });
-        let stderr_reader = std::thread::spawn(move || {
-            let mut tail = VecDeque::new();
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if tail.len() == STDERR_TAIL_LINES {
-                    tail.pop_front();
-                }
-                tail.push_back(line);
-            }
-            tail.into_iter().collect::<Vec<_>>().join("\n")
-        });
+        let stderr_reader = process::drain_stderr(stderr);
 
         let mut steps: HashMap<u64, OpenItem> = HashMap::new();
         let mut next_item = 0u32;
@@ -1109,7 +1076,7 @@ impl TurnRun {
                 retrying: false,
             });
         }
-        let stderr_tail = stderr_reader.join().ok().filter(|t| !t.is_empty());
+        let stderr_tail = stderr_reader.join().ok().flatten();
         if let Some(registry) = &self.registry {
             registry.unregister(pgid);
         }

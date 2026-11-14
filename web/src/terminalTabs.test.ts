@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  closeTab, focusCheckoutTab, describeAffectedTabs, isMismatched, openServiceTab, openTab, removeThreadTabs, selectTab, setRunning, tabsOfThread,
+  allTabsOfThread, closeTab, focusCheckoutTab, describeAffectedTabs, isMismatched, openServiceTab, openTab, removeThreadTabsEverywhere, selectTab, setRunning,
   type ServiceTab, type TerminalCheckout, type TerminalsByProject,
 } from "./terminalTabs";
 
@@ -69,7 +69,7 @@ describe("Project terminal tabs", () => {
   });
 
   it("removes only the deleted worktree's tabs, keeping main and sibling worktrees", () => {
-    const state = removeThreadTabs(opened(main, featureA, featureB, featureA), 1, 5);
+    const state = removeThreadTabsEverywhere(opened(main, featureA, featureB, featureA), 5);
     expect(state[1].tabs.map((tab) => tab.key)).toEqual(["1:main", "1:6"]);
   });
 
@@ -77,7 +77,7 @@ describe("Project terminal tabs", () => {
     let state = opened(featureA, featureA);
     const [one] = state[1].tabs;
     state = setRunning(state, 1, one.id, "npm run dev");
-    expect(describeAffectedTabs(tabsOfThread(state, 1, 5))).toEqual([
+    expect(describeAffectedTabs(allTabsOfThread(state, 5))).toEqual([
       "Running “npm run dev” in /repo-wt/a",
       "Idle shell in /repo-wt/a",
     ]);
@@ -124,12 +124,12 @@ describe("Project Service log tabs", () => {
   });
 
   it("closes a deleted worktree's service log tab without shutting the service down", () => {
-    const state = removeThreadTabs(openServiceTab(openServiceTab(opened(main, featureA), 1, featureA, 9), 1, featureA, 10), 1, 5);
+    const state = removeThreadTabsEverywhere(openServiceTab(openServiceTab(opened(main, featureA), 1, featureA, 9), 1, featureA, 10), 5);
     expect(state[1].tabs.map((tab) => tab.key)).toEqual(["1:main"]);
   });
 
   it("does not describe service log tabs as shells when a worktree is deleted", () => {
     const state = openServiceTab(opened(featureA), 1, featureA, 9);
-    expect(describeAffectedTabs(tabsOfThread(state, 1, 5))).toEqual(["Idle shell in /repo-wt/a"]);
+    expect(describeAffectedTabs(allTabsOfThread(state, 5))).toEqual(["Idle shell in /repo-wt/a"]);
   });
 });

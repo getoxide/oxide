@@ -71,15 +71,6 @@ export function modelEffortParts(
   };
 }
 
-export function modelEffortLabel(
-  model: string | null,
-  effort: string | null,
-  catalog: ModelInfo[] | null = null,
-): string {
-  const parts = modelEffortParts(model, effort, catalog);
-  return parts.effort ? `${parts.model} · ${parts.effort}` : parts.model;
-}
-
 export function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";

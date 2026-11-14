@@ -27,7 +27,6 @@ import { LanguageSupportNotice } from "./LanguageSupport";
 import { Skeleton } from "./Skeleton";
 import { fontStyle, getAppearance } from "./appearance";
 import { registerEditorSave } from "./editorSaves";
-import { invalidateQueries } from "./queryCache";
 import { shortcutLabel } from "./shortcuts";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
@@ -40,9 +39,11 @@ interface Document {
   path: string;
   model: monaco.editor.ITextModel;
   saved: string;
+  savedVersionId: number;
   dirty: boolean;
   view: monaco.editor.ICodeEditorViewState | null;
   saving: boolean;
+  reloading?: boolean;
   /** Replaced by the next single-click open until it is edited or double-clicked. */
   preview?: boolean;
   listener?: monaco.IDisposable;
@@ -100,14 +101,14 @@ export function CodeWorkbench({
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
   const [states, setStates] = useState<Record<string, string>>({});
-  const [cursor, setCursor] = useState({ lineNumber: 1, column: 1 });
+  const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [showProblems, setShowProblems] = useState(false);
   const dirtyState = useRef(false);
   const requestedFile = useRef(openRequest);
   useLayoutEffect(() => { requestedFile.current = openRequest; }, [openRequest]);
 
-  const publish = useCallback(() => {
+  const publish = useCallback((persistTabs = false) => {
     const docs = [...records.current.values()];
     setDocuments(docs.map((d) => ({ ...d })));
     const dirty = docs.some((d) => d.dirty);
@@ -115,13 +116,15 @@ export function CodeWorkbench({
       dirtyState.current = dirty;
       void commands.setEditorDirty(contextKey, dirty).catch(() => {});
     }
-    try {
-      localStorage.setItem(
-        `oxide:code-tabs:${contextKey}`,
-        JSON.stringify(docs.map((d) => d.path)),
-      );
-    } catch {
-      /* Editing works without UI persistence. */
+    if (persistTabs) {
+      try {
+        localStorage.setItem(
+          `oxide:code-tabs:${contextKey}`,
+          JSON.stringify(docs.map((d) => d.path)),
+        );
+      } catch {
+        /* Editing works without UI persistence. */
+      }
     }
   }, [contextKey]);
 
@@ -144,7 +147,7 @@ export function CodeWorkbench({
 
   /** Drops a document and its model without asking; callers decide whether that is allowed. */
   const discardDocument = useCallback(
-    (path: string) => {
+    (path: string, persistTabs = true) => {
       const doc = records.current.get(path);
       if (!doc) return;
       const order = [...records.current.keys()];
@@ -154,7 +157,7 @@ export function CodeWorkbench({
       records.current.delete(path);
       doc.listener?.dispose();
       doc.model.dispose();
-      publish();
+      publish(persistTabs);
       if (selected) {
         const next = records.current.get(neighborAfterClose(order, path) ?? "");
         if (next) select(next);
@@ -197,25 +200,34 @@ export function CodeWorkbench({
         );
         // A new preview takes the place of the unmodified one; dirty or kept files stay.
         const stale = keep ? null : previewToReplace([...records.current.values()].map((d) => ({ path: d.path, preview: !!d.preview, dirty: d.dirty })));
-        if (stale) discardDocument(stale);
+        if (stale) discardDocument(stale, false);
         const doc: Document = {
           path,
           model,
           saved: result.data.content,
+          savedVersionId: model.getAlternativeVersionId(),
           dirty: false,
           view: null,
           saving: false,
           preview: !keep,
         };
         doc.listener = model.onDidChangeContent(() => {
-          doc.dirty = model.getValue() !== doc.saved;
+          if (doc.reloading) {
+            languages.current?.changed(model);
+            return;
+          }
+          const wasDirty = doc.dirty;
+          const wasPreview = doc.preview;
+          doc.dirty = model.getAlternativeVersionId() !== doc.savedVersionId;
           if (doc.dirty) doc.preview = false;
           languages.current?.changed(model);
-          publish();
+          if (doc.dirty !== wasDirty || doc.preview !== wasPreview) {
+            publish();
+          }
         });
         records.current.set(path, doc);
         languages.current?.add(model);
-        publish();
+        publish(true);
         if (reveal) select(doc, selection);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -232,6 +244,7 @@ export function CodeWorkbench({
       if (!doc.dirty) return true;
       if (doc.saving) return false;
       const content = doc.model.getValue();
+      const savingVersionId = doc.model.getAlternativeVersionId();
       doc.saving = true;
       publish();
       setError(null);
@@ -245,9 +258,9 @@ export function CodeWorkbench({
         );
         if (result.status === "error") throw new Error(result.error.message);
         doc.saved = content;
-        doc.dirty = doc.model.getValue() !== content;
+        doc.savedVersionId = savingVersionId;
+        doc.dirty = doc.model.getAlternativeVersionId() !== doc.savedVersionId;
         languages.current?.saved(doc.model);
-        invalidateQueries(`p${projectId}:diff:`, { drop: true });
         onChanged();
         return true;
       } catch (e) {
@@ -303,6 +316,19 @@ export function CodeWorkbench({
     setTreeOpen(false);
     treeToggle.current?.focus();
   }, []);
+  const handleTreeOpen = useCallback(
+    (path: string) => {
+      if (compact) closeTree();
+      void openFile(path, undefined, true, false);
+    },
+    [compact, closeTree, openFile],
+  );
+  const handleTreeKeep = useCallback(
+    (path: string) => {
+      void openFile(path);
+    },
+    [openFile],
+  );
   // Narrow docks show the file list as an overlay instead of a permanent split.
   useEffect(() => {
     if (!showExplorer) return;
@@ -350,6 +376,7 @@ export function CodeWorkbench({
       stickyScroll: { enabled: true },
     });
     editor.current = instance;
+    setEditorInstance(instance);
     const appearance=()=>instance.updateOptions({fontFamily:getAppearance().fonts.code, fontSize:fontStyle("code").size, fontWeight:String(fontStyle("code").weight)});
     window.addEventListener("oxide-appearance-changed",appearance);
     const bridge = new EditorLanguages(
@@ -371,9 +398,6 @@ export function CodeWorkbench({
     const reconnect = () => bridge.reconnect();
     window.addEventListener("oxide-language-tools-changed", reconnect);
     const ownedRecords = records.current;
-    const cursorChange = instance.onDidChangeCursorPosition((e) =>
-      setCursor(e.position),
-    );
     const markers = monaco.editor.onDidChangeMarkers(() => {
       setProblems(
         [...records.current.values()].flatMap((doc) =>
@@ -423,12 +447,12 @@ export function CodeWorkbench({
       unregister();
       window.removeEventListener("oxide-appearance-changed",appearance);
       window.removeEventListener("oxide-language-tools-changed", reconnect);
-      cursorChange.dispose();
       markers.dispose();
       opener.dispose();
       bridge.dispose();
       instance.dispose();
       editor.current = null;
+      setEditorInstance(null);
       languages.current = null;
       for (const doc of ownedRecords.values()) {
         doc.listener?.dispose();
@@ -524,7 +548,13 @@ export function CodeWorkbench({
       return;
     }
     doc.saved = result.data.content;
-    doc.model.setValue(result.data.content);
+    doc.reloading = true;
+    try {
+      doc.model.setValue(result.data.content);
+    } finally {
+      doc.reloading = false;
+    }
+    doc.savedVersionId = doc.model.getAlternativeVersionId();
     doc.dirty = false;
     publish();
     setError(null);
@@ -616,11 +646,8 @@ export function CodeWorkbench({
           projectId={projectId}
           threadId={threadId}
           selected={active}
-          onOpen={(path) => {
-            if (compact) closeTree();
-            void openFile(path, undefined, true, false);
-          }}
-          onKeep={(path) => void openFile(path)}
+          onOpen={handleTreeOpen}
+          onKeep={handleTreeKeep}
           revision={treeRevision}
         />
       </aside>}
@@ -893,9 +920,7 @@ export function CodeWorkbench({
             · {warnings} {warnings === 1 ? "warning" : "warnings"}
           </button>
           <span className="grow" />
-          <span>
-            Ln {cursor.lineNumber}, Col {cursor.column}
-          </span>
+          <CursorReadout editor={editorInstance} />
           <button
             title={language ? states[language] : undefined}
             onClick={() => onOpenLanguageSettings()}
@@ -945,6 +970,20 @@ export function CodeWorkbench({
         </div>
       )}
     </main>
+  );
+}
+
+function CursorReadout({ editor }: { editor: monaco.editor.IStandaloneCodeEditor | null }) {
+  const [cursor, setCursor] = useState({ lineNumber: 1, column: 1 });
+  useEffect(() => {
+    if (!editor) return;
+    const sub = editor.onDidChangeCursorPosition((e) => setCursor(e.position));
+    return () => sub.dispose();
+  }, [editor]);
+  return (
+    <span>
+      Ln {cursor.lineNumber}, Col {cursor.column}
+    </span>
   );
 }
 

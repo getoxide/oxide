@@ -9,7 +9,6 @@ import { App } from "./App";
 vi.mock("./ThreadView", () => ({ ThreadView: ({ gitControls }: { gitControls?: unknown }) => <div>{gitControls as never}</div> }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./FilesPanel", () => ({ FilesPanel: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
 
@@ -38,11 +37,6 @@ beforeEach(() => {
     if (command === "fetch_project") return true;
     if (command === "last_selection") return { projectId: 1, threadId: 2 };
     if (command === "list_threads") return [thread()];
-    if (command === "add_line_comment") {
-      const saved = { id: drafts.length + 1, threadId: args.threadId, outdated: false, ...args.comment };
-      drafts.push(saved);
-      return saved;
-    }
     if (command === "list_line_comments") return drafts;
     if (command === "send_line_comments") { drafts = []; return null; }
     if (command === "plugin:event|listen") return 1;

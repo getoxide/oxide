@@ -37,7 +37,8 @@ import { Checks } from "./PullRequestChecks";
 import { Markdown } from "./PullRequestMarkdown";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
-import { defaultMergeMethod, mergeRequirements, readiness, relativeTime, unresolvedReviewThreads } from "./pullRequestReview";
+import { defaultMergeMethod, mergeRequirements, readiness, unresolvedReviewThreads } from "./pullRequestReview";
+import { relativeTime } from "./relativeTime";
 import { pullRequestFixPrompt } from "./fixPullRequest";
 import { reviewThreadsPrefix } from "./reviewKeys";
 import { threadLine } from "./reviewThreadPlacement";
@@ -511,7 +512,7 @@ export function PullRequestReview({
               <span className="add">+{detail.additions}</span> <span className="del">−{detail.deletions}</span>
               <span className="pr-diffstat-files">
                 {" "}
-                in {detail.diff.files.length} {detail.diff.files.length === 1 ? "file" : "files"}
+                in {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
               </span>
             </p>
           )}

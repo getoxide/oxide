@@ -1,3 +1,4 @@
+import { errorMessage } from "./errors";
 import { hasOpenDialog, isTypingTarget } from "./keyboardScope";
 import { Skeleton } from "./Skeleton";
 import { LruCache } from "./lru";
@@ -70,6 +71,7 @@ import { readableModel } from "./headerLines";
 import { filterSlashCommands, pickSlashCommand, slashQuery } from "./slashMenu";
 import {
   applyThreadEvent,
+  estimateTranscriptViewBytes,
   initialTranscriptState,
   SESSION_LOST_MESSAGE,
   turnIsRunning,
@@ -129,12 +131,6 @@ interface Outgoing {
 
 /** How a file offered as an Attachment fares once Core has looked at it. */
 type Stored = { attachment: Attachment } | { error: string };
-
-function errorMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
-  return "The file could not be attached.";
-}
 
 async function readBytes(file: File): Promise<Uint8Array> {
   if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
@@ -242,7 +238,7 @@ export function ThreadView({
   const pinnedAtRef = useRef<number | null>(null);
   const requestedPagesRef = useRef(new Set<number>());
   const savedViews = useRef(new LruCache<number, { transcript: TranscriptState; pages: TranscriptPages; top: number; following: boolean }>(16 * 1024 * 1024,
-    (view) => JSON.stringify([view.transcript, [...view.pages]]).length * 2));
+    (view) => estimateTranscriptViewBytes(view.transcript, view.pages)));
   const latestView = useRef({ transcript, pages });
   useLayoutEffect(() => {
     const views = savedViews.current;
@@ -419,7 +415,7 @@ export function ThreadView({
             });
             return { attachment };
           } catch (error) {
-            return { error: errorMessage(error) };
+            return { error: errorMessage(error, "The file could not be attached.") };
           }
         },
       })),

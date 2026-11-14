@@ -141,7 +141,7 @@ impl StorageHandle {
         std::thread::Builder::new()
             .name("storage-actor".into())
             .spawn(move || {
-                let conn = match rusqlite::Connection::open(&path) {
+                let conn = match Connection::open(&path) {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("storage actor failed to open db at {:?}: {}", path, e);
@@ -151,7 +151,7 @@ impl StorageHandle {
                 let _ = conn.pragma_update(None, "journal_mode", "WAL");
                 let _ = conn.pragma_update(None, "foreign_keys", "ON");
 
-                run_storage_actor(conn, rx);
+                run_storage_actor(&conn, &rx);
             })
             .map_err(|e| Error::Io {
                 path: db_path,
@@ -407,7 +407,7 @@ impl StorageHandle {
     }
 }
 
-fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
+fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
     while let Ok(msg) = rx.recv() {
         match msg {
             StorageMsg::WriteTurnStarted {
@@ -418,7 +418,7 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 reply,
             } => {
                 let res = (|| -> Result<TurnStarted> {
-                    let tx = crate::db::write_transaction(&conn)?;
+                    let tx = crate::db::write_transaction(conn)?;
                     let (model, effort, permission_mode, current_title): (
                         Option<String>,
                         Option<String>,
@@ -620,7 +620,7 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 tail,
                 reply,
             } => {
-                let res = query_snapshot(&conn, thread_id, tail);
+                let res = query_snapshot(conn, thread_id, tail);
                 let _ = reply.send(res);
             }
             StorageMsg::ListTurns {
@@ -629,7 +629,7 @@ fn run_storage_actor(conn: Connection, rx: Receiver<StorageMsg>) {
                 limit,
                 reply,
             } => {
-                let res = query_turns(&conn, thread_id, offset, limit);
+                let res = query_turns(conn, thread_id, offset, limit);
                 let _ = reply.send(res);
             }
             StorageMsg::SetProviderSessionId {

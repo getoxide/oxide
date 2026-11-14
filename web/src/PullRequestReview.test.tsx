@@ -47,7 +47,7 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     mergeMethods: ["merge", "squash", "rebase"],
     defaultMergeMethod: "squash",
     deleteBranchOnMerge: false,
-    diff: { base: "main", files: [] },
+    changedFiles: 3,
     ...overrides,
   };
 }
@@ -96,6 +96,21 @@ it("renders a cached pull request at once on remount without asking GitHub again
   expect(host.querySelector(".skeleton")).toBeNull();
   expect(host.textContent).toContain("chore(deps): bump react-virtual");
   expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
+});
+
+it("renders the changed file count from changedFiles in singular and plural form", async () => {
+  await render();
+  expect(host.querySelector(".pr-diffstat-files")?.textContent).toContain("in 3 files");
+
+  await act(() => root.unmount());
+  clearQueryCache();
+  root = createRoot(host);
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ changedFiles: 1 }),
+  });
+  await render();
+  expect(host.querySelector(".pr-diffstat-files")?.textContent).toContain("in 1 file");
 });
 
 it("requests a fix with the PR link, conflicts and every failed check, including optional checks", async () => {

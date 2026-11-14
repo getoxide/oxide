@@ -57,15 +57,14 @@ pub struct TurnPick {
 pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
 pub use git_diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus};
 pub use github::{
-    BranchPullRequest, CheckState, GithubAvailability, GithubRepository, IssueCloseReason,
-    IssueComment, IssueDetail, IssueEdit, IssueSummary, IssueTemplateFile, IssuesState,
-    MergeMethod, MergeState, PullRequest, PullRequestCandidates, PullRequestCheck,
-    PullRequestComment, PullRequestDetail, PullRequestDraft, PullRequestEdit, PullRequestInput,
-    PullRequestLabel, PullRequestPhase, PullRequestReviewThread, PullRequestReviewer,
-    PullRequestState, ReviewDecision, ReviewState, ReviewThreadComment,
+    CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueComment, IssueDetail,
+    IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
+    PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
+    PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
+    PullRequestReviewThread, PullRequestReviewer, ReviewDecision, ReviewState, ReviewThreadComment,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use line_comments::{CommentScope, CommentSide, LineComment, NewLineComment};
+pub use line_comments::{CommentScope, CommentSide, LineComment};
 use oxide_provider::Provider as ProviderTrait;
 use oxide_provider::process::ProcessRegistry;
 pub use project_services::{
@@ -97,8 +96,8 @@ pub use db::MIGRATIONS;
 pub use error::{Error, Result};
 pub use oxide_provider::{
     ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
-    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities, TurnStatus,
-    UsageStatus,
+    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
+    SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
 };
 pub use restore::{PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
 pub use review_ledger::{
@@ -109,11 +108,12 @@ pub use rule_suggestions::RuleSuggestion;
 use settings::SettingsStore;
 pub use settings::{
     FieldError, PermissionMode, Provider, ProviderSettings, Providers, Settings, SettingsState,
+    Shortcuts,
 };
 pub use thread::{
-    ApprovalSnapshot, DebugSequencedThreadEvent, ItemSnapshot, SequencedThreadEvent,
-    ThreadCapabilities, ThreadEvent, ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError,
-    TurnPage, TurnSnapshot, UnknownEventSnapshot,
+    ApprovalSnapshot, ItemSnapshot, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
+    ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError, TurnPage, TurnSnapshot,
+    UnknownEventSnapshot,
 };
 pub use usage::{UsageLimitWindow, UsageLimits, UsagePoolLimits};
 
@@ -135,6 +135,23 @@ pub struct ProjectSummary {
     pub open: bool,
     /// The folder no longer exists; the record and its data are kept.
     pub missing: bool,
+}
+
+type ProjectRow = (u32, String, String, bool, bool);
+
+fn parse_project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+}
+
+fn build_project_summary((id, name, path, hidden, open): ProjectRow) -> ProjectSummary {
+    ProjectSummary {
+        id,
+        name,
+        missing: !Path::new(&path).exists(),
+        path,
+        hidden,
+        open,
+    }
 }
 
 /// The Project and Thread Oxide reopens on launch.
@@ -171,8 +188,8 @@ pub struct Core {
     ledger: Arc<review_ledger::LedgerStore>,
     usage: Arc<usage::UsageHub>,
     usage_poller: Mutex<Option<usage_poll::PollerHandle>>,
-    model_catalogs: Mutex<HashMap<String, Vec<oxide_provider::ModelInfo>>>,
-    slash_catalogs: Mutex<HashMap<String, Vec<oxide_provider::SlashCommandInfo>>>,
+    model_catalogs: Mutex<HashMap<String, Vec<ModelInfo>>>,
+    slash_catalogs: Mutex<HashMap<String, Vec<SlashCommandInfo>>>,
     detections: detection_cache::DetectionCache,
 }
 
@@ -422,22 +439,15 @@ impl Core {
     /// All Projects known to Oxide, hidden and missing ones included, most
     /// recently added first.
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = db.prepare(
-            "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            let path: String = r.get(2)?;
-            Ok(ProjectSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                missing: !Path::new(&path).exists(),
-                path,
-                hidden: r.get(3)?,
-                open: r.get(4)?,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let rows: Vec<ProjectRow> = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let mut stmt = db.prepare(
+                "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
+            )?;
+            let rows = stmt.query_map([], parse_project_row)?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        Ok(rows.into_iter().map(build_project_summary).collect())
     }
 
     /// Scans conventional folders in the user home for Git repositories, records new ones
@@ -448,7 +458,7 @@ impl Core {
         let found = discovery::find_repositories(&roots);
         {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             for path in &found {
                 let name = path
                     .file_name()
@@ -540,10 +550,15 @@ impl Core {
     }
 
     fn project(&self, id: u32) -> Result<ProjectSummary> {
-        self.list_projects()?
-            .into_iter()
-            .find(|p| p.id == id)
-            .ok_or(Error::Db(rusqlite::Error::QueryReturnedNoRows))
+        let row = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            db.query_row(
+                "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects WHERE id = ?1",
+                [id],
+                parse_project_row,
+            )?
+        };
+        Ok(build_project_summary(row))
     }
 
     /// Lists the Project in the sidebar, or takes it out; it stays known either way, so
@@ -565,42 +580,15 @@ impl Core {
         Ok(())
     }
 
-    pub fn set_project_hidden(&self, id: u32, hidden: bool) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        db.execute(
-            "UPDATE projects SET hidden = ?2 WHERE id = ?1",
-            (id, hidden),
-        )?;
-        Ok(())
-    }
-
     /// Whether chat Threads of this Project stay in the main checkout instead of
     /// each getting its own worktree on its first prompt. Defaults to false.
-    pub fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
+    pub(crate) fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(db.query_row(
             "SELECT threads_in_main_checkout FROM projects WHERE id = ?1",
             [project_id],
             |r| Ok(r.get::<_, i64>(0)? != 0),
         )?)
-    }
-
-    /// Sets whether chat Threads of this Project stay in the main checkout instead
-    /// of each getting its own worktree on its first prompt.
-    pub fn set_project_threads_in_main_checkout(
-        &self,
-        project_id: u32,
-        in_main_checkout: bool,
-    ) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = db.execute(
-            "UPDATE projects SET threads_in_main_checkout = ?2 WHERE id = ?1",
-            (project_id, in_main_checkout as i64),
-        )?;
-        if changed == 0 {
-            return Err(Error::Db(rusqlite::Error::QueryReturnedNoRows));
-        }
-        Ok(())
     }
 
     pub fn default_settings_for_provider(
@@ -644,7 +632,14 @@ impl Core {
         let model = model.or(def_model);
         let effort = effort.or(def_effort);
         let permission_mode = permission_mode.into().unwrap_or(def_perm);
-        self.insert_thread(project_id, provider, model, effort, permission_mode, None)
+        self.insert_thread(
+            project_id,
+            provider,
+            model.as_deref(),
+            effort.as_deref(),
+            permission_mode,
+            None,
+        )
     }
 
     /// Starts a new Thread that continues one whose Provider session is gone: same Project,
@@ -666,8 +661,8 @@ impl Core {
         let thread = self.insert_thread(
             t.project_id,
             &t.provider,
-            t.model.clone(),
-            t.effort.clone(),
+            t.model.as_deref(),
+            t.effort.as_deref(),
             t.permission_mode,
             Some(thread_id),
         )?;
@@ -681,8 +676,8 @@ impl Core {
         &self,
         project_id: u32,
         provider: &str,
-        model: Option<String>,
-        effort: Option<String>,
+        model: Option<&str>,
+        effort: Option<&str>,
         permission_mode: PermissionMode,
         continued_from: Option<u32>,
     ) -> Result<ThreadSummary> {
@@ -727,10 +722,7 @@ impl Core {
         Ok(thread)
     }
 
-    fn collect_thread_attachments(
-        db: &rusqlite::Connection,
-        thread_id: u32,
-    ) -> Result<Vec<PathBuf>> {
+    fn collect_thread_attachments(db: &Connection, thread_id: u32) -> Result<Vec<PathBuf>> {
         let mut stmt =
             db.prepare("SELECT segments, attachments FROM turns WHERE thread_id = ?1")?;
         let attachments = stmt
@@ -778,7 +770,7 @@ impl Core {
         let (summary, attachments) = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             Self::clear_thread_history_tx(&tx, thread_id)?;
             tx.execute(
                 "UPDATE threads
@@ -822,7 +814,7 @@ impl Core {
                 |r| r.get(0),
             )?;
             let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = crate::db::write_transaction(&db)?;
+            let tx = db::write_transaction(&db)?;
             Self::clear_thread_history_tx(&tx, thread_id)?;
             // A Blind review's findings die with the review or with the change it reviewed.
             tx.execute(
@@ -872,16 +864,16 @@ impl Core {
         actor.respond_to_approval(approval_id.to_string(), decision)
     }
 
-    pub fn detect_provider(&self, provider: &str) -> oxide_provider::Detection {
+    pub fn detect_provider(&self, provider: &str) -> Detection {
         self.detections
             .get_or_detect(provider, || self.detect_provider_uncached(provider))
     }
 
-    fn detect_provider_uncached(&self, provider: &str) -> oxide_provider::Detection {
+    fn detect_provider_uncached(&self, provider: &str) -> Detection {
         let det = match provider {
             "claude" => oxide_provider::claude::ClaudeCodeProvider::new()
                 .detect()
-                .unwrap_or(oxide_provider::Detection {
+                .unwrap_or(Detection {
                     available: false,
                     installed: false,
                     version: None,
@@ -890,7 +882,7 @@ impl Core {
                 }),
             "codex" => oxide_provider::codex::CodexProvider::new()
                 .detect()
-                .unwrap_or(oxide_provider::Detection {
+                .unwrap_or(Detection {
                     available: false,
                     installed: false,
                     version: None,
@@ -901,7 +893,7 @@ impl Core {
                 let (det, models) = oxide_provider::agy::AgyProvider::new()
                     .detect_with_models()
                     .unwrap_or((
-                        oxide_provider::Detection {
+                        Detection {
                             available: false,
                             installed: false,
                             version: None,
@@ -918,14 +910,14 @@ impl Core {
                 }
                 det
             }
-            "fake" => oxide_provider::Detection {
+            "fake" => Detection {
                 available: true,
                 installed: true,
                 version: Some("0.1.0-fake".into()),
                 authenticated: true,
                 warning: None,
             },
-            _ => oxide_provider::Detection {
+            _ => Detection {
                 available: false,
                 installed: false,
                 version: None,
@@ -939,10 +931,7 @@ impl Core {
         det
     }
 
-    pub fn get_provider_capabilities(
-        &self,
-        provider: &str,
-    ) -> oxide_provider::ProviderCapabilities {
+    pub fn get_provider_capabilities(&self, provider: &str) -> ProviderCapabilities {
         match provider {
             "claude" => {
                 let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
@@ -951,7 +940,7 @@ impl Core {
             }
             "codex" => oxide_provider::codex::CodexProvider::new().capabilities(),
             "agy" | "antigravity" => oxide_provider::agy::AgyProvider::new().capabilities(),
-            _ => oxide_provider::ProviderCapabilities {
+            _ => ProviderCapabilities {
                 supported_permission_modes: vec![
                     PermissionMode::Ask,
                     PermissionMode::AutoEdit,
@@ -966,11 +955,7 @@ impl Core {
         }
     }
 
-    pub fn get_model_catalog(
-        &self,
-        provider: &str,
-        refresh: bool,
-    ) -> Result<Vec<oxide_provider::ModelInfo>> {
+    pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
         if !refresh {
             let cache = self.model_catalogs.lock().unwrap();
             if let Some(models) = cache.get(provider) {
@@ -1113,42 +1098,27 @@ impl Core {
             if let Some(p) = self.fake_providers.lock().unwrap().remove(&thread_id) {
                 p
             } else if snapshot.thread.provider == "claude" {
+                if !self.detect_provider("claude").installed {
+                    return Err(Error::Provider("Claude Code is not installed".to_string()));
+                }
                 let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
                 claude.set_registry(Arc::clone(&self.processes));
                 claude.set_user_customizations(self.settings().settings.claude_customizations);
-                let detection = claude.detect().unwrap_or(oxide_provider::Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                });
-                if !detection.installed {
-                    return Err(Error::Provider("Claude Code is not installed".to_string()));
-                }
                 Box::new(claude)
             } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-                let mut agy = oxide_provider::agy::AgyProvider::new();
-                agy.set_registry(Arc::clone(&self.processes));
-                if !agy.detect().is_ok_and(|d| d.installed) {
+                if !self.detect_provider(&snapshot.thread.provider).installed {
                     return Err(Error::Provider(
                         "Antigravity CLI is not installed".to_string(),
                     ));
                 }
+                let mut agy = oxide_provider::agy::AgyProvider::new();
+                agy.set_registry(Arc::clone(&self.processes));
                 Box::new(agy)
             } else if snapshot.thread.provider == "codex" {
-                let codex = oxide_provider::codex::CodexProvider::new();
-                let detection = codex.detect().unwrap_or(oxide_provider::Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                });
-                if !detection.installed {
+                if !self.detect_provider("codex").installed {
                     return Err(Error::Provider("Codex is not installed".to_string()));
                 }
-                Box::new(codex)
+                Box::new(oxide_provider::codex::CodexProvider::new())
             } else {
                 Box::new(oxide_provider::FakeProvider::scripted())
             };
@@ -1166,7 +1136,7 @@ impl Core {
             usage::ActorServices {
                 activity: Arc::clone(&self.activity),
                 usage: Arc::clone(&self.usage),
-                provider: snapshot.thread.provider.clone(),
+                provider: snapshot.thread.provider,
                 project_id,
                 project_services: Arc::clone(&self.project_services),
                 processes: Arc::clone(&self.processes),
@@ -1207,7 +1177,7 @@ impl Core {
         provider: &str,
         project_id: u32,
         thread_id: Option<u32>,
-    ) -> Result<Vec<oxide_provider::SlashCommandInfo>> {
+    ) -> Result<Vec<SlashCommandInfo>> {
         self.thread_slash_commands(provider, project_id, thread_id, true)
     }
 
@@ -1218,33 +1188,25 @@ impl Core {
         project_id: u32,
         thread_id: Option<u32>,
         refresh: bool,
-    ) -> Result<Vec<oxide_provider::SlashCommandInfo>> {
-        let working_dir = if let Some(thread_id) = thread_id {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let path: String = db.query_row(
-                "SELECT COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1 AND p.id = ?2",
-                rusqlite::params![thread_id, project_id], |row| row.get(0),
-            )?;
-            PathBuf::from(path)
-        } else {
-            self.list_projects()?
-                .into_iter()
-                .find(|p| p.id == project_id)
-                .map(|p| PathBuf::from(p.path))
-                .ok_or_else(|| Error::Provider("Project not found".into()))?
-        };
+    ) -> Result<Vec<SlashCommandInfo>> {
+        let working_dir = PathBuf::from(self.checkout_path(project_id, thread_id)?);
         let customizations = self.settings().settings.claude_customizations;
 
         let key = serde_json::to_string(&(provider, format!("{customizations:?}"), &working_dir))
             .map_err(|e| Error::Provider(e.to_string()))?;
-        let cached = self.slash_catalogs.lock().unwrap().get(&key).cloned();
+        let cached = self
+            .slash_catalogs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned();
         if !refresh {
             return Ok(cached
                 .map(|catalog| {
                     slash_catalog::merge(
                         catalog
                             .into_iter()
-                            .filter(|c| c.route != oxide_provider::SlashRoute::Oxide)
+                            .filter(|c| c.route != SlashRoute::Oxide)
                             .collect(),
                     )
                 })
@@ -1271,32 +1233,26 @@ impl Core {
         match reported {
             Ok(commands) => {
                 let catalog = slash_catalog::merge(commands);
-                let mut catalogs = self.slash_catalogs.lock().unwrap();
-                let mut updated = catalogs.clone();
-                updated.insert(key, catalog.clone());
+                let bytes = {
+                    let mut catalogs = self
+                        .slash_catalogs
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    catalogs.insert(key, catalog.clone());
+                    serde_json::to_vec(&*catalogs).map_err(|e| Error::Provider(e.to_string()))?
+                };
                 let folder = self.home.join("cache/slash-commands");
                 fs::create_dir_all(&folder).map_err(|source| Error::Io {
                     path: folder.clone(),
                     source,
                 })?;
                 let path = folder.join("catalogs.json");
-                let bytes =
-                    serde_json::to_vec(&updated).map_err(|e| Error::Provider(e.to_string()))?;
                 fs::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
-                *catalogs = updated;
                 Ok(catalog)
             }
             Err(error) => Err(Error::Provider(format!(
                 "Could not refresh Slash commands: {error}"
             ))),
-        }
-    }
-
-    /// Capabilities of a Provider, before any Thread of it exists.
-    pub fn provider_capabilities(&self, provider: &str) -> ThreadCapabilities {
-        let caps = self.get_provider_capabilities(provider);
-        ThreadCapabilities {
-            reasoning_text: caps.supports_reasoning,
         }
     }
 
@@ -1317,10 +1273,6 @@ impl Core {
     /// Forgets an Attachment the user removed from a prompt before sending it.
     pub fn discard_attachment(&self, id: &str) {
         self.attachment_store().remove(id);
-    }
-
-    pub fn attachment_preview(&self, id: &str) -> Result<Option<String>> {
-        self.attachment_store().preview(id)
     }
 
     fn attachment_store(&self) -> attachments::AttachmentStore {
@@ -1360,44 +1312,7 @@ impl Core {
         &self,
         project_id: u32,
     ) -> Result<(Vec<BoardCard>, crossbeam_channel::Receiver<BoardEvent>)> {
-        let subscription = self.board.subscribe(project_id)?;
-        self.refresh_board_pull_requests(project_id, &subscription.0);
-        Ok(subscription)
-    }
-
-    /// Looks up each Board Thread's pull request by branch, off-thread because `gh` is slow,
-    /// and publishes whatever it finds. Without a usable `gh` the cards simply show nothing.
-    fn refresh_board_pull_requests(&self, project_id: u32, cards: &[BoardCard]) {
-        let Ok(cwd) = self.main_checkout(project_id) else {
-            return;
-        };
-        let threads: Vec<(u32, String)> = cards
-            .iter()
-            .filter_map(|c| Some((c.thread.id, c.thread.branch.clone()?)))
-            .collect();
-        if threads.is_empty() {
-            return;
-        }
-        let (gh, board, ledger) = (
-            Arc::clone(&self.gh),
-            Arc::clone(&self.board),
-            Arc::clone(&self.ledger),
-        );
-        std::thread::spawn(move || {
-            for (thread_id, branch) in threads {
-                match github::branch_pull_request(&gh, &cwd, &branch) {
-                    Ok(found) => {
-                        if let Some((pr, Some(merged_at))) = &found
-                            && pr.phase == PullRequestPhase::Merged
-                        {
-                            let _ = ledger.record_merge(thread_id, pr.number, merged_at);
-                        }
-                        board.set_pull_request(thread_id, found.map(|(pr, _)| pr));
-                    }
-                    Err(_) => return,
-                }
-            }
-        });
+        self.board.subscribe(project_id)
     }
 
     /// The last Usage limits Oxide saw for a Provider, shared by all its Threads.
@@ -1438,21 +1353,6 @@ impl Core {
     )> {
         let actor = self.get_or_create_thread_actor(thread_id)?;
         actor.subscribe()
-    }
-
-    /// Like [`subscribe_thread`] but returns a debug channel where each event
-    /// is paired with the raw Provider payload that produced it.  Only open
-    /// this when the debug view is visible; raw payloads are never sent when
-    /// no debug subscriber is registered.
-    pub fn subscribe_thread_debug(
-        &self,
-        thread_id: u32,
-    ) -> Result<(
-        ThreadSnapshot,
-        crossbeam_channel::Receiver<DebugSequencedThreadEvent>,
-    )> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.subscribe_debug()
     }
 
     /// Starts a shell PTY in the Project's checkout. A terminal actor owns the
@@ -1598,12 +1498,8 @@ impl Core {
         self.language_servers.stop(id);
     }
 
-    /// Branch, ahead/behind and uncommitted-change counts of a Project's main checkout.
-    pub fn git_status(&self, project_id: u32) -> Result<GitStatus> {
-        self.git_status_in(project_id, None)
-    }
-
-    /// [`Core::git_status`] of the checkout a Thread works in (`None`: the Project's main one).
+    /// Branch, ahead/behind and uncommitted-change counts of the checkout a Thread works in
+    /// (`None`: the Project's main one).
     pub fn git_status_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitStatus> {
         let target = self.git_target(project_id, thread_id)?;
         let mut status = git::status(&target.root)?;
@@ -1611,12 +1507,8 @@ impl Core {
         Ok(status)
     }
 
-    /// The changes of a Project's main checkout in one scope, straight from Git.
-    pub fn diff(&self, project_id: u32, scope: DiffScope) -> Result<Diff> {
-        self.diff_in(project_id, None, scope)
-    }
-
-    /// [`Core::diff`] in the checkout of a Thread (`None`: the Project's main one).
+    /// The changes in the checkout of a Thread (`None`: the Project's main one) in one scope,
+    /// straight from Git.
     pub fn diff_in(
         &self,
         project_id: u32,
@@ -1626,23 +1518,21 @@ impl Core {
         git_diff::diff(&self.git_target(project_id, thread_id)?.root, scope)
     }
 
-    /// What one Turn changed: the diff between its two Checkpoints.
-    pub fn turn_diff(&self, thread_id: u32, turn_index: u32) -> Result<Diff> {
-        let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
-        let cwd = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
-        checkpoint::turn_diff(&cwd, thread_id, turn_index)
-    }
-
-    /// [`Core::turn_diff`] of the Thread's latest Turn; empty before the first.
-    pub fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
+    /// What the Thread's latest Turn changed: the diff between its two Checkpoints; empty before the first.
+    pub(crate) fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
         let snapshot = self.storage.get_snapshot(thread_id, 0)?;
-        match snapshot.turn_count.checked_sub(1) {
-            Some(latest) => self.turn_diff(thread_id, latest),
-            None => Ok(Diff {
+        let Some(latest) = snapshot.turn_count.checked_sub(1) else {
+            return Ok(Diff {
                 base: None,
                 files: Vec::new(),
-            }),
-        }
+            });
+        };
+        let cwd = PathBuf::from(self.checkout_path(snapshot.thread.project_id, Some(thread_id))?);
+        let files = match checkpoint::turn_revs(&cwd, thread_id, latest)? {
+            Some((start, end)) => git_diff::diff_against(&cwd, &[&start, &end])?,
+            None => Vec::new(),
+        };
+        Ok(Diff { base: None, files })
     }
 
     /// Every Turn of the Thread by position and prompt, for the Restore dialog.
@@ -1873,12 +1763,7 @@ impl Core {
         checkpoint::start_tree(cwd, thread_id, turn_index)
     }
 
-    /// Local and remote branches of a Project's main checkout.
-    pub fn list_branches(&self, project_id: u32) -> Result<Vec<GitBranch>> {
-        self.list_branches_in(project_id, None)
-    }
-
-    /// [`Core::list_branches`] as seen from a Thread's checkout (`None`: the main one).
+    /// Local and remote branches as seen from a Thread's checkout (`None`: the Project's main one).
     pub fn list_branches_in(
         &self,
         project_id: u32,
@@ -1887,13 +1772,8 @@ impl Core {
         git::list_branches(&self.git_target(project_id, thread_id)?.root)
     }
 
-    /// Checks out a branch (`feature`, or `origin/feature` to track a remote
-    /// one). Git's own refusal, e.g. for uncommitted changes, is the error.
-    pub fn checkout_branch(&self, project_id: u32, name: &str) -> Result<()> {
-        self.checkout_branch_in(project_id, None, name)
-    }
-
-    /// [`Core::checkout_branch`] in a Thread's checkout (`None`: the main one).
+    /// Checks out a branch (`feature`, or `origin/feature` to track a remote one) in a Thread's
+    /// checkout (`None`: the main one). Git's own refusal, e.g. for uncommitted changes, is the error.
     pub fn checkout_branch_in(
         &self,
         project_id: u32,
@@ -1903,12 +1783,7 @@ impl Core {
         self.switch_branch(project_id, thread_id, |cwd| git::checkout(cwd, name))
     }
 
-    /// Creates a branch from HEAD and checks it out.
-    pub fn create_branch(&self, project_id: u32, name: &str) -> Result<()> {
-        self.create_branch_in(project_id, None, name)
-    }
-
-    /// [`Core::create_branch`] in a Thread's checkout (`None`: the main one).
+    /// Creates a branch from HEAD and checks it out in a Thread's checkout (`None`: the main one).
     pub fn create_branch_in(
         &self,
         project_id: u32,
@@ -1935,24 +1810,15 @@ impl Core {
         Ok(fetched)
     }
 
-    /// `git pull --ff-only`; a diverged branch fails with Git's message.
-    pub fn pull(&self, project_id: u32) -> Result<()> {
-        self.pull_in(project_id, None)
-    }
-
-    /// [`Core::pull`] in a Thread's checkout (`None`: the main one).
+    /// `git pull --ff-only` in a Thread's checkout (`None`: the main one); a diverged branch
+    /// fails with Git's message.
     pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
         // Pulling rewrites files like a checkout does, so it takes the same guard.
         self.switch_branch(project_id, thread_id, git::pull)
     }
 
-    /// Commits exactly the given files of the main checkout with `message`,
-    /// leaving other staged state alone.
-    pub fn commit(&self, project_id: u32, paths: &[String], message: &str) -> Result<()> {
-        self.commit_in(project_id, None, paths, message)
-    }
-
-    /// [`Core::commit`] in a Thread's checkout (`None`: the main one).
+    /// Commits exactly the given files of a Thread's checkout (`None`: the main one) with
+    /// `message`, leaving other staged state alone.
     pub fn commit_in(
         &self,
         project_id: u32,
@@ -1964,14 +1830,8 @@ impl Core {
         self.git.mutate(&cwd, || git::commit(&cwd, paths, message))
     }
 
-    /// Pushes the current branch (upstream set on the first push, never
-    /// forced). Pushing `main`/`master` needs `allow_protected`.
-    pub fn push(&self, project_id: u32, allow_protected: bool) -> Result<()> {
-        self.push_in(project_id, None, allow_protected)
-    }
-
-    /// [`Core::push`] from a Thread's checkout (`None`: the main one). After a successful push
-    /// from a Thread.
+    /// Pushes the current branch from a Thread's checkout (`None`: the main one); upstream is set
+    /// on the first push, never forced. Pushing `main`/`master` needs `allow_protected`.
     pub fn push_in(
         &self,
         project_id: u32,
@@ -1989,32 +1849,13 @@ impl Core {
         self.gh.set_search_path(dirs);
     }
 
-    /// Whether `gh` works, and the branch's open pull request when it does.
-    /// Runs `gh` only when called: the Surface refreshes it, Core never polls.
-    pub fn pull_request_state(&self, project_id: u32) -> Result<PullRequestState> {
-        self.pull_request_state_in(project_id, None)
-    }
-
-    /// [`Core::pull_request_state`] of a Thread's checkout branch (`None`: the main one).
-    pub fn pull_request_state_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<PullRequestState> {
-        github::pull_request_state(&self.gh, &self.git_target(project_id, thread_id)?.root)
-    }
-
     /// Branches on GitHub that can be selected as a pull request's base.
     pub fn pull_request_base_branches(&self, project_id: u32) -> Result<Vec<String>> {
         github::pull_request_base_branches(&self.gh, &self.main_checkout(project_id)?)
     }
 
-    /// Title, body and base prefilled for a new pull request of the current branch.
-    pub fn pull_request_draft(&self, project_id: u32) -> Result<PullRequestDraft> {
-        self.pull_request_draft_in(project_id, None)
-    }
-
-    /// [`Core::pull_request_draft`] for a Thread's checkout branch (`None`: the main one).
+    /// Title, body and base prefilled for a new pull request of a Thread's checkout branch (`None`:
+    /// the main one).
     pub fn pull_request_draft_in(
         &self,
         project_id: u32,
@@ -2028,16 +1869,8 @@ impl Core {
         Ok(draft)
     }
 
-    /// Pushes the current branch if needed, then opens a pull request for it.
-    pub fn create_pull_request(
-        &self,
-        project_id: u32,
-        input: &PullRequestInput,
-    ) -> Result<PullRequest> {
-        self.create_pull_request_in(project_id, None, input)
-    }
-
-    /// [`Core::create_pull_request`] for a Thread's checkout branch (`None`: the main one).
+    /// Pushes the current branch of a Thread's checkout (`None`: the main one) if needed, then
+    /// opens a pull request for it.
     pub fn create_pull_request_in(
         &self,
         project_id: u32,
@@ -2057,7 +1890,10 @@ impl Core {
 
     /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
     pub fn issues_state(&self, project_id: u32) -> Result<IssuesState> {
-        github::issues_state(&self.gh, &self.main_checkout(project_id)?)
+        Ok(github::issues_state(
+            &self.gh,
+            &self.main_checkout(project_id)?,
+        ))
     }
 
     /// Open or closed issues of the repository, optionally only the user's own and
@@ -2137,19 +1973,6 @@ impl Core {
     /// Changes an issue's title, description, assignees and labels.
     pub fn edit_issue(&self, project_id: u32, number: u32, edit: &IssueEdit) -> Result<()> {
         github::edit_issue(&self.gh, &self.main_checkout(project_id)?, number, edit)
-    }
-
-    /// Opens an issue in the system browser.
-    pub fn open_issue(&self, project_id: u32, number: u32) -> Result<()> {
-        let url = github::issue_url(&self.gh, &self.main_checkout(project_id)?, number)?;
-        self.activity.open_url(&url);
-        Ok(())
-    }
-
-    pub fn open_pull_request(&self, project_id: u32) -> Result<()> {
-        let url = github::pull_request_url(&self.gh, &self.main_checkout(project_id)?)?;
-        self.activity.open_url(&url);
-        Ok(())
     }
 
     /// Opens a GitHub link, such as a check's run, in the system browser.
@@ -2301,15 +2124,10 @@ impl Core {
         github::close_pull_request(&self.gh, &self.main_checkout(project_id)?, number)
     }
 
-    /// Checks a pull request's branch out in the main checkout, under the
-    /// branch picker's rules: Git's refusal is the error, and it is refused
-    /// while a Thread is working.
-    pub fn checkout_pull_request(&self, project_id: u32, number: u32) -> Result<()> {
-        self.checkout_pull_request_in(project_id, None, number)
-    }
-
-    /// [`Core::checkout_pull_request`] in a Thread's checkout (`None`: the main one). A Thread
-    /// of another Project or a deleted worktree is an error, never the main checkout.
+    /// Checks a pull request's branch out in a Thread's checkout (`None`: the main one), under the
+    /// branch picker's rules: Git's refusal is the error, and it is refused while a Thread is
+    /// working. A Thread of another Project or a deleted worktree is an error, never the main
+    /// checkout.
     pub fn checkout_pull_request_in(
         &self,
         project_id: u32,
@@ -2365,20 +2183,23 @@ impl Core {
                 worktree: None,
             });
         };
-        let worktree: Option<Option<String>> = {
+        let row: Option<(Option<u32>, Option<String>, String)> = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             rusqlite::OptionalExtension::optional(db.query_row(
-                "SELECT worktree_path FROM threads WHERE id = ?1 AND project_id = ?2",
-                rusqlite::params![thread_id, project_id],
-                |r| r.get(0),
+                "SELECT t.id, t.worktree_path, p.path
+                 FROM projects p
+                 LEFT JOIN threads t ON t.id = ?2 AND t.project_id = p.id
+                 WHERE p.id = ?1",
+                rusqlite::params![project_id, thread_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ))?
         };
-        let Some(worktree) = worktree else {
+        let Some((Some(_), worktree, project_path)) = row else {
             return Err(Error::Git(format!(
                 "Thread {thread_id} does not belong to Project {project_id}."
             )));
         };
-        let root = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
+        let root = PathBuf::from(worktree.as_deref().unwrap_or(&project_path));
         if !root.is_dir() {
             return Err(Error::Git(format!(
                 "The checkout of Thread {thread_id} is missing: {}",

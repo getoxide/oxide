@@ -1,7 +1,7 @@
 import type { ModelInfo } from "./bindings";
 import { modelFamilyId } from "./modelPicker";
 
-/** Remove Windows extended-length syntax only for presentation. */
+/** Remove Windows extended-length syntax for presentation and shell prompts. */
 export function readablePath(path: string): string {
   const slash = String.fromCharCode(92);
   const prefix = slash + slash + "?" + slash;
@@ -29,31 +29,6 @@ const PROVIDER_NAMES: Record<string, string> = {
 };
 
 export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
-
-/** How many characters of the folder path the header shows before cutting its middle. */
-const FOLDER_MAX = 52;
-
-export interface ThreadHeaderInput {
-  provider: string;
-  model: string | null;
-  effort: string | null;
-  /** The Thread's own worktree and branch, for a Board Thread. */
-  thread: { worktreePath?: string | null; branch?: string | null } | null;
-  projectPath: string;
-  catalog: ModelInfo[] | null;
-}
-
-export interface ThreadHeaderLines {
-  /** "Opus 5.5 · high", or the Provider's name while no Model is picked. */
-  modelLine: string;
-  folder: {
-    /** The full path, for the tooltip. */
-    path: string;
-    /** The shortened path shown in the header. */
-    text: string;
-    branch: string | null;
-  };
-}
 
 /** A catalog name can spell out the Effort, "Gemini 3.8 Flash (High)" or "Gemini 3.8 Flash - High". */
 const EFFORT_SUFFIX = /\s*(?:[(·-]\s*|\s+)(low|medium|high|xhigh|max)\)?\s*$/i;
@@ -117,18 +92,4 @@ export function effortFromModel(model: string, catalog: ModelInfo[] | null): str
     (exact ? effortSuffix(exact.name) : null) ??
     (familyName ? effortSuffix(familyName) : null)
   );
-}
-
-export function threadHeaderLines(input: ThreadHeaderInput): ThreadHeaderLines {
-  const name = input.model ? readableModel(input.model, input.catalog) : providerName(input.provider);
-  const path = input.thread?.worktreePath ?? input.projectPath;
-  const effort = input.effort || (input.model ? effortFromModel(input.model, input.catalog) : null);
-  return {
-    modelLine: effort ? `${name} · ${effort}` : name,
-    folder: {
-      path: readablePath(path),
-      text: middleEllipsis(displayPath(path), FOLDER_MAX),
-      branch: input.thread?.worktreePath ? (input.thread.branch ?? null) : null,
-    },
-  };
 }

@@ -364,6 +364,10 @@ pub const MIGRATIONS: &[&str] = &[
     DROP TABLE pull_request_line_comments;
     DELETE FROM app_state WHERE key LIKE 'dossier_options:%';
 ",
+    // Verification commands were only used by the removed Verification Dossier.
+    "
+    ALTER TABLE projects DROP COLUMN verification_commands;
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -373,6 +377,21 @@ pub const MIGRATIONS: &[&str] = &[
 /// does not retry, so the write is simply lost.
 pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
     Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(Into::into)
+}
+
+/// Opens `db_path` once on demand with a 5 s busy timeout and runs `f` against the cached connection.
+pub(crate) fn with_conn<T>(
+    db_path: &Path,
+    slot: &std::sync::Mutex<Option<Connection>>,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_none() {
+        let conn = Connection::open(db_path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        *guard = Some(conn);
+    }
+    f(guard.as_ref().expect("connection opened above"))
 }
 
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing

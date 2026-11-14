@@ -1,9 +1,9 @@
 export type PanelBounds = { value: number; min: number; max: number };
 
 /** Narrowest the tools panel can get before the merge footer (three buttons + gear) no longer fits. */
-export const TOOLS_MIN = 496;
+const TOOLS_MIN = 496;
 
-export function panelBounds(preferred: number | null, fallback: number, min: number, max: number): PanelBounds {
+function panelBounds(preferred: number | null, fallback: number, min: number, max: number): PanelBounds {
   const upper = Math.max(min, Math.floor(max));
   return { value: Math.round(Math.min(upper, Math.max(min, preferred ?? fallback))), min, max: Math.floor(upper) };
 }
@@ -11,8 +11,7 @@ export function panelBounds(preferred: number | null, fallback: number, min: num
 /** Fit visible panels without overwriting the user's preferred wide-window sizes. */
 export function workspaceLayout(
   width: number,
-  height: number,
-  preferred: { sidebar: number | null; tools: number | null; terminal: number | null },
+  preferred: { sidebar: number | null; tools: number | null },
   toolsRequested: boolean,
   options: { sidebarVisible?: boolean; priority?: "sidebar" | "tools"; maximized?: boolean } = {},
 ) {
@@ -30,16 +29,6 @@ export function workspaceLayout(
     Math.min(800, width - (sidebarVisible ? sidebar.value : 0) - (maximized ? 32 : centreMin)));
   // During drag each panel must also respect the other panel's current size.
   sidebar.max = Math.floor(Math.max(sidebarMin, Math.min(400, width - (toolsVisible ? tools.value : 0) - centreMin)));
-  const terminal = panelBounds(preferred.terminal, Math.min(220, Math.max(140, (height + 44) * 0.25)),
-    140, Math.min(600, height - 280));
   if (maximized) tools.value = tools.max = Math.max(TOOLS_MIN, width - 32);
-  return { sidebar, tools, terminal, sidebarVisible, toolsVisible };
-}
-
-export function fileTreeLayout(width: number, height: number, preferred: { width: number | null; height: number | null }) {
-  const axis = width > 560 ? "x" : "y";
-  const bounds = axis === "x"
-    ? panelBounds(preferred.width, width * 0.34, 144, Math.min(480, width - 200))
-    : panelBounds(preferred.height, Math.max(120, height * 0.38), 80, height - 120);
-  return { axis, ...bounds } as const;
+  return { sidebar, tools, sidebarVisible, toolsVisible };
 }

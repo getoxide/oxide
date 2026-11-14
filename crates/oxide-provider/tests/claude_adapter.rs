@@ -251,7 +251,7 @@ fn claude_provider_handles_wire_commands_and_approval() {
     assert!(approval_requested_seen, "approval request should be seen");
 
     // Read wire log
-    let wire_contents = std::fs::read_to_string(&wire_log_path).unwrap();
+    let wire_contents = fs::read_to_string(&wire_log_path).unwrap();
     assert!(wire_contents.contains("opus"));
     assert!(wire_contents.contains("model_changed"));
     assert!(wire_contents.contains("sonnet"));
@@ -340,7 +340,7 @@ fn claude_provider_resume_passes_session_id() {
 
     provider.shutdown().unwrap();
 
-    let wire_contents = std::fs::read_to_string(&wire_log_path).unwrap();
+    let wire_contents = fs::read_to_string(&wire_log_path).unwrap();
     assert!(
         wire_contents.contains("--resume") && wire_contents.contains("session-xyz-99"),
         "argv should contain --resume session-xyz-99"
@@ -463,7 +463,7 @@ fn start_and_read_argv(configure: impl FnOnce(&mut ClaudeCodeProvider)) -> Strin
     assert!(matches!(evt, ProviderEvent::SessionInfo { .. }));
     provider.shutdown().unwrap();
 
-    std::fs::read_to_string(wire_log.path()).unwrap()
+    fs::read_to_string(wire_log.path()).unwrap()
 }
 
 #[test]
@@ -513,7 +513,7 @@ fn pid_alive(pid: i32) -> bool {
 
 fn wait_for_pid_file(path: &std::path::Path) -> i32 {
     for _ in 0..200 {
-        if let Some(pid) = std::fs::read_to_string(path)
+        if let Some(pid) = fs::read_to_string(path)
             .ok()
             .and_then(|s| s.trim().parse().ok())
         {
@@ -610,7 +610,7 @@ fn claude_model_catalog_errors_when_the_cli_is_missing() {
 fn claude_slash_command_catalog_comes_from_the_cli_without_hidden_commands() {
     let fake_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/claude/fake_claude.py");
     let mut provider = ClaudeCodeProvider::with_command(fake_cli.to_str().unwrap());
-    provider.set_user_customizations(oxide_provider::claude::ClaudeCustomizations::ALL);
+    provider.set_user_customizations(ClaudeCustomizations::ALL);
 
     let commands = provider.slash_commands(std::path::Path::new(".")).unwrap();
 
@@ -642,7 +642,7 @@ fn claude_skills_and_custom_commands_only_appear_with_the_skills_customization()
     };
 
     assert!(!names(&provider).contains(&"tdd".to_string()));
-    provider.set_user_customizations(oxide_provider::claude::ClaudeCustomizations {
+    provider.set_user_customizations(ClaudeCustomizations {
         skills: true,
         ..Default::default()
     });

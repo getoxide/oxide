@@ -10,8 +10,8 @@ name = "oxide_app_lib"
 
 [dependencies]
 oxide-core = { path = "../oxide-core" }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde = { workspace = true }
+serde_json = { workspace = true }
 specta = { version = "=2.0.0-rc.26", features = ["derive"] }
 specta-typescript = "=0.0.13"
 tauri = { version = "2.12.5", features = [] }
@@ -26,7 +26,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAppl
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSProcessInfo", "NSString", "NSObject"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = [
+windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_System_Power",
     "Win32_UI_Shell",
@@ -38,4 +38,7 @@ tauri-build = { version = "2.7.4", features = [] }
 
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

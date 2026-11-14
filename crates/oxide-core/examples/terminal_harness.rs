@@ -3,7 +3,7 @@ use oxide_core::Core;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::sync::Arc;
-fn emit(value: Value) {
+fn emit(value: &Value) {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{value}").unwrap();
     stdout.flush().unwrap();
@@ -20,7 +20,7 @@ fn main() {
     .unwrap();
     let core = Arc::new(Core::open(temporary.path().join("home")).unwrap());
     let project = core.add_project(&root.to_string_lossy()).unwrap();
-    emit(json!({"ready":true,"root":project.path}));
+    emit(&json!({"ready":true,"root":project.path}));
     for line in std::io::stdin().lock().lines().map_while(Result::ok) {
         let request: Value = serde_json::from_str(&line).unwrap();
         let core = Arc::clone(&core);
@@ -36,7 +36,7 @@ fn main() {
                         let receiver = core.subscribe_terminal(terminal.id).unwrap();
                         std::thread::spawn(move || {
                             for bytes in receiver {
-                                emit(json!({"bytes":bytes}));
+                                emit(&json!({"bytes":bytes}));
                             }
                         });
                         serde_json::to_value(terminal).unwrap()
@@ -74,7 +74,7 @@ fn main() {
                 _ => panic!("Unknown harness command"),
             };
             emit(
-                json!({"request":request["request"],"result":result.map_err(|error|error.to_string())}),
+                &json!({"request":request["request"],"result":result.map_err(|error|error.to_string())}),
             );
         });
     }

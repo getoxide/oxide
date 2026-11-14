@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use oxide_provider::time::parse_rfc3339;
@@ -17,16 +17,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 
-fn status_for(percent: f64) -> UsageStatus {
-    if percent >= 100.0 {
-        UsageStatus::Limited
-    } else if percent >= 80.0 {
-        UsageStatus::Warning
-    } else {
-        UsageStatus::Ok
-    }
-}
-
 fn window(
     kind: UsageWindowKind,
     percent: f64,
@@ -38,7 +28,7 @@ fn window(
         kind,
         percent_used: Some(percent),
         resets_at,
-        status: status_for(percent),
+        status: UsageStatus::from_percent(percent),
         pool,
     }
 }
@@ -95,12 +85,21 @@ fn claude_token(user_home: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+fn http_client() -> Result<&'static reqwest::blocking::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(HTTP_TIMEOUT)
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
 fn http_get_json(url: &str, headers: &[(&str, String)]) -> Result<Value, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut req = client.get(url);
+    let mut req = http_client()?.get(url);
     for (k, v) in headers {
         req = req.header(*k, v);
     }
@@ -219,10 +218,10 @@ pub(crate) fn parse_agy_usage(body: &Value) -> Vec<UsageWindow> {
     let mut out: Vec<UsageWindow> = Vec::new();
     let groups = body
         .pointer("/command/data/groups")
-        .and_then(|g| g.as_array())
-        .cloned()
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
         .unwrap_or_default();
-    for group in &groups {
+    for group in groups {
         let group_name = group.get("name").and_then(Value::as_str);
         let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) else {
             continue;

@@ -67,7 +67,7 @@ fn make_repo(dir: &Path) {
     git(dir, &["commit", "-qm", "Seed"]);
 }
 
-fn install_gh(f: &Fixture, repos: serde_json::Value) {
+fn install_gh(f: &Fixture, repos: &serde_json::Value) {
     let bin = f.root().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for name in ["gh", "gh.py", "gh.cmd"] {
@@ -101,7 +101,9 @@ fn add_folder_expands_tilde_unhides_and_rejects_non_folders() {
     make_repo(&f.root().join("user/app"));
 
     let project = f.core.add_project("~/app").unwrap();
-    f.core.set_project_hidden(project.id, true).unwrap();
+    let db = rusqlite::Connection::open(f.root().join("home/oxide.db")).unwrap();
+    db.execute("UPDATE projects SET hidden = 1 WHERE id = ?1", [project.id])
+        .unwrap();
     let again = f.core.add_project("~/app").unwrap();
 
     assert!(!again.hidden);
@@ -177,7 +179,7 @@ fn github_search_filters_repositories_through_gh_and_clones_the_pick() {
     make_repo(&origin);
     install_gh(
         &f,
-        serde_json::json!([
+        &serde_json::json!([
             {"nameWithOwner": "me/gadgets", "description": "Tiny tools", "isPrivate": false,
              "source": origin.to_str().unwrap()},
             {"nameWithOwner": "me/other", "description": "", "isPrivate": true, "source": "/x"},

@@ -140,7 +140,7 @@ impl TerminalSession {
             .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))?;
         let subscribers = Arc::new(Mutex::new(Vec::<Sender<Vec<u8>>>::new()));
         let output_subscribers = Arc::clone(&subscribers);
-        std::thread::spawn(move || read_output(reader, output_subscribers, blocks));
+        std::thread::spawn(move || read_output(reader, &output_subscribers, blocks));
         let (commands, receiver) = unbounded();
         std::thread::spawn(move || {
             #[cfg(unix)]
@@ -374,7 +374,7 @@ fn shell_command(
     blocks: bool,
     #[cfg(unix)] shell_init: Option<&Path>,
     #[cfg(windows)] _shell_init: Option<&Path>,
-) -> portable_pty::CommandBuilder {
+) -> CommandBuilder {
     #[cfg(windows)]
     let mut command = CommandBuilder::new("powershell.exe");
     #[cfg(windows)]
@@ -435,9 +435,9 @@ const VIEW_BUFFER: usize = 1024;
 /// otherwise block this reader — and with it the shell and every other view — as
 /// soon as its buffer is full. Such a view has already missed output it can never
 /// render, so it is dropped instead: its receiver ends and its reader stops.
-fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: Vec<u8>) {
+fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: &[u8]) {
     let mut subscribers = subscribers.lock().unwrap_or_else(|e| e.into_inner());
-    subscribers.retain(|sender| match sender.try_send(chunk.clone()) {
+    subscribers.retain(|sender| match sender.try_send(chunk.to_vec()) {
         Ok(()) => true,
         Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
     });
@@ -445,18 +445,18 @@ fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: Vec<u8>) {
 
 fn read_output(
     mut reader: Box<dyn Read + Send>,
-    subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
+    subscribers: &Mutex<Vec<Sender<Vec<u8>>>>,
     blocks: bool,
 ) {
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
-            Ok(count) => deliver(&subscribers, buffer[..count].to_vec()),
+            Ok(count) => deliver(subscribers, &buffer[..count]),
         }
     }
     if blocks {
-        deliver(&subscribers, b"\x1b]633;Oxide;closed\x07".to_vec());
+        deliver(subscribers, b"\x1b]633;Oxide;closed\x07");
     }
 }
 
