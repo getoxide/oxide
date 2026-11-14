@@ -400,7 +400,6 @@ export function App() {
     setGitRevision((n) => n + 1);
     // The user's own commit, push, pull or checkout: what Git views remember is now wrong.
     if (selectedId !== null) {
-      invalidateQueries(`p${selectedId}:diff:`, { drop: true });
       invalidateQueries(`p${selectedId}:branches`);
       invalidateQueries(`p${selectedId}:prs:`);
     }

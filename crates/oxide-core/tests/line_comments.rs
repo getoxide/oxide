@@ -1,7 +1,6 @@
 use crossbeam_channel::Receiver;
 use oxide_core::{
-    CommentScope, CommentSide, Core, NewLineComment, PermissionMode, SequencedThreadEvent,
-    ThreadEvent, ThreadStatus,
+    CommentSide, Core, PermissionMode, SequencedThreadEvent, ThreadEvent, ThreadStatus,
 };
 use oxide_provider::{FakeProvider, ProviderEvent, TurnStatus};
 use std::path::{Path, PathBuf};
@@ -93,28 +92,42 @@ fn wait_for(rx: &Receiver<SequencedThreadEvent>, accept: impl Fn(&ThreadEvent) -
     }
 }
 
-fn draft(path: &str, side: CommentSide, line: u32, code: &str, body: &str) -> NewLineComment {
-    NewLineComment {
-        scope: CommentScope::Uncommitted,
-        path: path.into(),
-        side,
-        line,
-        code: code.into(),
-        body: body.into(),
-    }
+fn seed_comment(
+    core: &Core,
+    thread_id: u32,
+    path: &str,
+    side: CommentSide,
+    line: u32,
+    code: &str,
+    body: &str,
+) -> u32 {
+    let side = match side {
+        CommentSide::Old => "old",
+        CommentSide::New => "new",
+    };
+    let db = rusqlite::Connection::open(core.home().join("oxide.db")).unwrap();
+    db.execute(
+        "INSERT INTO line_comments (thread_id, scope, path, side, line, code, body)
+         VALUES (?1, 'uncommitted', ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![thread_id, path, side, line, code, body],
+    )
+    .unwrap();
+    db.last_insert_rowid() as u32
 }
 
 #[test]
 fn drafts_are_added_edited_deleted_and_belong_to_their_thread() {
     let f = fixture();
-    let c = f
-        .core
-        .add_line_comment(
-            f.thread_id,
-            draft("a.txt", CommentSide::New, 2, "TWO", "why upper?"),
-        )
-        .unwrap();
-    f.core.edit_line_comment(c.id, "why uppercase?").unwrap();
+    let id = seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "why upper?",
+    );
+    f.core.edit_line_comment(id, "why uppercase?").unwrap();
     let listed = f.core.list_line_comments(f.thread_id).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].body, "why uppercase?");
@@ -127,19 +140,22 @@ fn drafts_are_added_edited_deleted_and_belong_to_their_thread() {
         .id;
     assert!(f.core.list_line_comments(other).unwrap().is_empty());
 
-    f.core.delete_line_comment(c.id).unwrap();
+    f.core.delete_line_comment(id).unwrap();
     assert!(f.core.list_line_comments(f.thread_id).unwrap().is_empty());
 }
 
 #[test]
 fn drafts_survive_reopening_core() {
     let f = fixture();
-    f.core
-        .add_line_comment(
-            f.thread_id,
-            draft("a.txt", CommentSide::New, 4, "four", "needed?"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        4,
+        "four",
+        "needed?",
+    );
     let home = f.core.home().to_path_buf();
     drop(f.core);
     let core = Core::open(home).unwrap();
@@ -149,12 +165,24 @@ fn drafts_survive_reopening_core() {
 #[test]
 fn a_draft_whose_line_changed_is_flagged_outdated() {
     let f = fixture();
-    f.core
-        .add_line_comment(f.thread_id, draft("a.txt", CommentSide::New, 2, "TWO", "x"))
-        .unwrap();
-    f.core
-        .add_line_comment(f.thread_id, draft("a.txt", CommentSide::Old, 2, "two", "y"))
-        .unwrap();
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "x",
+    );
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::Old,
+        2,
+        "two",
+        "y",
+    );
     assert!(
         f.core
             .list_line_comments(f.thread_id)
@@ -183,18 +211,24 @@ fn a_draft_whose_line_changed_is_flagged_outdated() {
 #[test]
 fn sending_delivers_every_draft_in_one_prompt_and_clears_them() {
     let f = fixture();
-    f.core
-        .add_line_comment(
-            f.thread_id,
-            draft("a.txt", CommentSide::New, 2, "TWO", "why upper?"),
-        )
-        .unwrap();
-    f.core
-        .add_line_comment(
-            f.thread_id,
-            draft("a.txt", CommentSide::New, 4, "four", "drop this"),
-        )
-        .unwrap();
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "why upper?",
+    );
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        4,
+        "four",
+        "drop this",
+    );
     f.core.send_line_comments(f.thread_id).unwrap();
     f.core.tick_thread(f.thread_id);
 
@@ -227,9 +261,15 @@ fn sending_is_refused_while_the_thread_is_working_and_keeps_the_drafts() {
     f.core.tick_thread(f.thread_id);
     wait_for(&rx, |e| matches!(e, ThreadEvent::TurnStarted { .. }));
 
-    f.core
-        .add_line_comment(f.thread_id, draft("a.txt", CommentSide::New, 2, "TWO", "x"))
-        .unwrap();
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "x",
+    );
     assert!(f.core.send_line_comments(f.thread_id).is_err());
     assert_eq!(f.core.list_line_comments(f.thread_id).unwrap().len(), 1);
 
@@ -255,9 +295,15 @@ fn sending_without_drafts_is_an_error() {
 #[test]
 fn deleting_a_thread_deletes_its_drafts() {
     let f = fixture();
-    f.core
-        .add_line_comment(f.thread_id, draft("a.txt", CommentSide::New, 2, "TWO", "x"))
-        .unwrap();
+    seed_comment(
+        &f.core,
+        f.thread_id,
+        "a.txt",
+        CommentSide::New,
+        2,
+        "TWO",
+        "x",
+    );
     f.core.delete_thread(f.thread_id, true).unwrap();
     assert!(f.core.list_line_comments(f.thread_id).unwrap().is_empty());
 }

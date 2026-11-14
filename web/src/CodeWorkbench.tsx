@@ -27,7 +27,6 @@ import { LanguageSupportNotice } from "./LanguageSupport";
 import { Skeleton } from "./Skeleton";
 import { fontStyle, getAppearance } from "./appearance";
 import { registerEditorSave } from "./editorSaves";
-import { invalidateQueries } from "./queryCache";
 import { shortcutLabel } from "./shortcuts";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
@@ -247,7 +246,6 @@ export function CodeWorkbench({
         doc.saved = content;
         doc.dirty = doc.model.getValue() !== content;
         languages.current?.saved(doc.model);
-        invalidateQueries(`p${projectId}:diff:`, { drop: true });
         onChanged();
         return true;
       } catch (e) {
