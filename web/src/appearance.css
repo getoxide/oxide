@@ -11,8 +11,7 @@
   font-size: var(--font-chat-size, 14px);
   font-weight: var(--font-chat-weight, 400);
 }
-.terminal-workbench,
-.terminal {
+.terminal-workbench {
   --mono: var(--font-terminal, monospace);
 }
 /* index.html paints the splash dark before any theme is known; once the app runs, the theme decides. */
@@ -42,7 +41,6 @@ kbd {
   animation: none;
 }
 .terminal-block-output,
-.terminal,
 .terminal-workbench {
   background: var(--terminal-background, var(--bg));
 }
