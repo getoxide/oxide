@@ -8,7 +8,6 @@ import { App } from "./App";
 const renders = vi.hoisted(() => ({ thread: 0 }));
 vi.mock("./ThreadView", () => ({ ThreadView: () => { renders.thread++; return <div>Transcript</div>; } }));
 vi.mock("./GitHeader", () => ({ GitHeader: () => null }));
-vi.mock("./TerminalPanel", () => ({ TerminalPanel: () => null }));
 vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./ProjectPalette", () => ({ ProjectPalette: () => <div>Project palette</div> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
