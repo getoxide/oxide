@@ -15,6 +15,40 @@ use std::time::Instant;
 /// How long a process group gets between SIGTERM and SIGKILL.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
+/// How many trailing stderr lines [`drain_stderr`] retains for `ProviderEvent::Exited`.
+pub const STDERR_TAIL_LINES: usize = 20;
+
+/// Drains a child's piped stderr on a background thread so verbose output cannot fill the OS
+/// pipe buffer and deadlock the child. Returns up to the last `STDERR_TAIL_LINES` lines.
+pub fn drain_stderr(stderr: std::process::ChildStderr) -> std::thread::JoinHandle<Option<String>> {
+    std::thread::spawn(move || {
+        use std::collections::VecDeque;
+        use std::io::{BufRead, BufReader};
+
+        let mut reader = BufReader::new(stderr);
+        let mut tail = VecDeque::with_capacity(STDERR_TAIL_LINES);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    while matches!(buf.last(), Some(b'\n' | b'\r')) {
+                        buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&buf).into_owned();
+                    if tail.len() == STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
+                    tail.push_back(line);
+                }
+            }
+        }
+        let joined = tail.into_iter().collect::<Vec<_>>().join("\n");
+        (!joined.is_empty()).then_some(joined)
+    })
+}
+
 /// Background CLI calls must not create a visible console in the Windows app.
 pub fn hide_console(command: &mut Command) -> &mut Command {
     #[cfg(windows)]

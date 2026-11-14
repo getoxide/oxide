@@ -390,3 +390,97 @@ fn fake_provider_handles_approval_and_permission_mode() {
         vec![("appr-1".to_string(), ApprovalDecision::Allow)]
     );
 }
+
+#[test]
+fn claude_drains_large_stderr_without_blocking() {
+    use oxide_provider::StartContext;
+    use std::time::{Duration, Instant};
+
+    let fake_cli = support::fake_cli("claude");
+    let mut provider = oxide_provider::claude::ClaudeCodeProvider::with_command(fake_cli.command());
+    provider.set_env("OXIDE_FAKE_STARTUP_LOG_BYTES", "220000");
+    let rx = provider
+        .start(&StartContext {
+            working_dir: ".".into(),
+            model: None,
+            effort: None,
+            permission_mode: PermissionMode::AutoEdit,
+        })
+        .unwrap();
+    provider.send_prompt("Hello").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut completed = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(ProviderEvent::TurnCompleted {
+                status: TurnStatus::Completed,
+                ..
+            }) => {
+                completed = true;
+                break;
+            }
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+    provider.shutdown().unwrap();
+    assert!(
+        completed,
+        "ClaudeCodeProvider must drain >64KB stderr without deadlocking"
+    );
+}
+
+#[test]
+fn codex_drains_large_stderr_without_blocking() {
+    use oxide_provider::StartContext;
+    use oxide_provider::codex::CodexAppServer;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let fake_cli = support::fake_cli("codex");
+    let mut app_server = CodexAppServer::with_command(fake_cli.command());
+    app_server.set_env("OXIDE_FAKE_STARTUP_LOG_BYTES", "220000");
+    let app_server = Arc::new(app_server);
+    let server_for_thread = Arc::clone(&app_server);
+
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        let mut provider = server_for_thread.create_provider();
+        let rx = provider
+            .start(&StartContext {
+                working_dir: ".".into(),
+                model: None,
+                effort: None,
+                permission_mode: PermissionMode::AutoEdit,
+            })
+            .unwrap();
+        provider.send_prompt("Hello").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut completed = false;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(remaining) {
+                Ok(ProviderEvent::TurnCompleted {
+                    status: TurnStatus::Completed,
+                    ..
+                }) => {
+                    completed = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        provider.shutdown().unwrap();
+        let _ = done_tx.send(completed);
+    });
+
+    let completed = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or(false);
+    app_server.shutdown().unwrap();
+    assert!(
+        completed,
+        "CodexAppServer must drain >64KB stderr without deadlocking"
+    );
+}
