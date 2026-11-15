@@ -7,6 +7,7 @@ import {
 import type { Project, Thread } from "./bindings";
 import { ReviewLedgerSummary } from "./ReviewLedgerSummary";
 import { RuleSuggestions } from "./RuleSuggestions";
+import { displayPath, readablePath } from "./headerLines";
 import { threadTitle } from "./threadList";
 import { relativeAge } from "./relativeTime";
 
@@ -34,8 +35,8 @@ export function ProjectOverview({
       <div className="project-overview-content">
         <RepoIcon size={28} className="project-overview-mark" />
         <h1>{project.name}</h1>
-        <p className="project-overview-path" title={project.path}>
-          {project.path}
+        <p className="project-overview-path" title={readablePath(project.path)}>
+          {displayPath(project.path)}
         </p>
         <p className="project-overview-intro">
           {threads.length === 0

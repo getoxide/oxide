@@ -2,6 +2,7 @@ import { Skeleton } from "./Skeleton";
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
 import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ContextMenu } from "./ContextMenu";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
 import type { CodeOpenRequest } from "./codeOpen";
@@ -48,7 +49,7 @@ import { workspaceLayout } from "./panelLayout";
 import { useElementSize, usePanelSize } from "./usePanelSize";
 import { displayPath, middleEllipsis, readablePath } from "./headerLines";
 import { hasOpenDialog } from "./keyboardScope";
-import { actionForKey, adjacentThreadId, ATTENTION_SHORTCUT, formatAccelerator, matchesAccelerator, modelDigitShortcut, type ShortcutAction } from "./shortcuts";
+import { actionForKey, adjacentThreadId, ATTENTION_SHORTCUT, formatAccelerator, matchesAccelerator, modelDigitShortcut, projectDigitShortcut, type ShortcutAction } from "./shortcuts";
 import { useShortcuts } from "./useShortcuts";
 import { useModifierHeld } from "./useModifierHeld";
 import { getDraft, isUnusedThread, setDraft } from "./threadDrafts";
@@ -957,6 +958,16 @@ export function App() {
   return (
     <div className={`window ${isMac ? "macos" : "windows"}`}>
       {isWindows && <WindowResizeHandles />}
+      <ContextMenu
+        shortcuts={shortcuts}
+        actions={{
+          newThread: selected ? () => { setShowSettings(false); void startNewThread(); } : undefined,
+          openProject: () => overlays.current?.openPalette(),
+          toggleSidebar: () => { setShowSidebar(!layout.sidebarVisible); setRegionPriority("sidebar"); setMaximized(false); },
+          toggleTools: () => { setShowTools(!dockVisible); setRegionPriority("tools"); setShowSettings(false); },
+          openSettings: () => { setSettingsSection(null); setShowSettings(true); },
+        }}
+      />
       <QuitDialog />
       <WorkspaceOverlays ref={overlays} projects={projects ?? []} onProjectsScanned={onProjectsScanned}
         onStartThread={startThreadIn} onOpenProject={openProject} onThreadDeleted={onThreadDeleted} />
@@ -1124,7 +1135,7 @@ export function App() {
           {threadLoadError && threadLoadError.projectId === selected?.id ? (
             <main className="centre empty-thread" aria-label="Project load error"><p className="error" role="alert">Could not load Threads for {selected?.name}: {threadLoadError.message}</p><button className="btn" onClick={() => { setThreadLoadError(null); setThreadReload((value) => value + 1); }}>Retry</button></main>
           ) : starting ? (
-            <main className="centre thread-loading" aria-label="Loading Project"><Skeleton kind="conversation" label="Loading Threadsâ€¦" /></main>
+            <main className="centre thread-loading" aria-label="Loading Project"><Skeleton kind="conversation" label="Loading Threads…" /></main>
           ) : selected && currentThreadId === null ? (
             <ProjectOverview project={selected} threads={threads ?? []}
               onNewThread={() => void startNewThread()}
@@ -1217,7 +1228,7 @@ export function App() {
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key
-                ? <Skeleton kind="code" label="Loading Codeâ€¦" /> : null}>
+                ? <Skeleton kind="code" label="Loading Code…" /> : null}>
                 <CodeWorkbench
                   projectId={context.projectId}
                   threadId={context.threadId}
@@ -1272,7 +1283,7 @@ export function App() {
                   const next = !maximized;
                   setMaximized(next);
                   requestAnimationFrame(() => focusRegion(next ? "dock" : "centre"));
-                }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}{modifierHeld && <kbd className="shortcut-badge">{keys("maximizeSurface")}</kbd>}</button>}
+                }}>{maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}{modifierHeld && <kbd className="shortcut-badge shortcut-badge-below">{keys("maximizeSurface")}</kbd>}</button>}
                 <button className="icon-btn sm" title={`Close panel (${keys("toggleTools")})`} aria-label="Close tools panel" onClick={() => {
                   setShowTools(false);
                   requestAnimationFrame(() => {
@@ -1284,7 +1295,7 @@ export function App() {
               </div>
             </nav>
             {selected && visitedTools[`${selected.id}:Pull request`] && (
-              <div className="surface-content" hidden={activeTool !== "Pull request"}><Suspense fallback={<Skeleton kind="list" label="Loading pull requestsâ€¦" />}>
+              <div className="surface-content" hidden={activeTool !== "Pull request"}><Suspense fallback={<Skeleton kind="list" label="Loading pull requests…" />}>
                 <PullRequestPanel
                   createRequest={createPrRequest}
                   onCreateHandled={() => setCreatePrRequest(0)}
@@ -1299,7 +1310,7 @@ export function App() {
             )}
             {workbenchContext && openedSurfaces[workbenchContext.key]?.files && (
               <div className="surface-content" hidden={activeTool !== "Files"}>
-                <Suspense fallback={dockVisible && activeTool === "Files" ? <Skeleton kind="tree" label="Loading filesâ€¦" /> : null}>
+                <Suspense fallback={dockVisible && activeTool === "Files" ? <Skeleton kind="tree" label="Loading files…" /> : null}>
                   <FilesPanel
                     key={workbenchContext.key}
                     projectId={workbenchContext.projectId}
@@ -1312,7 +1323,7 @@ export function App() {
             )}
             {Object.entries(terminalSurfaces).map(([id, state]) => {
               const projectId = Number(id); const isSelectedProject = projectId === selected?.id;
-              return <Suspense key={id} fallback={isSelectedProject && dockVisible && activeTool === "Terminal" ? <Skeleton kind="code" label="Loading Terminalâ€¦" /> : null}>
+              return <Suspense key={id} fallback={isSelectedProject && dockVisible && activeTool === "Terminal" ? <Skeleton kind="code" label="Loading Terminal…" /> : null}>
                 <TerminalSurface projectId={projectId} terminals={state} checkout={isSelectedProject ? workbenchContext : null}
                   visible={isSelectedProject && dockVisible && activeTool === "Terminal"}
                   queuedCommand={isSelectedProject ? installCommand : null} onCommandConsumed={() => setInstallCommand(null)}
@@ -1340,7 +1351,7 @@ export function App() {
               </section>
             )}
             {selected && visitedTools[`${selected.id}:Issues`] && (
-              <div className="surface-content" hidden={activeTool !== "Issues"}><Suspense fallback={<Skeleton kind="list" label="Loading issuesâ€¦" />}>
+              <div className="surface-content" hidden={activeTool !== "Issues"}><Suspense fallback={<Skeleton kind="list" label="Loading issues…" />}>
                 <IssuesSurface
                   projectId={selected.id}
                   onDispatched={(thread) => {
@@ -1451,6 +1462,21 @@ function Sidebar({
   const shown = selected && !listed.some((p) => p.id === selected.id) ? [selected, ...listed] : listed;
   const now = new Date();
 
+  // Ctrl+Alt+1..9 (⌘⌥ on macOS) switches to the nth Project, whatever the focus.
+  const shownRef = useRef(shown);
+  useEffect(() => { shownRef.current = shown; });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const index = projectDigitShortcut(event);
+      const target = index === null ? undefined : shownRef.current[index - 1];
+      if (!target || hasOpenDialog()) return;
+      event.preventDefault();
+      onSelect(target);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onSelect]);
+
   const renderThread = (t: Thread, index: number, showShortcutBadge: boolean) => (
     <li key={t.id} className="thread-row">
       {editingThreadId === t.id ? (
@@ -1469,7 +1495,7 @@ function Sidebar({
       ) : (
         <button
           className="thread-item"
-          aria-current={t.id === selectedThreadId}
+          aria-current={!settingsOpen && t.id === selectedThreadId}
           onClick={() => onSelectThread(t.id, t.projectId)}
           onDoubleClick={(e) => {
             e.preventDefault();
@@ -1490,10 +1516,9 @@ function Sidebar({
               <GitBranchIcon size={12} />
             </span>
           )}
-          {showShortcutBadge && modifierHeld && index < 9 ? (
+          <span className="thread-item-age">{relativeAge(t.updatedAt, now)}</span>
+          {showShortcutBadge && modifierHeld && index < 9 && (
             <span className="shortcut-badge">{formatAccelerator(`Mod+${index + 1}`)}</span>
-          ) : (
-            <span className="thread-item-age">{relativeAge(t.updatedAt, now)}</span>
           )}
         </button>
       )}
@@ -1517,7 +1542,7 @@ function Sidebar({
         </button>
         <button className="btn" onClick={onOpenPalette} title={`Open a Project, or a new Thread in another one (${keys("openProject")})`} aria-label="Open a Project">
           <RepoIcon size={14} />
-          {modifierHeld && <kbd className="shortcut-badge">{keys("openProject")}</kbd>}
+          {modifierHeld && <kbd className="shortcut-badge shortcut-badge-below">{keys("openProject")}</kbd>}
         </button>
       </div>
       {selected && (
@@ -1548,7 +1573,7 @@ function Sidebar({
           </div>
         )}
         <ul className="project-list">
-          {shown.map((p) => {
+          {shown.map((p, index) => {
             const isSelected = p.id === selected?.id;
             const isExpanded = expandedProjectIds.includes(p.id);
             const rawProjectThreads = isSelected ? threads : (threadsByProject[p.id] ?? null);
@@ -1577,8 +1602,9 @@ function Sidebar({
                     <RepoIcon size={13} />
                     <span className="project-name">{p.name}</span>
                     {p.missing && <span className="badge">missing</span>}
+                    {modifierHeld && index < 9 && <kbd className="shortcut-badge">{formatAccelerator(`Mod+Alt+${index + 1}`)}</kbd>}
                   </button>
-                  <button className="row-action" onClick={() => void close(p)} disabled={closingProjectId === p.id} aria-busy={closingProjectId === p.id} aria-label={`Close ${p.name}`} title={closingProjectId === p.id ? "Closing Projectâ€¦" : `Close Project (it stays in ${keys("openProject")})`}>
+                  <button className="row-action" onClick={() => void close(p)} disabled={closingProjectId === p.id} aria-busy={closingProjectId === p.id} aria-label={`Close ${p.name}`} title={closingProjectId === p.id ? "Closing Project…" : `Close Project (it stays in ${keys("openProject")})`}>
                     <XIcon size={13} />
                   </button>
                 </div>
@@ -1626,7 +1652,7 @@ function AppMenu({ onNewThread }: { onNewThread: () => void }) {
   };
   return <nav ref={root} className="app-menu" aria-label="Application menu">
     {Object.entries(menus).map(([name, items]) => <div className="app-menu-item" key={name}>
-      <button type="button" aria-haspopup="menu" aria-expanded={open === name} onMouseDown={(event) => event.preventDefault()} onClick={() => setOpen(open === name ? null : name)}>{name}</button>
+      <button type="button" aria-haspopup="menu" aria-expanded={open === name} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => { if (open) setOpen(name); }} onClick={() => setOpen(open === name ? null : name)}>{name}</button>
       {open === name && <div className="app-menu-popup" role="menu">
         {items.map(({ label, action }) => <button key={label} role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { action(); setOpen(null); }}>{label}</button>)}
       </div>}
@@ -1634,22 +1660,36 @@ function AppMenu({ onNewThread }: { onNewThread: () => void }) {
   </nav>;
 }
 
+/** Whether the window fills the screen; tracked so edge handles can stand aside and the glyph can match. */
+function useWindowMaximized(): boolean {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    const win = getCurrentWindow();
+    const sync = () => { void win.isMaximized().then((value) => { if (active) setMaximized(value); }).catch(() => {}); };
+    sync();
+    void win.onResized(sync).then((stop) => { if (active) unlisten = stop; else stop(); }).catch(() => {});
+    return () => { active = false; unlisten?.(); };
+  }, []);
+  return maximized;
+}
+
+/** Caption buttons drawn like Windows' own: Segoe glyphs, 46px wide, flush with the window's top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
+  const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
-    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6h10" /></svg>
-    </button>
-    <button type="button" aria-label="Maximize or restore" title="Maximize or restore" onClick={() => void window.toggleMaximize()}>
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" /></svg>
-    </button>
-    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg>
-    </button>
+    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>{""}</button>
+    <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>{maximized ? "" : ""}</button>
+    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>{""}</button>
   </div>;
 }
 
 function WindowResizeHandles() {
+  const maximized = useWindowMaximized();
+  // A maximized window cannot be resized, and the handles would cover the Close button's corner.
+  if (maximized) return null;
   const directions = ["North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
   return <div className="window-resize-handles" aria-hidden="true">
     {directions.map((direction) => <div key={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
@@ -1741,7 +1781,7 @@ function WorkspaceOverlays({ ref, projects, onProjectsScanned, onStartThread, on
   return <>
     {pending && <div className="modal-backdrop" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); cancelDelete(); } }}>
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-thread-title">
-        <h2 id="delete-thread-title">{pending.discardChanges ? "Discard worktree changes and delete?" : `Delete â€œ${pending.title}â€?`}</h2>
+        <h2 id="delete-thread-title">{pending.discardChanges ? "Discard worktree changes and delete?" : `Delete “${pending.title}”?`}</h2>
         <p>{pending.discardChanges ? "This Thread's worktree has uncommitted changes. Deleting removes the worktree and discards them; the branch is kept." : "Its conversation is removed permanently."}</p>
         {pending.shells.length > 0 && <>
           <p>Deleting also closes the terminals in its worktree:</p>
@@ -1750,7 +1790,7 @@ function WorkspaceOverlays({ ref, projects, onProjectsScanned, onStartThread, on
         {error && <p className="error" role="alert">{error}</p>}
         <div className="modal-actions">
           <button onClick={cancelDelete} disabled={deleting}>Cancel</button>
-          <button autoFocus className="danger" onClick={() => void confirmDelete()} disabled={deleting}>{deleting ? "Deletingâ€¦" : "Delete Thread"}</button>
+          <button autoFocus className="danger" onClick={() => void confirmDelete()} disabled={deleting}>{deleting ? "Deleting…" : "Delete Thread"}</button>
         </div>
       </div>
     </div>}

@@ -97,40 +97,21 @@ function ItemRow({ entry, kind }: { entry: ActivityItem; kind: PhaseKind }) {
   const failed = isFailedCommand(item);
   const failedChildren = children.filter(isFailedCommand).length;
 
-  if (item.kind === "file_change" || kind === "edit") {
-    return (
-      <div className="activity-item activity-item-file">
-        <FileDiffIcon size={12} />
-        <span className="activity-item-text">{headline}</span>
-      </div>
-    );
-  }
-
   if (kind === "reasoning") {
     return <div className="reasoning-text">{item.content}</div>;
   }
 
-  const expandable = detail !== "" || children.length > 0;
-  if (!expandable) {
-    return (
-      <div
-        className={`activity-item activity-item-plain${failed ? " activity-item-failed" : ""}`}
-      >
-        <span className="activity-item-text">{headline}</span>
-        {(failed || failedChildren > 0) && (
-          <FailedMark count={failed ? 1 : failedChildren} label={failedAriaLabel(failed ? 1 : failedChildren)} />
-        )}
-      </div>
-    );
-  }
+  // Every step opens: a long command or path is cut to one line, and a click shows all of it
+  // together with the output the step produced.
+  const isFile = item.kind === "file_change" || kind === "edit";
   return (
     <div className="activity-item-group">
       <Disclosure
         open={open}
         onToggle={() => setOpen((v) => !v)}
-        className={`activity-item${failed ? " activity-item-failed" : ""}`}
+        className={`activity-item${isFile ? " activity-item-file" : ""}${failed ? " activity-item-failed" : ""}`}
       >
-        <span className="activity-item-text">{headline}</span>
+        <span className={`activity-item-text${open ? " expanded" : ""}`}>{headline}</span>
         {(failed || failedChildren > 0) && (
           <FailedMark count={failed ? 1 : failedChildren} label={failedAriaLabel(failed ? 1 : failedChildren)} />
         )}

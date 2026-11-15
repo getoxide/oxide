@@ -87,6 +87,23 @@ function updateLastTurnItem(
   turns[lastTurnIndex] = turn;
 }
 
+/**
+ * The event belongs to a running Turn the Transcript does not have: its start was missed (it was
+ * broadcast before this view subscribed), so applying it would silently do nothing.
+ */
+export function eventOutrunsTranscript(state: TranscriptState, sequenced: SequencedThreadEvent): boolean {
+  if (sequenced.seq <= state.lastSeq) return false;
+  switch (sequenced.event.type) {
+    case "ItemStarted":
+    case "ItemDeltaBatch":
+    case "ItemCompleted":
+    case "TurnCompleted":
+      return state.turns.at(-1)?.status !== "running";
+    default:
+      return false;
+  }
+}
+
 export function applyThreadEvent(
   state: TranscriptState,
   sequenced: SequencedThreadEvent

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyThreadEvent, estimateTranscriptViewBytes, initialTranscriptState, SESSION_LOST_MESSAGE } from "./transcript";
+import { applyThreadEvent, eventOutrunsTranscript, estimateTranscriptViewBytes, initialTranscriptState, SESSION_LOST_MESSAGE } from "./transcript";
 import { getOfferedPermissionModes } from "./ThreadView";
 import type { SequencedThreadEvent, Thread, ThreadSnapshot } from "./bindings";
 
@@ -604,5 +604,14 @@ describe("command evidence", () => {
     expect(bytes).toBeLessThan(20000);
     expect(stringifySpy).not.toHaveBeenCalled();
     stringifySpy.mockRestore();
+  });
+});
+
+describe("eventOutrunsTranscript", () => {
+  const evt = (seq: number, event: SequencedThreadEvent["event"]): SequencedThreadEvent => ({ seq, event });
+  it("flags item events that arrive without a running Turn", () => {
+    const state = initialTranscriptState(null);
+    expect(eventOutrunsTranscript(state, evt(1, { type: "ItemDeltaBatch", payload: { item_index: 0, delta: "x" } }))).toBe(true);
+    expect(eventOutrunsTranscript(state, evt(1, { type: "ThreadStatusChanged", payload: { status: "working" } }))).toBe(false);
   });
 });

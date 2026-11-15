@@ -162,6 +162,8 @@ export const TurnView = memo(function TurnView({
   turn,
   provider,
   catalog = null,
+  fallbackModel = null,
+  fallbackEffort = null,
   onRespond,
   isWorking,
   instant = false,
@@ -170,6 +172,9 @@ export const TurnView = memo(function TurnView({
   provider: string;
   /** The Provider's Model catalog, so the header can name the Model the way the picker does. */
   catalog?: ModelInfo[] | null;
+  /** What a Turn still waiting on its start event is running with: the Thread's Model and Effort. */
+  fallbackModel?: string | null;
+  fallbackEffort?: string | null;
   onRespond: (approvalId: string, decision: ApprovalDecision) => void;
   isWorking: boolean;
   /** Skips the send animation: the prompt is already on screen as the outgoing Turn. */
@@ -178,9 +183,12 @@ export const TurnView = memo(function TurnView({
   const [justSent] = useState(
     () => !instant && turn.status === "running" && Date.now() - Date.parse(turn.startedAt) < JUST_SENT_MS
   );
+  const running = turn.status === "running";
+  const shownModel = turn.model ?? (running ? fallbackModel : null);
+  const shownEffort = turn.effort ?? (running ? fallbackEffort : null);
   const model = useMemo(
-    () => modelEffortParts(turn.model ?? null, turn.effort ?? null, catalog),
-    [turn.model, turn.effort, catalog],
+    () => modelEffortParts(shownModel, shownEffort, catalog),
+    [shownModel, shownEffort, catalog],
   );
   const blocks = useMemo(() => groupTurnItems(turn.items), [turn.items]);
   const promptText = useMemo(

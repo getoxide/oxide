@@ -849,7 +849,7 @@
 .tools-tab-strip::-webkit-scrollbar { display: none; }
 .tools-tab-actions { display: flex; align-items: center; flex: none; gap: 2px; padding: 0 8px 0 4px; }
 .tools-tab-actions .icon-btn { flex: none; }
-.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; }
+.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; }
 .window.windows .header { display: flex; }
 .window.windows .header-project { flex: 1; justify-content: flex-start; }
 .header > .icon-btn { flex: none; min-width: 28px; }

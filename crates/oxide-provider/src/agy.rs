@@ -585,17 +585,29 @@ fn parse_models(stdout: &str) -> Vec<AgyModel> {
         .collect()
 }
 
+/// The Effort an `agy models` slug names by its suffix (`gemini-4-hydrogen-xhigh`), if any.
+/// Antigravity lists every Effort of a Model as its own slug, and Models like the Orchestrator
+/// list none, so the catalog says which Efforts exist rather than Oxide assuming them.
+fn effort_of_slug(slug: &str) -> Option<&'static str> {
+    const EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+    let (_, tail) = slug.rsplit_once('-')?;
+    EFFORTS
+        .into_iter()
+        .find(|effort| tail.eq_ignore_ascii_case(effort))
+}
+
 fn models_to_info(models: Vec<AgyModel>) -> Vec<ModelInfo> {
     models
         .into_iter()
         .map(|m| {
             let is_legacy = m.slug.contains("1.5") || m.slug.contains("legacy");
+            let effort = effort_of_slug(&m.slug);
             ModelInfo {
                 id: m.slug,
                 name: m.label,
                 description: None,
-                supported_efforts: vec!["low".into(), "medium".into(), "high".into()],
-                default_effort: Some("medium".into()),
+                supported_efforts: effort.map(|e| vec![e.to_string()]).unwrap_or_default(),
+                default_effort: effort.map(str::to_string),
                 is_legacy,
             }
         })
@@ -1388,6 +1400,21 @@ mod tests {
     use super::command_for;
     use std::collections::HashMap;
     use std::ffi::OsStr;
+
+    #[test]
+    fn catalog_efforts_come_from_each_slug_not_a_fixed_list() {
+        let catalog = super::models_to_info(super::parse_models(
+            "gemini-4-hydrogen-high	Gemini 4 Hydrogen (High)
+             gemini-4-hydrogen-xhigh	Gemini 4 Hydrogen (XHigh)
+             orchestrator-argon	Orchestrator (Argon)
+",
+        ));
+        assert_eq!(catalog[0].supported_efforts, ["high"]);
+        assert_eq!(catalog[1].supported_efforts, ["xhigh"]);
+        assert_eq!(catalog[1].default_effort.as_deref(), Some("xhigh"));
+        assert!(catalog[2].supported_efforts.is_empty());
+        assert_eq!(catalog[2].default_effort, None);
+    }
 
     #[test]
     fn command_for_disables_auto_update_by_default() {

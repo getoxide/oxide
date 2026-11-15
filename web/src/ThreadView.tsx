@@ -71,6 +71,7 @@ import { readableModel } from "./headerLines";
 import { filterSlashCommands, pickSlashCommand, slashQuery } from "./slashMenu";
 import {
   applyThreadEvent,
+  eventOutrunsTranscript,
   estimateTranscriptViewBytes,
   initialTranscriptState,
   SESSION_LOST_MESSAGE,
@@ -237,6 +238,11 @@ export function ThreadView({
   /** Where the view was last pinned to the bottom; null before the first pin. */
   const pinnedAtRef = useRef<number | null>(null);
   const requestedPagesRef = useRef(new Set<number>());
+  /** The Thread whose live subscription is up, and who is waiting on that (a first prompt sent right after creating it). */
+  const subscribedThreadRef = useRef<number | null>(null);
+  const subscriptionWaiters = useRef<Array<() => void>>([]);
+  /** Bumped when live events stopped matching the Transcript, to take a fresh snapshot. */
+  const [resyncRevision, setResyncRevision] = useState(0);
   const savedViews = useRef(new LruCache<number, { transcript: TranscriptState; pages: TranscriptPages; top: number; following: boolean }>(16 * 1024 * 1024,
     (view) => estimateTranscriptViewBytes(view.transcript, view.pages)));
   const latestView = useRef({ transcript, pages });
@@ -536,13 +542,21 @@ export function ThreadView({
       savedViews.current.delete(threadId);
     }
 
+    let resyncQueued = false;
     // Per-token deltas never reach React directly: at most one update per frame.
     const batcher = createFrameBatcher<SequencedThreadEvent>((batch) => {
       if (!active) return;
       setTranscript((prev) => {
         let next = prev;
+        let orphaned = false;
         for (const evt of batch) {
+          orphaned ||= eventOutrunsTranscript(next, evt);
           next = applyThreadEvent(next, evt);
+        }
+        // A fresh snapshot repairs what the stream missed; the guard keeps a repeated updater to one resync.
+        if (orphaned && !resyncQueued) {
+          resyncQueued = true;
+          window.setTimeout(() => { if (active) setResyncRevision((n) => n + 1); }, 0);
         }
         if (next.status !== prev.status) {
           onStatusChange(threadId, next.status);
@@ -569,6 +583,8 @@ export function ThreadView({
       if (active && res.status === "ok") {
         const initial = early.reduce(applyThreadEvent, initialTranscriptState(res.data));
         snapshotApplied = true;
+        subscribedThreadRef.current = threadId;
+        for (const wake of subscriptionWaiters.current.splice(0)) wake();
         setTranscript(initial);
         const cached = savedViews.current.get(threadId);
         setPages(cached?.transcript.turnOffset === initial.turnOffset ? cached.pages : new Map());
@@ -582,9 +598,10 @@ export function ThreadView({
 
     return () => {
       active = false;
+      subscribedThreadRef.current = null;
       batcher.cancel();
     };
-  }, [threadId, onStatusChange, onThreadTitleChange, onInitialLoad, transcriptRevision]);
+  }, [threadId, onStatusChange, onThreadTitleChange, onInitialLoad, transcriptRevision, resyncRevision]);
 
   // A continued Thread opens with its recap in the composer.
   useEffect(() => {
@@ -1136,6 +1153,10 @@ export function ThreadView({
         }
       }
 
+      // A Thread created just now has no live subscription yet; a Turn started before it exists
+      // would stream to nobody and only show up after switching Threads.
+      if (targetThreadId !== threadId) await subscriptionReady(targetThreadId);
+
       const sent = await commands.sendPrompt(targetThreadId, segments);
       if (sent.status !== "ok") giveBack(sent.error.message);
       else {
@@ -1149,6 +1170,13 @@ export function ThreadView({
       setSending(false);
     }
   };
+
+  const subscriptionReady = (id: number) =>
+    new Promise<void>((resolve) => {
+      if (subscribedThreadRef.current === id) return resolve();
+      const timer = window.setTimeout(resolve, 300);
+      subscriptionWaiters.current.push(() => { window.clearTimeout(timer); resolve(); });
+    });
 
   const isTurnActive = turnIsRunning(transcript.status);
   const thread = transcript.thread;
@@ -1216,6 +1244,8 @@ export function ThreadView({
                       }
                       provider={transcript.thread?.provider ?? draftProvider}
                       catalog={catalogModels}
+                      fallbackModel={currentModel}
+                      fallbackEffort={currentEffort}
                       onRespond={handleRespond}
                       isWorking={isTurnActive}
                     />
@@ -1233,6 +1263,8 @@ export function ThreadView({
               turn={outgoingTurn}
               provider={transcript.thread?.provider ?? draftProvider}
               catalog={catalogModels}
+              fallbackModel={currentModel}
+              fallbackEffort={currentEffort}
               onRespond={handleRespond}
               isWorking
             />
@@ -1327,7 +1359,6 @@ export function ThreadView({
           value={value}
           onChange={handleComposerChange}
           onPasteFiles={(files) => attachFiles(files, composerRef.current?.caret() ?? undefined)}
-          onStop={isTurnActive ? stop : undefined}
           placeholder={
             isTurnActive
               ? "Working… (Esc to stop)"
