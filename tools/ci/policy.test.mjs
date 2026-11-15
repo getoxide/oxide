@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkUpdateFeed, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
-  localPlan, previousReleaseTag, releaseNotes, updateManifest,
+  downloadsSection, localPlan, previousReleaseTag, releaseNotes, updateManifest,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -524,3 +524,22 @@ describe("localPlan", () => {
   });
 });
 
+
+describe("downloadsSection", () => {
+  test("names the platform of every installer, not just its architecture", () => {
+    const section = downloadsSection([
+      "Oxide_0.1.0_aarch64.dmg", "Oxide_0.1.0_x64-setup.exe", "Oxide_0.1.0_arm64-setup.exe",
+      "Oxide_0.1.0_amd64.AppImage", "Oxide_0.1.0_amd64.deb", "Oxide-0.1.0-1.x86_64.rpm", "notes.txt",
+    ]);
+    assert.match(section, /\| macOS \(Apple Silicon\) \| Disk image \| `Oxide_0\.1\.0_aarch64\.dmg` \|/);
+    assert.match(section, /\| Windows \(Intel\/AMD, 64-bit\) \| Installer \| `Oxide_0\.1\.0_x64-setup\.exe` \|/);
+    assert.match(section, /\| Windows \(Arm\) \|/);
+    assert.match(section, /\| Linux \(Intel\/AMD, 64-bit\): Debian, Ubuntu \|/);
+    assert.match(section, /Fedora, RHEL, openSUSE/);
+    assert.doesNotMatch(section, /notes\.txt/);
+  });
+
+  test("is empty when there is no installer", () => {
+    assert.equal(downloadsSection(["notes.txt"]), "");
+  });
+});

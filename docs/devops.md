@@ -197,7 +197,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 **Why no "prepare release" workflow that opens the bump PR:** a PR made with `GITHUB_TOKEN` triggers no workflows, so its `gate` would never run. Avoiding that needs an extra credential just to save one local command.
 
-**Release notes** come from the Conventional Commit titles merged since the previous `v*` tag, grouped into Breaking changes, Features, Fixes, Dependencies, Documentation and Other, with PR links. `chore(release)` commits are omitted. They end with a per-platform signing notice.
+**Release notes** come from the Conventional Commit titles merged since the previous `v*` tag, grouped into Breaking changes, Features, Fixes, Dependencies, Documentation and Other, with PR links. `chore(release)` commits are omitted. They continue with a **Downloads** table that says which installer is for which platform (for example `_amd64.AppImage` is "Linux (Intel/AMD, 64-bit)"), because file names carry only the architecture and the format, and end with a per-platform signing notice.
 
 **Local:** `node tools/ci/cli.mjs bump X.Y.Z` (see the runbook), `node tools/ci/cli.mjs release-version vX.Y.Z` (does the tag match the manifests?), `node tools/ci/cli.mjs release-notes vX.Y.Z` (needs full git history).
 

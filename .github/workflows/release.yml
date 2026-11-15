@@ -140,6 +140,8 @@ jobs:
           node tools/ci/cli.mjs release-notes "$TAG" > notes.md
           {
             echo
+            node tools/ci/cli.mjs downloads release
+            echo
             echo "### Platform signing"
             echo
             for notice in staged/NOTICE-*.txt; do echo "- $(cat "$notice")"; done

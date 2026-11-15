@@ -240,6 +240,30 @@ export function releaseNotes(commits, { repository, previousTag, tag }) {
   return `${filled.map((name) => `### ${name}\n\n${sections[name].join("\n")}\n`).join("\n")}\n${changelog}\n`;
 }
 
+// What each installer is for, in plain words. The file names only carry the CPU
+// architecture and the format, which say little to someone choosing a download.
+const DOWNLOADS = [
+  [/_aarch64\.dmg$/, "macOS (Apple Silicon)", "Disk image"],
+  [/_x64-setup\.exe$/, "Windows (Intel/AMD, 64-bit)", "Installer"],
+  [/_arm64-setup\.exe$/, "Windows (Arm)", "Installer"],
+  [/_amd64\.AppImage$/, "Linux (Intel/AMD, 64-bit)", "AppImage, runs on any distribution"],
+  [/_aarch64\.AppImage$/, "Linux (Arm)", "AppImage, runs on any distribution"],
+  [/_amd64\.deb$/, "Linux (Intel/AMD, 64-bit): Debian, Ubuntu", ".deb package"],
+  [/_arm64\.deb$/, "Linux (Arm): Debian, Ubuntu", ".deb package"],
+  [/\.x86_64\.rpm$/, "Linux (Intel/AMD, 64-bit): Fedora, RHEL, openSUSE", ".rpm package"],
+  [/\.aarch64\.rpm$/, "Linux (Arm): Fedora, RHEL, openSUSE", ".rpm package"],
+];
+
+/** A "Downloads" section that tells which file is for which platform. Unknown files are left out. */
+export function downloadsSection(artifactNames) {
+  const rows = [];
+  for (const [pattern, platform, kind] of DOWNLOADS) {
+    for (const name of artifactNames.filter((candidate) => pattern.test(candidate)).sort()) rows.push(`| ${platform} | ${kind} | \`${name}\` |`);
+  }
+  if (rows.length === 0) return "";
+  return `### Downloads\n\n| Platform | Format | File |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
+}
+
 // Packages that break when moved alone, or whose bumps change generated bindings.
 const MANUAL_GROUPS = new Set(["tauri", "specta"]);
 
