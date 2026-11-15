@@ -7,6 +7,7 @@
 //   node tools/ci/cli.mjs release-version <tag>
 //   node tools/ci/cli.mjs tauri-alignment
 //   node tools/ci/cli.mjs release-notes <tag> [<previous-tag>]
+//   node tools/ci/cli.mjs downloads <dir>               prints the Downloads table for the installers in <dir>
 //   node tools/ci/cli.mjs dependabot                    env DEPENDENCIES_JSON
 //   node tools/ci/cli.mjs update-manifest <dir> <tag> [<owner/repo>] [<out-file>]
 //   node tools/ci/cli.mjs update-feed <latest.json> <tag>  prints the URLs the feed points at
@@ -20,7 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, checkUpdateFeed, dependabotDecision, evaluateGate, lanesFor,
-  previousReleaseTag, releaseNotes, updateManifest,
+  downloadsSection, previousReleaseTag, releaseNotes, updateManifest,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -82,6 +83,9 @@ const commands = {
       .map((entry) => { const [subject, body = ""] = entry.split("\x1f"); return { subject, body }; });
     const repository = process.env.GITHUB_REPOSITORY ?? "getoxide/oxide";
     process.stdout.write(releaseNotes(commits, { repository, previousTag: previous, tag }));
+  },
+  downloads([dir]) {
+    process.stdout.write(downloadsSection(readdirSync(dir)));
   },
   dependabot() {
     let dependencies;

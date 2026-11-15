@@ -183,15 +183,21 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           SIGNED: ${{ steps.apple.outputs.signed }}
           NOTARIZED: ${{ steps.apple.outputs.notarized }}
-        # Each deliverable gets the name users and latest.json see.
+        # Each deliverable gets the name users and latest.json see: Oxide_<version>_<os>_<arch>.<ext>.
+        # Renaming keeps the updater signature valid, because it signs the content, not the name.
         run: |
           version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
           bundle=target/release/bundle
           mkdir -p staged
+          # stage <source> <os_arch>: copy one installer, and its .sig when it has one, under its release name.
+          stage() {
+            local ext="${1##*.}"
+            cp "$1" "staged/Oxide_${version}_$2.${ext}"
+            if [ -f "$1.sig" ]; then cp "$1.sig" "staged/Oxide_${version}_$2.${ext}.sig"; fi
+          }
           case "$PLATFORM" in
             macos-aarch64)
-              cp "$bundle/dmg/Oxide_${version}_aarch64.dmg" staged/
-              cp "$bundle/dmg/Oxide_${version}_aarch64.dmg.sig" staged/
+              stage "$bundle/dmg/Oxide_${version}_aarch64.dmg" macos_arm64
               if [ "$NOTARIZED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
               elif [ "$SIGNED" = "true" ]; then
@@ -202,11 +208,12 @@ jobs:
               ;;
             windows-x64|windows-aarch64)
               # Tauri names the installer after the architecture: x64-setup.exe or arm64-setup.exe.
-              cp "$bundle"/nsis/Oxide_"${version}"_*-setup.exe staged/
-              cp "$bundle"/nsis/Oxide_"${version}"_*-setup.exe.sig staged/
+              arch=x64; if [ "$PLATFORM" = "windows-aarch64" ]; then arch=arm64; fi
+              stage "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "windows_${arch}"
               notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
               ;;
             linux-x64|linux-aarch64)
+              arch=x64; if [ "$PLATFORM" = "linux-aarch64" ]; then arch=arm64; fi
               # Exactly one AppImage (the updater package, with its .sig), one .deb and one .rpm per architecture.
               for pattern in "appimage/*.AppImage" "appimage/*.AppImage.sig" "deb/*.deb" "rpm/*.rpm"; do
                 mapfile -t matches < <(compgen -G "$bundle/$pattern" || true)
@@ -214,7 +221,9 @@ jobs:
                   echo "::error::Expected exactly one $pattern in $bundle, found: ${matches[*]}"
                   exit 1
                 fi
-                cp "${matches[0]}" staged/
+                # The .sig is only checked here: `stage` copies it along with its installer.
+                case "$pattern" in *.sig) continue ;; esac
+                stage "${matches[0]}" "linux_${arch}"
               done
               notice="The Linux builds are not signed with a distribution key. The AppImage updates itself through Oxide; the .deb and .rpm do not, so install a newer package to update. Verify the download against the release checksums or attestation."
               ;;

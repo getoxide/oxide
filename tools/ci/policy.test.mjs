@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkUpdateFeed, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
-  localPlan, previousReleaseTag, releaseNotes, updateManifest,
+  downloadsSection, localPlan, previousReleaseTag, releaseNotes, updateManifest,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -394,8 +394,8 @@ describe("checkUpdateFeed", () => {
 
 describe("updateManifest", () => {
   const release = { repository: "getoxide/oxide", tag: "v1.2.3", date: "2026-10-29T00:00:00Z" };
-  const artifacts = ["Oxide_1.2.3_aarch64.dmg", "Oxide_1.2.3_aarch64.dmg.sig", "Oxide_1.2.3_x64-setup.exe", "Oxide_1.2.3_x64-setup.exe.sig"];
-  const signatures = { "Oxide_1.2.3_aarch64.dmg": "mac-signature\n", "Oxide_1.2.3_x64-setup.exe": "windows-signature" };
+  const artifacts = ["Oxide_1.2.3_macos_arm64.dmg", "Oxide_1.2.3_macos_arm64.dmg.sig", "Oxide_1.2.3_windows_x64.exe", "Oxide_1.2.3_windows_x64.exe.sig"];
+  const signatures = { "Oxide_1.2.3_macos_arm64.dmg": "mac-signature\n", "Oxide_1.2.3_windows_x64.exe": "windows-signature" };
 
   test("one signed package per platform produces the updater feed", () => {
     assert.deepEqual(updateManifest(artifacts, signatures, release), {
@@ -405,23 +405,23 @@ describe("updateManifest", () => {
       platforms: {
         "darwin-aarch64": {
           signature: "mac-signature",
-          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_aarch64.dmg",
+          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_macos_arm64.dmg",
         },
         "windows-x86_64": {
           signature: "windows-signature",
-          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_x64-setup.exe",
+          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_windows_x64.exe",
         },
       },
     });
   });
 
   test("a missing or empty signature fails", () => {
-    assert.throws(() => updateManifest(artifacts, { "Oxide_1.2.3_x64-setup.exe": "windows-signature" }, release), /Missing signature for Oxide_1\.2\.3_aarch64\.dmg/);
-    assert.throws(() => updateManifest(artifacts, { ...signatures, "Oxide_1.2.3_x64-setup.exe": " \n" }, release), /Empty signature for Oxide_1\.2\.3_x64-setup\.exe/);
+    assert.throws(() => updateManifest(artifacts, { "Oxide_1.2.3_windows_x64.exe": "windows-signature" }, release), /Missing signature for Oxide_1\.2\.3_macos_arm64\.dmg/);
+    assert.throws(() => updateManifest(artifacts, { ...signatures, "Oxide_1.2.3_windows_x64.exe": " \n" }, release), /Empty signature for Oxide_1\.2\.3_windows_x64\.exe/);
   });
 
   test("a duplicate package or no package fails", () => {
-    assert.throws(() => updateManifest([...artifacts, "Oxide_1.2.2_x64-setup.exe"], signatures, release), /windows-x86_64: expected exactly one/);
+    assert.throws(() => updateManifest([...artifacts, "Oxide_1.2.2_windows_x64.exe"], signatures, release), /windows-x86_64: expected exactly one/);
     assert.throws(() => updateManifest(["Oxide_1.2.3_aarch64.app.tar.gz", "SHA256SUMS.txt"], {}, release), /No updater packages/);
   });
 
@@ -436,19 +436,19 @@ describe("updateManifest", () => {
 
   test("Windows ARM and both Linux architectures get their own platform key", () => {
     const names = [
-      "Oxide_1.2.3_arm64-setup.exe", "Oxide_1.2.3_amd64.AppImage", "Oxide_1.2.3_aarch64.AppImage",
-      "Oxide_1.2.3_amd64.deb", "Oxide-1.2.3-1.x86_64.rpm", "Oxide_1.2.3_arm64.deb", "Oxide-1.2.3-1.aarch64.rpm",
+      "Oxide_1.2.3_windows_arm64.exe", "Oxide_1.2.3_linux_x64.AppImage", "Oxide_1.2.3_linux_arm64.AppImage",
+      "Oxide_1.2.3_linux_x64.deb", "Oxide_1.2.3_linux_x64.rpm", "Oxide_1.2.3_linux_arm64.deb", "Oxide_1.2.3_linux_arm64.rpm",
     ];
     const signed = Object.fromEntries(names.map((name) => [name, `${name}-signature`]));
     const { platforms } = updateManifest(names, signed, release);
     assert.deepEqual(Object.keys(platforms), ["windows-aarch64", "linux-x86_64", "linux-aarch64"]);
-    assert.equal(platforms["windows-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_arm64-setup.exe");
-    assert.equal(platforms["linux-x86_64"].signature, "Oxide_1.2.3_amd64.AppImage-signature");
-    assert.equal(platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_aarch64.AppImage");
+    assert.equal(platforms["windows-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_windows_arm64.exe");
+    assert.equal(platforms["linux-x86_64"].signature, "Oxide_1.2.3_linux_x64.AppImage-signature");
+    assert.equal(platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_linux_arm64.AppImage");
   });
 
   test("a release can ship one platform", () => {
-    const macOnly = updateManifest(["Oxide_1.2.3_aarch64.dmg"], { "Oxide_1.2.3_aarch64.dmg": "mac-signature" }, release);
+    const macOnly = updateManifest(["Oxide_1.2.3_macos_arm64.dmg"], { "Oxide_1.2.3_macos_arm64.dmg": "mac-signature" }, release);
     assert.deepEqual(Object.keys(macOnly.platforms), ["darwin-aarch64"]);
   });
 });
@@ -524,3 +524,22 @@ describe("localPlan", () => {
   });
 });
 
+
+describe("downloadsSection", () => {
+  test("names the platform of every installer, not just its architecture", () => {
+    const section = downloadsSection([
+      "Oxide_0.1.0_macos_arm64.dmg", "Oxide_0.1.0_windows_x64.exe", "Oxide_0.1.0_windows_arm64.exe",
+      "Oxide_0.1.0_linux_x64.AppImage", "Oxide_0.1.0_linux_x64.deb", "Oxide_0.1.0_linux_x64.rpm", "notes.txt",
+    ]);
+    assert.match(section, /\| macOS \(Apple Silicon\) \| Disk image \| `Oxide_0\.1\.0_macos_arm64\.dmg` \|/);
+    assert.match(section, /\| Windows \(Intel\/AMD, 64-bit\) \| Installer \| `Oxide_0\.1\.0_windows_x64\.exe` \|/);
+    assert.match(section, /\| Windows \(Arm\) \|/);
+    assert.match(section, /\| Linux \(Intel\/AMD, 64-bit\): Debian, Ubuntu \|/);
+    assert.match(section, /Fedora, RHEL, openSUSE/);
+    assert.doesNotMatch(section, /notes\.txt/);
+  });
+
+  test("is empty when there is no installer", () => {
+    assert.equal(downloadsSection(["notes.txt"]), "");
+  });
+});

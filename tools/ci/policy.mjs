@@ -240,6 +240,29 @@ export function releaseNotes(commits, { repository, previousTag, tag }) {
   return `${filled.map((name) => `### ${name}\n\n${sections[name].join("\n")}\n`).join("\n")}\n${changelog}\n`;
 }
 
+// What each installer is for, in plain words, next to its file name (`Oxide_<version>_<os>_<arch>.<ext>`).
+const DOWNLOADS = [
+  [/_macos_arm64\.dmg$/, "macOS (Apple Silicon)", "Disk image"],
+  [/_windows_x64\.exe$/, "Windows (Intel/AMD, 64-bit)", "Installer"],
+  [/_windows_arm64\.exe$/, "Windows (Arm)", "Installer"],
+  [/_linux_x64\.AppImage$/, "Linux (Intel/AMD, 64-bit)", "AppImage, runs on any distribution"],
+  [/_linux_arm64\.AppImage$/, "Linux (Arm)", "AppImage, runs on any distribution"],
+  [/_linux_x64\.deb$/, "Linux (Intel/AMD, 64-bit): Debian, Ubuntu", ".deb package"],
+  [/_linux_arm64\.deb$/, "Linux (Arm): Debian, Ubuntu", ".deb package"],
+  [/_linux_x64\.rpm$/, "Linux (Intel/AMD, 64-bit): Fedora, RHEL, openSUSE", ".rpm package"],
+  [/_linux_arm64\.rpm$/, "Linux (Arm): Fedora, RHEL, openSUSE", ".rpm package"],
+];
+
+/** A "Downloads" section that tells which file is for which platform. Unknown files are left out. */
+export function downloadsSection(artifactNames) {
+  const rows = [];
+  for (const [pattern, platform, kind] of DOWNLOADS) {
+    for (const name of artifactNames.filter((candidate) => pattern.test(candidate)).sort()) rows.push(`| ${platform} | ${kind} | \`${name}\` |`);
+  }
+  if (rows.length === 0) return "";
+  return `### Downloads\n\n| Platform | Format | File |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
+}
+
 // Packages that break when moved alone, or whose bumps change generated bindings.
 const MANUAL_GROUPS = new Set(["tauri", "specta"]);
 
@@ -281,11 +304,11 @@ export function dependabotDecision(updatedDependencies) {
 // The Tauri updater platform key for each signed updater package.
 // The AppImage is the Linux updater package; the .deb and .rpm are not self-updating.
 const UPDATER_PACKAGES = [
-  ["darwin-aarch64", /_aarch64\.dmg$/],
-  ["windows-x86_64", /_x64-setup\.exe$/],
-  ["windows-aarch64", /_arm64-setup\.exe$/],
-  ["linux-x86_64", /_amd64\.AppImage$/],
-  ["linux-aarch64", /_aarch64\.AppImage$/],
+  ["darwin-aarch64", /_macos_arm64\.dmg$/],
+  ["windows-x86_64", /_windows_x64\.exe$/],
+  ["windows-aarch64", /_windows_arm64\.exe$/],
+  ["linux-x86_64", /_linux_x64\.AppImage$/],
+  ["linux-aarch64", /_linux_arm64\.AppImage$/],
 ];
 
 /**
@@ -306,7 +329,7 @@ export function updateManifest(artifactNames, signatures, { repository, tag, dat
     if (!signature) throw new Error(`Empty signature for ${name}.`);
     platforms[platform] = { signature, url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}` };
   }
-  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (.dmg, -setup.exe or .AppImage).");
+  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (.dmg, .exe or .AppImage).");
   const version = tag.slice(1);
   return {
     version,
