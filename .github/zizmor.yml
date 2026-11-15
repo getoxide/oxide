@@ -3,9 +3,9 @@ rules:
     ignore:
       # Low severity: `./` is the long-standing, documented way to call a local
       # composite action or reusable workflow, and actionlint understands it.
-      - ci.yml:121
-      - ci.yml:255
-      - build.yml:78
+      - ci.yml:122
+      - ci.yml:259
+      - build.yml:80
       - release.yml:80
   secrets-inherit:
     ignore:
