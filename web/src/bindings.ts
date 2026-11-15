@@ -190,6 +190,10 @@ export const commands = {
 	pullRequestDetail: (projectId: number, number: number) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number })),
 	pullRequestReviewThreads: (projectId: number, number: number) => typedError<PullRequestReviewThread_Serialize[], AppError>(__TAURI_INVOKE("pull_request_review_threads", { projectId, number })),
 	commentPullRequest: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_pull_request", { projectId, number, body })),
+	/**  Rewrites a comment of a pull request or an issue. */
+	editComment: (projectId: number, id: string, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_comment", { projectId, id, body })),
+	/**  Deletes a comment of a pull request or an issue. */
+	deleteComment: (projectId: number, id: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_comment", { projectId, id })),
 	mergePullRequest: (projectId: number, number: number, method: MergeMethod, deleteBranch: boolean, auto: boolean) => typedError<null, AppError>(__TAURI_INVOKE("merge_pull_request", { projectId, number, method, deleteBranch, auto })),
 	/**  Closes a pull request without merging it. */
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
@@ -639,6 +643,7 @@ export type GithubRepository = {
 export type IssueCloseReason = "completed" | "notPlanned";
 
 export type IssueComment = {
+	id: string,
 	author: string,
 	body: string,
 	createdAt: string,
@@ -1035,6 +1040,8 @@ export type PullRequestCheck_Serialize = {
 export type PullRequestComment = PullRequestComment_Serialize | PullRequestComment_Deserialize;
 
 export type PullRequestComment_Deserialize = {
+	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
+	id?: string | null,
 	author: string,
 	body: string,
 	createdAt: string,
@@ -1043,6 +1050,8 @@ export type PullRequestComment_Deserialize = {
 };
 
 export type PullRequestComment_Serialize = {
+	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
+	id: string | null,
 	author: string,
 	body: string,
 	createdAt: string,

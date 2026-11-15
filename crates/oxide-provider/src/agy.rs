@@ -585,29 +585,57 @@ fn parse_models(stdout: &str) -> Vec<AgyModel> {
         .collect()
 }
 
-/// The Effort an `agy models` slug names by its suffix (`gemini-4-hydrogen-xhigh`), if any.
-/// Antigravity lists every Effort of a Model as its own slug, and Models like the Orchestrator
-/// list none, so the catalog says which Efforts exist rather than Oxide assuming them.
-fn effort_of_slug(slug: &str) -> Option<&'static str> {
-    const EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-    let (_, tail) = slug.rsplit_once('-')?;
-    EFFORTS
-        .into_iter()
-        .find(|effort| tail.eq_ignore_ascii_case(effort))
+/// A catalog label without the trailing parenthesised qualifier: `Gemini 4 Hydrogen (XHigh)`
+/// becomes `Gemini 4 Hydrogen`.
+fn label_base(label: &str) -> &str {
+    match label
+        .trim_end()
+        .strip_suffix(')')
+        .and_then(|rest| rest.rsplit_once(" ("))
+    {
+        Some((base, _)) => base.trim(),
+        None => label.trim(),
+    }
+}
+
+/// Antigravity lists every Effort of a Model as its own slug. Slugs that share everything but their
+/// last `-` segment, and carry the same label apart from a qualifier, are Efforts of one Model and
+/// that segment is the Effort; any other slug has no Effort. Nothing here knows Effort names, so a
+/// new level in the catalog just appears.
+fn effort_slugs(models: &[AgyModel]) -> std::collections::HashSet<String> {
+    let mut groups: HashMap<(&str, &str), Vec<&AgyModel>> = HashMap::new();
+    for model in models {
+        if let Some((prefix, _)) = model.slug.rsplit_once('-') {
+            groups
+                .entry((prefix, label_base(&model.label)))
+                .or_default()
+                .push(model);
+        }
+    }
+    groups
+        .into_values()
+        .filter(|group| group.len() > 1)
+        .flatten()
+        .map(|model| model.slug.clone())
+        .collect()
 }
 
 fn models_to_info(models: Vec<AgyModel>) -> Vec<ModelInfo> {
+    let with_effort = effort_slugs(&models);
     models
         .into_iter()
         .map(|m| {
             let is_legacy = m.slug.contains("1.5") || m.slug.contains("legacy");
-            let effort = effort_of_slug(&m.slug);
+            let effort = with_effort
+                .contains(&m.slug)
+                .then(|| m.slug.rsplit_once('-').map(|(_, tail)| tail.to_string()))
+                .flatten();
             ModelInfo {
                 id: m.slug,
                 name: m.label,
                 description: None,
-                supported_efforts: effort.map(|e| vec![e.to_string()]).unwrap_or_default(),
-                default_effort: effort.map(str::to_string),
+                supported_efforts: effort.iter().cloned().collect(),
+                default_effort: effort,
                 is_legacy,
             }
         })
@@ -1406,14 +1434,17 @@ mod tests {
         let catalog = super::models_to_info(super::parse_models(
             "gemini-4-hydrogen-high	Gemini 4 Hydrogen (High)
              gemini-4-hydrogen-xhigh	Gemini 4 Hydrogen (XHigh)
+             gemini-4-argon	Gemini 4 Argon
              orchestrator-argon	Orchestrator (Argon)
 ",
         ));
         assert_eq!(catalog[0].supported_efforts, ["high"]);
         assert_eq!(catalog[1].supported_efforts, ["xhigh"]);
         assert_eq!(catalog[1].default_effort.as_deref(), Some("xhigh"));
+        // Siblings that differ in name, not just in a qualifier, are different Models.
         assert!(catalog[2].supported_efforts.is_empty());
-        assert_eq!(catalog[2].default_effort, None);
+        assert!(catalog[3].supported_efforts.is_empty());
+        assert_eq!(catalog[3].default_effort, None);
     }
 
     #[test]

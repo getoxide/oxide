@@ -1929,6 +1929,8 @@ pub struct PullRequestLabel {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestComment {
+    /// Set on a plain comment, which can be edited or deleted; reviews have none.
+    pub id: Option<String>,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -2010,6 +2012,7 @@ pub struct PullRequestDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueComment {
+    pub id: String,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -2218,6 +2221,29 @@ async fn create_issue(
     })
     .await
     .map(IssueSummary::from)
+}
+
+/// Rewrites a comment of a pull request or an issue.
+#[tauri::command]
+#[specta::specta]
+async fn edit_comment(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    id: String,
+    body: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.edit_comment(project_id, &id, &body)).await
+}
+
+/// Deletes a comment of a pull request or an issue.
+#[tauri::command]
+#[specta::specta]
+async fn delete_comment(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    id: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.delete_comment(project_id, &id)).await
 }
 
 #[tauri::command]
@@ -3328,6 +3354,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         pull_request_detail,
         pull_request_review_threads,
         comment_pull_request,
+        edit_comment,
+        delete_comment,
         merge_pull_request,
         close_pull_request,
         checkout_pull_request,

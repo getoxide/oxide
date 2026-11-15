@@ -10,6 +10,7 @@ import {
 import { useRef, useState } from "react";
 import { QUERY_STALE_MS, useQuery } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
+import { CommentEditForm, CommentTools } from "./CommentTools";
 import {
   commands,
   type IssueCloseReason,
@@ -71,6 +72,7 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
  *  discuss it, close it with a reason or reopen it, and start a Thread from it. */
 export function IssueDetailView({ projectId, number, refreshKey, onBack, onChanged, onDispatched }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
+  const [editingComment, setEditingComment] = useState<string | null>(null);
   const query = useQuery(`p${projectId}:issues:detail:${number}`, () => commands.issueDetail(projectId, number), refreshKey + reload, { staleMs: QUERY_STALE_MS });
   const loaded: Loaded = query.state === "ready" ? { state: "ready", issue: query.data } : query;
   const [pending, setPending] = useState<Pending | null>(null);
@@ -385,7 +387,7 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
             {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
           </h4>
           {detail.comments.map((c, i) => (
-            <article key={i} className="pr-entry">
+            <article key={c.id || i} className="pr-entry">
               <Avatar login={c.author} size={24} />
               <div className="pr-entry-card">
                 <header>
@@ -393,8 +395,20 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
                   {c.author === detail.author && <span className="pr-tag">Author</span>}
                   <span className="pr-entry-action">commented</span>
                   <time dateTime={c.createdAt}>{relativeTime(c.createdAt)}</time>
+                  {c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
+                    <CommentTools projectId={projectId} id={c.id} onEdit={() => setEditingComment(c.id)} onDeleted={() => setReload((n) => n + 1)} onError={setError} />
+                  )}
                 </header>
-                {c.body.trim() && <Markdown source={c.body} />}
+                {editingComment === c.id ? (
+                  <CommentEditForm
+                    projectId={projectId}
+                    id={c.id}
+                    initial={c.body}
+                    onSaved={() => { setEditingComment(null); setReload((n) => n + 1); }}
+                    onCancel={() => setEditingComment(null)}
+                    onError={setError}
+                  />
+                ) : c.body.trim() && <Markdown source={c.body} />}
               </div>
             </article>
           ))}

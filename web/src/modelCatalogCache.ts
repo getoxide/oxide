@@ -1,4 +1,5 @@
 import { commands, type ModelInfo } from "./bindings";
+import { learnEfforts } from "./effortVocabulary";
 
 export const PICKER_PROVIDERS = ["claude", "codex", "antigravity"] as const;
 
@@ -37,6 +38,7 @@ export async function loadCatalog(
   onUpdate: (list: ModelInfo[]) => void = () => {}
 ): Promise<void> {
   const apply = (list: ModelInfo[]) => {
+    learnEfforts(list);
     catalogCache.set(provider, list);
     onUpdate(list);
   };
@@ -65,7 +67,7 @@ export async function cachedCatalogs(providers: string[]): Promise<Record<string
       .filter((p) => !catalogCache.has(p))
       .map(async (p) => {
         const res = await commands.getModelCatalog(p, false);
-        if (res.status === "ok") catalogCache.set(p, res.data);
+        if (res.status === "ok") { learnEfforts(res.data); catalogCache.set(p, res.data); }
       })
   );
   return Object.fromEntries(providers.flatMap((p) => (catalogCache.has(p) ? [[p, catalogCache.get(p)!]] : [])));

@@ -1,5 +1,6 @@
 import type { ModelInfo } from "./bindings";
 import { modelFamilyId } from "./modelPicker";
+import { declaredEffort, effortOfId, effortOfName, stripEffortFromId, stripEffortFromName } from "./effortVocabulary";
 
 /** Remove Windows extended-length syntax for presentation and shell prompts. */
 export function readablePath(path: string): string {
@@ -30,18 +31,14 @@ const PROVIDER_NAMES: Record<string, string> = {
 
 export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
 
-/** A catalog name can spell out the Effort, "Gemini 3.8 Flash (High)" or "Gemini 3.8 Flash - High". */
-const EFFORT_SUFFIX = /\s*(?:[(·-]\s*|\s+)(low|medium|high|xhigh|max)\)?\s*$/i;
-
 /** The Effort level a Model id or name ends with, lowercased, if any. */
 export function effortSuffix(name: string): string | null {
-  const match = EFFORT_SUFFIX.exec(name.trim());
-  return match ? match[1].toLowerCase() : null;
+  return effortOfName(name) ?? (effortOfId(name) ? declaredEffort(effortOfId(name)!) : null);
 }
 
 /** Drops an Effort the Model's name already carries, since the header shows the Effort on its own. */
 export function stripEffortSuffix(name: string): string {
-  return name.replace(EFFORT_SUFFIX, "").trim();
+  return stripEffortFromName(stripEffortFromId(name.trim()));
 }
 
 const ACRONYMS = new Set(["ai", "api", "cli", "gpt", "llm", "ui"]);

@@ -1,4 +1,5 @@
 import type { ModelInfo as BindingsModelInfo } from "./bindings";
+import { learnEfforts, stripEffortFromId, stripEffortFromName } from "./effortVocabulary";
 
 export type ModelInfo = BindingsModelInfo;
 
@@ -75,29 +76,15 @@ export function filterModels(
  * those entries as one model in the picker; the effort selector still owns
  * which variant is sent to the provider.
  */
-const ID_EFFORT_SUFFIX = /-(minimal|low|medium|high|xhigh|max)$/i;
-const NAME_EFFORT_SUFFIX = /\s*\((minimal|low|medium|high|x-?high|max)\)$/i;
-const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-
 export function modelFamilyId(modelId: string): string {
-  return modelId.replace(ID_EFFORT_SUFFIX, "");
-}
-
-/** Efforts in ascending order; levels Oxide does not know keep their relative order at the end. */
-function sortEfforts(efforts: string[]): string[] {
-  const rank = (effort: string) => {
-    const at = EFFORT_ORDER.indexOf(effort.toLowerCase());
-    return at === -1 ? EFFORT_ORDER.length : at;
-  };
-  return efforts.map((effort, index) => ({ effort, index }))
-    .sort((a, b) => rank(a.effort) - rank(b.effort) || a.index - b.index)
-    .map((entry) => entry.effort);
+  return stripEffortFromId(modelId);
 }
 
 export function collapseEffortVariants(
   models: ModelInfo[],
   effort: string | null
 ): ModelInfo[] {
+  learnEfforts(models);
   const families = new Map<string, ModelInfo[]>();
   for (const model of models) {
     const family = modelFamilyId(model.id);
@@ -114,7 +101,7 @@ export function collapseEffortVariants(
         name:
           modelFamilyId(onlyVariant.id) === onlyVariant.id
             ? onlyVariant.name
-            : onlyVariant.name.replace(NAME_EFFORT_SUFFIX, ""),
+            : stripEffortFromName(onlyVariant.name),
       };
     }
 
@@ -122,13 +109,14 @@ export function collapseEffortVariants(
       variants.find((model) => model.id.toLowerCase().endsWith(`-${effort?.toLowerCase()}`)) ??
       variants.find((model) => model.id.toLowerCase().endsWith(`-${model.defaultEffort?.toLowerCase()}`)) ??
       variants[0]!;
-    const supportedEfforts = sortEfforts(Array.from(
+    // The catalog's own order: Providers list their levels ascending, and variants follow suit.
+    const supportedEfforts = Array.from(
       new Set(variants.flatMap((model) => model.supportedEfforts))
-    ));
+    );
 
     return {
       ...selected,
-      name: selected.name.replace(NAME_EFFORT_SUFFIX, ""),
+      name: stripEffortFromName(selected.name),
       supportedEfforts,
     };
   });

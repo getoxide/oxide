@@ -944,7 +944,12 @@ html.macos .header,
 .pr-views .pr-row-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--fg-bright); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .pr-views .pr-row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--dim); }
 .pr-views .pr-row-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.pr-views .pr-tag { font-size: 11px; padding: 0 6px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--dim); }
+.pr-views .pr-tag { display: inline-flex; align-items: center; box-sizing: border-box; height: 18px; font-size: 11px; line-height: 1; padding: 0 7px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--dim); }
+.pr-views .comment-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
+.pr-views .comment-tools button { min-height: 22px; font-size: 12px; }
+.pr-views .comment-tools-ask { color: var(--dim); }
+.pr-views .comment-edit { display: grid; gap: var(--space-2); padding: 8px 10px; }
+.pr-views .comment-edit-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: var(--space-2); }
 .pr-views .pr-state-open { color: var(--green); }
 .pr-views .pr-state-draft { color: var(--faint); }
 .pr-views .pr-branches { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--faint); }
@@ -1675,3 +1680,7 @@ html.macos .header,
 .context-menu-item:disabled { color: var(--faint); }
 .context-menu-item kbd { color: var(--faint); font: 11px var(--mono); }
 .context-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+
+/* Zero-height anchor so the spinner floats at the top-right of the scrolling view without moving content. */
+.refresh-anchor { position: sticky; top: 6px; z-index: 6; height: 0; display: flex; justify-content: flex-end; pointer-events: none; }
+.refresh-spinner { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 10px; border-radius: 99px; border: 1px solid var(--line-strong); background: var(--bg3); color: var(--acc2); box-shadow: 0 2px 8px #0005; }

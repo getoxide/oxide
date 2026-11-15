@@ -235,10 +235,10 @@ describe("antigravity effort variants", () => {
     { id: "orchestrator-argon", name: "Orchestrator (Argon)", description: null, supportedEfforts: [], defaultEffort: null, isLegacy: false },
   ];
 
-  it("shows one row per model with every effort the catalog lists, in order", () => {
+  it("shows one row per model with every effort the catalog lists, in its order", () => {
     const rows = collapseEffortVariants(catalog, null);
     expect(rows.map((m) => m.name)).toEqual(["Gemini 4 Hydrogen", "Orchestrator (Argon)"]);
-    expect(rows[0]!.supportedEfforts).toEqual(["low", "high", "xhigh"]);
+    expect(rows[0]!.supportedEfforts).toEqual(["low", "xhigh", "high"]);
     expect(rows[1]!.supportedEfforts).toEqual([]);
   });
 

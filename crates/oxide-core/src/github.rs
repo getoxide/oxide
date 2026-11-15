@@ -170,6 +170,8 @@ pub struct PullRequestLabel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestComment {
+    /// GitHub's node id of a plain comment, which can be edited or deleted; none for a review.
+    pub id: Option<String>,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -615,6 +617,7 @@ fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
     let mut entries: Vec<PullRequestComment> = list("comments")
         .iter()
         .map(|c| PullRequestComment {
+            id: Some(text(&c["id"])).filter(|id| !id.is_empty()),
             author: text(&c["author"]["login"]),
             body: text(&c["body"]),
             created_at: text(&c["createdAt"]),
@@ -630,6 +633,7 @@ fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
             continue;
         }
         entries.push(PullRequestComment {
+            id: None,
             author: text(&review["author"]["login"]),
             body,
             created_at: text(&review["submittedAt"]),
@@ -1194,6 +1198,48 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
+/// Rewrites a conversation comment of a pull request or an issue (both are issue comments to GitHub).
+pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(Error::Github(
+            "A comment cannot be empty; delete it instead.".into(),
+        ));
+    }
+    gh.require_ready(cwd)?;
+    gh.run(
+        cwd,
+        &[
+            "api",
+            "graphql",
+            "-F",
+            &format!("id={id}"),
+            "-f",
+            &format!("body={body}"),
+            "-f",
+            "query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}",
+        ],
+    )?;
+    Ok(())
+}
+
+/// Deletes a conversation comment of a pull request or an issue.
+pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
+    gh.require_ready(cwd)?;
+    gh.run(
+        cwd,
+        &[
+            "api",
+            "graphql",
+            "-F",
+            &format!("id={id}"),
+            "-f",
+            "query=mutation($id:ID!){deleteIssueComment(input:{id:$id}){clientMutationId}}",
+        ],
+    )?;
+    Ok(())
+}
+
 /// The merge methods the repository allows, and whether it deletes merged
 /// branches on its own.
 fn merge_settings(gh: &Gh, cwd: &Path) -> Result<(Vec<MergeMethod>, bool)> {
@@ -1271,6 +1317,8 @@ const ISSUE_DETAIL_FIELDS: &str =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueComment {
+    /// GitHub's node id, to edit or delete the comment.
+    pub id: String,
     pub author: String,
     pub body: String,
     pub created_at: String,
@@ -1550,6 +1598,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         comments: list("comments")
             .iter()
             .map(|c| IssueComment {
+                id: text(&c["id"]),
                 author: text(&c["author"]["login"]),
                 body: text(&c["body"]),
                 created_at: text(&c["createdAt"]),

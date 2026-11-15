@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { ItemSnapshot, ModelInfo } from "./bindings";
 import { formatElapsed, liveStatus, STATUS_PHRASES, statusPhrase, summaryText, type Activity } from "./activity";
 import { groupTurnItems, splitHeadline, formatTime, modelEffortParts } from "./transcriptView";
+import { learnEfforts } from "./effortVocabulary";
+
+// Efforts are only recognised once a catalog has declared them.
+learnEfforts([{ id: "m", name: "M", description: null, supportedEfforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: null, isLegacy: false }]);
 
 let nextId = 1;
 function item(

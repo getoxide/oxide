@@ -1411,6 +1411,7 @@ impl From<oxide_core::PullRequestLabel> for PullRequestLabel {
 impl From<oxide_core::PullRequestComment> for PullRequestComment {
     fn from(c: oxide_core::PullRequestComment) -> Self {
         Self {
+            id: c.id,
             author: c.author,
             body: c.body,
             created_at: c.created_at,
@@ -1495,6 +1496,7 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
 impl From<oxide_core::IssueComment> for IssueComment {
     fn from(c: oxide_core::IssueComment) -> Self {
         Self {
+            id: c.id,
             author: c.author,
             body: c.body,
             created_at: c.created_at,
