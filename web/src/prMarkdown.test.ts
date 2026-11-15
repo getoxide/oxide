@@ -24,6 +24,11 @@ describe("limitBlocks", () => {
 });
 
 describe("parseMarkdown", () => {
+  it("does not let nested tags rebuild a tag after one pass", () => {
+    const blocks = parseMarkdown("a <<b>b>x</b> b");
+    expect(blocks).toEqual([{ kind: "paragraph", inline: [{ kind: "text", text: "a x b" }] }]);
+  });
+
   it("drops HTML comments and bot metadata", () => {
     const blocks = parseMarkdown(
       "<!-- What changes and why. -->\nBumps `a` from 1 to 2.\n\n---\nupdated-dependencies:\n- dependency-name: a\n...\n",

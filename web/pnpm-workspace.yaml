@@ -1,5 +1,6 @@
 overrides:
   dompurify: 3.4.17
+  minimatch: 11.0.1
 
 # Refuse versions younger than the Dependabot minor cooldown (7 days, in
 # minutes). Dependabot's cooldown only covers Dependabot's own updates; this

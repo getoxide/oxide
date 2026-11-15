@@ -20,8 +20,18 @@ export type Block =
 const TAGS =
   "details|summary|p|blockquote|ul|ol|li|code|em|strong|b|i|a|img|div|span|h[1-6]|hr|table|tr|td|th|thead|tbody|sup|sub";
 
+/** Remove every match until none is left: one pass can leave a new match behind (`<<b>b>` becomes `<b>`). */
+function replaceUntilStable(src: string, pattern: RegExp, replacement: string): string {
+  let out = src;
+  for (let prev = ""; prev !== out; ) {
+    prev = out;
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 function clean(src: string): string {
-  return src
+  const text = src
     .replace(/\r\n?/g, "\n")
     .replace(/<!--[\s\S]*?-->/g, "")
     // GitHub shows a time as "now" or "5m ago", not as the raw tag.
@@ -30,8 +40,8 @@ function clean(src: string): string {
     .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]+\S.*$/gm, "")
     // Dependabot's machine-readable trailer.
     .replace(/\n?---\nupdated-dependencies:[\s\S]*?(\n\.\.\.\n?|$)/, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(new RegExp(`</?(${TAGS})(\\s[^>]*)?/?>`, "gi"), "");
+    .replace(/<br\s*\/?>/gi, "\n");
+  return replaceUntilStable(text, new RegExp(`</?(${TAGS})(\\s[^>]*)?/?>`, "gi"), "");
 }
 
 export function parseInline(text: string): Inline[] {
