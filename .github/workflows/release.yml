@@ -74,7 +74,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        platform: [macos-aarch64, windows-x64]
+        platform: [macos-aarch64, windows-x64, windows-aarch64, linux-x64, linux-aarch64]
     # Needs the `release` environment's secrets; build.yml declares the environment,
     # so a Release Manager must approve before the signing keys are readable.
     uses: ./.github/workflows/build.yml
@@ -117,7 +117,7 @@ jobs:
         run: |
           mkdir release metadata
           node tools/ci/cli.mjs update-manifest staged "$TAG" "$GITHUB_REPOSITORY" metadata/latest.json
-          find staged -type f \( -name '*.dmg' -o -name '*-setup.exe' \) -exec cp {} release/ \;
+          find staged -type f \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} release/ \;
           gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" --jq .sbom > "metadata/Oxide_${TAG#v}.spdx.json"
           (cd release && sha256sum -- * > ../metadata/SHA256SUMS.txt)
           ls -l release metadata

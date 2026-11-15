@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/getoxide/oxide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/getoxide/oxide/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
-  <img alt="Platforms: macOS (Apple Silicon) and Windows x64" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg" />
+  <img alt="Platforms: macOS (Apple Silicon), Windows and Linux (x64 and arm64)" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" />
   <img alt="Built with Rust and Tauri 2" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-orange.svg" />
   <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-yellow.svg" />
 </p>
@@ -46,7 +46,7 @@ Oxide is not a coding agent: it doesn't ship an agent of its own. It drives the 
 Most agent tools optimize for starting more agents. Oxide optimizes for the other end: the path from a finished agent Turn to a **confident merge**. For every change it shows what the agent touched, which checks actually ran, what stayed unverified, and lets you send line-level feedback or undo the work without leaving the app. It is built for developers who can write code themselves and have AI write it with a clear purpose: they know what the agent is producing, review it, and stay responsible for what lands in `main` ([ADR-0010](docs/adr/0010-prioritize-the-path-to-a-confident-merge.md)).
 
 > [!NOTE]
-> **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon** and **Windows x64**. Expect rough edges and breaking changes between versions.
+> **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon**, **Windows** (x64 and arm64) and **Linux** (x64 and arm64). Expect rough edges and breaking changes between versions.
 
 ## Features
 
@@ -87,6 +87,9 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 | --- | --- | --- |
 | macOS (Apple Silicon) | `Oxide_<version>_aarch64.dmg` | Drag `Oxide.app` into `/Applications`. |
 | Windows 10/11 (x64) | `Oxide_<version>_x64-setup.exe` | NSIS installer. |
+| Windows 11 (arm64) | `Oxide_<version>_arm64-setup.exe` | NSIS installer. |
+| Linux (x64) | `Oxide_<version>_amd64.AppImage`, `Oxide_<version>_amd64.deb` or `Oxide-<version>-1.x86_64.rpm` | The AppImage updates itself; the `.deb` and `.rpm` do not. |
+| Linux (arm64) | `Oxide_<version>_aarch64.AppImage`, `Oxide_<version>_arm64.deb` or `Oxide-<version>-1.aarch64.rpm` | The AppImage updates itself; the `.deb` and `.rpm` do not. |
 
 <!-- /site:install -->
 
@@ -110,7 +113,7 @@ At least one **Provider installed and logged in** before you launch Oxide:
 
 ### Updates
 
-Oxide checks for new versions in **Settings → Updates** and installs them in place. It only offers published stable releases, and only accepts packages signed with Oxide's updater key.
+Oxide checks for new versions in **Settings → Updates** and installs them in place. It only offers published stable releases, and only accepts packages signed with Oxide's updater key. On Linux only the AppImage updates itself; a `.deb` or `.rpm` install needs the newer package.
 
 ### Verifying a download
 
@@ -121,7 +124,7 @@ shasum -a 256 Oxide_<version>_aarch64.dmg   # macOS; compare with the release no
 gh attestation verify Oxide_<version>_aarch64.dmg --repo getoxide/oxide
 ```
 
-On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with the release notes.
+On Windows, compare `(Get-FileHash .\Oxide_<version>_x64-setup.exe).Hash` with the release notes (`arm64-setup.exe` on Windows on Arm). On Linux, use `sha256sum Oxide_<version>_amd64.AppImage`.
 
 ### Opening an unsigned build
 
@@ -135,6 +138,8 @@ Each release says whether it is code-signed on your platform.
 Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.apple.quarantine /Applications/Oxide.app`. Updates installed through Oxide are unaffected.
 
 **Windows.** The installer is **not Authenticode-signed**, so SmartScreen may warn on first run. Choose **More info → Run anyway** after verifying the download as above.
+
+**Linux.** The packages are **not signed with a distribution key**; verify them with the checksums and attestations above. Make an AppImage executable (`chmod +x Oxide_<version>_amd64.AppImage`) and run it, or install the package with `sudo apt install ./Oxide_<version>_amd64.deb` or `sudo dnf install ./Oxide-<version>-1.x86_64.rpm`. Oxide needs WebKitGTK 4.1 (`libwebkit2gtk-4.1`), which any distribution from the last few years ships; the packages are built on Ubuntu 22.04.
 
 ## Quick start
 
@@ -191,7 +196,7 @@ pnpm --dir web build:app
 
 The Tauri CLI must run from the repository root: that is where it finds `crates/oxide-app/tauri.conf.json`.
 
-### Windows (x64)
+### Windows (x64 and arm64)
 
 - Windows 10 (version 1803 or later) or Windows 11. These include the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/); on older or customized installations, install the Evergreen Runtime manually.
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload.
@@ -211,7 +216,31 @@ pnpm --dir web install
 .\web\node_modules\.bin\tauri.cmd build --bundles nsis
 ```
 
-To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again.
+To build an MSI instead, use `--bundles msi`; if that fails with a `light.exe` error, enable the **VBScript** optional Windows feature and try again. On Windows on Arm the same commands build a native arm64 installer; add the **ARM64 build tools** component to the Visual Studio workload.
+
+### Linux (x64 and arm64)
+
+- A recent distribution with WebKitGTK 4.1. On Debian or Ubuntu:
+
+  ```sh
+  sudo apt install build-essential curl file patchelf pkg-config xdg-utils \
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
+  ```
+
+  Other distributions need the equivalent packages (see Tauri's [prerequisites](https://v2.tauri.app/start/prerequisites/#linux)).
+- [rustup](https://rustup.rs), Node.js 22 and pnpm through Corepack (`corepack enable`), as on macOS.
+
+```sh
+git clone https://github.com/getoxide/oxide.git
+cd oxide
+pnpm --dir web install
+
+# Run the app in development mode (hot-reloading frontend).
+web/node_modules/.bin/tauri dev
+
+# Build an AppImage, .deb and .rpm into target/release/bundle/.
+web/node_modules/.bin/tauri build --bundles appimage,deb,rpm
+```
 
 ### Tests and checks
 
@@ -249,7 +278,7 @@ Oxide has no telemetry and no server. Your prompts and code go only to the Provi
 You keep the same CLIs, sessions and logins. Oxide adds Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
 
 **Which platforms are supported?**
-Official builds target macOS on Apple Silicon and Windows x64. Linux isn't packaged yet.
+Official builds target macOS on Apple Silicon, Windows (x64 and arm64) and Linux (x64 and arm64, as an AppImage, `.deb` and `.rpm`). Linux is new, so expect more rough edges there than on macOS and Windows.
 
 **Is it free?**
 Yes. Oxide is open source under the [MIT License](LICENSE).

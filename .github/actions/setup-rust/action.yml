@@ -24,8 +24,18 @@ runs:
       with:
         save-if: ${{ inputs.save-cache }}
 
+    - name: Install the Linux native libraries
+      if: runner.os == 'Linux'
+      shell: bash
+      # What Tauri's WebKitGTK webview and the AppImage, .deb and .rpm bundlers need.
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential curl file patchelf pkg-config xdg-utils \
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
+
     - name: Make libclang available (Windows)
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && runner.arch == 'X64'
       shell: bash
       # Bindgen needs libclang; the image ships LLVM.
       run: |

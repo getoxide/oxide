@@ -11,7 +11,7 @@ on:
   workflow_call:
     inputs:
       platform:
-        description: macos-aarch64 or windows-x64
+        description: macos-aarch64, windows-x64, windows-aarch64, linux-x64 or linux-aarch64
         type: string
         required: true
       release:
@@ -40,7 +40,9 @@ env:
 jobs:
   build:
     name: build (${{ inputs.platform }})
-    runs-on: ${{ inputs.platform == 'macos-aarch64' && 'macos-15' || 'windows-2025' }}
+    # Linux builds on the oldest supported runner: an AppImage or .deb links the glibc it
+    # was built against, so building on 22.04 keeps it running on older distributions.
+    runs-on: ${{ fromJSON('{"macos-aarch64":"macos-15","windows-x64":"windows-2025","windows-aarch64":"windows-11-arm","linux-x64":"ubuntu-22.04","linux-aarch64":"ubuntu-22.04-arm"}')[inputs.platform] }}
     timeout-minutes: 75
     environment: ${{ inputs.release && 'release' || '' }}
     outputs:
@@ -56,8 +58,8 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
         run: |
           case "$PLATFORM" in
-            macos-aarch64|windows-x64) ;;
-            *) echo "::error::Unknown platform '$PLATFORM': use macos-aarch64 or windows-x64."; exit 1 ;;
+            macos-aarch64|windows-x64|windows-aarch64|linux-x64|linux-aarch64) ;;
+            *) echo "::error::Unknown platform '$PLATFORM': use macos-aarch64, windows-x64, windows-aarch64, linux-x64 or linux-aarch64."; exit 1 ;;
           esac
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,7 +146,7 @@ jobs:
           fi
 
       - name: Build the Windows installer
-        if: inputs.platform == 'windows-x64'
+        if: startsWith(inputs.platform, 'windows-')
         env:
           RELEASE: ${{ inputs.release }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -153,6 +155,20 @@ jobs:
           extra=()
           if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
           web/node_modules/.bin/tauri.cmd build --ci --bundles nsis "${extra[@]}" -- --locked
+
+      - name: Build the Linux bundles
+        if: startsWith(inputs.platform, 'linux-')
+        env:
+          RELEASE: ${{ inputs.release }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The runner has no FUSE for linuxdeploy, and its bundled `strip` can't read newer ELF sections.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
+        run: |
+          extra=()
+          if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
+          web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm "${extra[@]}" -- --locked
 
       - name: Name the artifact
         id: name
@@ -172,21 +188,37 @@ jobs:
           version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
           bundle=target/release/bundle
           mkdir -p staged
-          if [ "$PLATFORM" = "macos-aarch64" ]; then
-            cp "$bundle/dmg/Oxide_${version}_aarch64.dmg" staged/
-            cp "$bundle/dmg/Oxide_${version}_aarch64.dmg.sig" staged/
-            if [ "$NOTARIZED" = "true" ]; then
-              notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
-            elif [ "$SIGNED" = "true" ]; then
-              notice="The macOS build is signed with a Developer ID certificate but not notarized; Gatekeeper may ask for confirmation on first launch."
-            else
-              notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`). Updates installed through Oxide are unaffected."
-            fi
-          else
-            cp "$bundle/nsis/Oxide_${version}_x64-setup.exe" staged/
-            cp "$bundle/nsis/Oxide_${version}_x64-setup.exe.sig" staged/
-            notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
-          fi
+          case "$PLATFORM" in
+            macos-aarch64)
+              cp "$bundle/dmg/Oxide_${version}_aarch64.dmg" staged/
+              cp "$bundle/dmg/Oxide_${version}_aarch64.dmg.sig" staged/
+              if [ "$NOTARIZED" = "true" ]; then
+                notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
+              elif [ "$SIGNED" = "true" ]; then
+                notice="The macOS build is signed with a Developer ID certificate but not notarized; Gatekeeper may ask for confirmation on first launch."
+              else
+                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`). Updates installed through Oxide are unaffected."
+              fi
+              ;;
+            windows-x64|windows-aarch64)
+              # Tauri names the installer after the architecture: x64-setup.exe or arm64-setup.exe.
+              cp "$bundle"/nsis/Oxide_"${version}"_*-setup.exe staged/
+              cp "$bundle"/nsis/Oxide_"${version}"_*-setup.exe.sig staged/
+              notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
+              ;;
+            linux-x64|linux-aarch64)
+              # Exactly one AppImage (the updater package, with its .sig), one .deb and one .rpm per architecture.
+              for pattern in "appimage/*.AppImage" "appimage/*.AppImage.sig" "deb/*.deb" "rpm/*.rpm"; do
+                matches=("$bundle"/$pattern)
+                if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+                  echo "::error::Expected exactly one $pattern in $bundle, found: ${matches[*]}"
+                  exit 1
+                fi
+                cp "${matches[0]}" staged/
+              done
+              notice="The Linux builds are not signed with a distribution key. The AppImage updates itself through Oxide; the .deb and .rpm do not, so install a newer package to update. Verify the download against the release checksums or attestation."
+              ;;
+          esac
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"
           ls -l staged
 
@@ -208,5 +240,8 @@ jobs:
             target/release/bundle/macos/Oxide.app
             target/release/bundle/dmg/*.dmg
             target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
           if-no-files-found: error
           retention-days: 7

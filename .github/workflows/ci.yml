@@ -110,6 +110,7 @@ jobs:
         include:
           - { label: macos, runner: macos-15, timeout: 45 }
           - { label: windows, runner: windows-2025, timeout: 60 }
+          - { label: linux, runner: ubuntu-24.04, timeout: 45 }
     defaults:
       run:
         shell: bash
@@ -251,6 +252,9 @@ jobs:
         include:
           - { label: macos, platform: macos-aarch64 }
           - { label: windows, platform: windows-x64 }
+          - { label: windows-arm64, platform: windows-aarch64 }
+          - { label: linux, platform: linux-x64 }
+          - { label: linux-arm64, platform: linux-aarch64 }
     # Unsigned release-profile bundles: a debug `cargo test` never runs `tauri build`.
     uses: ./.github/workflows/build.yml
     with:
