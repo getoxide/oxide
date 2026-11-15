@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-app"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64 0.23.1",
  "crossbeam-channel",
@@ -2878,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-provider"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64 0.23.1",
  "crossbeam-channel",
