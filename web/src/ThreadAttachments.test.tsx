@@ -58,7 +58,7 @@ const props = (over: Record<string, unknown> = {}) => ({
   prefill: null, onPrefillUsed: vi.fn(), onOpenThread: vi.fn(), onThreadContinued: vi.fn(), ...over,
 });
 const render = (over: Record<string, unknown> = {}) => act(async () => root.render(<ThreadView {...props(over)} />));
-const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 350)); });
 const editor = () => container.querySelector<HTMLElement>('[role="textbox"]')!;
 const chips = (scope: ParentNode = editor()) => Array.from(scope.querySelectorAll<HTMLElement>('[role="img"][aria-label^="Attachment,"]'));
 const sendButton = () => container.querySelector<HTMLButtonElement>('button[aria-label="Send"]');

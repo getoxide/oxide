@@ -7,6 +7,10 @@ import type { TranscriptTurn } from "./transcript";
 import * as attachments from "./attachments";
 import * as transcriptView from "./transcriptView";
 import { TurnView } from "./TurnView";
+import { learnEfforts } from "./effortVocabulary";
+
+// Efforts are only recognised once a catalog has declared them.
+learnEfforts([{ id: "m", name: "M", description: null, supportedEfforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: null, isLegacy: false }]);
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const container = document.createElement("div");

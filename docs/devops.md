@@ -24,18 +24,20 @@ pull_request ──► CI ─ changes ─┬─ web ─────────�
                                ├─ rust-fmt ────────── (Linux)
                                ├─ rust (macos)        Clippy + nextest + bindings
                                ├─ rust (windows)      Clippy + nextest + bindings
+                               ├─ rust (linux)        Clippy + nextest + bindings
                                ├─ supply-chain ────── (Linux) deny, alignment, dependency review
                                ├─ automation ──────── (Linux) actionlint, zizmor, schemas, tooling tests
                                ├─ pr-title ────────── (Linux)
                                ├─ bundle (macos)      only when packaging inputs change
                                ├─ bundle (windows)    only when packaging inputs change
+                               ├─ bundle (windows-arm64), (linux), (linux-arm64)   likewise
                                └─► gate   ◄── the ONE required check
 
-push main / release/** ──► CI, every lane forced on (incl. both bundles) ──► gate on that commit
+push main / release/** ──► CI, every lane forced on (incl. every bundle) ──► gate on that commit
 
 tag vX.Y.Z  (immutable once pushed)
-   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS + Windows, signed ─► publish DRAFT
-                                                                                    (dmg + exe, notes, checksums; metadata/SBOM as run artifact)
+   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64), signed ─► publish DRAFT
+                                                                                    (dmg, exe, AppImage, deb, rpm, notes, checksums; metadata/SBOM as run artifact)
 Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (publishes `latest.json` on `updater` branch)
 
 daily  ──► Advisories (RustSec) ──► one tracking issue on failure
@@ -63,7 +65,7 @@ Every decision the pipeline makes (which lanes a change needs, whether the gate 
 
 ## CI jobs
 
-The workflow is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Triggers: `pull_request`, `push` to `main` and `release/**`, and manual dispatch. The token is read-only by default and each job asks for more only if it needs it. Concurrency is per ref: a new push cancels the superseded PR run, but a `main` run always finishes. Every job has a timeout sized to its normal duration. Runners are pinned to `ubuntu-24.04`, `macos-15` (Apple Silicon) and `windows-2025`.
+The workflow is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Triggers: `pull_request`, `push` to `main` and `release/**`, and manual dispatch. The token is read-only by default and each job asks for more only if it needs it. Concurrency is per ref: a new push cancels the superseded PR run, but a `main` run always finishes. Every job has a timeout sized to its normal duration. Runners are pinned to `ubuntu-24.04`, `macos-15` (Apple Silicon) and `windows-2025`; the shared build also uses `windows-11-arm`, `ubuntu-22.04` and `ubuntu-22.04-arm` (the native Arm runners are free for public repositories).
 
 In the tables, **Blocking** means a red job turns `gate` red. Every job below blocks.
 
@@ -97,16 +99,16 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 - **When / where:** `rust` lane, Linux.
 - **Local:** `cargo fmt --all --check` (also in `fast`).
 
-### `rust (macos)` and `rust (windows)`
+### `rust (macos)`, `rust (windows)` and `rust (linux)`
 
 - **What:** Clippy (`--locked --workspace --all-targets -D warnings`), then `cargo nextest run --locked --workspace --profile ci`, then a check that the generated `web/src/bindings.ts` is committed. Failures list flaky tests in the job summary and upload JUnit.
-- **Why:** both are shipped platforms, and `cfg`-specific code (Metal and objc2 on macOS; Job Objects, the registry and the PowerShell PTY on Windows) only compiles on its own OS. Windows is the critical path, so these jobs install no Node and build no frontend: debug builds don't embed `web/dist`.
-- **When / where:** `rust` lane, macOS and Windows.
+- **Why:** all three are shipped platforms, and `cfg`-specific code (Metal and objc2 on macOS; Job Objects, the registry and the PowerShell PTY on Windows; the Unix PTY and `xdg-open` paths on Linux) only compiles on its own OS. The Linux job installs WebKitGTK and the other native libraries through the shared `setup-rust` action. The Arm builds are not run through Clippy and the tests: the Rust code does not differ by architecture, and the bundle jobs prove they compile. Windows is the critical path, so these jobs install no Node and build no frontend: debug builds don't embed `web/dist`.
+- **When / where:** `rust` lane, macOS, Windows and Linux.
 - **Local:** `node tools/check.mjs` runs Clippy, the tests and the bindings check on your OS. It needs `cargo install --locked cargo-nextest`. The local run uses nextest's default profile, with no retries and no timeouts. Stale bindings: `cargo test -p oxide-app --test bindings_and_capabilities`, then commit `web/src/bindings.ts`.
 
 ### `supply-chain`
 
-- **What:** the Tauri alignment check (the `tauri` crate and `@tauri-apps/*` packages must share a `major.minor`); `cargo deny check bans licenses sources` against the macOS and Windows graphs, and against the Vulkan and CUDA worker lockfiles (they ship but are outside the workspace), using [`deny.toml`](../deny.toml); on PRs, GitHub's dependency review (`fail-on-severity: high`, licence allowlist, with a per-package exception for the two bundled font packages under OFL-1.1).
+- **What:** the Tauri alignment check (the `tauri` crate and `@tauri-apps/*` packages must share a `major.minor`); `cargo deny check bans licenses sources` against the macOS, Windows (x64, arm64) and Linux (x64, arm64) graphs, and against the Vulkan and CUDA worker lockfiles (they ship but are outside the workspace), using [`deny.toml`](../deny.toml); on PRs, GitHub's dependency review (`fail-on-severity: high`, licence allowlist, with a per-package exception for the two bundled font packages under OFL-1.1).
 - **Why:** it is policy over lockfiles and needs no build. It stops a licence we can't ship, a git source, a wildcard version, a new dependency with a high advisory, or a half-landed Tauri bump from reaching `main`.
 - **When / where:** `supplyChain` lane (any manifest, lockfile or `deny.toml`), Linux.
 - **Local:** `node tools/ci/cli.mjs tauri-alignment` (in `check.mjs`), and `cargo deny check bans licenses sources` after `cargo install --locked cargo-deny`. Dependency review runs only in CI.
@@ -125,12 +127,12 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 - **When / where:** pull requests only, Linux.
 - **Local:** `PR_TITLE="fix(x): y" node tools/ci/cli.mjs pr-title`.
 
-### `bundle (macos)` and `bundle (windows)`
+### `bundle (macos)`, `bundle (windows)`, `bundle (windows-arm64)`, `bundle (linux)` and `bundle (linux-arm64)`
 
-- **What:** call the shared [`build.yml`](../.github/workflows/build.yml) with `release: false`: an unsigned release-profile `tauri build` (macOS `.app` + `.dmg`; Windows NSIS installer). The artifact is kept 7 days.
+- **What:** call the shared [`build.yml`](../.github/workflows/build.yml) with `release: false`: an unsigned release-profile `tauri build` (macOS `.app` + `.dmg`; Windows NSIS installer, x64 and arm64; Linux AppImage, `.deb` and `.rpm`, x64 and arm64). The artifact is kept 7 days.
 - **Why:** a debug `cargo test` never runs `tauri build`. This catches config, capability, icon, resource and frontend-embedding breakage.
 - **When / where:** `bundle` lane on PRs (Tauri config or capabilities, icons (release and dev), bundle resources, manifests and lockfiles, build scripts, the build workflow); **always** on `main` and `release/**`, so no commit is released without a proven bundle.
-- **Local:** `node tools/check.mjs` builds your OS's bundle. It reports the other OS's bundle as skipped.
+- **Local:** `node tools/check.mjs` builds your OS's bundle (native architecture). It reports the other OS's bundles as skipped.
 
 ### `gate`
 
@@ -158,13 +160,13 @@ Docs, research and UI-review screenshots match no lane, so a docs-only PR runs `
 
 | Layer | What it proves | Where |
 | --- | --- | --- |
-| Rust unit tests | Local logic per crate | `rust (macos)`, `rust (windows)` |
+| Rust unit tests | Local logic per crate | `rust (macos)`, `rust (windows)`, `rust (linux)` |
 | `oxide-core` integration tests | Behaviour through the Core API (Threads, Turns, Checkpoints, git, GitHub through a fake `gh`, process hygiene, window lifecycle…) with fake Providers and temp repositories | both Rust jobs |
 | Provider contract and adapter tests | Each Provider adapter honours the Provider contract against fake CLIs and fixtures | both Rust jobs |
 | Bindings and capabilities test | TypeScript bindings match the Tauri commands, and the webview has no filesystem, shell or process capability | both Rust jobs, plus the committed-bindings diff |
 | Web component tests (Vitest, jsdom) | Frontend behaviour against mocked IPC | `web` |
 | Tooling tests | Every pipeline decision | `automation` |
-| App bundles | `tauri build` succeeds with the real config, icons, resources and embedded frontend | `bundle (macos)`, `bundle (windows)` |
+| App bundles | `tauri build` succeeds with the real config, icons, resources and embedded frontend | every `bundle (...)` job |
 | Live Provider smoke tests and live language installs (`#[ignore]`) | The real Provider CLIs and language-support downloads still work | A Release Manager's machine, before publishing. Never in CI: they need logins and network |
 | UI review scripts | Visual review with screenshots | By hand during UI work. Not a gate |
 
@@ -174,11 +176,13 @@ nextest runs each test in its own process with the settings in [`.config/nextest
 
 ### `build.yml` (shared build)
 
-- **What:** the one place installers are built. Inputs: `platform` (`macos-aarch64` or `windows-x64`) and `release`.
+- **What:** the one place installers are built. Inputs: `platform` (`macos-aarch64`, `windows-x64`, `windows-aarch64`, `linux-x64` or `linux-aarch64`) and `release`.
   - `release: false` (CI): unsigned, caches allowed, no updater signatures.
-  - `release: true`: no caches at all, frozen installs, `TAURI_SIGNING_PRIVATE_KEY` signs the macOS `.dmg` via `tauri signer sign` and the Windows NSIS installer via `tauri.updater.conf.json`. It fails if that key is missing. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
+  - `release: true`: no caches at all, frozen installs, `TAURI_SIGNING_PRIVATE_KEY` signs the macOS `.dmg` via `tauri signer sign`, and the Windows NSIS installers and the Linux AppImages via `tauri.updater.conf.json`. It fails if that key is missing. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
 - **Why:** PR bundles and release bundles come from one definition, so what `main` proves is what ships. It declares the `release` environment itself, because a job that calls a reusable workflow can't name one, and the approval must guard the job that reads the secrets.
-- **Bundles:** macOS `app,dmg`; Windows `nsis` only (the updater's Windows package is the NSIS setup).
+- **Bundles:** macOS `app,dmg`; Windows `nsis` only (the updater's Windows package is the NSIS setup); Linux `appimage,deb,rpm` (the updater's Linux package is the AppImage; the `.deb` and `.rpm` are not self-updating and carry no `.sig`).
+- **Runners:** Windows on Arm builds natively on `windows-11-arm`, and Linux on `ubuntu-22.04` and `ubuntu-22.04-arm`: an AppImage or `.deb` links the glibc it was built against, so the oldest supported image keeps it running on older distributions. Move to `ubuntu-24.04*` only when 22.04 is retired.
+- **Updater keys:** `darwin-aarch64`, `windows-x86_64`, `windows-aarch64`, `linux-x86_64`, `linux-aarch64`, matched by file name in `tools/ci/policy.mjs`.
 - **Local:** `node tools/check.mjs` builds an unsigned bundle for your OS. Signed builds are never made locally.
 
 ### `release.yml` (Release)
@@ -186,8 +190,8 @@ nextest runs each test in its own process with the settings in [`.config/nextest
 Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 1. **`verify`** (read-only): the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
-2. **`build`** (both platforms in parallel, `release: true`) waits for approval of the `release` environment.
-3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the two installers (`Oxide_<v>_aarch64.dmg` and `Oxide_<v>_x64-setup.exe`) for the release, attests build provenance for them, writes `latest.json`, `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
+2. **`build`** (all five platforms in parallel, `release: true`) waits for approval of the `release` environment.
+3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers (`Oxide_<v>_aarch64.dmg`, `Oxide_<v>_x64-setup.exe`, `Oxide_<v>_arm64-setup.exe`, the two `.AppImage`, `.deb` and `.rpm` files) for the release, attests build provenance for them, writes `latest.json`, `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
 **Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push the signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
 
@@ -199,8 +203,8 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `verify-release.yml` (Verify release)
 
-- **What:** when a release is published, re-downloads both installers and checks `SHA256SUMS.txt` from the `release-metadata` run artifact, runs `gh attestation verify` on each file, and, for a stable release, checks every URL in `latest.json` resolves, publishes `latest.json` to the `updater` branch (`raw.githubusercontent.com/getoxide/oxide/updater/latest.json`) and verifies it serves this version.
-- **Why:** the updater feed is the one thing that, once broken, affects every installed app, and keeping `latest.json`, `.sig`s, checksums and the SBOM off the release keeps the release page limited to the `.dmg` and `.exe` installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
+- **What:** when a release is published, re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact, runs `gh attestation verify` on each file, and, for a stable release, checks every URL in `latest.json` resolves, publishes `latest.json` to the `updater` branch (`raw.githubusercontent.com/getoxide/oxide/updater/latest.json`) and verifies it serves this version.
+- **Why:** the updater feed is the one thing that, once broken, affects every installed app, and keeping `latest.json`, `.sig`s, checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
 - **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
 
@@ -224,7 +228,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the same steps and the same gates.
 
 1. **Bump.** `node tools/ci/cli.mjs bump X.Y.Z` writes the version into `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json` and refreshes the workspace entries of `Cargo.lock`. Open a PR titled `chore(release): vX.Y.Z`, and merge it like any other. Use `X.Y.Z-rc.N` for a release candidate.
-2. **Wait for `gate`** on the `main` run of the merge commit. That run also builds both bundles.
+2. **Wait for `gate`** on the `main` run of the merge commit. That run also builds every bundle.
 3. **Tag** the merged commit, annotated, and push it:
 
    ```sh
@@ -278,7 +282,7 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 | zizmor | `ci.yml` (`taiki-e/install-action` input) | by hand |
 | actionlint (version and SHA-256) | `ci.yml`, `automation` job | by hand |
 | check-jsonschema | `ci.yml`, `automation` job | by hand |
-| Runner images (`ubuntu-24.04`, `macos-15`, `windows-2025`) | workflow `runs-on` | by hand, when GitHub announces a deprecation |
+| Runner images (`ubuntu-24.04`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `macos-15`, `windows-2025`, `windows-11-arm`) | workflow `runs-on` | by hand, when GitHub announces a deprecation |
 | CUDA Toolkit (12.9.1) and Vulkan SDK (1.4.363.0), with SHA-256 | `GPU_BUILD_SDKS` in `tools/ci/policy.mjs` | by hand. CUDA stays on 12.x (13 drops compute capability below 7.5); a new CUDA major also renames the runtime DLLs, which the tests check |
 
 When bumping a tool by hand, change it everywhere it appears (`grep` for the version) and keep the local install instructions in CONTRIBUTING in step.

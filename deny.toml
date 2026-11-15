@@ -3,9 +3,15 @@
 # `advisories` workflow). Run the same locally with `cargo deny check`.
 
 [graph]
-# Both shipped platforms. Crates only used on other targets stay out of the
+# Every shipped platform. Crates only used on other targets stay out of the
 # licence and source checks.
-targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+]
 all-features = true
 
 [advisories]

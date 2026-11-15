@@ -179,5 +179,11 @@ export function modelDigitShortcut(e: KeyPress & { code: string }): number | nul
   return physicalDigit(e);
 }
 
+/** ⌘⌥1..9 / Ctrl+Alt+1..9: picks the nth Project in the sidebar. */
+export function projectDigitShortcut(e: KeyPress & { code: string }): number | null {
+  if (!isPrimaryModifier(e) || !e.altKey || e.shiftKey) return null;
+  return physicalDigit(e);
+}
+
 /** A platform-appropriate primary modifier for shortcut labels. */
 export const shortcutLabel = isMacPlatform ? "\u2318" : "Ctrl+";

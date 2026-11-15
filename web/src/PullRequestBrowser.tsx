@@ -3,6 +3,7 @@ import { Skeleton } from "./Skeleton";
 import { SurfaceSearch } from "./SurfaceSearch";
 import { shortcutLabel } from "./shortcuts";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { CommentEditForm, CommentTools } from "./CommentTools";
 import { PullRequestCreate } from "./PullRequestCreate";
 import { GithubSetup } from "./GithubSetup";
 import {
@@ -483,7 +484,7 @@ export function PullRequestReview({
   return (
     <div className="pr-review">
       {nav}
-      <RefreshNotice query={query} />
+      <RefreshNotice query={query} working={busy} />
       <div className="pr-scroll">
         <header className="pr-hero">
           <h3 className="pr-title">
@@ -607,7 +608,15 @@ export function PullRequestReview({
             {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
           </h4>
           {detail.comments.map((c, i) => (
-            <Entry key={i} entry={c} author={pr.author} />
+            <Entry
+              key={c.id ?? i}
+              entry={c}
+              author={pr.author}
+              viewer={detail.viewer}
+              projectId={projectId}
+              onChanged={() => setReload((n) => n + 1)}
+              onError={setError}
+            />
           ))}
           <form
             className="pr-compose"
@@ -728,7 +737,18 @@ const REVIEW_ACTION = {
 } as const;
 
 /** One conversation entry as the web shows it: who, what they did, when, and what they wrote. */
-function Entry({ entry, author }: { entry: PullRequestComment; author: string }) {
+function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
+  entry: PullRequestComment;
+  author: string;
+  viewer: string;
+  projectId: number;
+  /** The conversation changed on GitHub: load it again. */
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Only a plain comment of yours can be rewritten or removed; reviews and others' comments cannot.
+  const id = !entry.review && viewer !== "" && entry.author === viewer ? entry.id : null;
   return (
     <article className={`pr-entry${entry.review ? ` pr-entry-${entry.review}` : ""}`}>
       <Avatar login={entry.author} size={24} />
@@ -746,8 +766,20 @@ function Entry({ entry, author }: { entry: PullRequestComment; author: string })
             )}
           </span>
           <time dateTime={entry.createdAt}>{relativeTime(entry.createdAt)}</time>
+          {id && !editing && (
+            <CommentTools projectId={projectId} id={id} onEdit={() => setEditing(true)} onDeleted={onChanged} onError={onError} />
+          )}
         </header>
-        {entry.body.trim() && <Markdown source={entry.body} />}
+        {id && editing ? (
+          <CommentEditForm
+            projectId={projectId}
+            id={id}
+            initial={entry.body}
+            onSaved={() => { setEditing(false); onChanged(); }}
+            onCancel={() => setEditing(false)}
+            onError={onError}
+          />
+        ) : entry.body.trim() && <Markdown source={entry.body} />}
       </div>
     </article>
   );

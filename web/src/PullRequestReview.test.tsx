@@ -33,8 +33,8 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
       { name: "rust", state: "success", url: null, required: false },
     ],
     comments: [
-      { author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", review: "changesRequested" },
-      { author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", review: null },
+      { id: null, author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", review: "changesRequested" },
+      { id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", review: null },
     ],
     mergeState: "clean",
     reviewDecision: null,

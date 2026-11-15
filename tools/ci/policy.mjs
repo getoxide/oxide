@@ -13,7 +13,7 @@ const BUILD_WORKFLOW = ".github/workflows/build.yml";
 const PATH_RULES = [
   [/^crates\//, ["rust"]],
   [/^(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml|\.cargo\/.*|\.config\/nextest\.toml)$/, ["rust"]],
-  [/^\.github\/actions\/setup-rust\//, ["rust"]], // the shared Rust setup: toolchain, cache, libclang
+  [/^\.github\/actions\/setup-rust\//, ["rust", "bundle"]], // the shared Rust setup: toolchain, cache, libclang, Linux libraries
   [/^web\/src\/bindings\.ts$/, ["rust"]], // also web: the Rust tests generate what the web app imports
   [/^web\//, ["web"]],
   [/^\.node-version$/, ["web", "bundle"]],
@@ -279,7 +279,14 @@ export function dependabotDecision(updatedDependencies) {
 }
 
 // The Tauri updater platform key for each signed updater package.
-const UPDATER_PACKAGES = [["darwin-aarch64", /_aarch64\.dmg$/], ["windows-x86_64", /_x64-setup\.exe$/]];
+// The AppImage is the Linux updater package; the .deb and .rpm are not self-updating.
+const UPDATER_PACKAGES = [
+  ["darwin-aarch64", /_aarch64\.dmg$/],
+  ["windows-x86_64", /_x64-setup\.exe$/],
+  ["windows-aarch64", /_arm64-setup\.exe$/],
+  ["linux-x86_64", /_amd64\.AppImage$/],
+  ["linux-aarch64", /_aarch64\.AppImage$/],
+];
 
 /**
  * The `latest.json` feed the native updater reads. `signatures` maps each
@@ -299,7 +306,7 @@ export function updateManifest(artifactNames, signatures, { repository, tag, dat
     if (!signature) throw new Error(`Empty signature for ${name}.`);
     platforms[platform] = { signature, url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}` };
   }
-  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (_aarch64.dmg or _x64-setup.exe).");
+  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (.dmg, -setup.exe or .AppImage).");
   const version = tag.slice(1);
   return {
     version,
@@ -333,7 +340,6 @@ export function checkUpdateFeed(feed, tag) {
 // Node platform names and how the plan names them.
 const OS_NAMES = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 const EVERY_OS = Object.keys(OS_NAMES);
-const RUST_OS = ["darwin", "win32"];
 const CI_JOB_ONLY = (job, what) => `CI only: the ${job} job ${what}`;
 
 // What the PR lanes run, in the order the local runner runs it. A check with
@@ -347,12 +353,13 @@ const CHECKS = [
   { id: "web-build", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "build"] },
   { id: "tooling-tests", tiers: ["pr"], platforms: EVERY_OS, command: ["node", "--test", "tools/**/*.test.mjs"] },
   { id: "tauri-alignment", tiers: ["pr"], platforms: EVERY_OS, command: ["node", "tools/ci/cli.mjs", "tauri-alignment"] },
-  { id: "clippy", tiers: ["pr"], platforms: RUST_OS, command: ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"] },
-  { id: "rust-test", tiers: ["pr"], platforms: RUST_OS, command: ["cargo", "nextest", "run", "--locked", "--workspace"] },
+  { id: "clippy", tiers: ["pr"], platforms: EVERY_OS, command: ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings"] },
+  { id: "rust-test", tiers: ["pr"], platforms: EVERY_OS, command: ["cargo", "nextest", "run", "--locked", "--workspace"] },
   // The Rust tests regenerate the bindings; a diff means they were not committed.
-  { id: "bindings", tiers: ["pr"], platforms: RUST_OS, command: ["git", "diff", "--exit-code", "web/src/bindings.ts"] },
+  { id: "bindings", tiers: ["pr"], platforms: EVERY_OS, command: ["git", "diff", "--exit-code", "web/src/bindings.ts"] },
   { id: "bundle-macos", tiers: ["pr"], platforms: ["darwin"], command: ["web/node_modules/.bin/tauri", "build", "--ci", "--bundles", "app,dmg"] },
   { id: "bundle-windows", tiers: ["pr"], platforms: ["win32"], command: ["web/node_modules/.bin/tauri.cmd", "build", "--ci", "--bundles", "nsis"] },
+  { id: "bundle-linux", tiers: ["pr"], platforms: ["linux"], command: ["web/node_modules/.bin/tauri", "build", "--ci", "--bundles", "appimage,deb,rpm"] },
   { id: "cargo-deny", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("supply-chain", "installs cargo-deny and checks bans, licences and sources") },
   { id: "dependency-review", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("supply-chain", "asks GitHub to review dependencies the PR adds") },
   { id: "actionlint", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("automation", "installs actionlint") },
@@ -365,7 +372,7 @@ function skipReason(check, platform) {
   if (check.ci) return check.ci;
   if (check.platforms.includes(platform)) return undefined;
   const where = check.platforms.map((name) => OS_NAMES[name]).join(" and ");
-  return `runs only on ${where}${platform === "linux" ? ", the platforms Oxide ships on" : ""}`;
+  return `runs only on ${where}`;
 }
 
 /**

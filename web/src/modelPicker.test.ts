@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  collapseEffortVariants,
   applyModelShortcut,
   selectedModelInfo,
   resolveDefaultModel,
@@ -221,5 +222,27 @@ describe("resolveModelQuery", () => {
 
   it("suggests a few current Model names for error feedback", () => {
     expect(modelNameSuggestions(sampleModels, 2)).toEqual(["Claude 3.7 Sonnet", "Claude 3.5 Haiku"]);
+  });
+});
+
+describe("antigravity effort variants", () => {
+  const variant = (id: string, name: string, effort: string): ModelInfo =>
+    ({ id, name, description: null, supportedEfforts: [effort], defaultEffort: effort, isLegacy: false });
+  const catalog: ModelInfo[] = [
+    variant("gemini-4-hydrogen-low", "Gemini 4 Hydrogen (Low)", "low"),
+    variant("gemini-4-hydrogen-xhigh", "Gemini 4 Hydrogen (XHigh)", "xhigh"),
+    variant("gemini-4-hydrogen-high", "Gemini 4 Hydrogen (High)", "high"),
+    { id: "orchestrator-argon", name: "Orchestrator (Argon)", description: null, supportedEfforts: [], defaultEffort: null, isLegacy: false },
+  ];
+
+  it("shows one row per model with every effort the catalog lists, in its order", () => {
+    const rows = collapseEffortVariants(catalog, null);
+    expect(rows.map((m) => m.name)).toEqual(["Gemini 4 Hydrogen", "Orchestrator (Argon)"]);
+    expect(rows[0]!.supportedEfforts).toEqual(["low", "xhigh", "high"]);
+    expect(rows[1]!.supportedEfforts).toEqual([]);
+  });
+
+  it("selects the variant that matches the chosen effort", () => {
+    expect(collapseEffortVariants(catalog, "xhigh")[0]!.id).toBe("gemini-4-hydrogen-xhigh");
   });
 });

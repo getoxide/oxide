@@ -40,7 +40,7 @@ describe("lanesFor", () => {
   });
 
   test("a change to the shared Rust setup turns on rust and automation", () => {
-    assert.deepEqual(lanesFor([".github/actions/setup-rust/action.yml"], "pull_request"), { ...ALL_OFF, rust: true, automation: true });
+    assert.deepEqual(lanesFor([".github/actions/setup-rust/action.yml"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true, automation: true });
   });
 
   test("a workflow change turns on automation, and bundle if it is the build workflow", () => {
@@ -434,6 +434,19 @@ describe("updateManifest", () => {
     assert.equal(updateManifest(artifacts, signatures, { ...release, tag: "v1.2.3-rc.1" }).version, "1.2.3-rc.1");
   });
 
+  test("Windows ARM and both Linux architectures get their own platform key", () => {
+    const names = [
+      "Oxide_1.2.3_arm64-setup.exe", "Oxide_1.2.3_amd64.AppImage", "Oxide_1.2.3_aarch64.AppImage",
+      "Oxide_1.2.3_amd64.deb", "Oxide-1.2.3-1.x86_64.rpm", "Oxide_1.2.3_arm64.deb", "Oxide-1.2.3-1.aarch64.rpm",
+    ];
+    const signed = Object.fromEntries(names.map((name) => [name, `${name}-signature`]));
+    const { platforms } = updateManifest(names, signed, release);
+    assert.deepEqual(Object.keys(platforms), ["windows-aarch64", "linux-x86_64", "linux-aarch64"]);
+    assert.equal(platforms["windows-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_arm64-setup.exe");
+    assert.equal(platforms["linux-x86_64"].signature, "Oxide_1.2.3_amd64.AppImage-signature");
+    assert.equal(platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_aarch64.AppImage");
+  });
+
   test("a release can ship one platform", () => {
     const macOnly = updateManifest(["Oxide_1.2.3_aarch64.dmg"], { "Oxide_1.2.3_aarch64.dmg": "mac-signature" }, release);
     assert.deepEqual(Object.keys(macOnly.platforms), ["darwin-aarch64"]);
@@ -466,11 +479,16 @@ describe("localPlan", () => {
     assert.ok(plan.skipped.some(({ id }) => id === "bundle-macos"));
   });
 
-  test("Linux skips the Rust checks and bundles that CI runs on macOS and Windows", () => {
+  test("Linux runs both Rust checks and its own bundle, and skips the macOS and Windows bundles", () => {
     const plan = localPlan("linux");
-    assert.ok(!lines(plan).includes(CLIPPY));
-    assert.ok(lines(plan).includes("cargo fmt --all --check"));
-    assert.deepEqual(plan.skipped.filter(({ id }) => ["clippy", "rust-test", "bundle-macos", "bundle-windows"].includes(id)).length, 4);
+    assert.ok(lines(plan).includes(CLIPPY));
+    assert.ok(lines(plan).includes(NEXTEST));
+    assert.ok(lines(plan).includes("web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm"));
+    assert.deepEqual(plan.skipped.filter(({ id }) => ["bundle-macos", "bundle-windows"].includes(id)).length, 2);
+  });
+
+  test("macOS and Windows skip the Linux bundle", () => {
+    for (const platform of ["darwin", "win32"]) assert.ok(localPlan(platform).skipped.some(({ id }) => id === "bundle-linux"), platform);
   });
 
   test("the full tier runs the tooling suite and reports CI-only checks as skipped", () => {

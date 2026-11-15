@@ -22,7 +22,7 @@ node tools/check.mjs        # everything the PR lanes run on this OS
 node tools/check.mjs fast   # rustfmt, ESLint and TypeScript, in seconds
 ```
 
-The full tier installs the web dependencies from the lockfile, then runs formatting, ESLint, TypeScript, Vitest, the production web build, the tooling tests, the Tauri alignment check, Clippy, the Rust tests, the committed-bindings check and this OS's app bundle. It prints what it can't run here and why (for example the macOS bundle on Windows, or cargo-deny, which CI installs), and lists every failed command at the end so you can rerun it directly.
+The full tier installs the web dependencies from the lockfile, then runs formatting, ESLint, TypeScript, Vitest, the production web build, the tooling tests, the Tauri alignment check, Clippy, the Rust tests, the committed-bindings check and this OS's app bundle. It prints what it can't run here and why (for example the macOS bundle on Windows, or cargo-deny, which CI installs). On Linux, install the WebKitGTK libraries listed in the README first, and lists every failed command at the end so you can rerun it directly.
 
 The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it once with `cargo install --locked cargo-nextest`.
 
@@ -114,6 +114,6 @@ Oxide is developed with coding agents. [AGENTS.md](AGENTS.md) is the single sour
 
 ## Releasing Oxide
 
-Only the two Release Managers, `cavallinilorenzo` and `itsmrma`, release. In short: merge a `chore(release): vX.Y.Z` PR (bump all three manifests with `node tools/ci/cli.mjs bump X.Y.Z`), wait for `gate` on the `main` run, push an annotated `vX.Y.Z` tag, approve the `release` deployment, smoke test the draft, then click Publish. The pipeline builds and signs both platforms from scratch and creates a **draft**; nothing reaches users until a Release Manager publishes it. Rollback is rolling forward with a patch release.
+Only the two Release Managers, `cavallinilorenzo` and `itsmrma`, release. In short: merge a `chore(release): vX.Y.Z` PR (bump all three manifests with `node tools/ci/cli.mjs bump X.Y.Z`), wait for `gate` on the `main` run, push an annotated `vX.Y.Z` tag, approve the `release` deployment, smoke test the draft, then click Publish. The pipeline builds and signs every platform (macOS, Windows x64 and arm64, Linux x64 and arm64) from scratch and creates a **draft**; nothing reaches users until a Release Manager publishes it. Rollback is rolling forward with a patch release.
 
 The full runbook, the roles and how they are enforced, the signing secrets and the rehearsal procedure are in [docs/devops.md](docs/devops.md#release-runbook). The decisions behind them are in [ADR-0008](docs/adr/0008-continuous-delivery-with-human-published-releases.md).

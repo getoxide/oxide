@@ -393,6 +393,9 @@ fn shell_command(
         let prompt = r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#;
         command.env("PS1", prompt);
         command.env("PS2", "");
+        // Debian and Ubuntu build bash to run /etc/bash.bashrc even with `--rcfile`, and that file
+        // resets PS1. The init file puts the block prompt back once the system file has run.
+        command.env("_OXIDE_PS1", prompt);
         command.args(["--noprofile"]);
         if let Some(shell_init) = shell_init {
             command.arg("--rcfile");
@@ -420,8 +423,10 @@ fn create_shell_init_file(id: u32) -> Result<PathBuf> {
         .create_new(true)
         .open(&path)
         .map_err(|error| Error::Terminal(format!("create terminal shell init file: {error}")))?;
-    file.write_all(b"stty isig -echo\ntrap ':' INT\n")
-        .map_err(|error| Error::Terminal(format!("write terminal shell init file: {error}")))?;
+    file.write_all(
+        b"PS1=$_OXIDE_PS1\nPS2=\nunset _OXIDE_PS1 PROMPT_COMMAND\nstty isig -echo\ntrap ':' INT\n",
+    )
+    .map_err(|error| Error::Terminal(format!("write terminal shell init file: {error}")))?;
     Ok(path)
 }
 

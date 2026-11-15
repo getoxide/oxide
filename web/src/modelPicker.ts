@@ -1,4 +1,5 @@
 import type { ModelInfo as BindingsModelInfo } from "./bindings";
+import { learnEfforts, stripEffortFromId, stripEffortFromName } from "./effortVocabulary";
 
 export type ModelInfo = BindingsModelInfo;
 
@@ -76,13 +77,14 @@ export function filterModels(
  * which variant is sent to the provider.
  */
 export function modelFamilyId(modelId: string): string {
-  return modelId.replace(/-(low|medium|high)$/i, "");
+  return stripEffortFromId(modelId);
 }
 
 export function collapseEffortVariants(
   models: ModelInfo[],
   effort: string | null
 ): ModelInfo[] {
+  learnEfforts(models);
   const families = new Map<string, ModelInfo[]>();
   for (const model of models) {
     const family = modelFamilyId(model.id);
@@ -99,7 +101,7 @@ export function collapseEffortVariants(
         name:
           modelFamilyId(onlyVariant.id) === onlyVariant.id
             ? onlyVariant.name
-            : onlyVariant.name.replace(/\s*\((low|medium|high)\)$/i, ""),
+            : stripEffortFromName(onlyVariant.name),
       };
     }
 
@@ -107,13 +109,14 @@ export function collapseEffortVariants(
       variants.find((model) => model.id.toLowerCase().endsWith(`-${effort?.toLowerCase()}`)) ??
       variants.find((model) => model.id.toLowerCase().endsWith(`-${model.defaultEffort?.toLowerCase()}`)) ??
       variants[0]!;
+    // The catalog's own order: Providers list their levels ascending, and variants follow suit.
     const supportedEfforts = Array.from(
       new Set(variants.flatMap((model) => model.supportedEfforts))
     );
 
     return {
       ...selected,
-      name: selected.name.replace(/\s*\((low|medium|high)\)$/i, ""),
+      name: stripEffortFromName(selected.name),
       supportedEfforts,
     };
   });

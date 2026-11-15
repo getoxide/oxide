@@ -1943,6 +1943,16 @@ impl Core {
         )
     }
 
+    /// Rewrites a comment of a pull request or an issue.
+    pub fn edit_comment(&self, project_id: u32, id: &str, body: &str) -> Result<()> {
+        github::edit_comment(&self.gh, &self.main_checkout(project_id)?, id, body)
+    }
+
+    /// Deletes a comment of a pull request or an issue.
+    pub fn delete_comment(&self, project_id: u32, id: &str) -> Result<()> {
+        github::delete_comment(&self.gh, &self.main_checkout(project_id)?, id)
+    }
+
     /// Adds a comment to an issue.
     pub fn comment_issue(&self, project_id: u32, number: u32, body: &str) -> Result<()> {
         github::comment_issue(&self.gh, &self.main_checkout(project_id)?, number, body)
