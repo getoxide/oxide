@@ -209,7 +209,7 @@ jobs:
             linux-x64|linux-aarch64)
               # Exactly one AppImage (the updater package, with its .sig), one .deb and one .rpm per architecture.
               for pattern in "appimage/*.AppImage" "appimage/*.AppImage.sig" "deb/*.deb" "rpm/*.rpm"; do
-                matches=("$bundle"/$pattern)
+                mapfile -t matches < <(compgen -G "$bundle/$pattern" || true)
                 if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
                   echo "::error::Expected exactly one $pattern in $bundle, found: ${matches[*]}"
                   exit 1
