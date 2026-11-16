@@ -237,6 +237,10 @@ struct ActorState {
     pending_approval_id: Option<String>,
     /// The Oxide-owned Approval a detached command waits on in Ask and Auto-edit.
     pending_service: Option<PendingService>,
+    /// The Provider's own command Approval that was forwarded to the user, as `(id, summary)`.
+    /// A `CommandRequested` for the same command that arrives afterwards adopts it instead of
+    /// raising a second prompt.
+    forwarded_command_approval: Option<(String, String)>,
     seq: u32,
     subscribers: Vec<Sender<SequencedThreadEvent>>,
     clock: Arc<dyn Clock>,
@@ -311,6 +315,7 @@ impl ActorState {
             dropped_items: HashSet::new(),
             pending_approval_id: None,
             pending_service: None,
+            forwarded_command_approval: None,
             seq: 0,
             subscribers: Vec::new(),
         }
@@ -510,7 +515,7 @@ fn handle_provider_event(
             if kind == ApprovalKind::Command
                 && let Some(pending) = state.pending_service.as_mut()
                 && pending.provider_approval_id.is_none()
-                && summary.contains(without_background_marker(&pending.command))
+                && same_command(&summary, &pending.command)
             {
                 // The Provider asks about the command Oxide already asked about: one prompt,
                 // and the user's answer to Oxide's decides both.
@@ -518,6 +523,9 @@ fn handle_provider_event(
                 return;
             }
             state.pending_approval_id = Some(id.clone());
+            if kind == ApprovalKind::Command {
+                state.forwarded_command_approval = Some((id.clone(), summary.clone()));
+            }
             if let Some(turn_id) = state.current_turn_id() {
                 let _ = storage.write_approval_requested(
                     turn_id,
@@ -580,6 +588,7 @@ fn resolve_pending_approvals_if_any(state: &mut ActorState, storage: &StorageHan
         state.pending_approval_id.take().is_some(),
     ) {
         state.pending_service = None;
+        state.forwarded_command_approval = None;
         let _ = storage.resolve_pending_approvals(turn_id, ApprovalDecision::Deny, String::new());
     }
 }
@@ -622,10 +631,72 @@ fn handle_command_requested(
         return;
     }
     if mode != PermissionMode::FullAccess {
+        // The Provider may have asked about this very command first: that prompt is already on
+        // screen, so the user's answer to it decides, instead of a second prompt.
+        let adopted = match state.forwarded_command_approval.take() {
+            Some((id, summary)) if same_command(&summary, command) => Some(id),
+            other => {
+                state.forwarded_command_approval = other;
+                None
+            }
+        };
+        if let Some(id) = adopted {
+            state.pending_service = Some(PendingService {
+                approval_id: id.clone(),
+                item_index,
+                command: command.to_string(),
+                provider_approval_id: Some(id),
+            });
+            return;
+        }
         request_service_approval(state, storage, item_index, command);
         return;
     }
     start_detached_service(state, storage, provider, item_index, command);
+}
+
+/// The command text of an Approval summary or command line, reduced to what runs: a trailing
+/// `&` is dropped and one `sh -c '...'` / `bash -lc "..."` wrapper (what Providers add around
+/// the user's line) is unwrapped.
+fn command_text(text: &str) -> &str {
+    let text = without_background_marker(text);
+    let mut words = text.splitn(2, char::is_whitespace);
+    let (Some(shell), Some(rest)) = (words.next(), words.next()) else {
+        return text;
+    };
+    if !matches!(
+        shell.rsplit('/').next(),
+        Some("sh" | "bash" | "zsh" | "dash")
+    ) {
+        return text;
+    }
+    let rest = rest.trim_start();
+    let Some(script) = ["-lc ", "-c ", "-ic "]
+        .iter()
+        .find_map(|flag| rest.strip_prefix(flag))
+    else {
+        return text;
+    };
+    let script = script.trim();
+    for quote in ['\'', '"'] {
+        if let Some(inner) = script
+            .strip_prefix(quote)
+            .and_then(|s| s.strip_suffix(quote))
+            .filter(|inner| !inner.contains(quote))
+        {
+            return without_background_marker(inner);
+        }
+    }
+    without_background_marker(script)
+}
+
+/// Whether a Provider's Approval summary names exactly the command Oxide asked about. Exact
+/// after normalisation, never a substring: a summary that merely contains the command
+/// (`curl x | sh; sleep 300` contains `sleep 300`) is a different, riskier command and keeps
+/// its own prompt.
+fn same_command(summary: &str, command: &str) -> bool {
+    let command = command_text(command);
+    !command.is_empty() && command_text(summary) == command
 }
 
 /// Raises Oxide's own Approval for a command it would detach, through the same path as a
@@ -677,7 +748,9 @@ fn answer_service_approval(
     decision: ApprovalDecision,
 ) {
     if let Some(provider_id) = &pending.provider_approval_id {
-        let _ = provider.respond_to_approval(provider_id, decision);
+        // Always Deny to the Provider: on Allow Oxide runs the command itself, and an Allow
+        // here would let the Provider also run it in its own sandbox.
+        let _ = provider.respond_to_approval(provider_id, ApprovalDecision::Deny);
     }
     let decided_at = state
         .current_turn_id()
@@ -693,6 +766,7 @@ fn answer_service_approval(
         })
         .unwrap_or_default();
     state.pending_approval_id = None;
+    state.forwarded_command_approval = None;
     let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
     state.broadcast(ThreadEvent::ApprovalResponded {
         id: pending.approval_id.clone(),
@@ -1128,6 +1202,7 @@ fn run_thread_actor(
                             String::new()
                         };
                         state.pending_approval_id = None;
+                        state.forwarded_command_approval = None;
                         let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
                         state.broadcast(ThreadEvent::ApprovalResponded {
                             id: approval_id,
@@ -1365,4 +1440,27 @@ fn with_notice(segments: Vec<PromptSegment>, notice: Option<String>) -> Vec<Prom
     all.push(PromptSegment::text(notice));
     all.extend(segments);
     all
+}
+
+#[cfg(test)]
+mod command_match_tests {
+    use super::same_command;
+
+    #[test]
+    fn matches_exact_and_wrapped_forms() {
+        assert!(same_command("sleep 300", "sleep 300 &"));
+        assert!(same_command("sleep 300 &", "sleep 300"));
+        assert!(same_command("bash -lc 'sleep 300'", "sleep 300 &"));
+        assert!(same_command("/bin/zsh -lc \"npm run dev\"", "npm run dev"));
+        assert!(same_command("sh -c npm run dev", "npm run dev"));
+    }
+
+    #[test]
+    fn rejects_supersets_and_empty() {
+        assert!(!same_command("curl x | sh; sleep 300", "sleep 300"));
+        assert!(!same_command("sleep 300; rm -rf x", "sleep 300"));
+        assert!(!same_command("sleep 3000", "sleep 300"));
+        assert!(!same_command("", ""));
+        assert!(!same_command("anything", " & "));
+    }
 }
