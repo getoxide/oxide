@@ -261,14 +261,31 @@ mod helpers {
 #[cfg(any(target_os = "macos", test))]
 fn privileged_install_script(source: &str, target: &str, backup: &str) -> String {
     use helpers::{DITTO, MV, RM, XATTR};
+    install_script_with([MV, DITTO, XATTR, RM], source, target, backup)
+}
+
+/// The script body with the four helpers (`mv`, `ditto`, `xattr`, `rm`) injected, so a test can
+/// run the real control flow against harmless stand-ins.
+///
+/// The first `mv` must succeed before anything else is touched: if it fails, the installed
+/// bundle is still where it was and the script just stops. Only a failure after the bundle
+/// was moved aside removes the partial copy and puts the backup back.
+#[cfg(any(target_os = "macos", test))]
+fn install_script_with(
+    [mv, ditto, xattr, rm]: [&str; 4],
+    source: &str,
+    target: &str,
+    backup: &str,
+) -> String {
     let (s, t, b) = (
         shell_quote(source),
         shell_quote(target),
         shell_quote(backup),
     );
     format!(
-        "{MV} {t} {b} && {DITTO} {s} {t} && {XATTR} -dr com.apple.quarantine {t} \
-         || {{ {RM} -rf {t}; {MV} {b} {t}; exit 1; }}"
+        "{mv} {t} {b} || exit 1; \
+         ( {ditto} {s} {t} && {xattr} -dr com.apple.quarantine {t} ) \
+         || {{ {rm} -rf {t}; {mv} {b} {t}; exit 1; }}"
     )
 }
 
@@ -564,6 +581,79 @@ mod tests {
         let inner = &wrapped[1..wrapped.len() - 1];
         assert!(!inner.replace("\\\\", "").replace("\\\"", "").contains('"'));
     }
+    /// Runs the script text with `/bin/sh` and stand-in helpers: `mv` and `rm` are the real
+    /// ones (on temp paths), `ditto` and `xattr` are shell functions that succeed or fail.
+    #[cfg(unix)]
+    fn run_install_script(mv: &str, ditto: &str, xattr: &str) -> (bool, bool, bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Oxide.app");
+        let backup = dir.path().join("backup.app");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("marker"), "installed").unwrap();
+        let tools = dir.path().join("tools");
+        std::fs::create_dir(&tools).unwrap();
+        let tool = |name: &str, body: &str| {
+            use std::os::unix::fs::PermissionsExt;
+            let path = tools.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let mv = tool("mv", mv);
+        let ditto = tool("ditto", ditto);
+        let xattr = tool("xattr", xattr);
+        let script = install_script_with(
+            [&mv, &ditto, &xattr, "/bin/rm"],
+            "/nonexistent/source.app",
+            &target.to_string_lossy(),
+            &backup.to_string_lossy(),
+        );
+        let ok = std::process::Command::new("/bin/sh")
+            .args(["-c", &script])
+            .status()
+            .unwrap()
+            .success();
+        (ok, target.join("marker").exists(), backup.exists())
+    }
+
+    #[cfg(unix)]
+    const REAL_MV: &str = "/bin/mv \"$@\"";
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_first_move_leaves_the_installed_app_alone() {
+        let (ok, installed_survives, _) = run_install_script("exit 1", "exit 0", "exit 0");
+        assert!(!ok);
+        assert!(installed_survives, "the installed app was deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_copy_puts_the_previous_app_back() {
+        let (ok, installed_survives, backup_left) = run_install_script(REAL_MV, "exit 1", "exit 0");
+        assert!(!ok);
+        assert!(installed_survives, "the previous app was not restored");
+        assert!(!backup_left);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_quarantine_removal_puts_the_previous_app_back() {
+        let (ok, installed_survives, _) = run_install_script(REAL_MV, "exit 0", "exit 1");
+        assert!(!ok);
+        assert!(installed_survives);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_good_install_succeeds_and_keeps_the_backup() {
+        // The stand-in ditto creates nothing, so the target is gone and the backup holds the old app.
+        let (ok, installed_survives, backup_left) = run_install_script(REAL_MV, "exit 0", "exit 0");
+        assert!(ok);
+        assert!(!installed_survives);
+        assert!(backup_left);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn staging_folders_are_private() {
