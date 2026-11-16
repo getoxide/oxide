@@ -392,12 +392,15 @@ pub(crate) fn with_conn<T>(
     f: impl FnOnce(&Connection) -> Result<T>,
 ) -> Result<T> {
     let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        let conn = Connection::open(db_path)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        *guard = Some(conn);
-    }
-    f(guard.as_ref().expect("connection opened above"))
+    let conn = match &mut *guard {
+        Some(conn) => conn,
+        empty @ None => {
+            let conn = Connection::open(db_path)?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            empty.insert(conn)
+        }
+    };
+    f(conn)
 }
 
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing

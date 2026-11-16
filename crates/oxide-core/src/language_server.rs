@@ -265,7 +265,7 @@ impl LanguageServers {
         let tool = tools(home)
             .into_iter()
             .find(|t| t.language == language)
-            .unwrap();
+            .ok_or_else(|| failure(format!("{language} has no language server tool")))?;
         let executable = tool.resolved_path.ok_or_else(|| {
             failure(format!(
                 "{} is not installed. Open Language tools to install or configure it.",
@@ -291,9 +291,13 @@ impl LanguageServers {
         attach_child_to_job(&mut child).map_err(failure)?;
         let pid = child.id() as i32;
         registry.register(pid, &executable);
-        let input = child.stdin.take().unwrap();
-        let output = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let (Some(input), Some(output), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            let _ = child.kill();
+            registry.unregister(pid);
+            return Err(failure("language server pipes were not available"));
+        };
         let session = Arc::new(Session {
             root: root.to_path_buf(),
             child: Mutex::new(child),

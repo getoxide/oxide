@@ -858,7 +858,10 @@ mod windows_tests {
 }
 
 #[cfg(all(test, unix))]
-#[allow(clippy::unwrap_used, reason = "test module: clippy only recognises plain cfg(test)")]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test module: clippy only recognises plain cfg(test)"
+)]
 mod tests {
     use super::*;
     use std::process::Stdio;

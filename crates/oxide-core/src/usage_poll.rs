@@ -421,11 +421,9 @@ pub(crate) fn spawn(hub: Arc<UsageHub>, user_home: PathBuf) -> PollerHandle {
                 }
             }
         })
-        .expect("failed to spawn usage-poll thread");
-    PollerHandle {
-        stop_tx,
-        handle: Some(handle),
-    }
+        .map_err(|e| eprintln!("failed to spawn usage-poll thread: {e}"))
+        .ok();
+    PollerHandle { stop_tx, handle }
 }
 
 #[cfg(test)]

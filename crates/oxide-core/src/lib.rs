@@ -957,7 +957,7 @@ impl Core {
                 if let Some(models) = models.filter(|m| !m.is_empty()) {
                     self.model_catalogs
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(provider.to_string(), models);
                 }
                 det
@@ -1009,7 +1009,10 @@ impl Core {
 
     pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
         if !refresh {
-            let cache = self.model_catalogs.lock().unwrap();
+            let cache = self
+                .model_catalogs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(models) = cache.get(provider) {
                 return Ok(models.clone());
             }
@@ -1039,7 +1042,7 @@ impl Core {
         if !models.is_empty() {
             self.model_catalogs
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(provider.to_string(), models.clone());
         }
         Ok(models)
@@ -1125,12 +1128,12 @@ impl Core {
     pub fn register_fake_provider(&self, thread_id: u32, provider: impl ProviderTrait) {
         self.fake_providers
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(thread_id, Box::new(provider));
     }
 
     pub fn get_or_create_thread_actor(&self, thread_id: u32) -> Result<ThreadActorHandle> {
-        let mut actors = self.thread_actors.lock().unwrap();
+        let mut actors = self.thread_actors.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(actor) = actors.get(&thread_id) {
             return Ok(actor.clone());
         }
@@ -1146,34 +1149,38 @@ impl Core {
             (row.0, PathBuf::from(row.1))
         };
 
-        let provider: Box<dyn ProviderTrait> =
-            if let Some(p) = self.fake_providers.lock().unwrap().remove(&thread_id) {
-                p
-            } else if snapshot.thread.provider == "claude" {
-                if !self.detect_provider("claude").installed {
-                    return Err(Error::Provider("Claude Code is not installed".to_string()));
-                }
-                let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
-                claude.set_registry(Arc::clone(&self.processes));
-                claude.set_user_customizations(self.settings().settings.claude_customizations);
-                Box::new(claude)
-            } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-                if !self.detect_provider(&snapshot.thread.provider).installed {
-                    return Err(Error::Provider(
-                        "Antigravity CLI is not installed".to_string(),
-                    ));
-                }
-                let mut agy = oxide_provider::agy::AgyProvider::new();
-                agy.set_registry(Arc::clone(&self.processes));
-                Box::new(agy)
-            } else if snapshot.thread.provider == "codex" {
-                if !self.detect_provider("codex").installed {
-                    return Err(Error::Provider("Codex is not installed".to_string()));
-                }
-                Box::new(oxide_provider::codex::CodexProvider::new())
-            } else {
-                Box::new(oxide_provider::FakeProvider::scripted())
-            };
+        let provider: Box<dyn ProviderTrait> = if let Some(p) = self
+            .fake_providers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&thread_id)
+        {
+            p
+        } else if snapshot.thread.provider == "claude" {
+            if !self.detect_provider("claude").installed {
+                return Err(Error::Provider("Claude Code is not installed".to_string()));
+            }
+            let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
+            claude.set_registry(Arc::clone(&self.processes));
+            claude.set_user_customizations(self.settings().settings.claude_customizations);
+            Box::new(claude)
+        } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
+            if !self.detect_provider(&snapshot.thread.provider).installed {
+                return Err(Error::Provider(
+                    "Antigravity CLI is not installed".to_string(),
+                ));
+            }
+            let mut agy = oxide_provider::agy::AgyProvider::new();
+            agy.set_registry(Arc::clone(&self.processes));
+            Box::new(agy)
+        } else if snapshot.thread.provider == "codex" {
+            if !self.detect_provider("codex").installed {
+                return Err(Error::Provider("Codex is not installed".to_string()));
+            }
+            Box::new(oxide_provider::codex::CodexProvider::new())
+        } else {
+            Box::new(oxide_provider::FakeProvider::scripted())
+        };
 
         let mut provider = provider;
         provider.allow_attachments_dir(&self.attachments_dir());
@@ -2472,7 +2479,12 @@ impl Core {
     }
 
     pub fn tick_thread(&self, thread_id: u32) {
-        if let Some(actor) = self.thread_actors.lock().unwrap().get(&thread_id) {
+        if let Some(actor) = self
+            .thread_actors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&thread_id)
+        {
             actor.tick();
         }
     }

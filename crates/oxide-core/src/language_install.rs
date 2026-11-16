@@ -100,7 +100,10 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
                     ));
                 }
                 let relative = found.strip_prefix(&extracted).map_err(error)?.to_path_buf();
-                std::fs::create_dir_all(destination.parent().unwrap()).map_err(error)?;
+                std::fs::create_dir_all(destination.parent().ok_or_else(|| {
+                    error("The language server destination has no parent folder.")
+                })?)
+                .map_err(error)?;
                 std::fs::rename(&extracted, &destination).map_err(error)?;
                 destination.join(relative)
             };
