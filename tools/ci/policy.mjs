@@ -380,6 +380,8 @@ export const ADVISORY_SCANS = [
 const CHECKS = [
   { id: "web-install", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "install", "--frozen-lockfile"] },
   { id: "rust-fmt", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["cargo", "fmt", "--all", "--check"] },
+  // ADR-0016: Git and gh start only in the hardened builders. Pure Node, so it is cheap enough for `fast`.
+  { id: "process-builders", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/process-builders.mjs"] },
   { id: "web-lint", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "lint"] },
   { id: "web-typecheck", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "typecheck"] },
   { id: "web-test", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "test"] },

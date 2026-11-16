@@ -28,6 +28,8 @@ The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it 
 
 Every job, why it exists and its local command are in [docs/devops.md](docs/devops.md#ci-jobs).
 
+The security rules the checks enforce (no `unwrap` on outside data, documented `unsafe`, `git` and `gh` only through the hardened builders, no HTML sinks) are in [ADR-0016](docs/adr/0016-security-boundaries.md).
+
 Before every commit, `node tools/check.mjs fast` is enough. To run it automatically, add it to `.git/hooks/pre-commit` yourself; the repository doesn't install hooks, and CI is the authority.
 
 The pipeline's decisions (which lanes a change needs, the merge gate, PR titles, release versions, release notes, Dependabot auto-merge, the updater feed) live as pure functions in `tools/ci/policy.mjs`, with a command-line wrapper in `tools/ci/cli.mjs`. `node --test "tools/**/*.test.mjs"` runs all the tooling tests.

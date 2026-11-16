@@ -94,10 +94,10 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 
 ### `rust-fmt`
 
-- **What:** `cargo fmt --all --check`.
-- **Why:** mechanical, and it fails in seconds without waiting for a compile.
+- **What:** `cargo fmt --all --check`, then `node tools/checks/process-builders.mjs`, which fails on a `Command::new` of `git` or `gh` outside the hardened builders (`git_command.rs`, `github.rs`; integration tests under `tests/` are exempt). See [ADR-0016](adr/0016-security-boundaries.md).
+- **Why:** both are mechanical and fail in seconds without waiting for a compile. The builder check keeps a repository's own configuration from running programs on Oxide's behalf.
 - **When / where:** `rust` lane, Linux.
-- **Local:** `cargo fmt --all --check` (also in `fast`).
+- **Local:** `cargo fmt --all --check` and `node tools/checks/process-builders.mjs` (both also in `fast`).
 
 ### `rust (macos)`, `rust (windows)` and `rust (linux)`
 
