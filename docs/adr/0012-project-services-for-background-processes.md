@@ -22,6 +22,10 @@ When a user or an agent starts a long-running process (such as `npm run dev`, `c
    - The left sidebar hosts a compact, pinned **Services** section above Settings, displaying active Project Services with a status dot, detected localhost port, and quick stop button.
    - Clicking a service or selecting "View logs" focuses the Terminal Surface in the right dock (preserving ADR-0009's single Surfaces dock architecture), opening a dedicated, read-only tab with circular buffer log streaming, autoscroll, and controls for Restart, Stop, and Open URL in browser.
 
+## Amendment: detaching a Provider command needs an Approval
+
+A Provider command recognised as a background command detaches into a Project Service immediately only in Full access. In Ask and Auto-edit, Oxide first raises its own Approval naming the full command line and starts the service only if it is allowed; a denial, or the Turn ending or being interrupted while the Approval is pending, starts nothing. In a Blind review it never detaches.
+
 ## Consequences
 
 - Terminal tabs remain free for immediate commands without manually juggling extra tabs or background terminal jobs.
