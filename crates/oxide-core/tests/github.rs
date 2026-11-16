@@ -271,6 +271,22 @@ fn pr_base_branch_errors_are_not_reported_as_an_empty_list() {
 }
 
 #[test]
+fn gh_errors_do_not_show_credentials_embedded_in_a_url() {
+    let f = fixture();
+    let mut state = ok_state();
+    state["branches_error"] =
+        serde_json::json!("fatal: unable to access 'https://user:synthetic-secret@host/r.git/'");
+    install_gh(&f, &state);
+    let message = f
+        .core
+        .pull_request_base_branches(f.project.id)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("https://host/r.git"), "{message}");
+    assert!(!message.contains("synthetic-secret"), "{message}");
+}
+
+#[test]
 fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
     let f = fixture(); // nothing on the PATH
     let state = f.core.issues_state(f.project.id).unwrap();

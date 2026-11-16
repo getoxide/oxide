@@ -4,6 +4,7 @@
 
 use crate::git;
 use crate::line_comments::CommentSide;
+use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
 use serde::{Deserialize, Serialize};
@@ -440,7 +441,7 @@ impl Gh {
         };
         let output = output.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => GhError::Missing,
-            _ => GhError::Failed(format!("could not run gh: {e}")),
+            _ => GhError::Failed(redact_url_credentials(&format!("could not run gh: {e}"))),
         })?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
@@ -451,7 +452,7 @@ impl Gh {
         } else {
             stderr
         };
-        Err(GhError::Failed(message.trim().to_string()))
+        Err(GhError::Failed(redact_url_credentials(message.trim())))
     }
 
     /// Whether `gh` can be used, and if not, what to tell the user.
@@ -683,7 +684,7 @@ impl From<GhError> for Error {
     fn from(e: GhError) -> Self {
         match e {
             GhError::Missing => Error::Github(INSTALL_GUIDANCE.into()),
-            GhError::Failed(message) => Error::Github(message),
+            GhError::Failed(message) => Error::Github(redact_url_credentials(&message)),
         }
     }
 }

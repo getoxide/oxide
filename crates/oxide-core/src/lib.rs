@@ -23,6 +23,7 @@ mod language_server;
 mod line_comments;
 mod project_services;
 mod project_setup;
+mod redact;
 mod restore;
 mod review_ledger;
 mod rule_suggestions;
