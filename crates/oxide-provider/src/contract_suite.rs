@@ -1,8 +1,4 @@
 //! Shared contract assertions for Provider adapters; a failed expectation is a test failure.
-#![allow(
-    clippy::expect_used,
-    reason = "contract suite: expect is the assertion that fails the adapter's test"
-)]
 use crate::{
     Attachment, AttachmentKind, CommandOutcome, ItemKind, PromptSegment, Provider, ProviderEvent,
     StartContext, TurnStatus,
@@ -14,6 +10,10 @@ use std::time::Duration;
 /// Numbers each run's scratch folder: the contract tests share a process and run in parallel.
 static RUNS: AtomicUsize = AtomicUsize::new(0);
 
+#[allow(
+    clippy::expect_used,
+    reason = "contract suite: expect is the assertion that fails the adapter's test"
+)]
 pub fn verify_provider_contract<P: Provider, F: FnOnce() -> P>(factory: F) {
     let mut provider = factory();
 

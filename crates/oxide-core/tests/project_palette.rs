@@ -163,6 +163,23 @@ fn clone_from_url_registers_the_clone() {
 }
 
 #[test]
+fn a_file_url_to_a_real_repository_is_refused_and_nothing_is_cloned() {
+    let f = fixture();
+    let origin = f.root().join("origin/widgets");
+    make_repo(&origin);
+    let parent = f.root().join("code");
+
+    let err = f.core.clone_project(
+        &format!("file://{}", origin.display()),
+        parent.to_str().unwrap(),
+    );
+
+    assert!(err.is_err(), "a file:// URL must not be cloned");
+    assert!(!parent.join("widgets").exists());
+    assert!(f.core.list_projects().unwrap().is_empty());
+}
+
+#[test]
 fn failed_clone_registers_nothing() {
     let f = fixture();
     let parent = f.root().join("code");
