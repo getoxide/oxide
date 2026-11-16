@@ -15,6 +15,14 @@ pub fn is_line_too_long(error: &io::Error) -> bool {
     error.kind() == ErrorKind::InvalidData && error.to_string().starts_with("line exceeds")
 }
 
+/// What a Provider adapter reports when [`read_bounded_line`] stopped its stream.
+pub fn protocol_overflow_message() -> String {
+    format!(
+        "The Provider sent a line over {} MiB, so its session was ended.",
+        PROTOCOL_LINE_CAP / (1024 * 1024)
+    )
+}
+
 /// Reads one line into `buf` (cleared first), without its trailing `\n` or `\r\n`. Returns
 /// `Ok(false)` at end of input. A line longer than `cap` bytes fails with `InvalidData`; at most
 /// `cap` bytes are ever held, and the caller should stop reading since the stream is mid-line.

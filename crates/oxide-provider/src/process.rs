@@ -22,28 +22,32 @@ pub const STDERR_TAIL_LINES: usize = 20;
 /// pipe buffer and deadlock the child. Returns up to the last `STDERR_TAIL_LINES` lines.
 pub fn drain_stderr(stderr: std::process::ChildStderr) -> std::thread::JoinHandle<Option<String>> {
     std::thread::spawn(move || {
+        use crate::bounded_lines::{BoundedLines, LOG_LINE_CAP, is_line_too_long};
         use std::collections::VecDeque;
-        use std::io::{BufRead, BufReader};
+        use std::io::BufReader;
 
         let mut reader = BufReader::new(stderr);
         let mut tail = VecDeque::with_capacity(STDERR_TAIL_LINES);
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    while matches!(buf.last(), Some(b'\n' | b'\r')) {
-                        buf.pop();
+        let mut push = |line: String| {
+            if tail.len() == STDERR_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        };
+        let mut lines = BoundedLines::new(&mut reader, LOG_LINE_CAP);
+        for line in lines.by_ref() {
+            match line {
+                Ok(line) => push(line),
+                Err(error) => {
+                    if is_line_too_long(&error) {
+                        push(format!("[stderr line over {LOG_LINE_CAP} bytes discarded]"));
                     }
-                    let line = String::from_utf8_lossy(&buf).into_owned();
-                    if tail.len() == STDERR_TAIL_LINES {
-                        tail.pop_front();
-                    }
-                    tail.push_back(line);
+                    break;
                 }
             }
         }
+        // Keep emptying the pipe so a chatty child never blocks on it, without keeping anything.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
         let joined = tail.into_iter().collect::<Vec<_>>().join("\n");
         (!joined.is_empty()).then_some(joined)
     })
@@ -79,14 +83,70 @@ pub fn spawn_in_own_group(command: &mut Command) -> &mut Command {
     command
 }
 
+/// Smallest process id or group id Oxide will ever signal. Group 0 is Oxide's own group,
+/// `kill(-1, ..)` reaches every process of the user, and 1 is init: all of them are refused.
+#[cfg(unix)]
+const MIN_SIGNAL_TARGET: i32 = 2;
+
+/// Sends `signal` to every process of group `pgid`. This is the only place that signals a group:
+/// ids of 1 or less (0, 1, negatives) fail with `InvalidInput` and nothing is sent.
+#[cfg(unix)]
+pub fn signal_group(pgid: i32, signal: i32) -> std::io::Result<()> {
+    if pgid < MIN_SIGNAL_TARGET {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to signal process group {pgid}"),
+        ));
+    }
+    // SAFETY: `kill` takes plain integers and touches no memory. `pgid` is at least 2, so the
+    // negated value targets one specific process group and never 0, -1 or init's group.
+    if unsafe { libc::kill(-pgid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Sends `signal` to the single process `pid`; ids of 1 or less fail with `InvalidInput`.
+#[cfg(unix)]
+pub fn signal_process(pid: i32, signal: i32) -> std::io::Result<()> {
+    if pid < MIN_SIGNAL_TARGET {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to signal process {pid}"),
+        ));
+    }
+    // SAFETY: `kill` takes plain integers and touches no memory. `pid` is at least 2, so it
+    // names one specific process and never a group, every process (-1) or init.
+    if unsafe { libc::kill(pid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Ends group `pgid` at once without waiting for it; used when its stdout turned hostile.
+pub fn kill_group(pgid: i32) {
+    #[cfg(unix)]
+    {
+        let _ = signal_group(pgid, libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    terminate_group(pgid, Duration::ZERO, || {});
+    #[cfg(not(any(unix, windows)))]
+    let _ = pgid;
+}
+
 /// Whether any process of group `pgid` still exists (zombies included).
 #[cfg(unix)]
 pub fn group_alive(pgid: i32) -> bool {
     if pgid <= 0 {
         return false;
     }
-    let rc = unsafe { libc::kill(-pgid, 0) };
-    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    match signal_group(pgid, 0) {
+        Ok(()) => true,
+        Err(error) => error.raw_os_error() == Some(libc::EPERM),
+    }
 }
 
 #[cfg(windows)]
@@ -107,7 +167,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
     if pgid <= 0 {
         return;
     }
-    unsafe { libc::kill(-pgid, libc::SIGTERM) };
+    let _ = signal_group(pgid, libc::SIGTERM);
     let deadline = Instant::now() + grace;
     let mut killed = false;
     loop {
@@ -116,7 +176,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
             return;
         }
         if !killed && Instant::now() >= deadline {
-            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            let _ = signal_group(pgid, libc::SIGKILL);
             killed = true;
         }
         // After SIGKILL the group dies at once; this bound only guards against uninterruptible
@@ -307,6 +367,7 @@ impl ProcessRegistry {
 /// (directly, or as the script of an interpreter such as `node claude`).
 #[cfg(unix)]
 fn leader_runs(pid: i32, executable: &str, _identity: Option<&ProcessIdentity>) -> bool {
+    // SAFETY: `getpgid` takes a plain integer, touches no memory and only reports an error.
     if pid <= 0 || unsafe { libc::getpgid(pid) } != pid {
         return false;
     }
@@ -757,11 +818,29 @@ mod tests {
     }
 
     #[test]
+    fn signal_group_refuses_ids_that_would_reach_oxide_or_every_process() {
+        // Signal 0 only checks existence, so a regression here cannot hurt the test run.
+        for pgid in [0, 1, -1, -2, i32::MIN] {
+            let error = signal_group(pgid, 0).expect_err("must refuse");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "pgid {pgid}");
+        }
+    }
+
+    #[test]
+    fn signal_process_refuses_ids_that_would_reach_every_process() {
+        for pid in [0, 1, -1, i32::MIN] {
+            let error = signal_process(pid, 0).expect_err("must refuse");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "pid {pid}");
+        }
+    }
+
+    #[test]
     fn child_leads_its_own_group() {
         let mut child = spawn_sleeper("sleep");
         let pid = child.id() as i32;
+        // SAFETY: `getpgid` takes a plain integer and touches no memory.
         assert_eq!(unsafe { libc::getpgid(pid) }, pid);
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
+        signal_group(pid, libc::SIGKILL).unwrap();
         assert!(wait_gone(pid, &mut child));
     }
 
