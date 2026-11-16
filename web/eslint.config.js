@@ -10,6 +10,20 @@ export default defineConfig(
   ...tseslint.configs.recommended,
   reactHooks.configs.flat.recommended,
   { languageOptions: { globals: globals.browser } },
+  {
+    // HTML sinks are how hostile text becomes markup. The only exceptions are the two documented
+    // `eslint-disable-next-line` sites (highlighted code in ItemContent, chip markup in ComposerInput).
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']", message: "HTML sink: render text as React children instead." },
+        { selector: "Property[key.name='dangerouslySetInnerHTML']", message: "HTML sink: render text as React children instead." },
+        { selector: "MemberExpression[property.name=/^(innerHTML|outerHTML|insertAdjacentHTML)$/]", message: "HTML sink: use textContent or DOM nodes instead." },
+      ],
+    },
+  },
   { files: ["scripts/*.cjs", "web/scripts/*.cjs"], languageOptions: { globals: globals.node }, rules: { "@typescript-eslint/no-require-imports": "off" } },
   { files: ["tools/**/*.mjs"], languageOptions: { globals: globals.node } },
 );

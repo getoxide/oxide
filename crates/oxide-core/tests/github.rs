@@ -110,6 +110,22 @@ impl Fixture {
             .collect()
     }
 
+    /// The `GIT_CONFIG_*` variables each `gh` invocation ran with.
+    fn gh_git_config(&self) -> Vec<std::collections::BTreeMap<String, String>> {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(self.gh_dir.join("calls"))
+            .map(|dir| dir.map(|e| e.unwrap().path()).collect())
+            .unwrap_or_default();
+        files.sort();
+        files
+            .iter()
+            .map(|file| {
+                let v: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+                serde_json::from_value(v["git_config"].clone()).unwrap()
+            })
+            .collect()
+    }
+
     fn create_calls(&self) -> Vec<Vec<String>> {
         self.gh_calls()
             .into_iter()
@@ -218,6 +234,25 @@ fn pr_base_branches_come_from_github_and_request_all_pages() {
             "--jq",
             ".[].name"
         ]));
+}
+
+#[test]
+fn gh_runs_with_the_git_hardening_in_its_environment() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    f.core.pull_request_base_branches(f.project.id).unwrap();
+
+    let calls = f.gh_git_config();
+    assert!(!calls.is_empty());
+    for config in calls {
+        assert_eq!(config["GIT_CONFIG_COUNT"], "3");
+        assert_eq!(config["GIT_CONFIG_KEY_0"], "core.fsmonitor");
+        assert_eq!(config["GIT_CONFIG_VALUE_0"], "false");
+        assert_eq!(config["GIT_CONFIG_KEY_1"], "core.untrackedCache");
+        assert_eq!(config["GIT_CONFIG_VALUE_1"], "false");
+        assert_eq!(config["GIT_CONFIG_KEY_2"], "protocol.ext.allow");
+        assert_eq!(config["GIT_CONFIG_VALUE_2"], "never");
+    }
 }
 
 #[test]

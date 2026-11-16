@@ -15,6 +15,7 @@ mod discovery;
 mod error;
 mod files;
 mod git;
+mod git_command;
 mod git_diff;
 mod github;
 mod language_install;
@@ -179,6 +180,8 @@ pub struct Core {
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
     next_terminal_id: AtomicU32,
+    /// The Project each open terminal belongs to, to mark it acted upon on its first command.
+    terminal_projects: Mutex<HashMap<u32, u32>>,
     project_services: Arc<project_services::ProjectServices>,
     language_servers: language_server::LanguageServers,
     dirty_editors: Mutex<std::collections::HashSet<String>>,
@@ -244,6 +247,7 @@ impl Core {
             processes,
             terminals: Mutex::new(HashMap::new()),
             next_terminal_id: AtomicU32::new(1),
+            terminal_projects: Mutex::new(HashMap::new()),
             project_services: Arc::new(project_services::ProjectServices::new()),
             language_servers: language_server::LanguageServers::default(),
             dirty_editors: Mutex::new(std::collections::HashSet::new()),
@@ -516,13 +520,13 @@ impl Core {
     /// Creates `parent/name` with `git init` and registers it as a Project.
     pub fn create_project(&self, parent: &str, name: &str) -> Result<ProjectSummary> {
         let dest = project_setup::create(&self.expand_home(parent.trim()), name)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
     }
 
     /// Clones a Git URL into `parent/<repository name>` and registers it as a Project.
     pub fn clone_project(&self, url: &str, parent: &str) -> Result<ProjectSummary> {
         let dest = project_setup::clone_url(&self.expand_home(parent.trim()), url)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
     }
 
     /// The user's GitHub repositories matching `query`, found through `gh`.
@@ -540,7 +544,46 @@ impl Core {
         let dest =
             project_setup::github_clone_target(&self.expand_home(parent.trim()), name_with_owner)?;
         github::clone_repository(&self.gh, name_with_owner, &dest)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
+    }
+
+    /// Registers a folder Oxide itself created or cloned: the user chose its content, so it
+    /// counts as acted upon from the start.
+    fn add_created_project(&self, dest: &Path) -> Result<ProjectSummary> {
+        let project = self.add_project(&dest.to_string_lossy())?;
+        self.mark_project_acted_upon(project.id)?;
+        Ok(project)
+    }
+
+    /// Records that the user did something in the Project (a prompt, a terminal command, Pull or
+    /// Push), which lets Oxide fetch its remote on its own from then on.
+    pub fn mark_project_acted_upon(&self, project_id: u32) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute(
+            "UPDATE projects SET acted_upon = 1 WHERE id = ?1",
+            [project_id],
+        )?;
+        Ok(())
+    }
+
+    /// Whether the user has acted in the Project, so that automatic fetch is on.
+    pub fn project_acted_upon(&self, project_id: u32) -> Result<bool> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT acted_upon FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn mark_thread_project_acted_upon(&self, thread_id: u32) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute(
+            "UPDATE projects SET acted_upon = 1
+             WHERE id = (SELECT project_id FROM threads WHERE id = ?1)",
+            [thread_id],
+        )?;
+        Ok(())
     }
 
     /// Shows the Project's checkout, or the Thread's, in Finder.
@@ -1162,6 +1205,7 @@ impl Core {
     /// them.
     pub fn send_prompt_segments(&self, thread_id: u32, input: &[PromptInput]) -> Result<()> {
         let segments = self.attachment_store().resolve(input)?;
+        self.mark_thread_project_acted_upon(thread_id)?;
         // Giving a chat Thread its own worktree (and running the Setup command) happens on its
         // first prompt; a failed Setup means no Turn is started.
         let start_turn = self.ensure_worktree(thread_id)?;
@@ -1393,6 +1437,10 @@ impl Core {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, session);
+        self.terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, project_id);
         Ok(summary)
     }
 
@@ -1802,6 +1850,11 @@ impl Core {
 
     /// Like [`Core::fetch_project`], with the current time injected.
     pub fn fetch_project_at(&self, project_id: u32, now: std::time::Instant) -> Result<bool> {
+        // A folder the user has not acted in yet is not contacted: its own configuration may
+        // name what a fetch would run.
+        if !self.project_acted_upon(project_id)? {
+            return Ok(false);
+        }
         let checkout = self.main_checkout(project_id)?;
         let fetched = self.git.fetch(&checkout, now)?;
         if fetched {
@@ -1814,6 +1867,7 @@ impl Core {
     /// `git pull --ff-only` in a Thread's checkout (`None`: the main one); a diverged branch
     /// fails with Git's message.
     pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
+        self.mark_project_acted_upon(project_id)?;
         // Pulling rewrites files like a checkout does, so it takes the same guard.
         self.switch_branch(project_id, thread_id, git::pull)
     }
@@ -1839,6 +1893,7 @@ impl Core {
         thread_id: Option<u32>,
         allow_protected: bool,
     ) -> Result<()> {
+        self.mark_project_acted_upon(project_id)?;
         let cwd = self.git_target(project_id, thread_id)?.root;
         self.git.mutate(&cwd, || git::push(&cwd, allow_protected))?;
         Ok(())
@@ -2248,11 +2303,28 @@ impl Core {
     }
 
     pub fn write_terminal(&self, terminal_id: u32, bytes: &[u8]) -> Result<()> {
-        self.terminal(terminal_id)?.write(bytes)
+        let session = self.terminal(terminal_id)?;
+        self.mark_terminal_project_acted_upon(terminal_id)?;
+        session.write(bytes)
     }
 
     pub fn run_terminal_block(&self, terminal_id: u32, command: &str, token: &str) -> Result<()> {
-        self.terminal(terminal_id)?.run_block(command, token)
+        let session = self.terminal(terminal_id)?;
+        self.mark_terminal_project_acted_upon(terminal_id)?;
+        session.run_block(command, token)
+    }
+
+    fn mark_terminal_project_acted_upon(&self, terminal_id: u32) -> Result<()> {
+        let project = self
+            .terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&terminal_id)
+            .copied();
+        match project {
+            Some(project) => self.mark_project_acted_upon(project),
+            None => Ok(()),
+        }
     }
     pub fn complete_terminal(
         &self,
@@ -2276,6 +2348,10 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&terminal_id)
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
+        self.terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&terminal_id);
         session.close();
         Ok(())
     }
