@@ -1180,12 +1180,143 @@ pub fn edit_pull_request(gh: &Gh, cwd: &Path, number: u32, edit: &PullRequestEdi
     Ok(())
 }
 
-/// A link for the system browser, which only ever gets `https`.
+/// Documentation links Oxide itself ships (Language tools and developer tools). Matched whole.
+const FIXED_DOCUMENTATION_URLS: [&str; 6] = [
+    "https://github.com/microsoft/pyright/blob/main/docs/installation.md",
+    "https://github.com/typescript-language-server/typescript-language-server",
+    "https://rust-analyzer.github.io/book/installation.html",
+    "https://clangd.llvm.org/installation",
+    "https://git-scm.com/downloads",
+    "https://cli.github.com/",
+];
+
+/// Parses a link for the system browser: `https`, no userinfo, no whitespace or control
+/// characters. Returns the host.
+fn parse_https_link(url: &str) -> Result<String> {
+    let unexpected = || Error::Github(format!("Unexpected link: {}", redact_url_credentials(url)));
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(unexpected());
+    }
+    let parsed = url::Url::parse(url).map_err(|_| unexpected())?;
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(unexpected());
+    }
+    parsed
+        .host_str()
+        .map(str::to_owned)
+        .filter(|host| !host.is_empty())
+        .ok_or_else(unexpected)
+}
+
+fn is_listed_host(host: &str) -> bool {
+    host == "github.com"
+        || host.ends_with(".github.com")
+        || host.ends_with(".githubusercontent.com")
+}
+
+/// A link that may open without asking: GitHub, or one of the fixed documentation URLs. Any
+/// other well-formed `https` host is [`Error::UnlistedLinkHost`], for the UI to confirm.
 pub fn checked_url(url: &str) -> Result<&str> {
-    if url.starts_with("https://") {
+    let host = parse_https_link(url)?;
+    if is_listed_host(&host) || FIXED_DOCUMENTATION_URLS.contains(&url) {
         Ok(url)
     } else {
-        Err(Error::Github(format!("Unexpected link: {url}")))
+        Err(Error::UnlistedLinkHost { host })
+    }
+}
+
+/// A well-formed `https` link on any host, for after the user confirmed the host.
+pub fn confirmed_url(url: &str) -> Result<&str> {
+    parse_https_link(url).map(|_| url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listed_hosts_and_fixed_documentation_open_directly() {
+        for url in [
+            "https://github.com/fake/repo/actions/runs/1",
+            "https://api.github.com/x",
+            "https://avatars.githubusercontent.com/u/1",
+            "https://rust-analyzer.github.io/book/installation.html",
+            "https://clangd.llvm.org/installation",
+        ] {
+            assert_eq!(checked_url(url).unwrap(), url, "{url}");
+        }
+    }
+
+    #[test]
+    fn every_language_tool_and_developer_tool_guide_opens_directly() {
+        let home = tempfile::tempdir().unwrap();
+        for tool in crate::language_server::tools(home.path()) {
+            checked_url(&tool.documentation).unwrap();
+        }
+        for tool in crate::desktop_tools::developer_tools() {
+            checked_url(&tool.documentation).unwrap();
+        }
+    }
+
+    #[test]
+    fn comment_ids_are_base64url_text_never_a_file_reference() {
+        for id in ["IC_kwDOAbc123-_", "MDEyOklzc3VlQ29tbWVudDE="] {
+            assert_eq!(checked_comment_id(id).unwrap(), id);
+        }
+        for id in [
+            "",
+            "@/etc/passwd",
+            "@x",
+            "a b",
+            "a\nb",
+            "id=1&x",
+            "a/b",
+            "é",
+        ] {
+            assert!(checked_comment_id(id).is_err(), "{id:?}");
+        }
+    }
+
+    #[test]
+    fn foreign_hosts_ask_for_confirmation_with_the_host() {
+        for (url, host) in [
+            ("https://evil.example/", "evil.example"),
+            ("https://notgithub.com/", "notgithub.com"),
+            (
+                "https://github.com.evil.example/",
+                "github.com.evil.example",
+            ),
+            ("https://clangd.llvm.org/other", "clangd.llvm.org"),
+        ] {
+            match checked_url(url) {
+                Err(Error::UnlistedLinkHost { host: h }) => assert_eq!(h, host),
+                other => panic!("{url}: {other:?}"),
+            }
+            assert_eq!(confirmed_url(url).unwrap(), url);
+        }
+    }
+
+    #[test]
+    fn malformed_or_dangerous_links_are_refused_even_when_confirmed() {
+        for url in [
+            "https://github.com@evil.example/",
+            "https://user:pw@github.com/",
+            "http://github.com/",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "https://github.com/a b",
+            "https://github.com/a\tb",
+            "https://github.com/a\nb",
+            "https://github.com/\u{7}",
+            "https://",
+            "",
+        ] {
+            assert!(matches!(checked_url(url), Err(Error::Github(_))), "{url:?}");
+            assert!(
+                matches!(confirmed_url(url), Err(Error::Github(_))),
+                "{url:?}"
+            );
+        }
     }
 }
 
@@ -1200,8 +1331,24 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
+/// A GraphQL node id (`IC_kwDO...`) is base64url-style text. Anything else, notably a leading
+/// `@`, which `gh api -F` would read as a file, is refused.
+fn checked_comment_id(id: &str) -> Result<&str> {
+    if !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='))
+    {
+        Ok(id)
+    } else {
+        Err(Error::Github("That comment id is not valid.".into()))
+    }
+}
+
 /// Rewrites a conversation comment of a pull request or an issue (both are issue comments to GitHub).
 pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
+    let id = checked_comment_id(id)?;
     let body = body.trim();
     if body.is_empty() {
         return Err(Error::Github(
@@ -1214,7 +1361,7 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
         &[
             "api",
             "graphql",
-            "-F",
+            "-f",
             &format!("id={id}"),
             "-f",
             &format!("body={body}"),
@@ -1227,13 +1374,14 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
 
 /// Deletes a conversation comment of a pull request or an issue.
 pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
+    let id = checked_comment_id(id)?;
     gh.require_ready(cwd)?;
     gh.run(
         cwd,
         &[
             "api",
             "graphql",
-            "-F",
+            "-f",
             &format!("id={id}"),
             "-f",
             "query=mutation($id:ID!){deleteIssueComment(input:{id:$id}){clientMutationId}}",

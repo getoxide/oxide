@@ -1,7 +1,6 @@
 use crate::terminal::TerminalSession;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-#[cfg(any(not(windows), test))]
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -17,6 +16,26 @@ pub struct TerminalMatch {
     pub text: String,
     pub label: String,
     pub detail: String,
+}
+
+/// The directory completion lists: the `cwd` the webview sent only when it canonicalises inside
+/// one of the `checkouts` of an open Project, otherwise the terminal's own recorded directory.
+pub fn trusted_cwd(requested: &str, checkouts: &[std::path::PathBuf], recorded: &str) -> String {
+    let inside = Path::new(requested)
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            checkouts.iter().any(|checkout| {
+                checkout
+                    .canonicalize()
+                    .is_ok_and(|checkout| path.starts_with(checkout))
+            })
+        });
+    match inside {
+        Some(_) => requested.to_string(),
+        None => recorded.to_string(),
+    }
 }
 
 pub fn complete(
@@ -187,5 +206,35 @@ mod tests {
         let result = path_completion("cat so", 6, root.path());
         assert_eq!(result.replacement_index, 4);
         assert_eq!(result.matches[0].text, "'some file.txt'");
+    }
+
+    #[test]
+    fn cwd_outside_every_open_checkout_is_ignored_for_the_recorded_directory() {
+        let base = tempfile::tempdir().unwrap();
+        let checkout = base.path().join("proj");
+        let inner = checkout.join("src");
+        let outside = base.path().join("elsewhere");
+        for dir in [&inner, &outside] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let roots = [checkout.clone()];
+        let text = |p: &Path| p.to_string_lossy().into_owned();
+        assert_eq!(trusted_cwd(&text(&inner), &roots, "recorded"), text(&inner));
+        assert_eq!(
+            trusted_cwd(&text(&checkout), &roots, "recorded"),
+            text(&checkout)
+        );
+        assert_eq!(trusted_cwd(&text(&outside), &roots, "recorded"), "recorded");
+        assert_eq!(trusted_cwd("/", &roots, "recorded"), "recorded");
+        assert_eq!(trusted_cwd("/no/such/dir", &roots, "recorded"), "recorded");
+        let escape = format!("{}/../../elsewhere", text(&inner));
+        assert_eq!(trusted_cwd(&escape, &roots, "recorded"), "recorded");
+        assert_eq!(trusted_cwd(&text(&inner), &[], "recorded"), "recorded");
+        #[cfg(unix)]
+        {
+            let link = checkout.join("out");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert_eq!(trusted_cwd(&text(&link), &roots, "recorded"), "recorded");
+        }
     }
 }

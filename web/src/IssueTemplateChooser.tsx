@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowRightIcon, LinkExternalIcon } from "@primer/octicons-react";
-import { commands } from "./bindings";
+import { openExternalLink } from "./externalLink";
 import type { IssueTemplate, IssueTemplates } from "./issueTemplates";
 
 interface IssueTemplateChooserProps {
@@ -49,7 +49,7 @@ export function IssueTemplateChooser({ templates, onBack, onChoose }: IssueTempl
           </li>
           {config.contactLinks.map((link) => (
             <li key={link.url}>
-              <button type="button" className="issue-template" onClick={() => void commands.openLink(link.url)}>
+              <button type="button" className="issue-template" onClick={() => void openExternalLink(link.url)}>
                 <span className="issue-template-body">
                   <span className="issue-template-name">{link.name}</span>
                   {link.about && <span className="issue-template-about">{link.about}</span>}

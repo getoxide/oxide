@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { CheckCircleIcon, DownloadIcon, MarkGithubIcon, LinkExternalIcon } from "@primer/octicons-react";
 import { commands, type DeveloperTool } from "./bindings";
+import { openExternalLink } from "./externalLink";
 const TerminalWorkbench = lazy(() => import("./TerminalWorkbench").then((module) => ({ default: module.TerminalWorkbench })));
 
 /** Shared recovery path for a fresh machine, also available from Settings. */
@@ -57,7 +58,7 @@ export function GithubSetup({ guidance, onReady, projectId }: { guidance?: strin
       {tools?.map((tool) => <li key={tool.id}>
         <span className={`setup-step-state${tool.installed ? " complete" : ""}`}>{tool.installed ? <CheckCircleIcon size={18} /> : <DownloadIcon size={18} />}</span>
         <div><strong>{tool.name}</strong><p>{tool.id === "git" ? "Version control and local repositories" : "Pull requests, issues and your GitHub account"}</p><small className="dim" title={tool.path ?? undefined}>{tool.installed ? "Installed" : "Not installed"}</small></div>
-        {tool.installed ? null : tool.canInstall ? <button className="btn" disabled={installing !== null || checking} onClick={() => void install(tool)}>{installing === tool.id ? "Installing…" : `Install ${tool.name}`}</button> : <button className="btn" disabled={installing !== null} onClick={() => void commands.openLink(tool.documentation).then((r) => { if (r.status === "error") setError(r.error.message); }).catch((e) => setError(String(e)))}>Installation guide <LinkExternalIcon size={12} /></button>}
+        {tool.installed ? null : tool.canInstall ? <button className="btn" disabled={installing !== null || checking} onClick={() => void install(tool)}>{installing === tool.id ? "Installing…" : `Install ${tool.name}`}</button> : <button className="btn" disabled={installing !== null} onClick={() => void openExternalLink(tool.documentation).then((message) => { if (message) setError(message); }).catch((e) => setError(String(e)))}>Installation guide <LinkExternalIcon size={12} /></button>}
       </li>)}
       {installed && onReady && <li><span className="setup-step-state"><MarkGithubIcon size={18} /></span><div><strong>Sign in to GitHub</strong><p>Connect your account, then check again to continue.</p></div>
         {projectId !== undefined ? <button className="btn" disabled={login} onClick={() => { setLogin(true); setLoginCommand({ id: Date.now(), command: "gh auth login --web --git-protocol https" }); }}>Open sign-in terminal</button> : <button className="btn" onClick={() => void navigator.clipboard.writeText("gh auth login --web --git-protocol https").then(() => setCopied(true)).catch((e) => setError(String(e)))}>{copied ? "Copied — run in your terminal" : "Copy sign-in command"}</button>}
