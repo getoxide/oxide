@@ -84,7 +84,8 @@ fn configurations(home: &Path) -> HashMap<String, LanguageServerConfig> {
 
 fn resolve(program: &str, home: &Path) -> Option<PathBuf> {
     let mut directories = vec![
-        home.join("tools/language-servers/node_modules/.bin"),
+        home.join("tools/language-servers/python/node_modules/.bin"),
+        home.join("tools/language-servers/typescript/node_modules/.bin"),
         home.join("tools/language-servers/bin"),
     ];
     if let Some(user) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
@@ -128,9 +129,11 @@ pub fn tools(home: &Path) -> Vec<LanguageTool> {
                 });
             let resolved = resolve(&config.command, home);
             let install_command = match *id {
-                "python" => format!("npm install --prefix \"{prefix}\" pyright@1.1.414"),
+                "python" => format!(
+                    "npm install --ignore-scripts --prefix \"{prefix}/python\" pyright@1.1.414"
+                ),
                 "typescript" => format!(
-                    "npm install --prefix \"{prefix}\" typescript@6.0.3 typescript-language-server@6.0.2"
+                    "npm install --ignore-scripts --prefix \"{prefix}/typescript\" typescript@6.0.3 typescript-language-server@6.0.2"
                 ),
                 "rust" => "rustup component add rust-analyzer".into(),
                 _ if cfg!(windows) => "winget install --id LLVM.LLVM --exact".into(),
@@ -331,8 +334,9 @@ impl LanguageServers {
                 language: language.into(),
                 initialization_options: if language == "typescript" {
                     let local = root.join("node_modules/typescript/lib/tsserver.js");
-                    let managed =
-                        home.join("tools/language-servers/node_modules/typescript/lib/tsserver.js");
+                    let managed = home.join(
+                        "tools/language-servers/typescript/node_modules/typescript/lib/tsserver.js",
+                    );
                     let sdk = if local.is_file() {
                         Some(local)
                     } else if managed.is_file() {

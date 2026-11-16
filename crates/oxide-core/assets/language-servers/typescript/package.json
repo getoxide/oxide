@@ -1,0 +1,9 @@
+{
+  "name": "oxide-language-server-typescript",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "typescript": "6.0.3",
+    "typescript-language-server": "6.0.2"
+  }
+}
