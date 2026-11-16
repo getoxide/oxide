@@ -184,6 +184,9 @@ pub struct Core {
     next_terminal_id: AtomicU32,
     /// The Project each open terminal belongs to, to mark it acted upon on its first command.
     terminal_projects: Mutex<HashMap<u32, u32>>,
+    /// Terminals whose Project has already been marked acted upon, so a keystroke does not
+    /// write the database again.
+    acted_terminals: Mutex<std::collections::HashSet<u32>>,
     project_services: Arc<project_services::ProjectServices>,
     language_servers: language_server::LanguageServers,
     dirty_editors: Mutex<std::collections::HashSet<String>>,
@@ -257,6 +260,7 @@ impl Core {
             terminals: Mutex::new(HashMap::new()),
             next_terminal_id: AtomicU32::new(1),
             terminal_projects: Mutex::new(HashMap::new()),
+            acted_terminals: Mutex::new(std::collections::HashSet::new()),
             project_services: Arc::new(project_services::ProjectServices::new()),
             language_servers: language_server::LanguageServers::default(),
             dirty_editors: Mutex::new(std::collections::HashSet::new()),
@@ -569,7 +573,7 @@ impl Core {
     pub fn mark_project_acted_upon(&self, project_id: u32) -> Result<()> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         db.execute(
-            "UPDATE projects SET acted_upon = 1 WHERE id = ?1",
+            "UPDATE projects SET acted_upon = 1 WHERE id = ?1 AND acted_upon = 0",
             [project_id],
         )?;
         Ok(())
@@ -2355,6 +2359,26 @@ impl Core {
     }
 
     fn mark_terminal_project_acted_upon(&self, terminal_id: u32) -> Result<()> {
+        let first = self
+            .acted_terminals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(terminal_id);
+        if !first {
+            return Ok(());
+        }
+        let result = self.mark_terminal_project_in_db(terminal_id);
+        if result.is_err() {
+            // Not written: the next keystroke tries again.
+            self.acted_terminals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&terminal_id);
+        }
+        result
+    }
+
+    fn mark_terminal_project_in_db(&self, terminal_id: u32) -> Result<()> {
         let project = self
             .terminal_projects
             .lock()
