@@ -15,6 +15,7 @@ mod discovery;
 mod error;
 mod files;
 mod git;
+mod git_command;
 mod git_diff;
 mod github;
 mod language_install;
