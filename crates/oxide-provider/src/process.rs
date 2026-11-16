@@ -451,6 +451,9 @@ mod windows_process {
         {
             return Ok(());
         }
+        // SAFETY: every Win32 call in this block gets a handle created here, is checked for
+        // null or failure before use, and the handles are closed on every exit path. The zeroed
+        // limits struct is plain C data that is fully initialised before it is passed in.
         unsafe {
             let job = CreateJobObjectW(null(), null());
             if job.is_null() {
@@ -506,21 +509,29 @@ mod windows_process {
         }
     }
 
+    /// # Safety
+    ///
+    /// `job` must be a live job object handle.
     unsafe fn attach_existing_descendants(root_pid: u32, job: HANDLE) -> io::Result<()> {
         let mut attached = HashSet::from([root_pid]);
         loop {
+            // SAFETY: plain flags and a pid; the snapshot handle is checked before use.
             let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
             if snapshot == -1_isize as HANDLE {
                 return Err(io::Error::last_os_error());
             }
+            // SAFETY: `PROCESSENTRY32W` is plain C data for which all-zero is valid.
             let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
             entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
             let mut parents = Vec::new();
+            // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
             let mut found = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
             while found {
                 parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+                // SAFETY: same as above.
                 found = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
             }
+            // SAFETY: `snapshot` is a valid handle that is closed exactly once.
             unsafe { CloseHandle(snapshot) };
 
             let mut descendants = HashSet::new();
@@ -542,6 +553,7 @@ mod windows_process {
                 .collect::<Vec<_>>()
             {
                 attached.insert(pid);
+                // SAFETY: `OpenProcess` takes plain values; a null result is handled below.
                 let process = unsafe {
                     OpenProcess(
                         PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -553,10 +565,13 @@ mod windows_process {
                     continue;
                 }
                 let mut already_in_job = 0;
+                // SAFETY: `process` is a valid, non-null handle and `job` is the caller's live job.
                 let checked = unsafe { IsProcessInJob(process, job, &mut already_in_job) } != 0;
                 let assigned = checked
                     && (already_in_job != 0
+                        // SAFETY: same handles as the check above.
                         || unsafe { AssignProcessToJobObject(job, process) } != 0);
+                // SAFETY: `process` is a valid handle that is closed exactly once.
                 unsafe { CloseHandle(process) };
                 added |= assigned;
             }
@@ -566,22 +581,30 @@ mod windows_process {
         }
     }
 
+    /// # Safety
+    ///
+    /// `pid` must name a process created suspended by this module.
     unsafe fn resume_primary_thread(pid: u32) -> io::Result<()> {
+        // SAFETY: plain flags and a pid; the snapshot handle is checked before use.
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
         if snapshot == -1_isize as HANDLE {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `THREADENTRY32` is plain C data for which all-zero is valid.
         let mut entry: THREADENTRY32 = unsafe { zeroed() };
         entry.dwSize = size_of::<THREADENTRY32>() as u32;
         let mut thread_id = None;
+        // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
         let mut found = unsafe { Thread32First(snapshot, &mut entry) } != 0;
         while found {
             if entry.th32OwnerProcessID == pid {
                 thread_id = Some(entry.th32ThreadID);
                 break;
             }
+            // SAFETY: same as above.
             found = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
         }
+        // SAFETY: `snapshot` is a valid handle that is closed exactly once.
         unsafe { CloseHandle(snapshot) };
         let Some(thread_id) = thread_id else {
             return Err(io::Error::new(
@@ -589,12 +612,15 @@ mod windows_process {
                 "suspended process thread was not found",
             ));
         };
+        // SAFETY: `OpenThread` takes plain values; a null result is handled just below.
         let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id) };
         if thread.is_null() {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `thread` is a valid, non-null handle.
         let resumed = unsafe { ResumeThread(thread) } != u32::MAX;
         let error = (!resumed).then(io::Error::last_os_error);
+        // SAFETY: `thread` is a valid handle that is closed exactly once.
         unsafe { CloseHandle(thread) };
         error.map_or(Ok(()), Err)
     }
@@ -606,6 +632,8 @@ mod windows_process {
         let jobs = jobs().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(&job) = jobs.get(&pid) {
             let job = job as HANDLE;
+            // SAFETY: `job` is a live job handle owned by the registry (guarded by the lock held
+            // here), and the zeroed accounting struct is plain C data the call fills in.
             unsafe {
                 let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = zeroed();
                 return QueryInformationJobObject(
@@ -618,6 +646,8 @@ mod windows_process {
                     && accounting.ActiveProcesses != 0;
             }
         }
+        // SAFETY: `OpenProcess` takes plain values; the handle is checked for null and closed
+        // once.
         unsafe {
             let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
             if process.is_null() {
@@ -640,9 +670,12 @@ mod windows_process {
             .copied();
         if let Some(job) = job {
             let job = job as HANDLE;
+            // SAFETY: `job` is a live job handle owned by the registry.
             unsafe { TerminateJobObject(job, 1) };
             return;
         }
+        // SAFETY: `OpenProcess` takes plain values; the handle is checked for null and closed
+        // once.
         unsafe {
             let process = OpenProcess(PROCESS_TERMINATE, 0, pid as u32);
             if !process.is_null() {
@@ -658,6 +691,7 @@ mod windows_process {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&pid)
         {
+            // SAFETY: the handle was just removed from the registry, so this is its only close.
             unsafe { CloseHandle(job as HANDLE) };
         }
     }
@@ -693,6 +727,8 @@ mod windows_process {
         if pid <= 0 {
             return None;
         }
+        // SAFETY: the handle is checked for null and closed once; the buffers outlive the calls
+        // and `length` holds the buffer size in characters, as the API requires.
         unsafe {
             let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
             if process.is_null() {
@@ -906,7 +942,7 @@ mod tests {
 
         assert!(killed.is_empty());
         assert!(group_alive(pid));
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
+        signal_group(pid, libc::SIGKILL).unwrap();
         assert!(wait_gone(pid, &mut bystander));
     }
 

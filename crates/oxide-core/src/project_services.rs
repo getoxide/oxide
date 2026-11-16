@@ -623,7 +623,9 @@ fn launch(service: &Arc<Service>) -> Result<()> {
             summary.command
         )));
     }
-    service.registry.register(pid as i32, shell());
+    service
+        .registry
+        .register(pid as i32, &shell().to_string_lossy());
     {
         let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
         state.summary.pid = pid;
@@ -649,19 +651,20 @@ fn launch(service: &Arc<Service>) -> Result<()> {
     Ok(())
 }
 
+/// The OS shell, by absolute path where the platform has a fixed one.
 #[cfg(unix)]
-fn shell() -> &'static str {
-    "sh"
+fn shell() -> std::path::PathBuf {
+    oxide_provider::command::os_tool("sh")
 }
 
 #[cfg(windows)]
-fn shell() -> &'static str {
-    "cmd.exe"
+fn shell() -> std::path::PathBuf {
+    oxide_provider::command::os_tool("cmd.exe")
 }
 
 #[cfg(not(any(unix, windows)))]
-fn shell() -> &'static str {
-    "sh"
+fn shell() -> std::path::PathBuf {
+    "sh".into()
 }
 
 fn spawn_reader(

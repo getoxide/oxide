@@ -363,10 +363,10 @@ fn interrupt_session_processes(session_id: i32) -> bool {
 fn kill_session_processes(session_id: i32) {
     if let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Ok(pid) = line.trim().parse::<i32>() {
-                if session_of(pid) == Some(session_id) {
-                    let _ = signal_process(pid, libc::SIGKILL);
-                }
+            if let Ok(pid) = line.trim().parse::<i32>()
+                && session_of(pid) == Some(session_id)
+            {
+                let _ = signal_process(pid, libc::SIGKILL);
             }
         }
     }
@@ -393,18 +393,6 @@ fn require_pid(pid: Option<u32>) -> Result<u32> {
         _ => Err(Error::Terminal(
             "terminal shell has no process id".to_string(),
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_pty_child_without_a_pid_fails_the_start() {
-        assert!(matches!(require_pid(None), Err(Error::Terminal(_))));
-        assert!(matches!(require_pid(Some(0)), Err(Error::Terminal(_))));
-        assert_eq!(require_pid(Some(4242)).unwrap(), 4242);
     }
 }
 
@@ -512,4 +500,16 @@ fn read_output(
 
 pub fn next_id(counter: &AtomicU32) -> u32 {
     counter.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pty_child_without_a_pid_fails_the_start() {
+        assert!(matches!(require_pid(None), Err(Error::Terminal(_))));
+        assert!(matches!(require_pid(Some(0)), Err(Error::Terminal(_))));
+        assert_eq!(require_pid(Some(4242)).unwrap(), 4242);
+    }
 }
