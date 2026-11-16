@@ -181,7 +181,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     core.close_terminal(terminal.id).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
+        // SAFETY: signal 0 only probes whether the target exists; nothing is delivered.
         let result = unsafe { libc::kill(-(pid as i32), 0) };
+        // SAFETY: same as above.
         let child_result = unsafe { libc::kill(child_pid, 0) };
         let missing = |result| {
             result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)

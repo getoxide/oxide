@@ -102,13 +102,13 @@ struct SetupRun {
 fn setup_command(command: &str, worktree: &Path, project_root: &Path) -> Command {
     #[cfg(unix)]
     let mut cmd = {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new(oxide_provider::command::os_tool("sh"));
         cmd.arg("-c").arg(format!("exec 2>&1\n{command}"));
         cmd
     };
     #[cfg(windows)]
     let mut cmd = {
-        let mut cmd = Command::new("cmd");
+        let mut cmd = Command::new(oxide_provider::command::os_tool("cmd"));
         cmd.arg("/C").arg(format!("{command} 2>&1"));
         oxide_provider::process::hide_console(&mut cmd);
         cmd

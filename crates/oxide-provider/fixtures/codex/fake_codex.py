@@ -214,6 +214,15 @@ for line in sys.stdin:
                     "turn": {"id": "turn-deadlock", "status": "completed"}
                 }
             })
+        elif "oversized_test" in prompt_text:
+            send_msg({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {"turn": {"id": "turn-1", "status": "inProgress"}}
+            })
+            # One endless line: past the 16 MiB protocol cap, newline only at the very end.
+            sys.stdout.write("x" * (17 * 1024 * 1024) + "\n")
+            sys.stdout.flush()
         elif "approval_test" in prompt_text:
             send_msg({
                 "jsonrpc": "2.0",

@@ -1,6 +1,7 @@
 //! Local language servers. Core owns process lifetime and stdio framing; the editor owns LSP.
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, bounded};
+use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, read_bounded_line};
 use oxide_provider::command::find_in;
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, release_job, spawn_in_own_group,
@@ -315,12 +316,14 @@ impl LanguageServers {
             );
         });
         std::thread::spawn(move || {
-            for line in BufReader::new(stderr)
-                .lines()
-                .map_while(std::result::Result::ok)
+            let mut stderr = BufReader::new(stderr);
+            for line in
+                BoundedLines::new(&mut stderr, LOG_LINE_CAP).map_while(std::result::Result::ok)
             {
                 if errors.send(serde_json::json!({"jsonrpc":"2.0", "method":"window/logMessage", "params":{"type":4,"message":line.chars().take(2000).collect::<String>()}}).to_string()).is_err() { break; }
             }
+            // A line over the cap ends the log feed; keep emptying the pipe so the server never blocks.
+            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.sessions
@@ -419,11 +422,13 @@ fn read_message(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     let mut length = None;
     let mut total = 0;
     loop {
-        let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
+        let mut line = Vec::new();
+        if !read_bounded_line(reader, &mut line, LOG_LINE_CAP)? {
             return Ok(None);
         }
-        total += header.len();
+        let header = String::from_utf8_lossy(&line);
+        // The terminator is stripped by the reader; count it back for the total.
+        total += header.len() + 2;
         if total > 8192 {
             return Err(std::io::Error::other("LSP header too large"));
         }
@@ -518,6 +523,25 @@ mod tests {
         assert_eq!(saved["python"].args, ["--stdio"]);
     }
 
+    /// A server that never ends its header line must fail the session, not fill memory.
+    #[test]
+    fn a_header_line_over_the_cap_is_an_error_with_bounded_memory() {
+        struct Endless(usize);
+        impl std::io::Read for Endless {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                self.0 += out.len();
+                assert!(
+                    self.0 < 10 * 1024 * 1024,
+                    "reader kept consuming past the cap"
+                );
+                out.fill(b'x');
+                Ok(out.len())
+            }
+        }
+        let mut reader = BufReader::new(Endless(0));
+        let error = read_message(&mut reader).unwrap_err();
+        assert!(oxide_provider::bounded_lines::is_line_too_long(&error));
+    }
     #[test]
     fn rejects_unbounded_messages_and_invalid_utf8() {
         assert!(

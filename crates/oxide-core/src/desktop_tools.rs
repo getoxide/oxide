@@ -33,6 +33,8 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
     )
 }
 
+pub use oxide_provider::command::os_tool;
+
 pub fn system_fonts() -> Result<Vec<String>> {
     #[cfg(windows)]
     let (program, args) = (
@@ -48,7 +50,7 @@ pub fn system_fonts() -> Result<Vec<String>> {
     let (program, args) = ("system_profiler", vec!["SPFontsDataType", "-json"]);
     #[cfg(not(any(windows, target_os = "macos")))]
     let (program, args) = ("fc-list", vec!["--format=%{family}\\n"]);
-    let output = oxide_provider::process::hide_console(Command::new(program).args(args))
+    let output = oxide_provider::process::hide_console(Command::new(os_tool(program)).args(args))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| Error::Editor(format!("Could not list installed fonts: {e}")))?;

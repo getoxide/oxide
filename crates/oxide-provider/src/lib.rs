@@ -2,6 +2,7 @@
 //! (Claude Code, Codex, Antigravity CLI). Adapters implement it; Core depends only on it.
 
 pub mod agy;
+pub mod bounded_lines;
 pub mod claude;
 pub mod codex;
 pub mod command;

@@ -848,3 +848,36 @@ fn codex_reports_command_status_and_exit_code() {
     );
     provider.shutdown().unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn a_line_over_the_cap_ends_the_session_with_an_error() {
+    use oxide_provider::{PermissionMode, ProviderEvent, StartContext};
+    use std::time::Duration;
+
+    let fake_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/codex/fake_codex.py");
+    let mut provider = CodexProvider::with_command(fake_cli.to_str().unwrap());
+    let rx = provider
+        .start(&StartContext {
+            working_dir: PathBuf::from("."),
+            model: None,
+            effort: None,
+            permission_mode: PermissionMode::AutoEdit,
+        })
+        .unwrap();
+    let _ = provider.send_prompt("oversized_test");
+
+    let mut errored = false;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(ProviderEvent::Error { message, .. }) => {
+                assert!(message.contains("16 MiB"), "{message}");
+                errored = true;
+            }
+            Ok(ProviderEvent::Exited { .. }) => break,
+            Ok(_) => {}
+            Err(error) => panic!("the session never ended: {error}"),
+        }
+    }
+    assert!(errored, "the Thread must see why the session ended");
+}

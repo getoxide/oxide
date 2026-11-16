@@ -4,13 +4,14 @@
 
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
+use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, is_line_too_long};
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, spawn_in_own_group, terminate_group,
 };
 use oxide_provider::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -622,7 +623,9 @@ fn launch(service: &Arc<Service>) -> Result<()> {
             summary.command
         )));
     }
-    service.registry.register(pid as i32, shell());
+    service
+        .registry
+        .register(pid as i32, &shell().to_string_lossy());
     {
         let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
         state.summary.pid = pid;
@@ -648,19 +651,20 @@ fn launch(service: &Arc<Service>) -> Result<()> {
     Ok(())
 }
 
+/// The OS shell, by absolute path where the platform has a fixed one.
 #[cfg(unix)]
-fn shell() -> &'static str {
-    "sh"
+fn shell() -> std::path::PathBuf {
+    oxide_provider::command::os_tool("sh")
 }
 
 #[cfg(windows)]
-fn shell() -> &'static str {
-    "cmd.exe"
+fn shell() -> std::path::PathBuf {
+    oxide_provider::command::os_tool("cmd.exe")
 }
 
 #[cfg(not(any(unix, windows)))]
-fn shell() -> &'static str {
-    "sh"
+fn shell() -> std::path::PathBuf {
+    "sh".into()
 }
 
 fn spawn_reader(
@@ -671,19 +675,22 @@ fn spawn_reader(
 ) {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(reader);
-        let mut buffer = Vec::new();
-        loop {
-            buffer.clear();
-            match reader.read_until(b'\n', &mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-                        buffer.pop();
+        for line in BoundedLines::new(&mut reader, LOG_LINE_CAP) {
+            match line {
+                Ok(line) => service.record_line(stream, line),
+                Err(error) => {
+                    if is_line_too_long(&error) {
+                        service.record_line(
+                            stream,
+                            format!("[output line over {LOG_LINE_CAP} bytes discarded]"),
+                        );
                     }
-                    service.record_line(stream, String::from_utf8_lossy(&buffer).into_owned());
+                    break;
                 }
             }
         }
+        // Keep emptying the pipe so the service never blocks on it, without keeping anything.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
         let _ = drained.send(());
     });
 }
