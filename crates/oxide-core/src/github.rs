@@ -1193,7 +1193,9 @@ const FIXED_DOCUMENTATION_URLS: [&str; 6] = [
 ];
 
 /// Parses a link for the system browser: `https`, no userinfo, no whitespace or control
-/// characters. Returns the host.
+/// characters. Returns the host, with `:port` when the link names a port other than 443, so the
+/// confirmation shows where the link really goes and a listed host on another port is not
+/// mistaken for the listed service.
 fn parse_https_link(url: &str) -> Result<String> {
     let unexpected = || Error::Github(format!("Unexpected link: {}", redact_url_credentials(url)));
     if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
@@ -1203,11 +1205,14 @@ fn parse_https_link(url: &str) -> Result<String> {
     if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(unexpected());
     }
-    parsed
+    let host = parsed
         .host_str()
-        .map(str::to_owned)
         .filter(|host| !host.is_empty())
-        .ok_or_else(unexpected)
+        .ok_or_else(unexpected)?;
+    Ok(match parsed.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 fn is_listed_host(host: &str) -> bool {
@@ -1289,6 +1294,8 @@ mod tests {
                 "github.com.evil.example",
             ),
             ("https://clangd.llvm.org/other", "clangd.llvm.org"),
+            ("https://evil.example:8443/x", "evil.example:8443"),
+            ("https://github.com:8443/x", "github.com:8443"),
         ] {
             match checked_url(url) {
                 Err(Error::UnlistedLinkHost { host: h }) => assert_eq!(h, host),

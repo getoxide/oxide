@@ -1,13 +1,5 @@
 import { commands } from "./bindings";
 
-/** Core refuses a link outside GitHub and the fixed documentation with this message prefix. */
-const UNLISTED_PREFIX = "Unlisted link host: ";
-
-/** The host Core wants confirmed, if this error is its "unlisted host" refusal. */
-export function unlistedHost(message: string): string | null {
-  return message.startsWith(UNLISTED_PREFIX) ? message.slice(UNLISTED_PREFIX.length) : null;
-}
-
 export interface LinkConfirmation {
   url: string;
   host: string;
@@ -50,9 +42,10 @@ function confirmHost(link: LinkConfirmation): Promise<boolean> {
  *  message, or null when the link opened or the user declined. */
 export async function openExternalLink(url: string): Promise<string | null> {
   const result = await commands.openLink(url);
-  if (result.status === "ok") return null;
-  const host = unlistedHost(result.error.message);
-  if (host === null) return result.error.message;
+  if (result.status === "error") return result.error.message;
+  // `null`: opened. A string: the host (and port) of a link Core did not open until confirmed.
+  const host = result.data;
+  if (host === null) return null;
   if (!(await confirmHost({ url, host }))) return null;
   const confirmed = await commands.openConfirmedLink(url);
   return confirmed.status === "ok" ? null : confirmed.error.message;

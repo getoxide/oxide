@@ -2396,11 +2396,19 @@ async fn close_pull_request(
     .await
 }
 
-/// Opens a GitHub link, such as a check's run, in the system browser.
+/// Opens a GitHub link, such as a check's run, in the system browser. A well-formed link
+/// outside GitHub and the fixed documentation is not opened: the answer is `Some(host)` (with
+/// the port, if any) for the webview to confirm with the user, then `open_confirmed_link`.
+/// `None` means the link was opened.
 #[tauri::command]
 #[specta::specta]
-async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.open_link(&url)).await
+async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<Option<String>, AppError> {
+    git_blocking(&core, move |core| match core.open_link(&url) {
+        Ok(()) => Ok(None),
+        Err(oxide_core::Error::UnlistedLinkHost { host }) => Ok(Some(host)),
+        Err(error) => Err(error),
+    })
+    .await
 }
 
 /// Opens a link whose host the user confirmed after `open_link` refused it as unlisted.
