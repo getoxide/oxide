@@ -54,7 +54,7 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 
 ### One app, every agent CLI
 
-- **Multiple Providers.** Use [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) and Antigravity CLI (`agy`) side by side. Oxide detects which ones are installed and only offers those.
+- **Multiple Providers.** Use [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) and [Antigravity CLI](https://antigravity.google/download) (`agy`) side by side. Oxide detects which ones are installed and only offers those.
 - **Threads.** Each Thread is one conversation with one Provider, mapped one-to-one to the Provider's own session, with its own Model and Effort.
 - **Permission modes.** Choose per Thread between *Ask*, *Auto-edit* and *Full access*, and answer Approvals inline. The Attention Center collects every Thread waiting on you, across Projects.
 - **Slash commands, attachments and usage limits.** Each Provider's Slash commands and skills in the composer, files and images attached inside the prompt, and the 5-hour and weekly usage limits your Provider reports.
@@ -105,7 +105,7 @@ At least one **Provider installed and logged in** before you launch Oxide:
 | --- | --- | --- |
 | Claude Code | `claude` | [docs.claude.com](https://docs.claude.com/en/docs/claude-code) |
 | Codex | `codex` | [github.com/openai/codex](https://github.com/openai/codex) |
-| Antigravity CLI | `agy` | Google Antigravity |
+| Antigravity CLI | `agy` | [antigravity.google](https://antigravity.google/download) |
 
 `git` is required. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and enables the pull request and Issues features.
 
