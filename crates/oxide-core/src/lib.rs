@@ -2289,6 +2289,23 @@ impl Core {
         Ok(PathBuf::from(self.checkout_path(project_id, None)?))
     }
 
+    /// Every checkout of an open Project: its folder and the worktrees of its Threads.
+    fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
+        for path in projects.query_map([], |r| r.get::<_, String>(0))? {
+            paths.push(PathBuf::from(path?));
+        }
+        let mut worktrees = db.prepare(
+            "SELECT t.worktree_path FROM threads t JOIN projects p ON p.id = t.project_id WHERE p.opened_at IS NOT NULL AND t.worktree_path IS NOT NULL",
+        )?;
+        for path in worktrees.query_map([], |r| r.get::<_, String>(0))? {
+            paths.push(PathBuf::from(path?));
+        }
+        Ok(paths)
+    }
+
     pub fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(match thread_id {
@@ -2340,7 +2357,9 @@ impl Core {
         cwd: &str,
     ) -> Result<TerminalCompletion> {
         let session = self.terminal(terminal_id)?;
-        terminal_completion::complete(&session, line, cursor, cwd)
+        let cwd =
+            terminal_completion::trusted_cwd(cwd, &self.open_checkouts()?, &session.summary.cwd);
+        terminal_completion::complete(&session, line, cursor, &cwd)
     }
 
     pub fn resize_terminal(&self, terminal_id: u32, rows: u16, cols: u16) -> Result<()> {

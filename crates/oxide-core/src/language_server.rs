@@ -502,7 +502,10 @@ mod tests {
         configure(
             home.path(),
             "python",
-            config(&format!("  {}  ", executable.to_string_lossy()), &["--stdio"]),
+            config(
+                &format!("  {}  ", executable.to_string_lossy()),
+                &["--stdio"],
+            ),
         )
         .unwrap();
         let saved = configurations(home.path());
