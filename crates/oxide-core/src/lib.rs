@@ -2520,6 +2520,8 @@ impl Core {
 impl Drop for Core {
     fn drop(&mut self) {
         self.shutdown();
+        // Last: the actors above may still be writing their final records.
+        self.storage.shutdown();
     }
 }
 
