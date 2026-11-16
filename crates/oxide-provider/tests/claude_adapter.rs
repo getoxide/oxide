@@ -730,3 +730,37 @@ fn claude_reports_background_commands_for_detachment() {
     );
     provider.shutdown().unwrap();
 }
+
+#[test]
+fn a_line_over_the_cap_fails_the_turn_instead_of_exhausting_memory() {
+    use oxide_provider::{PermissionMode, ProviderEvent, StartContext, TurnStatus};
+
+    let fake_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/claude/fake_claude.py");
+    let mut provider = ClaudeCodeProvider::with_command(fake_cli.to_str().unwrap());
+    let context = StartContext {
+        working_dir: PathBuf::from("."),
+        model: None,
+        effort: None,
+        permission_mode: PermissionMode::AutoEdit,
+    };
+    let rx = provider.start(&context).unwrap();
+    provider.send_prompt("oversized_test").unwrap();
+
+    let mut errored = false;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(ProviderEvent::Error { message, .. }) => {
+                assert!(message.contains("16 MiB"), "{message}");
+                errored = true;
+            }
+            Ok(ProviderEvent::TurnCompleted { status, .. }) => {
+                assert_eq!(status, TurnStatus::Error);
+                break;
+            }
+            Ok(_) => {}
+            Err(error) => panic!("the Turn never ended: {error}"),
+        }
+    }
+    assert!(errored, "the Thread must see why the Turn failed");
+    provider.shutdown().unwrap();
+}

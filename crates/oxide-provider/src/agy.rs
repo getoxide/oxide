@@ -5,6 +5,9 @@
 //! Headless `agy` cannot ask for Approval, so only Auto-edit (soft-deny) and Full access are
 //! offered (ADR-0004), and Oxide never touches `agy`'s settings file.
 
+use crate::bounded_lines::{
+    BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
+};
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
 use crate::time::{now_unix, parse_rfc3339};
 use crate::{
@@ -16,7 +19,7 @@ use crate::{
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -873,9 +876,7 @@ impl Provider for AgyProvider {
         if let Some(_pgid) = pgid {
             self.interrupted.store(true, Ordering::SeqCst);
             #[cfg(unix)]
-            unsafe {
-                libc::kill(-_pgid, libc::SIGINT)
-            };
+            let _ = process::signal_group(_pgid, libc::SIGINT);
             // Print mode has no input/control channel. End the whole contained process tree;
             // the reader reports the interrupted Turn and preserves its conversation id.
             #[cfg(windows)]
@@ -1057,7 +1058,22 @@ impl TurnRun {
         let mut next_item = 0u32;
         let mut result_seen = false;
 
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        for line in BoundedLines::new(BufReader::new(stdout), PROTOCOL_LINE_CAP) {
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => {
+                    if is_line_too_long(&error) {
+                        // Fail this session: the stream is unusable and must not keep growing.
+                        let _ = self.tx.send(ProviderEvent::Error {
+                            message: protocol_overflow_message(),
+                            code: None,
+                            retrying: false,
+                        });
+                        process::kill_group(pgid);
+                    }
+                    break;
+                }
+            };
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;

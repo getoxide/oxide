@@ -1,5 +1,8 @@
 //! Codex native provider adapter.
 
+use crate::bounded_lines::{
+    BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
+};
 use crate::process;
 use crate::{
     ActivityCategory, ApprovalDecision, ApprovalKind, AttachmentKind, CommandOutcome,
@@ -12,7 +15,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -222,6 +225,7 @@ impl CodexAppServer {
             ProviderError::StartFailed(format!("Failed to contain Codex app-server process: {e}"))
         })?;
 
+        let pgid = child.id() as i32;
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin must be piped")));
         let stdout = child.stdout.take().expect("stdout must be piped");
         let stderr = child.stderr.take().expect("stderr must be piped");
@@ -241,10 +245,26 @@ impl CodexAppServer {
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
-            for line_res in reader.lines() {
+            for line_res in BoundedLines::new(reader, PROTOCOL_LINE_CAP) {
                 let line = match line_res {
                     Ok(l) => l,
-                    Err(_) => break,
+                    Err(error) => {
+                        if is_line_too_long(&error) {
+                            // The stream is unusable and shared by every Thread: tell each one
+                            // why, then stop the app-server (Exited follows once we leave).
+                            let threads = threads_clone.lock().unwrap();
+                            for tx in threads.values() {
+                                let _ = tx.send(ProviderEvent::Error {
+                                    message: protocol_overflow_message(),
+                                    code: None,
+                                    retrying: false,
+                                });
+                            }
+                            drop(threads);
+                            process::kill_group(pgid);
+                        }
+                        break;
+                    }
                 };
                 let trimmed = line.trim();
                 if trimmed.is_empty() {

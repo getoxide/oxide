@@ -311,9 +311,12 @@ fn background_provider_commands_do_not_allocate_a_console() {
 
     // Reproduce a desktop process with no inherited console, even under a CLI test runner.
     #[link(name = "kernel32")]
+    // SAFETY: the signature matches kernel32's `FreeConsole`.
     unsafe extern "system" {
         fn FreeConsole() -> i32;
     }
+    // SAFETY: `FreeConsole` takes no arguments and only detaches this test process from its
+    // console.
     unsafe { FreeConsole() };
 
     let mut command = std::process::Command::new(python);

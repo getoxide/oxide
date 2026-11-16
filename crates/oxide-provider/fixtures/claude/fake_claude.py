@@ -137,6 +137,10 @@ for line in sys.stdin:
                 for resp_line in f:
                     sys.stdout.write(resp_line.strip() + "\n")
                     sys.stdout.flush()
+        elif "oversized_test" in prompt_text:
+            # One endless line: past the 16 MiB protocol cap, newline only at the very end.
+            sys.stdout.write("x" * (17 * 1024 * 1024) + "\n")
+            sys.stdout.flush()
         elif "interrupt_test" in prompt_text:
             # Keep reading stdin so protocol interrupts can be handled on every platform.
             print(json.dumps({"type": "interrupt_ready"}), flush=True)

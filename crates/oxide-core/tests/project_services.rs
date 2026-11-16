@@ -431,3 +431,36 @@ fn a_command_without_an_explicit_port_still_spawns() {
 
     core.stop_project_service(service.id).unwrap();
 }
+
+#[test]
+fn an_output_line_over_the_cap_is_replaced_by_a_notice_and_never_buffered() {
+    let dir = tempdir().unwrap();
+    let (core, project_id) = open_core_with_project(dir.path());
+
+    // 200 000 bytes without a newline is well past the 64 KiB log line cap.
+    let service = started(
+        core.start_project_service(
+            project_id,
+            None,
+            "head -c 200000 /dev/zero | tr '\\0' x; echo; sleep 30",
+        )
+        .unwrap(),
+    );
+    let (backlog, rx) = core.subscribe_project_service_logs(service.id).unwrap();
+    let mut seen = backlog;
+    assert!(
+        wait_until(Duration::from_secs(10), || {
+            while let Ok(line) = rx.try_recv() {
+                seen.push(line);
+            }
+            seen.iter().any(|line| line.text.contains("discarded"))
+        }),
+        "the over-long line was reported as discarded"
+    );
+    assert!(
+        seen.iter().all(|line| line.text.len() <= 64 * 1024),
+        "no buffered line exceeds the cap"
+    );
+
+    core.stop_project_service(service.id).unwrap();
+}

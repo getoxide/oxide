@@ -1,5 +1,8 @@
 //! Claude Code native provider adapter.
 
+use crate::bounded_lines::{
+    BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
+};
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
 use crate::{
     ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
@@ -13,7 +16,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -221,7 +224,9 @@ impl ClaudeCodeProvider {
 
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            for line in
+                BoundedLines::new(BufReader::new(stdout), PROTOCOL_LINE_CAP).map_while(Result::ok)
+            {
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
                     continue;
                 };
@@ -336,6 +341,7 @@ impl ClaudeCodeProvider {
         if let Some(registry) = &self.registry {
             registry.register(child.id() as i32, &self.command);
         }
+        let pgid = child.id() as i32;
         *self.child_stdin.lock().unwrap() = Some(stdin);
         *self.child_process.lock().unwrap() = Some(child);
 
@@ -355,10 +361,27 @@ impl ClaudeCodeProvider {
             let mut pending_commands: HashMap<String, PendingCommand> = HashMap::new();
             let mut slash_outputs: u32 = 0;
 
-            for line_res in reader.lines() {
+            for line_res in BoundedLines::new(reader, PROTOCOL_LINE_CAP) {
                 let line = match line_res {
                     Ok(l) => l,
-                    Err(_) => break,
+                    Err(error) => {
+                        if is_line_too_long(&error) {
+                            // The stream is unusable from here: fail the Turn, stop the process.
+                            let _ = tx.send(ProviderEvent::Error {
+                                message: protocol_overflow_message(),
+                                code: None,
+                                retrying: false,
+                            });
+                            if let Some(turn) = active_turn_clone.lock().unwrap().take() {
+                                let _ = tx.send(ProviderEvent::TurnCompleted {
+                                    turn_index: turn.index,
+                                    status: TurnStatus::Error,
+                                });
+                            }
+                            process::kill_group(pgid);
+                        }
+                        break;
+                    }
                 };
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
