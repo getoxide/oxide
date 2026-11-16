@@ -3394,13 +3394,13 @@ pub fn builder() -> Builder<tauri::Wry> {
 /// Path of the generated TypeScript bindings, anchored to this crate.
 pub const BINDINGS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/src/bindings.ts");
 
-pub fn export_bindings() {
+pub fn export_bindings() -> Result<(), String> {
     builder()
         .export(
             specta_typescript::Typescript::default().header("// @ts-nocheck\n/* eslint-disable */"),
             BINDINGS_PATH,
         )
-        .expect("failed to export TypeScript bindings");
+        .map_err(|e| format!("failed to export TypeScript bindings: {e}"))
 }
 
 pub fn run() {
@@ -3411,9 +3411,11 @@ pub fn run() {
     let builder = builder();
 
     #[cfg(debug_assertions)]
-    export_bindings();
+    if let Err(error) = export_bindings() {
+        eprintln!("{error}");
+    }
 
-    tauri::Builder::default()
+    let built = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(updates::Updates::default()))
         .plugin(tauri_plugin_notification::init())
@@ -3484,7 +3486,7 @@ pub fn run() {
             let home = app
                 .path()
                 .home_dir()
-                .expect("no home directory")
+                .map_err(|e| format!("no home directory: {e}"))?
                 .join(".oxide");
             let core = Core::open(home)?;
             core.start_usage_poller();
@@ -3513,31 +3515,37 @@ pub fn run() {
             let _ = app.notification().request_permission();
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("error while building Oxide")
-        .run(|app, event| match event {
-            // The Dock icon was clicked while the window was hidden.
-            #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { .. } => show_main_window(app),
-            // ⌘Q / close-before-destroy: ask first when dirty editors or running Threads exist,
-            // but never prevent exit after the main window has already been destroyed.
-            tauri::RunEvent::ExitRequested {
-                code: None, api, ..
-            } => {
-                if !should_prompt_on_exit_request(app.get_webview_window(MAIN_WINDOW).is_some()) {
-                    return;
-                }
-                let core = app.state::<Arc<Core>>();
-                if let Some(prompt) = quit_prompt_for_core(&core) {
-                    api.prevent_exit();
-                    emit_quit_prompt(app, prompt);
-                }
+        .build(tauri::generate_context!());
+    let app = match built {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("error while building Oxide: {error}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app, event| match event {
+        // The Dock icon was clicked while the window was hidden.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => show_main_window(app),
+        // ⌘Q / close-before-destroy: ask first when dirty editors or running Threads exist,
+        // but never prevent exit after the main window has already been destroyed.
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } => {
+            if !should_prompt_on_exit_request(app.get_webview_window(MAIN_WINDOW).is_some()) {
+                return;
             }
-            // Managed state is not dropped on exit: interrupt every Turn, then stop every
-            // Provider and shell by hand.
-            tauri::RunEvent::Exit => app.state::<Arc<Core>>().quit(),
-            _ => {}
-        });
+            let core = app.state::<Arc<Core>>();
+            if let Some(prompt) = quit_prompt_for_core(&core) {
+                api.prevent_exit();
+                emit_quit_prompt(app, prompt);
+            }
+        }
+        // Managed state is not dropped on exit: interrupt every Turn, then stop every
+        // Provider and shell by hand.
+        tauri::RunEvent::Exit => app.state::<Arc<Core>>().quit(),
+        _ => {}
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
