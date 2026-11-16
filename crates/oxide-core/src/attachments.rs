@@ -32,6 +32,8 @@ pub enum AttachmentError {
     TooLarge { name: String, size: String },
     #[error("{name} is a folder. Attach files instead.")]
     IsDirectory { name: String },
+    #[error("{name} is not a regular file (a device or a pipe). Attach files instead.")]
+    NotRegularFile { name: String },
     #[error("{name} can't be read: {reason}")]
     Unreadable { name: String, reason: String },
     #[error("A prompt can carry at most {MAX_ATTACHMENTS_PER_PROMPT} attachments.")]
@@ -101,9 +103,15 @@ impl AttachmentStore {
             name: name.clone(),
             reason: reason_of(&e),
         };
+        if fs::symlink_metadata(source).map_err(unreadable)?.is_dir() {
+            return Err(AttachmentError::IsDirectory { name }.into());
+        }
         let metadata = fs::metadata(source).map_err(unreadable)?;
         if metadata.is_dir() {
             return Err(AttachmentError::IsDirectory { name }.into());
+        }
+        if !metadata.is_file() {
+            return Err(AttachmentError::NotRegularFile { name }.into());
         }
         if metadata.len() > MAX_ATTACHMENT_BYTES {
             return Err(AttachmentError::TooLarge {
@@ -113,9 +121,17 @@ impl AttachmentStore {
             .into());
         }
         let (id, folder, path) = self.new_slot(&name)?;
-        if let Err(e) = fs::copy(source, &path) {
+        if let Err(e) = copy_capped(source, &path) {
             let _ = fs::remove_dir_all(&folder);
-            return Err(unreadable(e).into());
+            return Err(match e {
+                CopyError::TooLarge(size) => AttachmentError::TooLarge {
+                    size: human_size(size),
+                    name,
+                },
+                CopyError::NotRegular => AttachmentError::NotRegularFile { name },
+                CopyError::Io(e) => unreadable(e),
+            }
+            .into());
         }
         self.describe(&id).inspect_err(|_| {
             let _ = fs::remove_dir_all(&folder);
@@ -434,6 +450,36 @@ fn read_sample(path: &Path) -> std::io::Result<Vec<u8>> {
     Ok(sample)
 }
 
+enum CopyError {
+    TooLarge(u64),
+    NotRegular,
+    Io(std::io::Error),
+}
+
+/// Copies `source` to `target` through a reader capped at [`MAX_ATTACHMENT_BYTES`], so a file
+/// that grew after its size was checked cannot exceed the limit. The opened handle must still
+/// be a regular file, and opening never waits for a writer.
+fn copy_capped(source: &Path, target: &Path) -> std::result::Result<(), CopyError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(source).map_err(CopyError::Io)?;
+    if !file.metadata().map_err(CopyError::Io)?.is_file() {
+        return Err(CopyError::NotRegular);
+    }
+    let mut out = fs::File::create(target).map_err(CopyError::Io)?;
+    let copied =
+        std::io::copy(&mut file.take(MAX_ATTACHMENT_BYTES + 1), &mut out).map_err(CopyError::Io)?;
+    if copied > MAX_ATTACHMENT_BYTES {
+        return Err(CopyError::TooLarge(copied));
+    }
+    Ok(())
+}
+
 fn file_name_of(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -499,6 +545,76 @@ mod tests {
             classify("data.xlsx", b"PK\x03\x04\x00").0,
             AttachmentKind::Other
         );
+    }
+
+    fn store() -> (tempfile::TempDir, AttachmentStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::new(dir.path().join("attachments"));
+        (dir, store)
+    }
+
+    fn stored_files(store: &AttachmentStore) -> usize {
+        fs::read_dir(store.dir())
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn a_folder_is_refused_with_a_reason_and_nothing_is_stored() {
+        let (dir, store) = store();
+        let folder = dir.path().join("docs");
+        fs::create_dir(&folder).unwrap();
+        let error = store.attach_path(&folder).unwrap_err().to_string();
+        assert!(error.contains("is a folder"), "{error}");
+        assert_eq!(stored_files(&store), 0);
+    }
+
+    #[test]
+    fn a_file_over_the_cap_is_refused() {
+        let (dir, store) = store();
+        let big = dir.path().join("big.bin");
+        fs::File::create(&big)
+            .unwrap()
+            .set_len(MAX_ATTACHMENT_BYTES + 1)
+            .unwrap();
+        let error = store.attach_path(&big).unwrap_err().to_string();
+        assert!(error.contains("too large"), "{error}");
+        assert_eq!(stored_files(&store), 0);
+    }
+
+    #[test]
+    fn a_regular_file_and_a_symlink_to_one_are_stored() {
+        let (dir, store) = store();
+        let file = dir.path().join("a.txt");
+        fs::write(&file, "hi").unwrap();
+        assert_eq!(store.attach_path(&file).unwrap().size_bytes, 2);
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link.txt");
+            std::os::unix::fs::symlink(&file, &link).unwrap();
+            assert_eq!(store.attach_path(&link).unwrap().size_bytes, 2);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_device_a_fifo_and_a_symlink_to_a_device_are_refused_without_blocking() {
+        let (dir, store) = store();
+        let fifo = dir.path().join("pipe");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let link = dir.path().join("zero-link");
+        std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+        for source in [Path::new("/dev/zero"), fifo.as_path(), link.as_path()] {
+            let error = store.attach_path(source).unwrap_err().to_string();
+            assert!(error.contains("not a regular file"), "{error}");
+        }
+        assert_eq!(stored_files(&store), 0);
     }
 
     #[test]
