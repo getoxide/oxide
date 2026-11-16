@@ -1,3 +1,8 @@
+//! Shared contract assertions for Provider adapters; a failed expectation is a test failure.
+#![allow(
+    clippy::expect_used,
+    reason = "contract suite: expect is the assertion that fails the adapter's test"
+)]
 use crate::{
     Attachment, AttachmentKind, CommandOutcome, ItemKind, PromptSegment, Provider, ProviderEvent,
     StartContext, TurnStatus,

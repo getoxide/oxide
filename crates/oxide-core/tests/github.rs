@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{
     Core, GithubAvailability, IssueCloseReason, IssueEdit, Notification, ProjectSummary,
     PullRequestInput, System,

@@ -20,6 +20,19 @@ pub const STDERR_TAIL_LINES: usize = 20;
 
 /// Drains a child's piped stderr on a background thread so verbose output cannot fill the OS
 /// pipe buffer and deadlock the child. Returns up to the last `STDERR_TAIL_LINES` lines.
+/// Unwraps a stdio handle that was configured as piped. A missing pipe kills the child (it
+/// would otherwise run unattended) and becomes a start error instead of a panic.
+pub fn require_pipe<T>(
+    pipe: Option<T>,
+    child: &mut Child,
+    name: &str,
+) -> Result<T, crate::ProviderError> {
+    pipe.ok_or_else(|| {
+        let _ = child.kill();
+        crate::ProviderError::StartFailed(format!("child {name} was not piped"))
+    })
+}
+
 pub fn drain_stderr(stderr: std::process::ChildStderr) -> std::thread::JoinHandle<Option<String>> {
     std::thread::spawn(move || {
         use crate::bounded_lines::{BoundedLines, LOG_LINE_CAP, is_line_too_long};
@@ -845,6 +858,10 @@ mod windows_tests {
 }
 
 #[cfg(all(test, unix))]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test module: clippy only recognises plain cfg(test)"
+)]
 mod tests {
     use super::*;
     use std::process::Stdio;
@@ -970,13 +987,20 @@ mod tests {
         registry.unregister(4_000_001);
 
         let next = ProcessRegistry::open(&path);
-        assert_eq!(next.state.lock().unwrap().stale.len(), 1);
+        assert_eq!(
+            next.state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stale
+                .len(),
+            1
+        );
         next.reap_stale();
         assert!(
             ProcessRegistry::open(&path)
                 .state
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .stale
                 .is_empty()
         );

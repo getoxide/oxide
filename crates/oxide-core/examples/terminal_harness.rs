@@ -1,4 +1,10 @@
 //! Test-only JSON-lines transport used by web/scripts/terminal-regression.cjs.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test-only harness: a failure should abort the regression run"
+)]
 use oxide_core::Core;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};

@@ -1,5 +1,11 @@
 //! Git operations resolve the checkout of the Thread they are given: a main checkout and two
 //! Board worktrees on real temporary repositories, with a local bare remote.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 
 use oxide_core::thread::ThreadStatus;
 use oxide_core::{Core, DispatchRequest, PermissionMode, ProjectSummary, ThreadSummary};

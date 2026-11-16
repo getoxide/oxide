@@ -19,6 +19,9 @@ cloned_instead_of_copied = "warn"
 redundant_clone = "warn"
 inefficient_to_string = "warn"
 unnecessary_wraps = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [workspace.dependencies]
 base64 = "0.23.1"

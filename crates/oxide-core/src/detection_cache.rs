@@ -22,7 +22,11 @@ impl DetectionCache {
         provider: &str,
         detect: impl FnOnce() -> Detection,
     ) -> Detection {
-        if let Some((at, det)) = self.entries.lock().unwrap().get(provider)
+        if let Some((at, det)) = self
+            .entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(provider)
             && at.elapsed() < TTL
         {
             return det.clone();
@@ -31,7 +35,7 @@ impl DetectionCache {
         if det.available {
             self.entries
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(provider.to_string(), (Instant::now(), det.clone()));
         }
         det
@@ -79,6 +83,22 @@ mod tests {
             assert!(!det.available);
         }
         assert_eq!(spawned.get(), 2);
+    }
+
+    #[test]
+    fn a_poisoned_cache_lock_does_not_cascade_into_later_detections() {
+        let cache = std::sync::Arc::new(DetectionCache::default());
+        let poisoner = std::sync::Arc::clone(&cache);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.entries.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("poison the cache lock");
+        })
+        .join();
+        assert!(cache.entries.is_poisoned());
+
+        assert!(cache.get_or_detect("claude", || detection(true)).available);
+        let cached = cache.get_or_detect("claude", || detection(false));
+        assert!(cached.available, "the success was cached after recovery");
     }
 
     #[test]

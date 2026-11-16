@@ -299,8 +299,10 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
         .stderr(Stdio::piped());
     command.spawn().and_then(|mut child| {
         let sent = {
-            let mut stdin = child.stdin.take().unwrap();
-            stdin.write_all(input.as_bytes())
+            match child.stdin.take() {
+                Some(mut stdin) => stdin.write_all(input.as_bytes()),
+                None => Err(std::io::Error::other("gh stdin was not piped")),
+            }
         };
         let output = child.wait_with_output();
         sent.and(output)

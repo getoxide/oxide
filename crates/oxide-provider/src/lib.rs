@@ -813,27 +813,36 @@ pub struct FakeRecorder {
 impl FakeRecorder {
     /// How many times a session was started or resumed.
     pub fn starts(&self) -> u32 {
-        *self.starts.lock().unwrap()
+        *self.starts.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The session id of every resume, in order (each also counts as a start).
     pub fn resumes(&self) -> Vec<String> {
-        self.resumes.lock().unwrap().clone()
+        self.resumes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// How many times the Provider was shut down.
     pub fn shutdowns(&self) -> u32 {
-        *self.shutdowns.lock().unwrap()
+        *self.shutdowns.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Every prompt sent, in order, as plain text.
     pub fn prompts(&self) -> Vec<String> {
-        self.prompts.lock().unwrap().clone()
+        self.prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The segments of every prompt sent, in order.
     pub fn segments(&self) -> Vec<Vec<PromptSegment>> {
-        self.segments.lock().unwrap().clone()
+        self.segments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -914,7 +923,7 @@ impl FakeProvider {
         let turn_counter = Arc::new(AtomicU32::new(0));
         fake.on_prompt(move |prompt| {
             let turn_index = turn_counter.fetch_add(1, Ordering::SeqCst);
-            if let Some(sender) = slot.lock().unwrap().as_ref() {
+            if let Some(sender) = slot.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 for event in scripted_turn(turn_index, prompt) {
                     let _ = sender.send(event);
                 }
@@ -925,8 +934,11 @@ impl FakeProvider {
 
     /// The event channel of a new session: the current one, or a fresh one after a shutdown.
     fn open_channel(&mut self) -> Receiver<ProviderEvent> {
-        let mut sender = self.event_sender.lock().unwrap();
-        let mut receiver = self.event_receiver.lock().unwrap();
+        let mut sender = self.event_sender.lock().unwrap_or_else(|e| e.into_inner());
+        let mut receiver = self
+            .event_receiver
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if sender.is_none() {
             let (tx, rx) = crossbeam_channel::unbounded();
             *sender = Some(tx);
@@ -958,10 +970,14 @@ impl FakeProvider {
         self.capabilities = capabilities;
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "test double: using a shut-down fake is a bug in the test itself"
+    )]
     pub fn sender(&self) -> crossbeam_channel::Sender<ProviderEvent> {
         self.event_sender
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .expect("provider already shut down")
             .clone()
@@ -972,15 +988,24 @@ impl FakeProvider {
     }
 
     pub fn on_prompt(&self, handler: impl Fn(&str) + Send + Sync + 'static) {
-        *self.prompt_handler.lock().unwrap() = Some(Box::new(handler));
+        *self
+            .prompt_handler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(handler));
     }
 
     pub fn on_approval(&self, handler: impl Fn(&str, ApprovalDecision) + Send + Sync + 'static) {
-        *self.approval_handler.lock().unwrap() = Some(Box::new(handler));
+        *self
+            .approval_handler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Box::new(handler));
     }
 
     pub fn current_permission_mode(&self) -> PermissionMode {
-        *self.current_permission_mode.lock().unwrap()
+        *self
+            .current_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -990,7 +1015,11 @@ impl Provider for FakeProvider {
     }
 
     fn start(&mut self, _context: &StartContext) -> Result<Receiver<ProviderEvent>, ProviderError> {
-        *self.recorder.starts.lock().unwrap() += 1;
+        *self
+            .recorder
+            .starts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) += 1;
         Ok(self.open_channel())
     }
 
@@ -1002,11 +1031,15 @@ impl Provider for FakeProvider {
         if self.session_not_found {
             return Err(ProviderError::SessionNotFound);
         }
-        *self.recorder.starts.lock().unwrap() += 1;
+        *self
+            .recorder
+            .starts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) += 1;
         self.recorder
             .resumes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push(session_id.to_string());
         Ok(self.open_channel())
     }
@@ -1023,15 +1056,25 @@ impl Provider for FakeProvider {
             return Err(ProviderError::CommandFailed(reason.clone()));
         }
         let prompt = render_prompt(segments);
-        self.recorder.prompts.lock().unwrap().push(prompt.clone());
+        self.recorder
+            .prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(prompt.clone());
         self.recorder
             .segments
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push(segments.to_vec());
-        if let Some(ref handler) = *self.prompt_handler.lock().unwrap() {
+        if let Some(ref handler) = *self
+            .prompt_handler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             handler(&prompt);
-        } else if let Some(ref sender) = *self.event_sender.lock().unwrap() {
+        } else if let Some(ref sender) =
+            *self.event_sender.lock().unwrap_or_else(|e| e.into_inner())
+        {
             let _ = sender.send(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
@@ -1041,7 +1084,7 @@ impl Provider for FakeProvider {
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
-        if let Some(ref sender) = *self.event_sender.lock().unwrap() {
+        if let Some(ref sender) = *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) {
             let _ = sender.send(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Interrupted,
@@ -1055,7 +1098,11 @@ impl Provider for FakeProvider {
         id: &str,
         decision: ApprovalDecision,
     ) -> Result<(), ProviderError> {
-        if let Some(ref handler) = *self.approval_handler.lock().unwrap() {
+        if let Some(ref handler) = *self
+            .approval_handler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             handler(id, decision);
         }
         Ok(())
@@ -1066,18 +1113,34 @@ impl Provider for FakeProvider {
     }
 
     fn set_permission_mode(&mut self, mode: PermissionMode) -> Result<(), ProviderError> {
-        *self.current_permission_mode.lock().unwrap() = mode;
+        *self
+            .current_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = mode;
         Ok(())
     }
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
-        *self.recorder.shutdowns.lock().unwrap() += 1;
+        *self
+            .recorder
+            .shutdowns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) += 1;
         if !self.reusable {
             // Dropping the handlers releases any event sender they captured, so the channel closes.
-            *self.prompt_handler.lock().unwrap() = None;
-            *self.approval_handler.lock().unwrap() = None;
+            *self
+                .prompt_handler
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            *self
+                .approval_handler
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
         }
-        self.event_sender.lock().unwrap().take();
+        self.event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         Ok(())
     }
 
