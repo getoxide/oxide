@@ -399,7 +399,7 @@ fn write_file(path: &Path, settings: &Settings) -> Result<()> {
     let mut text = serde_json::to_string_pretty(settings).expect("settings serialize");
     text.push('\n');
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, text).map_err(io)?;
+    crate::private::write(&tmp, text).map_err(io)?;
     fs::rename(&tmp, path).map_err(io)
 }
 

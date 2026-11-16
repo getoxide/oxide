@@ -357,10 +357,24 @@ impl ProcessRegistry {
             return;
         };
         let tmp = self.path.with_extension("json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
+        if write_private(&tmp, &json).is_ok() {
             let _ = std::fs::rename(&tmp, &self.path);
         }
     }
+}
+
+/// Writes `bytes` to `path`; on Unix a new file is `0600`, like the rest of Oxide's home.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(bytes)
 }
 
 /// Whether `pid` leads its own process group and its command line starts with `executable`

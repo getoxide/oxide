@@ -156,7 +156,7 @@ impl AttachmentStore {
             .into());
         }
         let (id, folder, path) = self.new_slot(&name)?;
-        if let Err(e) = fs::write(&path, bytes) {
+        if let Err(e) = crate::private::write(&path, bytes) {
             let _ = fs::remove_dir_all(&folder);
             return Err(AttachmentError::Unreadable {
                 name,
@@ -471,7 +471,7 @@ fn copy_capped(source: &Path, target: &Path) -> std::result::Result<(), CopyErro
     if !file.metadata().map_err(CopyError::Io)?.is_file() {
         return Err(CopyError::NotRegular);
     }
-    let mut out = fs::File::create(target).map_err(CopyError::Io)?;
+    let mut out = crate::private::create_file(target).map_err(CopyError::Io)?;
     let copied =
         std::io::copy(&mut file.take(MAX_ATTACHMENT_BYTES + 1), &mut out).map_err(CopyError::Io)?;
     if copied > MAX_ATTACHMENT_BYTES {

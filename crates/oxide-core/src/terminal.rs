@@ -65,6 +65,7 @@ impl TerminalSession {
 
     pub fn start(
         id: u32,
+        home: &Path,
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         blocks: bool,
@@ -80,12 +81,15 @@ impl TerminalSession {
             .map_err(|e| Error::Terminal(format!("open terminal: {e}")))?;
         #[cfg(unix)]
         let shell_init = if blocks {
-            Some(create_shell_init_file(id)?)
+            Some(create_shell_init_file(home, id)?)
         } else {
             None
         };
         #[cfg(windows)]
-        let shell_init: Option<PathBuf> = None;
+        let shell_init: Option<PathBuf> = {
+            let _ = home;
+            None
+        };
         let mut command = shell_command(cwd, blocks, shell_init.as_deref());
         // Installers can update PATH after the GUI process started. New shells must
         // see the same Git/GitHub CLI executables that Core just detected.
@@ -442,11 +446,19 @@ fn shell_command(
 }
 
 #[cfg(unix)]
-fn create_shell_init_file(id: u32) -> Result<PathBuf> {
+fn create_shell_init_file(home: &Path, id: u32) -> Result<PathBuf> {
     use std::io::Write as _;
 
     static NEXT_INIT_FILE: AtomicU32 = AtomicU32::new(0);
-    let path = std::env::temp_dir().join(format!(
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    // In Oxide's private home, not the shared temp directory: any local account could otherwise
+    // plant or read a file there.
+    let dir = home.join("terminal");
+    crate::private::create_dir_all(&dir).map_err(|error| {
+        Error::Terminal(format!("create terminal shell init directory: {error}"))
+    })?;
+    let path = dir.join(format!(
         "oxide-terminal-{}-{id}-{}.bashrc",
         std::process::id(),
         NEXT_INIT_FILE.fetch_add(1, Ordering::Relaxed)
@@ -454,6 +466,7 @@ fn create_shell_init_file(id: u32) -> Result<PathBuf> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
+        .mode(0o600)
         .open(&path)
         .map_err(|error| Error::Terminal(format!("create terminal shell init file: {error}")))?;
     file.write_all(
