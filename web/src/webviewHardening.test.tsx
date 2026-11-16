@@ -51,8 +51,8 @@ describe("Tauri security configuration", () => {
     expect(conf.app.security.devCsp).toContain("http://localhost:1420");
   });
 
-  it("freezes the prototype", () => {
-    expect(conf.app.security.freezePrototype).toBe(true);
+  it("does not freeze the prototype (Monaco and the terminal assign toString on plain objects)", () => {
+    expect(conf.app.security.freezePrototype).not.toBe(true);
   });
 
   it("describes the capability truthfully and points to ADR-0016", () => {
