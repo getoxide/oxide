@@ -111,6 +111,11 @@ pub(crate) fn run(cwd: &Path, args: &[&str]) -> Result<String> {
     run_with_env(cwd, args, &[])
 }
 
+/// A Git invocation the user asked for: hooks and helpers run as in a terminal.
+pub(crate) fn run_user_initiated(cwd: &Path, args: &[&str]) -> Result<String> {
+    GitCommand::user_initiated(cwd).args(args).run()
+}
+
 pub(crate) fn run_with_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String> {
     GitCommand::read_only(cwd)
         .args(args)

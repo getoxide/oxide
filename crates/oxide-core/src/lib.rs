@@ -222,6 +222,7 @@ impl Core {
             path: home.clone(),
             source,
         })?;
+        git_command::set_home(&home);
         let db = db::open(&home.join(DB_FILE), migrations)?;
         let (settings, _settings_watcher) = SettingsStore::open(&home)?;
         // A crashed run leaves its Provider and shell groups behind; its Threads were mid-flight.
