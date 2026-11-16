@@ -109,10 +109,7 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
             if asset.name.ends_with(".zip") {
                 extract_zip(&archive, &extracted)?;
             } else {
-                let mut reader = flate2::read::GzDecoder::new(File::open(&archive).map_err(error)?);
-                let mut file = File::create(extracted.join(executable)).map_err(error)?;
-                std::io::copy(&mut Read::by_ref(&mut reader).take(MAX_DOWNLOAD), &mut file)
-                    .map_err(error)?;
+                gunzip_limited(&archive, &extracted.join(executable), MAX_DOWNLOAD)?;
             }
             let executable_name = if cfg!(windows) {
                 format!("{executable}.exe")
@@ -248,6 +245,25 @@ fn download(
         ));
     }
     Ok(())
+}
+
+/// Decompresses a gzip file to `destination`. A stream that goes past `limit`
+/// bytes is an error and leaves no file, never a silently truncated binary.
+fn gunzip_limited(archive: &Path, destination: &Path, limit: u64) -> Result<()> {
+    let reader = flate2::read::GzDecoder::new(File::open(archive).map_err(error)?);
+    let mut file = File::create(destination).map_err(error)?;
+    let copied = std::io::copy(&mut reader.take(limit.saturating_add(1)), &mut file);
+    drop(file);
+    match copied {
+        Ok(n) if n <= limit => Ok(()),
+        outcome => {
+            let _ = std::fs::remove_file(destination);
+            match outcome {
+                Ok(_) => Err(error("Unpacked language server is larger than the supported limit.")),
+                Err(e) => Err(error(e)),
+            }
+        }
+    }
 }
 
 fn extract_zip(archive: &Path, root: &Path) -> Result<()> {
@@ -460,6 +476,30 @@ mod tests {
         writer.finish().unwrap();
         assert!(extract_zip(&archive, &temporary.path().join("extract")).is_err());
         assert!(!temporary.path().parent().unwrap().join("escape").exists());
+    }
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+    #[test]
+    fn gzip_over_the_cap_fails_instead_of_truncating() {
+        let temporary = tempfile::tempdir().unwrap();
+        let archive = temporary.path().join("big.gz");
+        std::fs::write(&archive, gzip(&[7; 100])).unwrap();
+        let output = temporary.path().join("out");
+        assert!(gunzip_limited(&archive, &output, 99).is_err());
+        assert!(!output.exists());
+    }
+    #[test]
+    fn gzip_exactly_at_the_cap_is_extracted_whole() {
+        let temporary = tempfile::tempdir().unwrap();
+        let archive = temporary.path().join("ok.gz");
+        std::fs::write(&archive, gzip(&[7; 100])).unwrap();
+        let output = temporary.path().join("out");
+        gunzip_limited(&archive, &output, 100).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), vec![7; 100]);
     }
     /// Serves `body` once over plain HTTP and returns the URL.
     fn serve_once(body: &'static [u8]) -> String {
