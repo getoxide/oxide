@@ -224,7 +224,9 @@ impl ClaudeCodeProvider {
 
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            for line in BoundedLines::new(BufReader::new(stdout), PROTOCOL_LINE_CAP).map_while(Result::ok) {
+            for line in
+                BoundedLines::new(BufReader::new(stdout), PROTOCOL_LINE_CAP).map_while(Result::ok)
+            {
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
                     continue;
                 };

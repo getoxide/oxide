@@ -142,7 +142,10 @@ mod tests {
         impl Read for Endless {
             fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
                 self.0 += out.len();
-                assert!(self.0 < 10 * 1024 * 1024, "reader kept consuming past the cap");
+                assert!(
+                    self.0 < 10 * 1024 * 1024,
+                    "reader kept consuming past the cap"
+                );
                 out.fill(b'x');
                 Ok(out.len())
             }

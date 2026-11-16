@@ -822,7 +822,11 @@ mod tests {
         // Signal 0 only checks existence, so a regression here cannot hurt the test run.
         for pgid in [0, 1, -1, -2, i32::MIN] {
             let error = signal_group(pgid, 0).expect_err("must refuse");
-            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "pgid {pgid}");
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "pgid {pgid}"
+            );
         }
     }
 

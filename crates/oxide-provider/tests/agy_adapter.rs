@@ -605,3 +605,25 @@ fn agy_reports_background_commands_for_detachment() {
     );
     provider.shutdown().unwrap();
 }
+
+#[test]
+fn a_line_over_the_cap_ends_the_session_with_an_error() {
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("oversized_test").unwrap();
+    let mut errored = false;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(ProviderEvent::Error { message, .. }) => {
+                assert!(message.contains("16 MiB"), "{message}");
+                errored = true;
+            }
+            Ok(ProviderEvent::Exited { .. }) => break,
+            Ok(ProviderEvent::TurnCompleted { .. }) => panic!("no result was sent"),
+            Ok(_) => {}
+            Err(error) => panic!("the session never ended: {error}"),
+        }
+    }
+    assert!(errored, "the Thread must see why the session ended");
+}

@@ -113,6 +113,10 @@ elif "usage_third_party_test" in prompt:
     replay("turn_usage_third_party.jsonl")
 elif "commands_contract" in prompt:
     replay("turn_commands.jsonl")
+elif "oversized_test" in prompt:
+    # One endless line: past the 16 MiB protocol cap, newline only at the very end.
+    emit("x" * (17 * 1024 * 1024))
+    time.sleep(30)
 elif "error_test" in prompt:
     replay("turn_error.jsonl")
     sys.exit(3)
