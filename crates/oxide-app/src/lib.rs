@@ -2403,6 +2403,13 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppErr
     git_blocking(&core, move |core| core.open_link(&url)).await
 }
 
+/// Opens a link whose host the user confirmed after `open_link` refused it as unlisted.
+#[tauri::command]
+#[specta::specta]
+async fn open_confirmed_link(core: State<'_, Arc<Core>>, url: String) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.open_confirmed_link(&url)).await
+}
+
 /// Opens a localhost URL detected in a Project Service's log in the system browser. Only
 /// loopback `http` addresses are accepted; the webview never opens pages itself.
 #[tauri::command]
@@ -3319,6 +3326,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         set_editor_dirty,
         run_terminal_block,
         complete_terminal,
+        open_confirmed_link,
         configure_language_server,
         start_language_server,
         language_server_message,

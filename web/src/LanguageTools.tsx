@@ -8,6 +8,7 @@ import {
   XIcon,
 } from "@primer/octicons-react";
 import { commands, type LanguageTool } from "./bindings";
+import { openExternalLink } from "./externalLink";
 import { InstallLanguageButton } from "./LanguageSupport";
 
 export function LanguageTools({
@@ -186,11 +187,9 @@ export function LanguageTools({
               href={tool.documentation}
               onClick={(event) => {
                 event.preventDefault();
-                void commands
-                  .openLink(tool.documentation)
-                  .then((result) => {
-                    if (result.status === "error")
-                      setError(result.error.message);
+                void openExternalLink(tool.documentation)
+                  .then((message) => {
+                    if (message) setError(message);
                   })
                   .catch((e: Error) => setError(e.message));
               }}

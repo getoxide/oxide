@@ -31,6 +31,7 @@ import {
   type PullRequestReviewThread,
   type Thread,
 } from "./bindings";
+import { openExternalLink } from "./externalLink";
 import { Avatar } from "./Avatar";
 import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
@@ -324,8 +325,8 @@ export function PullRequestReview({
   }, [checksRunning]);
 
   async function openLink(url: string) {
-    const result = await commands.openLink(url);
-    if (result.status === "error") setError(result.error.message);
+    const message = await openExternalLink(url);
+    if (message) setError(message);
   }
 
   // What the repository list already told us, if this pull request came from there. It only has

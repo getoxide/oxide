@@ -17,6 +17,7 @@ import {
   type IssueDetail,
   type IssueEdit,
 } from "./bindings";
+import { openExternalLink } from "./externalLink";
 import { Avatar } from "./Avatar";
 import { DispatchDialog } from "./DispatchDialog";
 import { IssueStateIcon } from "./IssueStateIcon";
@@ -88,8 +89,8 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
   const busy = pending !== null;
 
   async function openLink(url: string) {
-    const result = await commands.openLink(url);
-    if (result.status === "error") setError(result.error.message);
+    const message = await openExternalLink(url);
+    if (message) setError(message);
   }
 
   const issue = loaded.state === "ready" ? loaded.issue : null;

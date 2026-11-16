@@ -1052,6 +1052,24 @@ fn only_https_links_reach_the_browser() {
     assert_eq!(f.system.opened.lock().unwrap().len(), 1);
 }
 
+#[test]
+fn a_link_to_a_foreign_host_opens_only_after_confirmation() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let error = f.core.open_link("https://evil.example/x").unwrap_err();
+    assert!(error.to_string().contains("evil.example"), "{error}");
+    assert!(f.system.opened.lock().unwrap().is_empty());
+    f.core
+        .open_confirmed_link("https://evil.example/x")
+        .unwrap();
+    assert!(
+        f.core
+            .open_confirmed_link("https://github.com@evil.example/")
+            .is_err()
+    );
+    assert_eq!(f.system.opened.lock().unwrap().len(), 1);
+}
+
 /// Publishes `add-b` (with `file` holding `content`) and leaves `main` checked out.
 fn publish_pr_branch(f: &Fixture, file: &str, content: &str) {
     git(&f.work, &["checkout", "-q", "-b", "add-b"]);

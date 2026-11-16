@@ -129,6 +129,8 @@ export const commands = {
 	setEditorDirty: (id: string, dirty: boolean) => __TAURI_INVOKE<void>("set_editor_dirty", { id, dirty }),
 	runTerminalBlock: (terminalId: number, command: string, token: string) => typedError<null, AppError>(__TAURI_INVOKE("run_terminal_block", { terminalId, command, token })),
 	completeTerminal: (terminalId: number, line: string, cursor: number, cwd: string) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor, cwd })),
+	/**  Opens a link whose host the user confirmed after `open_link` refused it as unlisted. */
+	openConfirmedLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_confirmed_link", { url })),
 	configureLanguageServer: (language: string, config: LanguageServerConfig_Deserialize) => typedError<null, AppError>(__TAURI_INVOKE("configure_language_server", { language, config })),
 	startLanguageServer: (projectId: number, threadId: number | null, language: string, onMessage: Channel<string>) => typedError<LanguageServer, AppError>(__TAURI_INVOKE("start_language_server", { projectId, threadId, language, onMessage })),
 	languageServerMessage: (id: number, message: string) => typedError<null, AppError>(__TAURI_INVOKE("language_server_message", { id, message })),

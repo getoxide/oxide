@@ -2047,6 +2047,12 @@ impl Core {
         Ok(())
     }
 
+    /// Opens a link on a host outside the allowlist, after the user confirmed the host.
+    pub fn open_confirmed_link(&self, url: &str) -> Result<()> {
+        self.activity.open_url(github::confirmed_url(url)?);
+        Ok(())
+    }
+
     /// Open pull requests of the Project's repository: only the user's own, if
     /// `mine`, and matching the GitHub search query, if not empty.
     pub fn list_pull_requests(
