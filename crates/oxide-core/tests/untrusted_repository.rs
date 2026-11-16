@@ -1,4 +1,10 @@
 //! A folder's own Git configuration must not run programs when Oxide only looks at it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 #![cfg(unix)]
 
 use oxide_core::{Core, DiffScope, ProjectSummary};

@@ -68,7 +68,7 @@ struct ActiveTurn {
 type ActiveTurnsMap = Arc<Mutex<HashMap<String, ActiveTurn>>>;
 
 fn dispatch_to_thread(threads: &ThreadsMap, thread_id: Option<&str>, event: ProviderEvent) {
-    let threads_guard = threads.lock().unwrap();
+    let threads_guard = threads.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(tid) = thread_id {
         if let Some(tx) = threads_guard.get(tid) {
             let _ = tx.send(event);
@@ -81,7 +81,7 @@ fn dispatch_to_thread(threads: &ThreadsMap, thread_id: Option<&str>, event: Prov
 }
 
 fn emit_compaction(threads: &ThreadsMap, items: &ThreadItemsMap, thread_id: Option<&str>) {
-    let mut items = items.lock().unwrap();
+    let mut items = items.lock().unwrap_or_else(|e| e.into_inner());
     let state = items
         .entry(thread_id.unwrap_or_default().to_owned())
         .or_default();
@@ -203,7 +203,7 @@ impl CodexAppServer {
     }
 
     fn ensure_running(&self) -> Result<(), ProviderError> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return Ok(());
         }
@@ -226,9 +226,13 @@ impl CodexAppServer {
         })?;
 
         let pgid = child.id() as i32;
-        let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin must be piped")));
-        let stdout = child.stdout.take().expect("stdout must be piped");
-        let stderr = child.stderr.take().expect("stderr must be piped");
+        let stdin = Arc::new(Mutex::new(process::require_pipe(
+            child.stdin.take(),
+            &mut child,
+            "stdin",
+        )?));
+        let stdout = process::require_pipe(child.stdout.take(), &mut child, "stdout")?;
+        let stderr = process::require_pipe(child.stderr.take(), &mut child, "stderr")?;
         let stderr_reader = process::drain_stderr(stderr);
 
         let pending_requests: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
@@ -252,7 +256,7 @@ impl CodexAppServer {
                         if is_line_too_long(&error) {
                             // The stream is unusable and shared by every Thread: tell each one
                             // why, then stop the app-server (Exited follows once we leave).
-                            let threads = threads_clone.lock().unwrap();
+                            let threads = threads_clone.lock().unwrap_or_else(|e| e.into_inner());
                             for tx in threads.values() {
                                 let _ = tx.send(ProviderEvent::Error {
                                     message: protocol_overflow_message(),
@@ -290,7 +294,10 @@ impl CodexAppServer {
                 if has_id && !has_method {
                     // Response to client-initiated request
                     if let Some(id_u64) = val.get("id").and_then(|i| i.as_u64()) {
-                        let sender_opt = pending_requests_clone.lock().unwrap().remove(&id_u64);
+                        let sender_opt = pending_requests_clone
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&id_u64);
                         if let Some(tx) = sender_opt {
                             if let Some(err) = val.get("error") {
                                 let _ = tx.send(Err(err.to_string()));
@@ -314,7 +321,7 @@ impl CodexAppServer {
                     };
                     pending_server_requests_clone
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(id_str.clone(), (id_val, method.to_string()));
 
                     let params = val.get("params").cloned().unwrap_or_default();
@@ -377,7 +384,8 @@ impl CodexAppServer {
                         "turn/started" => {
                             // TurnStarted event already emitted immediately on send_prompt
                             if let Some(tid) = &thread_id {
-                                let mut turns = active_turns_clone.lock().unwrap();
+                                let mut turns =
+                                    active_turns_clone.lock().unwrap_or_else(|e| e.into_inner());
                                 if let Some(turn) = turns.get_mut(tid) {
                                     turn.id = params["turn"]["id"].as_str().map(str::to_owned);
                                 }
@@ -436,7 +444,8 @@ impl CodexAppServer {
                             };
 
                             let t_key = thread_id.clone().unwrap_or_default();
-                            let mut item_map_guard = thread_items_clone.lock().unwrap();
+                            let mut item_map_guard =
+                                thread_items_clone.lock().unwrap_or_else(|e| e.into_inner());
                             let state = item_map_guard.entry(t_key).or_default();
                             let idx = state.resolve_index(item_id);
 
@@ -479,7 +488,8 @@ impl CodexAppServer {
                             let delta = params.get("delta").and_then(|s| s.as_str()).unwrap_or("");
 
                             let t_key = thread_id.clone().unwrap_or_default();
-                            let mut item_map_guard = thread_items_clone.lock().unwrap();
+                            let mut item_map_guard =
+                                thread_items_clone.lock().unwrap_or_else(|e| e.into_inner());
                             let state = item_map_guard.entry(t_key).or_default();
                             let idx = state.resolve_index(item_id);
 
@@ -560,7 +570,8 @@ impl CodexAppServer {
                             };
 
                             let t_key = thread_id.clone().unwrap_or_default();
-                            let mut item_map_guard = thread_items_clone.lock().unwrap();
+                            let mut item_map_guard =
+                                thread_items_clone.lock().unwrap_or_else(|e| e.into_inner());
                             let state = item_map_guard.entry(t_key).or_default();
                             let idx = state.resolve_index(item_id);
 
@@ -592,7 +603,7 @@ impl CodexAppServer {
                             let turn_idx = if let Some(ref tid) = thread_id {
                                 active_turns_clone
                                     .lock()
-                                    .unwrap()
+                                    .unwrap_or_else(|e| e.into_inner())
                                     .remove(tid)
                                     .map(|turn| turn.index)
                                     .unwrap_or(0)
@@ -611,7 +622,10 @@ impl CodexAppServer {
 
                             // Clear thread item indexing for next turn
                             if let Some(ref tid) = thread_id {
-                                thread_items_clone.lock().unwrap().remove(tid);
+                                thread_items_clone
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .remove(tid);
                             }
                         }
                         _ => {
@@ -635,7 +649,7 @@ impl CodexAppServer {
 
             // Reader exited / EOF
             let stderr_tail = stderr_reader.join().ok().flatten();
-            let threads = threads_clone.lock().unwrap();
+            let threads = threads_clone.lock().unwrap_or_else(|e| e.into_inner());
             for tx in threads.values() {
                 let _ = tx.send(ProviderEvent::Exited {
                     code: None,
@@ -674,14 +688,18 @@ impl CodexAppServer {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, ProviderError> {
         self.ensure_running()?;
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let inner = guard.as_ref().ok_or_else(|| {
             ProviderError::CommandFailed("App server process is not running".to_string())
         })?;
 
         let id = inner.next_request_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = crossbeam_channel::bounded(1);
-        inner.pending_requests.lock().unwrap().insert(id, tx);
+        inner
+            .pending_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, tx);
 
         let req = json!({
             "jsonrpc": "2.0",
@@ -694,7 +712,7 @@ impl CodexAppServer {
         let stdin_arc = inner.process.stdin.clone();
         drop(guard);
 
-        let mut stdin = stdin_arc.lock().unwrap();
+        let mut stdin = stdin_arc.lock().unwrap_or_else(|e| e.into_inner());
         stdin.write_all(req_str.as_bytes()).map_err(|e| {
             ProviderError::CommandFailed(format!("Failed to write request to app-server: {e}"))
         })?;
@@ -744,7 +762,7 @@ impl CodexAppServer {
         };
 
         if let Some(w) = warning {
-            let mut guard = self.inner.lock().unwrap();
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut inner) = *guard {
                 inner.handshake_warning = Some(w);
             }
@@ -796,7 +814,7 @@ impl CodexAppServer {
             });
         }
 
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut inner) = *guard {
             inner.models = models.clone();
         }
@@ -805,12 +823,12 @@ impl CodexAppServer {
     }
 
     pub fn models(&self) -> Vec<CodexModelEntry> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|i| i.models.clone()).unwrap_or_default()
     }
 
     pub fn warning(&self) -> Option<String> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().and_then(|i| i.handshake_warning.clone())
     }
 
@@ -819,7 +837,7 @@ impl CodexAppServer {
         id: &str,
         decision: ApprovalDecision,
     ) -> Result<(), ProviderError> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let inner = guard.as_ref().ok_or_else(|| {
             ProviderError::CommandFailed("App server process is not running".to_string())
         })?;
@@ -827,7 +845,7 @@ impl CodexAppServer {
         let (raw_id, method) = inner
             .pending_server_requests
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .remove(id)
             .ok_or_else(|| {
                 ProviderError::CommandFailed(format!("No pending server request with id `{id}`"))
@@ -860,7 +878,7 @@ impl CodexAppServer {
         let stdin_arc = inner.process.stdin.clone();
         drop(guard);
 
-        let mut stdin = stdin_arc.lock().unwrap();
+        let mut stdin = stdin_arc.lock().unwrap_or_else(|e| e.into_inner());
         stdin.write_all(resp_str.as_bytes()).map_err(|e| {
             ProviderError::CommandFailed(format!("Failed to write approval response: {e}"))
         })?;
@@ -875,32 +893,52 @@ impl CodexAppServer {
     }
 
     fn register_thread(&self, thread_id: String, sender: Sender<ProviderEvent>) {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref inner) = *guard {
-            inner.threads.lock().unwrap().insert(thread_id, sender);
+            inner
+                .threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_id, sender);
         }
     }
 
     fn unregister_thread(&self, thread_id: &str) {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref inner) = *guard {
-            inner.threads.lock().unwrap().remove(thread_id);
-            inner.thread_items.lock().unwrap().remove(thread_id);
-            inner.active_turns.lock().unwrap().remove(thread_id);
+            inner
+                .threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(thread_id);
+            inner
+                .thread_items
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(thread_id);
+            inner
+                .active_turns
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(thread_id);
         }
     }
 
     fn record_active_turn(&self, thread_id: String, turn_index: u32) {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref inner) = *guard {
-            inner.active_turns.lock().unwrap().insert(
-                thread_id,
-                ActiveTurn {
-                    index: turn_index,
-                    id: None,
-                    interrupt_requested: false,
-                },
-            );
+            inner
+                .active_turns
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    thread_id,
+                    ActiveTurn {
+                        index: turn_index,
+                        id: None,
+                        interrupt_requested: false,
+                    },
+                );
         }
     }
 
@@ -913,9 +951,9 @@ impl CodexAppServer {
         let response = self.send_request(method, params)?;
         // A caller may interrupt immediately after send_prompt returns, before turn/started.
         let interrupt_requested = {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(inner) = guard.as_ref() {
-                let mut turns = inner.active_turns.lock().unwrap();
+                let mut turns = inner.active_turns.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(turn) = turns.get_mut(thread_id) {
                     turn.id = response["turn"]["id"].as_str().map(str::to_owned);
                     turn.interrupt_requested
@@ -934,12 +972,12 @@ impl CodexAppServer {
 
     fn interrupt_turn(&self, thread_id: &str) -> Result<(), ProviderError> {
         let turn_id = {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             guard.as_ref().and_then(|inner| {
                 inner
                     .active_turns
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(thread_id)
                     .and_then(|turn| turn.id.clone())
             })
@@ -953,9 +991,13 @@ impl CodexAppServer {
                 }),
             )?;
         } else {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(inner) = guard.as_ref()
-                && let Some(turn) = inner.active_turns.lock().unwrap().get_mut(thread_id)
+                && let Some(turn) = inner
+                    .active_turns
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(thread_id)
             {
                 turn.interrupt_requested = true;
             }
@@ -964,11 +1006,23 @@ impl CodexAppServer {
     }
 
     pub fn shutdown(&self) -> Result<(), ProviderError> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut inner) = guard.take() {
-            inner.threads.lock().unwrap().clear();
-            inner.pending_requests.lock().unwrap().clear();
-            inner.pending_server_requests.lock().unwrap().clear();
+            inner
+                .threads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            inner
+                .pending_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            inner
+                .pending_server_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             let pid = inner.process.child.id() as i32;
             process::terminate_group(pid, process::SHUTDOWN_GRACE, || {
                 let _ = inner.process.child.try_wait();
@@ -1095,7 +1149,13 @@ impl CodexProvider {
             .filter(|skill| skill["enabled"].as_bool() == Some(true))
             .cloned()
             .collect();
-        if let Some(inner) = self.app_server.inner.lock().unwrap().as_mut() {
+        if let Some(inner) = self
+            .app_server
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
             inner
                 .skills_cache
                 .insert(working_dir.to_owned(), skills.clone());
@@ -1110,12 +1170,25 @@ impl CodexProvider {
         result: Result<(), ProviderError>,
     ) -> Result<(), ProviderError> {
         if let Err(ref error) = result {
-            let guard = self.app_server.inner.lock().unwrap();
+            let guard = self
+                .app_server
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(inner) = guard.as_ref() {
-                inner.active_turns.lock().unwrap().remove(thread_id);
+                inner
+                    .active_turns
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(thread_id);
             }
             drop(guard);
-            if let Some(sender) = self.event_sender.lock().unwrap().as_ref() {
+            if let Some(sender) = self
+                .event_sender
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+            {
                 let _ = sender.send(ProviderEvent::Error {
                     message: error.to_string(),
                     code: None,
@@ -1261,10 +1334,13 @@ impl Provider for CodexProvider {
             params["model"] = json!(m);
         }
 
-        *self.active_permission_mode.lock().unwrap() = context.permission_mode;
-        *self.active_model.lock().unwrap() = context.model.clone();
-        *self.active_effort.lock().unwrap() = context.effort.clone();
-        *self.working_dir.lock().unwrap() = context.working_dir.clone();
+        *self
+            .active_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = context.permission_mode;
+        *self.active_model.lock().unwrap_or_else(|e| e.into_inner()) = context.model.clone();
+        *self.active_effort.lock().unwrap_or_else(|e| e.into_inner()) = context.effort.clone();
+        *self.working_dir.lock().unwrap_or_else(|e| e.into_inner()) = context.working_dir.clone();
 
         let res = self.app_server.send_request("thread/start", &params)?;
         let tid = res
@@ -1278,10 +1354,10 @@ impl Provider for CodexProvider {
             })?
             .to_string();
 
-        *self.thread_id.lock().unwrap() = Some(tid.clone());
+        *self.thread_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(tid.clone());
 
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap() = Some(tx.clone());
+        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
         self.app_server.register_thread(tid.clone(), tx.clone());
 
@@ -1308,17 +1384,20 @@ impl Provider for CodexProvider {
             "approvalPolicy": approval_policy,
         });
 
-        *self.active_permission_mode.lock().unwrap() = context.permission_mode;
-        *self.active_model.lock().unwrap() = context.model.clone();
-        *self.active_effort.lock().unwrap() = context.effort.clone();
-        *self.working_dir.lock().unwrap() = context.working_dir.clone();
+        *self
+            .active_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = context.permission_mode;
+        *self.active_model.lock().unwrap_or_else(|e| e.into_inner()) = context.model.clone();
+        *self.active_effort.lock().unwrap_or_else(|e| e.into_inner()) = context.effort.clone();
+        *self.working_dir.lock().unwrap_or_else(|e| e.into_inner()) = context.working_dir.clone();
 
         let _res = self.app_server.send_request("thread/resume", &params)?;
 
-        *self.thread_id.lock().unwrap() = Some(session_id.to_string());
+        *self.thread_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(session_id.to_string());
 
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap() = Some(tx.clone());
+        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
         self.app_server
             .register_thread(session_id.to_string(), tx.clone());
@@ -1342,14 +1421,14 @@ impl Provider for CodexProvider {
         let tid = self
             .thread_id
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or_else(|| ProviderError::CommandFailed("Thread not started".into()))?;
 
         let turn_index = self.turn_counter.fetch_add(1, Ordering::SeqCst);
         self.app_server.record_active_turn(tid.clone(), turn_index);
 
-        if let Some(ref sender) = *self.event_sender.lock().unwrap() {
+        if let Some(ref sender) = *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) {
             let _ = sender.send(ProviderEvent::TurnStarted {
                 turn_index,
                 prompt: prompt.to_string(),
@@ -1384,9 +1463,17 @@ impl Provider for CodexProvider {
         if let Some(command) = prompt.trim_start().strip_prefix('/') {
             let split = command.find(char::is_whitespace).unwrap_or(command.len());
             let name = &command[..split];
-            let cwd = self.working_dir.lock().unwrap().clone();
+            let cwd = self
+                .working_dir
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             let skills = self.skills(&cwd).or_else(|error| {
-                let guard = self.app_server.inner.lock().unwrap();
+                let guard = self
+                    .app_server
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 guard
                     .as_ref()
                     .and_then(|inner| inner.skills_cache.get(&cwd).cloned())
@@ -1413,7 +1500,10 @@ impl Provider for CodexProvider {
             }
         }
 
-        let mode = *self.active_permission_mode.lock().unwrap();
+        let mode = *self
+            .active_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (sandbox_policy, approval_policy) = Self::map_permission_mode_to_turn_start(mode);
 
         let mut params = json!({
@@ -1423,10 +1513,10 @@ impl Provider for CodexProvider {
             "approvalPolicy": approval_policy,
         });
 
-        if let Some(ref m) = *self.active_model.lock().unwrap() {
+        if let Some(ref m) = *self.active_model.lock().unwrap_or_else(|e| e.into_inner()) {
             params["model"] = json!(m);
         }
-        if let Some(ref eff) = *self.active_effort.lock().unwrap() {
+        if let Some(ref eff) = *self.active_effort.lock().unwrap_or_else(|e| e.into_inner()) {
             params["effort"] = json!(eff);
         }
 
@@ -1438,7 +1528,7 @@ impl Provider for CodexProvider {
         let tid = self
             .thread_id
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or_else(|| ProviderError::CommandFailed("Thread not started".into()))?;
 
@@ -1454,12 +1544,12 @@ impl Provider for CodexProvider {
     }
 
     fn set_model(&mut self, model: &str) -> Result<(), ProviderError> {
-        *self.active_model.lock().unwrap() = Some(model.to_string());
+        *self.active_model.lock().unwrap_or_else(|e| e.into_inner()) = Some(model.to_string());
         Ok(())
     }
 
     fn set_effort(&mut self, effort: &str) -> Result<(), ProviderError> {
-        *self.active_effort.lock().unwrap() = Some(effort.to_string());
+        *self.active_effort.lock().unwrap_or_else(|e| e.into_inner()) = Some(effort.to_string());
         Ok(())
     }
 
@@ -1518,20 +1608,34 @@ impl Provider for CodexProvider {
     }
 
     fn set_permission_mode(&mut self, mode: PermissionMode) -> Result<(), ProviderError> {
-        *self.active_permission_mode.lock().unwrap() = mode;
+        *self
+            .active_permission_mode
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = mode;
         Ok(())
     }
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
-        if let Some(tid) = self.thread_id.lock().unwrap().take() {
+        if let Some(tid) = self
+            .thread_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             self.app_server.unregister_thread(&tid);
         }
-        self.event_sender.lock().unwrap().take();
+        self.event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         Ok(())
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        self.capabilities.lock().unwrap().clone()
+        self.capabilities
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -1584,4 +1688,38 @@ fn codex_input(segments: &[PromptSegment]) -> Vec<serde_json::Value> {
         items.push(json!({"type": "text", "text": ""}));
     }
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn poison<T: Send + 'static>(mutex: &Arc<Mutex<T>>) {
+        let mutex = Arc::clone(mutex);
+        let _ = std::thread::spawn(move || {
+            let _guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("poison the mutex");
+        })
+        .join();
+    }
+
+    #[test]
+    fn a_poisoned_provider_mutex_does_not_cascade_into_later_calls() {
+        let provider = CodexProvider::with_app_server(Arc::new(CodexAppServer::new()));
+        let before = provider.capabilities();
+        poison(&provider.capabilities);
+        assert!(provider.capabilities.is_poisoned());
+
+        assert_eq!(
+            provider.capabilities().supported_permission_modes,
+            before.supported_permission_modes
+        );
+    }
+
+    #[test]
+    fn a_poisoned_app_server_state_still_reports_its_models() {
+        let app_server = CodexAppServer::new();
+        poison(&app_server.inner);
+        assert!(app_server.models().is_empty());
+    }
 }

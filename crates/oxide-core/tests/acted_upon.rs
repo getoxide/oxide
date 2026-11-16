@@ -1,4 +1,10 @@
 //! Oxide does not contact a Project's remote on its own until the user has acted in it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{Core, PermissionMode};
 use oxide_provider::FakeProvider;
 use std::path::{Path, PathBuf};

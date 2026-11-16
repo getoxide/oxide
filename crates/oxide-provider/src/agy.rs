@@ -539,7 +539,7 @@ impl AgyProvider {
 
     fn open_channel(&self) -> Receiver<ProviderEvent> {
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap() = Some(tx);
+        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         self.closed.store(false, Ordering::SeqCst);
         rx
     }
@@ -551,7 +551,7 @@ impl AgyProvider {
     ) -> Result<Receiver<ProviderEvent>, ProviderError> {
         ensure_honourable(context.permission_mode)
             .map_err(|e| ProviderError::StartFailed(e.to_string()))?;
-        *self.session.lock().unwrap() = Session {
+        *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Session {
             context: Some(context.clone()),
             conversation,
         };
@@ -559,7 +559,12 @@ impl AgyProvider {
     }
 
     fn send(&self, event: ProviderEvent) {
-        if let Some(sender) = self.event_sender.lock().unwrap().as_ref() {
+        if let Some(sender) = self
+            .event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             let _ = sender.send(event);
         }
     }
@@ -770,7 +775,7 @@ impl Provider for AgyProvider {
         let prompt = render_flat_prompt(segments);
         let prompt = prompt.as_str();
         let (context, conversation) = {
-            let session = self.session.lock().unwrap();
+            let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
             let context = session
                 .context
                 .clone()
@@ -830,7 +835,7 @@ impl Provider for AgyProvider {
         if let Some(registry) = &self.registry {
             registry.register(pgid, &self.command);
         }
-        *self.group.lock().unwrap() = Some(pgid);
+        *self.group.lock().unwrap_or_else(|e| e.into_inner()) = Some(pgid);
         self.interrupted.store(false, Ordering::SeqCst);
 
         let turn_index = self.turn_counter.fetch_add(1, Ordering::SeqCst);
@@ -839,11 +844,16 @@ impl Provider for AgyProvider {
             prompt: crate::render_prompt(segments),
         });
 
-        let Some(tx) = self.event_sender.lock().unwrap().clone() else {
+        let Some(tx) = self
+            .event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        else {
             return Err(ProviderError::CommandFailed("session is shut down".into()));
         };
-        let stdout = child.stdout.take().expect("stdout must be piped");
-        let stderr = child.stderr.take().expect("stderr must be piped");
+        let stdout = process::require_pipe(child.stdout.take(), &mut child, "stdout")?;
+        let stderr = process::require_pipe(child.stderr.take(), &mut child, "stderr")?;
         let turn = TurnRun {
             turn_index,
             working_dir: context.working_dir,
@@ -866,7 +876,7 @@ impl Provider for AgyProvider {
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
-        let pgid = *self.group.lock().unwrap();
+        let pgid = *self.group.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(_pgid) = pgid {
             self.interrupted.store(true, Ordering::SeqCst);
             #[cfg(unix)]
@@ -890,7 +900,7 @@ impl Provider for AgyProvider {
     }
 
     fn set_model(&mut self, model: &str) -> Result<(), ProviderError> {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
         let context = session
             .context
             .as_mut()
@@ -900,7 +910,7 @@ impl Provider for AgyProvider {
     }
 
     fn set_effort(&mut self, effort: &str) -> Result<(), ProviderError> {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
         let context = session
             .context
             .as_mut()
@@ -965,7 +975,7 @@ impl Provider for AgyProvider {
 
     fn set_permission_mode(&mut self, mode: PermissionMode) -> Result<(), ProviderError> {
         ensure_honourable(mode)?;
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
         let context = session
             .context
             .as_mut()
@@ -976,12 +986,15 @@ impl Provider for AgyProvider {
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
         self.closed.store(true, Ordering::SeqCst);
-        let pgid = self.group.lock().unwrap().take();
+        let pgid = self.group.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(pgid) = pgid {
             // The Turn's reader thread owns the child and reaps it.
             process::terminate_group(pgid, SHUTDOWN_GRACE, || {});
         }
-        self.event_sender.lock().unwrap().take();
+        self.event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         Ok(())
     }
 
@@ -1034,18 +1047,19 @@ impl TurnRun {
     ) {
         // Drain startup output while feeding stdin: neither pipe may block the other, and
         // send_prompt must return so the user can interrupt even a CLI that stops reading.
-        let prompt_writer = prompt_input.map(|prompt| {
-            use std::io::Write;
-            let mut stdin = child.stdin.take().expect("stdin must be piped");
-            std::thread::spawn(move || {
-                let sent = writeln!(stdin, "{prompt}");
-                if sent.is_err() {
-                    // Closing the Windows job terminates the CLI without racing a reused pid.
-                    process::release_job(pgid);
-                }
-                sent
-            })
-        });
+        let prompt_writer = prompt_input
+            .and_then(|prompt| child.stdin.take().map(|stdin| (prompt, stdin)))
+            .map(|(prompt, mut stdin)| {
+                use std::io::Write;
+                std::thread::spawn(move || {
+                    let sent = writeln!(stdin, "{prompt}");
+                    if sent.is_err() {
+                        // Closing the Windows job terminates the CLI without racing a reused pid.
+                        process::release_job(pgid);
+                    }
+                    sent
+                })
+            });
         let stderr_reader = process::drain_stderr(stderr);
 
         let mut steps: HashMap<u64, OpenItem> = HashMap::new();
@@ -1092,7 +1106,10 @@ impl TurnRun {
             match value.get("event").and_then(Value::as_str) {
                 Some("init") => {
                     if let Some(id) = value.get("conversation_id").and_then(Value::as_str) {
-                        self.session.lock().unwrap().conversation = Some(id.to_string());
+                        self.session
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .conversation = Some(id.to_string());
                         let _ = self.tx.send(ProviderEvent::SessionInfo {
                             session_id: id.to_string(),
                         });
@@ -1132,7 +1149,7 @@ impl TurnRun {
         }
         process::release_job(pgid);
         {
-            let mut group = self.group.lock().unwrap();
+            let mut group = self.group.lock().unwrap_or_else(|e| e.into_inner());
             if *group == Some(pgid) {
                 *group = None;
             }

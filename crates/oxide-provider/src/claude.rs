@@ -212,8 +212,8 @@ impl ClaudeCodeProvider {
             ProviderError::StartFailed(format!("Failed to contain Claude Code process: {e}"))
         })?;
         let pgid = child.id() as i32;
-        let mut stdin = child.stdin.take().expect("stdin must be piped");
-        let stdout = child.stdout.take().expect("stdout must be piped");
+        let mut stdin = process::require_pipe(child.stdin.take(), &mut child, "stdin")?;
+        let stdout = process::require_pipe(child.stdout.take(), &mut child, "stdout")?;
 
         let request = json!({
             "type": "control_request",
@@ -333,20 +333,20 @@ impl ClaudeCodeProvider {
             ProviderError::StartFailed(format!("Failed to contain Claude Code process: {e}"))
         })?;
 
-        let stdin = child.stdin.take().expect("stdin must be piped");
-        let stdout = child.stdout.take().expect("stdout must be piped");
-        let stderr = child.stderr.take().expect("stderr must be piped");
+        let stdin = process::require_pipe(child.stdin.take(), &mut child, "stdin")?;
+        let stdout = process::require_pipe(child.stdout.take(), &mut child, "stdout")?;
+        let stderr = process::require_pipe(child.stderr.take(), &mut child, "stderr")?;
         let _stderr_reader = process::drain_stderr(stderr);
 
         if let Some(registry) = &self.registry {
             registry.register(child.id() as i32, &self.command);
         }
         let pgid = child.id() as i32;
-        *self.child_stdin.lock().unwrap() = Some(stdin);
-        *self.child_process.lock().unwrap() = Some(child);
+        *self.child_stdin.lock().unwrap_or_else(|e| e.into_inner()) = Some(stdin);
+        *self.child_process.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
 
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap() = Some(tx.clone());
+        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
         let active_turn_clone = Arc::clone(&self.active_turn);
         let capabilities_clone = Arc::clone(&self.capabilities);
@@ -372,7 +372,11 @@ impl ClaudeCodeProvider {
                                 code: None,
                                 retrying: false,
                             });
-                            if let Some(turn) = active_turn_clone.lock().unwrap().take() {
+                            if let Some(turn) = active_turn_clone
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .take()
+                            {
                                 let _ = tx.send(ProviderEvent::TurnCompleted {
                                     turn_index: turn.index,
                                     status: TurnStatus::Error,
@@ -407,16 +411,20 @@ impl ClaudeCodeProvider {
                                         .and_then(|v| v.as_str())
                                         .is_some_and(|m| m.contains("haiku"))
                                     {
-                                        capabilities_clone.lock().unwrap().supports_reasoning =
-                                            false;
+                                        capabilities_clone
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .supports_reasoning = false;
                                     }
                                     if let Some(reasoning) = val
                                         .get("capabilities")
                                         .and_then(|c| c.get("supports_reasoning"))
                                         .and_then(|v| v.as_bool())
                                     {
-                                        capabilities_clone.lock().unwrap().supports_reasoning =
-                                            reasoning;
+                                        capabilities_clone
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .supports_reasoning = reasoning;
                                     }
                                 } else {
                                     let _ = tx.send(ProviderEvent::Unknown { raw: line.clone() });
@@ -750,7 +758,11 @@ impl ClaudeCodeProvider {
                                     .unwrap_or(false);
 
                                 flush_pending_commands(&tx, &mut pending_commands);
-                                let Some(turn) = active_turn_clone.lock().unwrap().take() else {
+                                let Some(turn) = active_turn_clone
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .take()
+                                else {
                                     continue;
                                 };
                                 let status = if turn.interrupted || subtype == "interrupted" {
@@ -784,7 +796,7 @@ impl ClaudeCodeProvider {
     }
 
     fn write_to_stdin(&self, json_val: &serde_json::Value) -> Result<(), ProviderError> {
-        let mut stdin_guard = self.child_stdin.lock().unwrap();
+        let mut stdin_guard = self.child_stdin.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut stdin) = *stdin_guard {
             let data = json_val.to_string();
             stdin.write_all(data.as_bytes()).map_err(|e| {
@@ -1111,13 +1123,13 @@ impl Provider for ClaudeCodeProvider {
     ) -> Result<(), ProviderError> {
         let content = build_content(segments)?;
         let turn_index = self.turn_counter.fetch_add(1, Ordering::SeqCst);
-        *self.active_turn.lock().unwrap() = Some(ActiveTurn {
+        *self.active_turn.lock().unwrap_or_else(|e| e.into_inner()) = Some(ActiveTurn {
             index: turn_index,
             interrupted: false,
         });
 
         // Emit TurnStarted event
-        if let Some(ref sender) = *self.event_sender.lock().unwrap() {
+        if let Some(ref sender) = *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) {
             let _ = sender.send(ProviderEvent::TurnStarted {
                 turn_index,
                 prompt: render_prompt(segments),
@@ -1139,7 +1151,7 @@ impl Provider for ClaudeCodeProvider {
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
-        let mut active = self.active_turn.lock().unwrap();
+        let mut active = self.active_turn.lock().unwrap_or_else(|e| e.into_inner());
         let Some(turn) = active.as_mut() else {
             return Ok(());
         };
@@ -1228,10 +1240,18 @@ impl Provider for ClaudeCodeProvider {
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
         // Drop child stdin to signal EOF
-        self.child_stdin.lock().unwrap().take();
+        self.child_stdin
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
 
         // Then SIGTERM the whole group, SIGKILL after the grace period.
-        if let Some(mut child) = self.child_process.lock().unwrap().take() {
+        if let Some(mut child) = self
+            .child_process
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             let pgid = child.id() as i32;
             process::terminate_group(pgid, SHUTDOWN_GRACE, || {
                 let _ = child.try_wait();
@@ -1243,12 +1263,18 @@ impl Provider for ClaudeCodeProvider {
         }
 
         // Drop event sender
-        self.event_sender.lock().unwrap().take();
+        self.event_sender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         Ok(())
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        self.capabilities.lock().unwrap().clone()
+        self.capabilities
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 

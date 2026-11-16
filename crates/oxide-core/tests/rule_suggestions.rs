@@ -1,4 +1,10 @@
 //! Rule suggestions: feedback a user keeps giving, turned into a proposed `AGENTS.md` rule.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

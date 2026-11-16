@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{Core, PermissionMode, ThreadEvent, TurnStatus};
 use oxide_provider::{FakeProvider, Provider, ProviderEvent};
 use tempfile::tempdir;

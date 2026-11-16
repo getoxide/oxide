@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 #[test]
 fn bindings_are_up_to_date() {
     // Regenerates the file; CI fails on `git diff --exit-code` if it was stale.
