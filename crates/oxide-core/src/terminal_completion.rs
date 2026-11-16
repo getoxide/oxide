@@ -1,7 +1,6 @@
 use crate::terminal::TerminalSession;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-#[cfg(any(not(windows), test))]
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,7 +21,7 @@ pub struct TerminalMatch {
 /// The directory completion lists: the `cwd` the webview sent only when it canonicalises inside
 /// one of the `checkouts` of an open Project, otherwise the terminal's own recorded directory.
 pub fn trusted_cwd(requested: &str, checkouts: &[std::path::PathBuf], recorded: &str) -> String {
-    let inside = std::path::Path::new(requested)
+    let inside = Path::new(requested)
         .canonicalize()
         .ok()
         .filter(|path| path.is_dir())

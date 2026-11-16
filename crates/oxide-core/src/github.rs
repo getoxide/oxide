@@ -1311,12 +1311,9 @@ mod tests {
             "https://",
             "",
         ] {
+            assert!(matches!(checked_url(url), Err(Error::Github(_))), "{url:?}");
             assert!(
-                matches!(checked_url(&url), Err(Error::Github(_))),
-                "{url:?}"
-            );
-            assert!(
-                matches!(confirmed_url(&url), Err(Error::Github(_))),
+                matches!(confirmed_url(url), Err(Error::Github(_))),
                 "{url:?}"
             );
         }
