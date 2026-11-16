@@ -77,3 +77,68 @@ fn rejects_paths_escaping_the_checkout() {
         assert!(core.read_file(project, None, "link").is_err());
     }
 }
+
+#[test]
+fn write_create_and_list_reject_paths_escaping_the_checkout() {
+    let (dir, core, project) = setup();
+    fs::write(dir.path().join("secret.txt"), "s").unwrap();
+    assert!(
+        core.write_file(project, None, "../secret.txt", "s", "x")
+            .is_err()
+    );
+    assert!(
+        core.write_file(project, None, "/etc/passwd", "", "x")
+            .is_err()
+    );
+    assert!(core.create_file(project, None, "../new.txt").is_err());
+    assert!(
+        core.create_file(project, None, "/tmp/oxide-new.txt")
+            .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("secret.txt")).unwrap(),
+        "s"
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("proj/out")).unwrap();
+        assert!(core.list_dir(project, None, "out").is_err());
+        assert!(core.create_file(project, None, "out/new.txt").is_err());
+        assert!(
+            core.write_file(project, None, "out/secret.txt", "s", "x")
+                .is_err()
+        );
+        assert!(!dir.path().join("new.txt").exists());
+    }
+}
+
+/// Runs `work` on a thread and fails if it blocks, as reading a FIFO without a writer does.
+#[cfg(unix)]
+fn within_a_second<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the call blocked on a FIFO")
+}
+
+#[cfg(unix)]
+#[test]
+fn reading_or_writing_a_fifo_in_the_checkout_is_an_error_instead_of_blocking() {
+    let (dir, core, project) = setup();
+    let fifo = dir.path().join("proj/pipe");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let core = std::sync::Arc::new(core);
+    let reader = std::sync::Arc::clone(&core);
+    assert!(within_a_second(move || reader.read_file(project, None, "pipe")).is_err());
+    let writer = std::sync::Arc::clone(&core);
+    assert!(within_a_second(move || writer.write_file(project, None, "pipe", "", "x")).is_err());
+}

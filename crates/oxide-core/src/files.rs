@@ -53,6 +53,23 @@ pub(crate) fn resolve(root: &Path, relative: &str) -> Result<PathBuf> {
     }
 }
 
+fn not_a_regular_file() -> Error {
+    Error::Editor("Only regular files can be opened or saved here.".into())
+}
+
+/// Opens for reading without waiting for a writer, so a FIFO swapped in after the path was
+/// resolved cannot block the thread. The caller checks the handle is a regular file.
+fn open_without_blocking(path: &Path) -> std::io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
+}
+
 /// Saves a complete UTF-8 document atomically, refusing stale buffers and links outside the checkout.
 pub fn write_file(root: &Path, relative: &str, expected: &str, content: &str) -> Result<()> {
     let path = resolve(root, relative)?;
@@ -61,6 +78,9 @@ pub fn write_file(root: &Path, relative: &str, expected: &str, content: &str) ->
         source,
     };
     let metadata = std::fs::metadata(&path).map_err(io)?;
+    if !metadata.is_file() {
+        return Err(not_a_regular_file());
+    }
     if metadata.len() > MAX_FILE_BYTES || content.len() as u64 > MAX_FILE_BYTES {
         return Err(Error::Editor(
             "The editor supports complete text files up to 1 MiB.".into(),
@@ -75,7 +95,10 @@ pub fn write_file(root: &Path, relative: &str, expected: &str, content: &str) ->
     if metadata.permissions().readonly() {
         return Err(Error::Editor("This file is read-only on disk.".into()));
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap()).map_err(io)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::InvalidPath(relative.to_string()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
     temporary
         .as_file()
         .set_permissions(metadata.permissions())
@@ -172,8 +195,12 @@ pub fn read_file(root: &Path, relative: &str) -> Result<FileContent> {
         path: path.clone(),
         source,
     };
-    let file = File::open(&path).map_err(io)?;
-    let size = file.metadata().map_err(io)?.len();
+    let file = open_without_blocking(&path).map_err(io)?;
+    let metadata = file.metadata().map_err(io)?;
+    if !metadata.is_file() {
+        return Err(not_a_regular_file());
+    }
+    let size = metadata.len();
     let mut bytes = Vec::with_capacity(size.min(MAX_FILE_BYTES) as usize);
     file.take(MAX_FILE_BYTES)
         .read_to_end(&mut bytes)
