@@ -4,10 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { AttachmentChip } from "./AttachmentChip";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ItemContent } from "./ItemContent";
+import { createHighlightService } from "./highlightService";
 import tauriConf from "../../crates/oxide-app/tauri.conf.json?raw";
 import capabilityFile from "../../crates/oxide-app/capabilities/default.json?raw";
 import itemContentSource from "./ItemContent.tsx?raw";
 import composerInputSource from "./ComposerInput.tsx?raw";
+
+// What the highlighter hands the code block: undefined until highlighted, then Shiki's HTML.
+const highlighted = vi.hoisted(() => ({ html: undefined as string | undefined }));
+vi.mock("./highlighter", () => ({
+  highlighter: () => ({
+    cached: () => highlighted.html,
+    highlight: () => new Promise<string>(() => {}),
+  }),
+}));
 
 const HOSTILE = "</code><img src=x onerror=alert(1)>";
 const conf = JSON.parse(tauriConf);
@@ -20,6 +30,21 @@ describe("hostile text renders as literal text", () => {
     const html = renderToStaticMarkup(<ItemContent content={"```html\n" + HOSTILE + "\n```"} />);
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  it("in a highlighted code fence, which reaches the HTML sink", async () => {
+    // The real highlight service, as the worker runs it, on hostile source.
+    highlighted.html = await createHighlightService().highlight(HOSTILE, "html");
+    try {
+      expect(highlighted.html).toContain("shiki");
+      const html = renderToStaticMarkup(<ItemContent content={"```html\n" + HOSTILE + "\n```"} />);
+      // The sink ran (Shiki's markup is there) and the source is still inert text.
+      expect(html).toContain('class="shiki');
+      expect(html).not.toContain("<img");
+      expect(html).toContain("&#x3C;"); // Shiki escapes every `<` of the source
+    } finally {
+      highlighted.html = undefined;
+    }
   });
 
   it("in inline Markdown", () => {
