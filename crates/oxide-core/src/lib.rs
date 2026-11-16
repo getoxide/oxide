@@ -18,6 +18,7 @@ mod git;
 mod git_diff;
 mod github;
 mod language_install;
+mod language_pins;
 mod language_server;
 mod line_comments;
 mod project_services;
