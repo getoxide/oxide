@@ -10,6 +10,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
+const NO_CHECKSUM: &str = "Oxide has no verified checksum for this download, so it will not install it. Set a custom executable in Language tools.";
 #[allow(clippy::needless_pass_by_value)]
 fn error(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
@@ -202,6 +203,9 @@ fn download(
     expected: Option<&str>,
     progress: &impl Fn(&str),
 ) -> Result<()> {
+    let Some(expected) = expected else {
+        return Err(error(NO_CHECKSUM));
+    };
     let mut response = client
         .get(url)
         .send()
@@ -236,11 +240,11 @@ fn download(
             });
         }
     }
-    if let Some(expected) = expected
-        && !hex(&hash.finalize()).eq_ignore_ascii_case(expected)
-    {
+    drop(file);
+    if !hex(&hash.finalize()).eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(destination);
         return Err(error(
-            "The downloaded file failed checksum verification. Try again.",
+            "The downloaded file failed checksum verification. Nothing was installed. Set a custom executable in Language tools.",
         ));
     }
     Ok(())
@@ -456,6 +460,68 @@ mod tests {
         writer.finish().unwrap();
         assert!(extract_zip(&archive, &temporary.path().join("extract")).is_err());
         assert!(!temporary.path().parent().unwrap().join("escape").exists());
+    }
+    /// Serves `body` once over plain HTTP and returns the URL.
+    fn serve_once(body: &'static [u8]) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://127.0.0.1:{port}/asset")
+    }
+    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    #[test]
+    fn download_without_an_expected_checksum_fails_and_keeps_nothing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        let result = download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            None,
+            &|_| {},
+        );
+        assert!(result.unwrap_err().to_string().contains("custom executable"));
+        assert!(!target.exists());
+    }
+    #[test]
+    fn download_with_a_mismatched_checksum_fails_and_keeps_nothing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        let wrong = "0".repeat(64);
+        let result = download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            Some(&wrong),
+            &|_| {},
+        );
+        assert!(result.unwrap_err().to_string().contains("checksum"));
+        assert!(!target.exists());
+    }
+    #[test]
+    fn download_with_the_expected_checksum_succeeds() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            Some(HELLO_SHA256),
+            &|_| {},
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"hello");
     }
     #[test]
     fn only_the_runtime_asset_for_this_platform_is_selected() {
