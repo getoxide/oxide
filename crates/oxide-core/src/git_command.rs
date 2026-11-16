@@ -11,6 +11,7 @@
 //! - [`Mode::UserInitiated`]: commit, checkout, pull, push, clone and similar,
 //!   which the user asked for. Hooks and helpers run as in a terminal.
 
+use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -133,7 +134,7 @@ impl GitCommand {
         let output = self
             .build()?
             .output()
-            .map_err(|e| Error::Git(format!("could not run git: {e}")))?;
+            .map_err(|e| Error::Git(redact_url_credentials(&format!("could not run git: {e}"))))?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
         }
@@ -143,7 +144,7 @@ impl GitCommand {
         } else {
             stderr
         };
-        Err(Error::Git(message.trim().to_string()))
+        Err(Error::Git(redact_url_credentials(message.trim())))
     }
 }
 
@@ -289,5 +290,18 @@ mod tests {
                 ("protocol.ext.allow".to_string(), "never".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn git_errors_do_not_show_credentials_embedded_in_a_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let alias = "alias.boom=!echo \"fatal: unable to access 'https://user:synthetic-secret@host/r.git/'\" >&2; exit 1";
+        let message = GitCommand::read_only(dir.path())
+            .args(["-c", alias, "boom"])
+            .run()
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("https://host/r.git"), "{message}");
+        assert!(!message.contains("synthetic-secret"), "{message}");
     }
 }

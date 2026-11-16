@@ -148,10 +148,7 @@ fn clone_from_url_registers_the_clone() {
 
     let project = f
         .core
-        .clone_project(
-            &format!("file://{}", origin.display()),
-            parent.to_str().unwrap(),
-        )
+        .clone_project(&origin.display().to_string(), parent.to_str().unwrap())
         .unwrap();
 
     assert_eq!(project.name, "widgets");
