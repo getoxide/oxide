@@ -1259,6 +1259,25 @@ mod tests {
     }
 
     #[test]
+    fn comment_ids_are_base64url_text_never_a_file_reference() {
+        for id in ["IC_kwDOAbc123-_", "MDEyOklzc3VlQ29tbWVudDE="] {
+            assert_eq!(checked_comment_id(id).unwrap(), id);
+        }
+        for id in [
+            "",
+            "@/etc/passwd",
+            "@x",
+            "a b",
+            "a\nb",
+            "id=1&x",
+            "a/b",
+            "é",
+        ] {
+            assert!(checked_comment_id(id).is_err(), "{id:?}");
+        }
+    }
+
+    #[test]
     fn foreign_hosts_ask_for_confirmation_with_the_host() {
         for (url, host) in [
             ("https://evil.example/", "evil.example"),
@@ -1315,8 +1334,24 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
+/// A GraphQL node id (`IC_kwDO...`) is base64url-style text. Anything else, notably a leading
+/// `@`, which `gh api -F` would read as a file, is refused.
+fn checked_comment_id(id: &str) -> Result<&str> {
+    if !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'='))
+    {
+        Ok(id)
+    } else {
+        Err(Error::Github("That comment id is not valid.".into()))
+    }
+}
+
 /// Rewrites a conversation comment of a pull request or an issue (both are issue comments to GitHub).
 pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
+    let id = checked_comment_id(id)?;
     let body = body.trim();
     if body.is_empty() {
         return Err(Error::Github(
@@ -1329,7 +1364,7 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
         &[
             "api",
             "graphql",
-            "-F",
+            "-f",
             &format!("id={id}"),
             "-f",
             &format!("body={body}"),
@@ -1342,13 +1377,14 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
 
 /// Deletes a conversation comment of a pull request or an issue.
 pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
+    let id = checked_comment_id(id)?;
     gh.require_ready(cwd)?;
     gh.run(
         cwd,
         &[
             "api",
             "graphql",
-            "-F",
+            "-f",
             &format!("id={id}"),
             "-f",
             "query=mutation($id:ID!){deleteIssueComment(input:{id:$id}){clientMutationId}}",
