@@ -423,6 +423,7 @@ impl Gh {
             .env("PATH", &child_path)
             .env("GH_PROMPT_DISABLED", "1")
             .env("NO_COLOR", "1")
+            .envs(crate::git_command::hardening_env())
             .stdin(Stdio::null());
         let output = match input {
             Some(input) => pipe_stdin(command, input),

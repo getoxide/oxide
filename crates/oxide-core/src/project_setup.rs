@@ -58,7 +58,7 @@ pub fn clone_url(parent: &Path, url: &str) -> Result<PathBuf> {
     let name = repository_name(url)
         .ok_or_else(|| Error::Git(format!("Cannot tell the repository name from `{url}`.")))?;
     let dest = fresh_folder(parent, name)?;
-    git::run(parent, &["clone", "-q", "--", url, &dest.to_string_lossy()])?;
+    git::run_user(parent, &["clone", "-q", "--", url, &dest.to_string_lossy()])?;
     Ok(dest)
 }
 

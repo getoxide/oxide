@@ -2,13 +2,13 @@
 //! never a shell. Reads run concurrently; mutating commands are serialized
 //! per checkout.
 
+use crate::git_command::GitCommand;
 use crate::{Error, Result};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -106,31 +106,22 @@ impl GitState {
     }
 }
 
+/// A read-only Git invocation: hooks off, hardening on.
 pub(crate) fn run(cwd: &Path, args: &[&str]) -> Result<String> {
     run_with_env(cwd, args, &[])
 }
 
 pub(crate) fn run_with_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String> {
-    let mut command =
-        Command::new(crate::desktop_tools::resolve("git").unwrap_or_else(|| "git".into()));
-    let output = oxide_provider::process::hide_console(&mut command)
+    GitCommand::read_only(cwd)
         .args(args)
-        .current_dir(cwd)
         .envs(env.iter().copied())
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| Error::Git(format!("could not run git: {e}")))?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let message = if stderr.trim().is_empty() {
-        String::from_utf8_lossy(&output.stdout)
-    } else {
-        stderr
-    };
-    Err(Error::Git(message.trim().to_string()))
+        .run()
+}
+
+/// A Git invocation the user asked for (commit, checkout, pull, push, clone):
+/// their hooks and helpers run, as in a terminal. Hardening stays on.
+pub(crate) fn run_user(cwd: &Path, args: &[&str]) -> Result<String> {
+    GitCommand::user_initiated(cwd).args(args).run()
 }
 
 pub(crate) fn succeeds(cwd: &Path, args: &[&str]) -> bool {
@@ -354,9 +345,9 @@ pub fn checkout(cwd: &Path, name: &str) -> Result<()> {
     let local = format!("refs/heads/{name}");
     let remote = format!("refs/remotes/{name}");
     if succeeds(cwd, &["show-ref", "--verify", "--quiet", &local]) {
-        run(cwd, &["checkout", name, "--"])?;
+        run_user(cwd, &["checkout", name, "--"])?;
     } else if succeeds(cwd, &["show-ref", "--verify", "--quiet", &remote]) {
-        run(cwd, &["checkout", "--track", name, "--"])?;
+        run_user(cwd, &["checkout", "--track", name, "--"])?;
     } else {
         return Err(Error::Git(format!("no branch named `{name}`")));
     }
@@ -366,13 +357,13 @@ pub fn checkout(cwd: &Path, name: &str) -> Result<()> {
 /// Creates a branch from HEAD and checks it out.
 pub fn create_branch(cwd: &Path, name: &str) -> Result<()> {
     checked_name(cwd, name)?;
-    run(cwd, &["checkout", "-b", name, "--"])?;
+    run_user(cwd, &["checkout", "-b", name, "--"])?;
     Ok(())
 }
 
 /// Fast-forward only: never creates a merge or rebases.
 pub fn pull(cwd: &Path) -> Result<()> {
-    run(cwd, &["pull", "--ff-only"])?;
+    run_user(cwd, &["pull", "--ff-only"])?;
     Ok(())
 }
 
@@ -417,7 +408,7 @@ pub fn commit(cwd: &Path, paths: &[String], message: &str) -> Result<()> {
         "--",
     ];
     commit.extend(paths.iter().map(String::as_str));
-    let result = run(cwd, &commit);
+    let result = run_user(cwd, &commit);
     if result.is_err() && !untracked.is_empty() {
         let mut undo = vec!["--literal-pathspecs", "reset", "--quiet", "--"];
         undo.extend(untracked.iter().map(String::as_str));
@@ -449,6 +440,6 @@ pub fn push(cwd: &Path, allow_protected: bool) -> Result<()> {
     }
     // A newly created branch can inherit main's upstream. Never let
     // push.default or an inherited upstream choose a different branch.
-    run(cwd, &["push", "-u", "origin", "HEAD"])?;
+    run_user(cwd, &["push", "-u", "origin", "HEAD"])?;
     Ok(())
 }
