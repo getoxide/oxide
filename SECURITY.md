@@ -34,6 +34,8 @@ Oxide is a desktop app that starts agent CLIs (Providers such as Claude Code, Co
 - untrusted content (a repository, transcript, issue or Provider output) causing code execution or data exposure through Oxide itself
 - Oxide leaking credentials or tokens, such as GitHub CLI tokens
 
+**How Oxide treats a repository's own Git configuration.** Adding a folder as a Project, viewing its status, branches and Diff, and leaving it open run no program named by that folder's Git configuration: Oxide starts every Git command with `core.fsmonitor`, `core.untrackedCache` and the `ext` protocol off, with external diff drivers and textconv off, and with hooks disabled for read-only commands. It also does not fetch a Project's remote on its own until you have acted in it (sent a prompt, run a terminal command, pressed Pull or Push). Commit, checkout, pull and push are different: they are commands you ask for, so the repository's hooks and configured helpers (such as a credential helper or `core.sshCommand`) run on them, exactly as they would in a terminal. Only run those in a repository you trust.
+
 **Out of scope**, because these are by design:
 
 - anything a Provider does while running under **Full access**, or under any mode with approvals the user granted. Full access means nothing asks.

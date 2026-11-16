@@ -6,7 +6,7 @@ State lives next to this script in `state.json`, which the test writes:
    "repo": {"mergeCommitAllowed": true, ...}}
 A PR may also carry "author", "body", "comments", "statusCheckRollup" and "diff" (a unified diff).
 A "review_error" fails every submitted review, and "review_submissions" records the ones accepted.
-Every invocation is recorded in its own file under `calls/` as {"args": [...], "cwd": "..."}:
+Every invocation is recorded in its own file under `calls/` as {"args": [...], "cwd": "...", "git_config": {GIT_CONFIG_*: ...}}:
 concurrent invocations must not share a file, appends are not atomic on Windows.
 """
 import datetime
@@ -28,7 +28,8 @@ args = sys.argv[1:]
 calls_dir = os.path.join(here, "calls")
 os.makedirs(calls_dir, exist_ok=True)
 with open(os.path.join(calls_dir, "%020d-%d.json" % (time.time_ns(), os.getpid())), "w", encoding="utf-8") as f:
-    f.write(json.dumps({"args": args, "cwd": os.getcwd()}))
+    git_config = {k: v for k, v in os.environ.items() if k.startswith("GIT_CONFIG_")}
+    f.write(json.dumps({"args": args, "cwd": os.getcwd(), "git_config": git_config}))
 
 with open(state_path, encoding="utf-8") as f:
     state = json.load(f)

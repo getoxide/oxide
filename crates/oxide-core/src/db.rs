@@ -368,6 +368,12 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE projects DROP COLUMN verification_commands;
 ",
+    // Oxide fetches a Project's remote on its own only once the user has acted in it, so that
+    // a folder obtained from elsewhere is not contacted before then. Existing Projects start
+    // unacted: the first prompt, terminal command, Pull or Push sets it.
+    "
+    ALTER TABLE projects ADD COLUMN acted_upon INTEGER NOT NULL DEFAULT 0;
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -439,6 +445,28 @@ fn backup(conn: &Connection, path: &Path, version: u32) -> Result<()> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn migrating_an_existing_project_leaves_it_unacted_upon() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
+        open(&path, before)
+            .unwrap()
+            .execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
+            .unwrap();
+
+        let migrated = open(&path, MIGRATIONS).unwrap();
+
+        let acted: i64 = migrated
+            .query_row(
+                "SELECT acted_upon FROM projects WHERE path = '/p'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(acted, 0);
+    }
 
     /// Oxide writes the database from several connections at once. A transaction that
     /// reads before it writes must hold the write lock while it does, or another
