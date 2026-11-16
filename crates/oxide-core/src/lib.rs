@@ -22,6 +22,7 @@ mod language_install;
 mod language_pins;
 mod language_server;
 mod line_comments;
+mod private;
 mod project_services;
 mod project_setup;
 mod redact;
@@ -217,7 +218,7 @@ impl Core {
 
     pub fn open_with_migrations(home: impl Into<PathBuf>, migrations: &[&str]) -> Result<Self> {
         let home = home.into();
-        fs::create_dir_all(&home).map_err(|source| Error::Io {
+        private::prepare_home(&home).map_err(|source| Error::Io {
             path: home.clone(),
             source,
         })?;
@@ -227,6 +228,12 @@ impl Core {
         let processes = Arc::new(ProcessRegistry::open(home.join(PROCESSES_FILE)));
         processes.reap_stale();
         mark_unfinished_work_interrupted(&db)?;
+        // The pieces above created their own files (database sidecars, the process list):
+        // make sure none of them is looser than the rest of the home.
+        private::prepare_home(&home).map_err(|source| Error::Io {
+            path: home.clone(),
+            source,
+        })?;
         let storage = StorageHandle::new(home.join(DB_FILE))?;
         let board = Arc::new(board::BoardHub::new(home.join(DB_FILE)));
         let usage = Arc::new(usage::UsageHub::new(home.join(DB_FILE)));
@@ -1293,7 +1300,7 @@ impl Core {
                     source,
                 })?;
                 let path = folder.join("catalogs.json");
-                fs::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
+                private::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
                 Ok(catalog)
             }
             Err(error) => Err(Error::Provider(format!(
@@ -1429,6 +1436,7 @@ impl Core {
         let id = next_id(&self.next_terminal_id);
         let session = Arc::new(TerminalSession::start(
             id,
+            &self.home,
             Path::new(&cwd),
             Arc::clone(&self.processes),
             blocks,
