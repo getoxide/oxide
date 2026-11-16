@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ALLOWED_BUILDERS, findStrayProcesses } from "./process-builders.mjs";
+
+function repo(t, files) {
+  const root = mkdtempSync(join(tmpdir(), "oxide-process-builders-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+  return root;
+}
+
+const stray = (root) => findStrayProcesses(root).map(({ file, line }) => `${file}:${line}`);
+
+test("a Git process created outside the builders fails the check", (t) => {
+  const root = repo(t, { "crates/oxide-core/src/sneaky.rs": 'fn f() {\n    let _ = Command::new("git").arg("status");\n}\n' });
+  assert.deepEqual(stray(root), ["crates/oxide-core/src/sneaky.rs:2"]);
+});
+
+test("gh, git.exe, qualified paths and multi-line calls are all caught", (t) => {
+  const root = repo(t, {
+    "crates/a/src/one.rs": 'let c = std::process::Command::new("gh");\n',
+    "crates/a/src/two.rs": 'let c = Command::new("git.exe");\n',
+    "crates/a/src/three.rs": 'let c = tokio::process::Command::new(\n    resolve("gh").unwrap(),\n);\n',
+    "crates/a/src/four.rs": 'let c = Command::new( "git" );\n',
+  });
+  assert.deepEqual(stray(root).sort(), ["crates/a/src/four.rs:1", "crates/a/src/one.rs:1", "crates/a/src/three.rs:1", "crates/a/src/two.rs:1"]);
+});
+
+test("the hardened builders are allowed", (t) => {
+  const files = Object.fromEntries(ALLOWED_BUILDERS.map((path) => [path, 'let c = Command::new(find("gh")); let d = Command::new("git");\n']));
+  assert.deepEqual(stray(repo(t, files)), []);
+});
+
+test("other programs, other arguments, comments and integration tests are allowed", (t) => {
+  const root = repo(t, {
+    "crates/a/src/ok.rs": 'let c = Command::new("ps").args(["-A"]); let d = Command::new("sh").arg("git");\n',
+    "crates/a/tests/fixture.rs": 'let c = Command::new("git").arg("init");\n',
+    "crates/a/src/comment.rs": '// Command::new("git") is forbidden here\n',
+  });
+  assert.deepEqual(stray(root), []);
+});
+
+test("the real repository is clean", () => {
+  assert.deepEqual(findStrayProcesses(fileURLToPath(new URL("../../", import.meta.url))), []);
+});

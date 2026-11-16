@@ -1,0 +1,25 @@
+# Security boundaries
+
+Oxide is a desktop app whose webview can call Rust commands that start processes, read and write files and talk to the network, on behalf of a Provider that is itself an agent. The security review behind #479 found that every weakness was one of a few recurring classes. This ADR records the rules that close them, so review has something to check against and CI fails a change that reintroduces the ones a machine can see. Changing a rule below needs a line in this ADR.
+
+## Rules
+
+- **Permission mode.** Oxide never performs on a Provider's behalf an action the Thread's Permission mode would have asked about. Any new path where Core acts on a Provider event names the Approval that gates it.
+- **New IPC commands.** A command takes ids, not paths, wherever an id exists. Every string argument is validated in Core, not in the webview: length cap, character set, and for paths, canonicalisation inside a checkout through the one resolve function. A command that starts a process, writes outside a checkout or opens something outside the app says so in its doc comment and has a negative test for each argument. Capabilities (`crates/oxide-app/capabilities/default.json`) grant plugins nothing beyond what is listed today without a line in this ADR.
+- **Errors.** No `unwrap`, `expect` or indexing on data from the webview, the network, files or child processes. Mutexes recover from poisoning. Errors shown to the user or logged pass through URL-credential redaction.
+- **Processes.** Argument arrays only. A shell is used only for text the user typed as a command (terminal, Setup command, Project Service) or approved. Positional values that can start with `-` come after `--`. `git` and `gh` go through the hardened builders (`GitCommand` in `git_command.rs`, the `gh` runner in `github.rs`). OS helpers are absolute paths. Output read from a child is bounded.
+- **File system.** Reads and writes for the webview go through resolve: only regular files, with size caps before allocation. Oxide's own data is `0700` / `0600`. Anything downloaded is verified against a pinned hash before it is unpacked or executed.
+- **Webview.** No HTML sinks beyond the two documented ones. No remote scripts, frames or anchors that navigate the app. CSP changes need a line in this ADR.
+- **Unsafe.** Every block has a `SAFETY` comment stating the invariant. Signals to a process group go through the guarded helper.
+- **Automation.** What a machine enforces:
+  - Workspace lints `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::undocumented_unsafe_blocks` are `deny` (tests are exempt through `clippy.toml`), run by `cargo clippy --locked --workspace --all-targets -- -D warnings`.
+  - ESLint has the HTML-sink rule (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`) in `web/eslint.config.js`.
+  - CI runs `cargo deny check` (bans, licences and sources on PRs; advisories daily and on release), `pnpm audit --prod` (daily and on release), and zizmor on PRs.
+  - `tools/checks/process-builders.mjs` fails on a `Command::new` of `git` or `gh` outside the two builders. It runs in `node tools/check.mjs` (both tiers) and in the `rust-fmt` CI job. Integration tests under `tests/` may start Git to build fixtures.
+
+The rest (Permission mode, IPC validation, file system, CSP) is checked in review.
+
+## Consequences
+
+- A new process helper for `git` or `gh` means extending a builder, not adding a call site. Adding a file to `ALLOWED_BUILDERS` in the check needs a line here.
+- The `agy` Provider receives its prompt on stdin, never on the command line, so it has no prompt length cap and nothing to record as a limitation.

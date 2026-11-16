@@ -498,10 +498,16 @@ describe("localPlan", () => {
     for (const { reason } of plan.skipped) assert.ok(reason.length > 0);
   });
 
-  test("fast has only rustfmt, ESLint and TypeScript, on every platform", () => {
+  test("fast has only rustfmt, the process-builder check, ESLint and TypeScript, on every platform", () => {
     for (const platform of ["darwin", "win32", "linux"]) {
-      assert.deepEqual(lines(localPlan(platform, "fast")), ["cargo fmt --all --check", "pnpm --dir web lint", "pnpm --dir web typecheck"]);
+      assert.deepEqual(lines(localPlan(platform, "fast")), [
+        "cargo fmt --all --check", "node tools/checks/process-builders.mjs", "pnpm --dir web lint", "pnpm --dir web typecheck",
+      ]);
     }
+  });
+
+  test("the full tier checks that Git and gh start only in the hardened builders", () => {
+    for (const platform of ["darwin", "win32", "linux"]) assert.ok(lines(localPlan(platform)).includes("node tools/checks/process-builders.mjs"), platform);
   });
 
   test("an unknown platform or tier fails", () => {
