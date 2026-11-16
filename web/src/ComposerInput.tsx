@@ -63,6 +63,7 @@ function chipHost(chip: ComposerChip): HTMLElement {
   host.setAttribute("contenteditable", "false");
   host.setAttribute(CHIP_KEY, chip.key);
   host.className = "chip-host";
+  // eslint-disable-next-line no-restricted-syntax -- documented HTML sink: React-escaped chip markup, never raw text.
   host.innerHTML = renderToStaticMarkup(
     <AttachmentChip name={chip.name} kind={chip.attachmentKind} sizeBytes={chip.sizeBytes} busy={chip.id === null} removable />,
   );
