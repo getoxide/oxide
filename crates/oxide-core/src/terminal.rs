@@ -2,7 +2,7 @@ use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
 use oxide_provider::process::ProcessRegistry;
 #[cfg(unix)]
-use oxide_provider::process::{SHUTDOWN_GRACE, terminate_group};
+use oxide_provider::process::{SHUTDOWN_GRACE, signal_group, signal_process, terminate_group};
 #[cfg(unix)]
 use portable_pty::MasterPty;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -117,7 +117,18 @@ impl TerminalSession {
                 return Err(Error::Terminal(format!("start terminal shell: {error}")));
             }
         };
-        let pid = child.process_id().unwrap_or_default();
+        let pid = match require_pid(child.process_id()) {
+            Ok(pid) => pid,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                #[cfg(unix)]
+                if let Some(path) = &shell_init {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        };
         if let Err(error) = oxide_provider::process::attach_running_to_job(pid) {
             let _ = child.kill();
             let _ = child.wait();
@@ -165,7 +176,7 @@ impl TerminalSession {
                         #[cfg(unix)]
                         {
                             // Interactive shells ignore SIGTERM but hang up on SIGHUP.
-                            unsafe { libc::kill(-process_group, libc::SIGHUP) };
+                            let _ = signal_group(process_group, libc::SIGHUP);
                             terminate_group(process_group, SHUTDOWN_GRACE, || {
                                 let _ = child.try_wait();
                             });
@@ -319,7 +330,7 @@ fn write_terminal_input(
                 && if process_group == shell_pid {
                     interrupt_session_processes(shell_pid)
                 } else {
-                    (unsafe { libc::kill(-process_group, libc::SIGINT) }) == 0
+                    signal_group(process_group, libc::SIGINT).is_ok()
                 }
         });
         if !signaled {
@@ -341,8 +352,8 @@ fn interrupt_session_processes(session_id: i32) -> bool {
         let Ok(pid) = line.trim().parse::<i32>() else {
             continue;
         };
-        if pid != session_id && unsafe { libc::getsid(pid) } == session_id {
-            interrupted |= unsafe { libc::kill(pid, libc::SIGTERM) } == 0;
+        if pid != session_id && session_of(pid) == Some(session_id) {
+            interrupted |= signal_process(pid, libc::SIGTERM).is_ok();
         }
     }
     interrupted
@@ -353,14 +364,48 @@ fn kill_session_processes(session_id: i32) {
     if let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Ok(pid) = line.trim().parse::<i32>() {
-                let sid = unsafe { libc::getsid(pid) };
-                if sid == session_id {
-                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                if session_of(pid) == Some(session_id) {
+                    let _ = signal_process(pid, libc::SIGKILL);
                 }
             }
         }
     }
-    unsafe { libc::kill(-session_id, libc::SIGKILL) };
+    let _ = signal_group(session_id, libc::SIGKILL);
+}
+
+/// The session id of `pid`, or `None` when it is gone or not a real process id.
+#[cfg(unix)]
+fn session_of(pid: i32) -> Option<i32> {
+    if pid < 2 {
+        return None;
+    }
+    // SAFETY: `getsid` takes a plain integer, touches no memory and only reports an error; `pid`
+    // is at least 2 so it never means the calling process (0).
+    let sid = unsafe { libc::getsid(pid) };
+    (sid >= 0).then_some(sid)
+}
+
+/// The shell's process id; a PTY child that has none (or reports 0) fails the start instead of
+/// letting 0 stand in as a process or group id.
+fn require_pid(pid: Option<u32>) -> Result<u32> {
+    match pid {
+        Some(pid) if pid > 0 => Ok(pid),
+        _ => Err(Error::Terminal(
+            "terminal shell has no process id".to_string(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pty_child_without_a_pid_fails_the_start() {
+        assert!(matches!(require_pid(None), Err(Error::Terminal(_))));
+        assert!(matches!(require_pid(Some(0)), Err(Error::Terminal(_))));
+        assert_eq!(require_pid(Some(4242)).unwrap(), 4242);
+    }
 }
 
 impl Drop for TerminalSession {
