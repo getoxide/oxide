@@ -177,8 +177,11 @@ pub fn configure(home: &Path, language: &str, mut config: LanguageServerConfig) 
     if given.components().count() > 1 && !given.is_absolute() {
         return Err(failure("Enter the full path of the executable."));
     }
+    // The absolute path as found, symlinks left in place: `~/.cargo/bin/rust-analyzer` is a
+    // proxy that dispatches on its own name, and a Homebrew link must survive an upgrade. A
+    // symlink is followed only to check that it ends at a regular file.
     let resolved = resolve(command, home)
-        .and_then(|found| found.canonicalize().ok())
+        .and_then(|found| std::path::absolute(found).ok())
         .filter(|found| found.is_file())
         .ok_or_else(|| failure(format!("{command} is not an existing executable file.")))?;
     config.command = dunce::simplified(&resolved).to_string_lossy().into_owned();
@@ -506,6 +509,39 @@ mod tests {
         for argument in ["a\nb", "a\0b", "a\u{1b}[0m"] {
             assert!(configure(home.path(), "python", config(&command, &[argument])).is_err());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configuring_keeps_a_symlink_as_given_and_refuses_a_dangling_one() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // `rust-analyzer` in `~/.cargo/bin` is a link to `rustup`, which acts on its own name.
+        let real = bin.join("rustup");
+        std::fs::write(&real, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = bin.join("rust-analyzer");
+        symlink(&real, &link).unwrap();
+        let dangling = bin.join("gone");
+        symlink(bin.join("missing"), &dangling).unwrap();
+
+        configure(home.path(), "rust", config(&link.to_string_lossy(), &[])).unwrap();
+        assert!(
+            configure(
+                home.path(),
+                "python",
+                config(&dangling.to_string_lossy(), &[])
+            )
+            .is_err()
+        );
+
+        let saved: HashMap<String, LanguageServerConfig> = serde_json::from_slice(
+            &std::fs::read(home.path().join("language-servers.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved["rust"].command, link.to_string_lossy());
     }
 
     #[test]

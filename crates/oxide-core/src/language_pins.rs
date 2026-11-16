@@ -29,6 +29,9 @@ pub struct NodePin {
     pub platform: &'static str,
     pub archive: &'static str,
     pub archive_sha256: &'static str,
+    /// The hash of the unpacked `node` / `node.exe`, from the official archive, so an
+    /// existing install is checked before it is ever run.
+    pub binary_sha256: &'static str,
 }
 
 /// `<os>-<arch>` of this build, or `None` where Oxide ships no pinned download.
@@ -145,36 +148,42 @@ pub fn language_server(language: &str, platform: &str) -> Option<Pin> {
 
 /// The pinned Node.js runtime for `platform`.
 pub fn node(platform: &str) -> Option<NodePin> {
-    let (name, archive, archive_sha256) = match platform {
+    let (name, archive, archive_sha256, binary_sha256) = match platform {
         "macos-aarch64" => (
             "darwin-arm64",
             "node-v26.13.1-darwin-arm64.tar.gz",
             "aec2514ea1ceb2ba52455e9ec65986f6749a06dd759e5db2a72e6889668c9735",
+            "266dec4dce3a6cdcf5cdc38722a00cf5ae6a12cc51068d2a227655bbb75751ec",
         ),
         "macos-x86_64" => (
             "darwin-x64",
             "node-v26.13.1-darwin-x64.tar.gz",
             "82bb96078a24ca50b9c9a38f2379e6be6d87171fcd400fc14c8934b3bce96e2f",
+            "e85cb6dd5f916a2aa0d05a5874dcf7c69b1ebd7a5347d7ff912bb4d9339f5e23",
         ),
         "linux-aarch64" => (
             "linux-arm64",
             "node-v26.13.1-linux-arm64.tar.gz",
             "80a330b35415382878df18d41afbd106ea89bfb3be0087d6608e289a14c5cc7d",
+            "de21e5b6e081aa16f86413aeba8c77fac44670cb6fe2748cc7c00329e6e6aa3a",
         ),
         "linux-x86_64" => (
             "linux-x64",
             "node-v26.13.1-linux-x64.tar.gz",
             "518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778",
+            "d931c649850ffa7155b8ceffb400dc916ef325866e509cc52ae36e33e8fbb9a9",
         ),
         "windows-aarch64" => (
             "win-arm64",
             "node-v26.13.1-win-arm64.zip",
             "181ebe431b90787113a9e4fc80d38ce86d37888a353a0386de44d2872e48cb97",
+            "00edc356a01d7fe586beebe7519bb1acdff9dd62064ce4cf12ff1ed4a8d1810e",
         ),
         "windows-x86_64" => (
             "win-x64",
             "node-v26.13.1-win-x64.zip",
             "e2edda75bfb089654705cf65a13b58933bfd5f57148e8ebda916f58a2474f1f7",
+            "f5109dc868ec38703ad8f305e0aceece717cb60d4889873f434017af4e96cccb",
         ),
         _ => return None,
     };
@@ -183,6 +192,7 @@ pub fn node(platform: &str) -> Option<NodePin> {
         platform: name,
         archive,
         archive_sha256,
+        binary_sha256,
     })
 }
 
@@ -237,6 +247,8 @@ mod tests {
             }
             let node = node(platform).expect("node is pinned on every platform");
             assert!(is_sha256(node.archive_sha256));
+            assert!(is_sha256(node.binary_sha256));
+            assert_ne!(node.archive_sha256, node.binary_sha256);
             assert!(node.archive.starts_with(&format!("node-{}-", node.version)));
             assert!(node.archive.contains(node.platform));
         }

@@ -67,6 +67,39 @@ struct ActiveTurn {
 
 type ActiveTurnsMap = Arc<Mutex<HashMap<String, ActiveTurn>>>;
 
+/// What the user is asked to approve. `item/commandExecution/requestApproval` carries the
+/// command as a string, the older `execCommandApproval` as an argv array (`["bash", "-lc",
+/// "npm run dev"]`): a lone shell wrapper is unwrapped to its script, anything else is joined
+/// with spaces so Core can compare it with the command it was asked to detach.
+fn approval_summary(params: &serde_json::Value, method: &str) -> String {
+    match params.get("command") {
+        Some(serde_json::Value::String(command)) => return command.clone(),
+        Some(serde_json::Value::Array(argv)) => {
+            let argv: Vec<&str> = argv.iter().filter_map(|a| a.as_str()).collect();
+            if !argv.is_empty() {
+                return match argv.as_slice() {
+                    [shell, flag, script]
+                        if matches!(*flag, "-c" | "-lc")
+                            && matches!(
+                                shell.rsplit('/').next(),
+                                Some("sh" | "bash" | "zsh" | "dash")
+                            ) =>
+                    {
+                        (*script).to_string()
+                    }
+                    _ => argv.join(" "),
+                };
+            }
+        }
+        _ => {}
+    }
+    params
+        .get("reason")
+        .and_then(|s| s.as_str())
+        .unwrap_or(method)
+        .to_string()
+}
+
 fn dispatch_to_thread(threads: &ThreadsMap, thread_id: Option<&str>, event: ProviderEvent) {
     let threads_guard = threads.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(tid) = thread_id {
@@ -341,12 +374,7 @@ impl CodexAppServer {
                         _ => ApprovalKind::Other,
                     };
 
-                    let summary = params
-                        .get("command")
-                        .and_then(|s| s.as_str())
-                        .or_else(|| params.get("reason").and_then(|s| s.as_str()))
-                        .unwrap_or(method)
-                        .to_string();
+                    let summary = approval_summary(&params, method);
 
                     let options = vec!["allow".to_string(), "deny".to_string()];
 
@@ -1701,6 +1729,25 @@ mod tests {
             panic!("poison the mutex");
         })
         .join();
+    }
+
+    #[test]
+    fn an_exec_approval_with_an_argv_array_names_the_script() {
+        let params = serde_json::json!({"command": ["bash", "-lc", "npm run dev"]});
+        assert_eq!(
+            approval_summary(&params, "execCommandApproval"),
+            "npm run dev"
+        );
+        let params = serde_json::json!({"command": ["git", "status"]});
+        assert_eq!(
+            approval_summary(&params, "execCommandApproval"),
+            "git status"
+        );
+        let params = serde_json::json!({"command": "ls", "reason": "r"});
+        assert_eq!(approval_summary(&params, "x"), "ls");
+        let params = serde_json::json!({"reason": "why"});
+        assert_eq!(approval_summary(&params, "x"), "why");
+        assert_eq!(approval_summary(&serde_json::json!({}), "m"), "m");
     }
 
     #[test]

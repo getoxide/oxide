@@ -32,8 +32,10 @@ pub fn trusted_cwd(requested: &str, checkouts: &[std::path::PathBuf], recorded: 
                     .is_ok_and(|checkout| path.starts_with(checkout))
             })
         });
+    // The canonical path, not the text the webview sent: a symlink or `..` cannot change what
+    // it points at between this check and the listing.
     match inside {
-        Some(_) => requested.to_string(),
+        Some(path) => dunce::simplified(&path).to_string_lossy().into_owned(),
         None => recorded.to_string(),
     }
 }
@@ -219,10 +221,20 @@ mod tests {
         }
         let roots = [checkout.clone()];
         let text = |p: &Path| p.to_string_lossy().into_owned();
-        assert_eq!(trusted_cwd(&text(&inner), &roots, "recorded"), text(&inner));
+        let canonical = |p: &Path| text(dunce::simplified(&p.canonicalize().unwrap()));
+        assert_eq!(
+            trusted_cwd(&text(&inner), &roots, "recorded"),
+            canonical(&inner)
+        );
         assert_eq!(
             trusted_cwd(&text(&checkout), &roots, "recorded"),
-            text(&checkout)
+            canonical(&checkout)
+        );
+        // A `..` that stays inside the checkout comes back resolved.
+        let wandering = format!("{}/../src", text(&inner));
+        assert_eq!(
+            trusted_cwd(&wandering, &roots, "recorded"),
+            canonical(&inner)
         );
         assert_eq!(trusted_cwd(&text(&outside), &roots, "recorded"), "recorded");
         assert_eq!(trusted_cwd("/", &roots, "recorded"), "recorded");

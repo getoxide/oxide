@@ -22,7 +22,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const unlisted = { status: "error", error: { message: "Unlisted link host: evil.example" } } as const;
+const unlisted = { status: "ok", data: "evil.example" } as const;
 const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith(text))!;
 
 it("opens GitHub links without asking", async () => {
@@ -42,6 +42,20 @@ it("shows the full host of any other link and opens it only after confirmation",
   await act(async () => button("Open evil.example").click());
   expect(await result!).toBeNull();
   expect(confirmed).toHaveBeenCalledWith("https://evil.example/x");
+});
+
+it("shows the port of the host it asks about", async () => {
+  vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: "evil.example:8443" });
+  vi.spyOn(commands, "openConfirmedLink").mockResolvedValue({ status: "ok", data: null });
+  await act(async () => { void openExternalLink("https://evil.example:8443/x"); });
+  expect(host.querySelector('[role="alertdialog"]')!.textContent).toContain("evil.example:8443");
+  await act(async () => button("Cancel").click());
+});
+
+it("does not mistake an error message that looks like the old prefix for a confirmation", async () => {
+  vi.spyOn(commands, "openLink").mockResolvedValue({ status: "error", error: { message: "Unlisted link host: evil.example" } });
+  expect(await openExternalLink("x")).toBe("Unlisted link host: evil.example");
+  expect(host.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
 it("opens nothing when the user cancels", async () => {

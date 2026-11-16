@@ -374,6 +374,12 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE projects ADD COLUMN acted_upon INTEGER NOT NULL DEFAULT 0;
 ",
+    // A Project that already has Threads was acted upon before the flag existed: keep its
+    // background fetch running instead of silently stopping it for existing users.
+    "
+    UPDATE projects SET acted_upon = 1
+    WHERE EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id);
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -450,25 +456,36 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn migrating_an_existing_project_leaves_it_unacted_upon() {
+    fn migrating_keeps_fetch_on_for_projects_with_threads_and_off_for_the_rest() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("oxide.db");
         let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
-        open(&path, before)
-            .unwrap()
-            .execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
+        let old = open(&path, before).unwrap();
+        old.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
             .unwrap();
+        old.execute("INSERT INTO projects (name, path) VALUES ('q', '/q')", [])
+            .unwrap();
+        old.execute(
+            "INSERT INTO threads (project_id, provider, permission_mode, status) \
+             SELECT id, 'fake', 'ask', 'idle' FROM projects WHERE path = '/p'",
+            [],
+        )
+        .unwrap();
+        drop(old);
 
         let migrated = open(&path, MIGRATIONS).unwrap();
 
-        let acted: i64 = migrated
-            .query_row(
-                "SELECT acted_upon FROM projects WHERE path = '/p'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(acted, 0);
+        let acted = |project: &str| -> i64 {
+            migrated
+                .query_row(
+                    "SELECT acted_upon FROM projects WHERE path = ?1",
+                    [project],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(acted("/p"), 1, "a Project with a Thread was acted upon");
+        assert_eq!(acted("/q"), 0, "an untouched Project stays unacted");
     }
 
     /// Oxide writes the database from several connections at once. A transaction that

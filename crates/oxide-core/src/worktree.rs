@@ -285,7 +285,7 @@ impl Core {
             let name = free_name(root, &parent, slug);
             let branch = format!("oxide/{name}");
             let worktree = parent.join(&name);
-            git::run(
+            git::run_user_initiated(
                 root,
                 &[
                     "worktree",
@@ -490,7 +490,7 @@ impl Core {
                     source,
                 })?;
             }
-            git::run(
+            git::run_user_initiated(
                 root,
                 &["worktree", "add", "-q", &worktree.to_string_lossy(), rev],
             )?;

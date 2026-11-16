@@ -201,8 +201,13 @@ export const commands = {
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
 	/**  Checks the pull request's branch out in a Thread's checkout (`None`: the main one). */
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
-	/**  Opens a GitHub link, such as a check's run, in the system browser. */
-	openLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_link", { url })),
+	/**
+	 *  Opens a GitHub link, such as a check's run, in the system browser. A well-formed link
+	 *  outside GitHub and the fixed documentation is not opened: the answer is `Some(host)` (with
+	 *  the port, if any) for the webview to confirm with the user, then `open_confirmed_link`.
+	 *  `None` means the link was opened.
+	 */
+	openLink: (url: string) => typedError<string | null, AppError>(__TAURI_INVOKE("open_link", { url })),
 	/**
 	 *  Opens a localhost URL detected in a Project Service's log in the system browser. Only
 	 *  loopback `http` addresses are accepted; the webview never opens pages itself.

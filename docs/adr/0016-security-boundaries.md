@@ -9,15 +9,21 @@ Oxide is a desktop app whose webview can call Rust commands that start processes
 - **Errors.** No `unwrap`, `expect` or indexing on data from the webview, the network, files or child processes. Mutexes recover from poisoning. Errors shown to the user or logged pass through URL-credential redaction.
 - **Processes.** Argument arrays only. A shell is used only for text the user typed as a command (terminal, Setup command, Project Service) or approved. Positional values that can start with `-` come after `--`. `git` and `gh` go through the hardened builders (`GitCommand` in `git_command.rs`, the `gh` runner in `github.rs`). OS helpers are absolute paths. Output read from a child is bounded.
 - **File system.** Reads and writes for the webview go through resolve: only regular files, with size caps before allocation. Oxide's own data is `0700` / `0600`. Anything downloaded is verified against a pinned hash before it is unpacked or executed.
-- **Webview.** No HTML sinks beyond the two documented ones. No remote scripts, frames or anchors that navigate the app. CSP changes need a line in this ADR.
+- **Webview.** No HTML sinks beyond the two documented ones. No remote scripts, frames or anchors that navigate the app. CSP changes need a line in this ADR. `freezePrototype` is deliberately off: Monaco and the terminal assign `toString` on plain `{}` namespace objects at module start, which throws a TypeError once `Object.prototype` is frozen (reproduced in strict-mode Node; not tried in a WKWebView build). Turn it on only after proving the editor and terminal load in a real build.
 - **Unsafe.** Every block has a `SAFETY` comment stating the invariant. Signals to a process group go through the guarded helper.
 - **Automation.** What a machine enforces:
-  - Workspace lints `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::undocumented_unsafe_blocks` are `deny` (tests are exempt through `clippy.toml`), run by `cargo clippy --locked --workspace --all-targets -- -D warnings`.
+  - Workspace lints `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::undocumented_unsafe_blocks` are `deny` (`clippy.toml` exempts `#[test]` functions and `#[cfg(test)]` modules; integration-test files under `tests/` need a file-level `#![allow(..., reason = ...)]` because their helpers are not test functions, and the public contract suite carries one function-level allow; every allow carries a reason and none may appear elsewhere in production code), run by `cargo clippy --locked --workspace --all-targets -- -D warnings`.
   - ESLint has the HTML-sink rule (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`) in `web/eslint.config.js`.
   - CI runs `cargo deny check` (bans, licences and sources on PRs; advisories daily and on release), `pnpm audit --prod` (daily and on release), and zizmor on PRs.
-  - `tools/checks/process-builders.mjs` fails on a `Command::new` of `git` or `gh` outside the two builders. It runs in `node tools/check.mjs` (both tiers) and in the `rust-fmt` CI job. Integration tests under `tests/` may start Git to build fixtures.
+  - `tools/checks/process-builders.mjs` fails on a `Command::new` of `git` or `gh` outside the two builders: a string literal (`"git"`, `"gh.exe"`), a lookup such as `resolve("gh")`, or an identifier named `git`, `gh` or `git_*` / `gh_*`. It fails closed (an unreadable directory is an error). It runs in `node tools/check.mjs` (both tiers) and in the `rust-fmt` CI job. Only `crates/<crate>/tests/` may start Git to build fixtures; `src/**/tests` modules are scanned. Its limit: a program reached through an unrelated variable name, a shell string or a helper in another crate is invisible to a text check and is left to review.
 
 The rest (Permission mode, IPC validation, file system, CSP) is checked in review.
+
+## Git filters, hooks and the home
+
+- Read-only Git invocations blank every `filter.<name>.clean`, `smudge` and `process` driver that the repository's own `.git/config` defines (enumerated with `git config --local`), because `add --all`, `status` and `diff` run them. The user's global filters (Git LFS) are left alone. `core.untrackedCache=false` stays in the forced configuration (the spec lists it); its cost is that Git drops the untracked-cache extension whenever it writes a repository's index.
+- The empty hooks folder lives under the Oxide home (`no-hooks`, `0700`), not in the shared temporary folder. `git worktree add` is user-initiated (the user's hooks run); blind review keeps its read-only worktree creation.
+- The home is walked and tightened once (marker `.private-v1`); `worktrees/` and `tools/` are never entered, and a path that vanishes or refuses a change is logged, not fatal.
 
 ## Consequences
 

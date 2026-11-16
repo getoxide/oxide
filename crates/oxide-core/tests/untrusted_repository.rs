@@ -55,7 +55,7 @@ fn hostile() -> Hostile {
     executable(&script, &body);
 
     git(&work, &["init", "-q", "-b", "main"]);
-    std::fs::write(work.join(".gitattributes"), "*.txt diff=evil\n").unwrap();
+    std::fs::write(work.join(".gitattributes"), "*.txt diff=evil filter=evil\n").unwrap();
     std::fs::write(work.join("a.txt"), "one\n").unwrap();
     git(&work, &["add", "."]);
     git(&work, &["commit", "-qm", "init"]);
@@ -64,6 +64,10 @@ fn hostile() -> Hostile {
         ("core.fsmonitor", script.as_str()),
         ("core.sshCommand", script.as_str()),
         ("diff.evil.textconv", script.as_str()),
+        ("filter.evil.clean", script.as_str()),
+        ("filter.evil.smudge", script.as_str()),
+        ("filter.evil.process", script.as_str()),
+        ("filter.evil.required", "true"),
         ("remote.origin.url", "ssh://example.invalid/repo.git"),
     ] {
         git(&work, &["config", key, value]);
