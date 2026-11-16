@@ -406,7 +406,31 @@ fn prompts_preserve_newlines_quotes_and_shell_characters() {
     provider.shutdown().unwrap();
 }
 
-#[cfg(windows)]
+#[test]
+fn the_prompt_travels_on_stdin_and_never_in_the_arguments() {
+    let (mut provider, log, _fake) = provider_with_log();
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    let prompt = "confidential plan: rotate the keys tomorrow";
+    provider.send_prompt(prompt).unwrap();
+    collect_turn(&rx);
+    let runs = wire_argv(log.path());
+    assert_eq!(runs.len(), 1);
+    assert!(
+        runs[0].1.iter().all(|arg| !arg.contains("confidential")),
+        "the process list must not show the prompt: {:?}",
+        runs[0].1
+    );
+    assert!(!runs[0].1.contains(&"-p".to_string()));
+    assert!(
+        runs[0]
+            .1
+            .windows(2)
+            .any(|w| w == ["--input-format", "stream-json"])
+    );
+    assert_eq!(wire_prompts(log.path()), [prompt]);
+    provider.shutdown().unwrap();
+}
+
 #[test]
 fn large_prompts_and_startup_logs_do_not_block_each_other() {
     let (done, rx) = crossbeam_channel::bounded(1);

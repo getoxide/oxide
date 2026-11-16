@@ -1,6 +1,6 @@
 //! Antigravity CLI (`agy`) native provider adapter.
 //!
-//! Print mode (or one stdin message on Windows) runs one Turn and exits, so every Turn is its
+//! Print mode with one stdin message runs one Turn and exits, so every Turn is its
 //! own process; Turns after the first resume the conversation with `--conversation <id>`.
 //! Headless `agy` cannot ask for Approval, so only Auto-edit (soft-deny) and Full access are
 //! offered (ADR-0004), and Oxide never touches `agy`'s settings file.
@@ -784,12 +784,10 @@ impl Provider for AgyProvider {
         }
 
         let mut cmd = command_for(&self.command, &self.extra_env);
-        // Batch shims cannot carry multiline prompts or arbitrarily long arguments. One
-        // streamed user message followed by EOF keeps the same one-process-per-Turn lifecycle.
-        #[cfg(windows)]
+        // The prompt never goes on the command line: the process list would show it to other
+        // local accounts, and a long one would exceed the argument size limit. One streamed
+        // user message followed by EOF keeps the one-process-per-Turn lifecycle.
         cmd.args(["--input-format", "stream-json"]);
-        #[cfg(not(windows))]
-        cmd.arg("-p").arg(prompt);
         cmd.args(["--output-format", "stream-json"]);
         if let Some(model) = &context.model {
             cmd.arg("--model").arg(model);
@@ -807,11 +805,7 @@ impl Provider for AgyProvider {
             cmd.arg("--add-dir").arg(dir);
         }
         cmd.current_dir(&context.working_dir)
-            .stdin(if cfg!(windows) {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         process::spawn_in_own_group(&mut cmd);
@@ -861,12 +855,12 @@ impl Provider for AgyProvider {
             closed: Arc::clone(&self.closed),
             registry: self.registry.clone(),
         };
-        let prompt_input = cfg!(windows).then(|| {
+        let prompt_input = Some(
             serde_json::json!({
                 "event": "user", "message": { "content": prompt }
             })
-            .to_string()
-        });
+            .to_string(),
+        );
         std::thread::spawn(move || turn.run(child, pgid, stdout, stderr, prompt_input));
         Ok(())
     }

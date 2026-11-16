@@ -105,6 +105,7 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
             "open" => "/usr/bin/open",
             "system_profiler" => "/usr/sbin/system_profiler",
             "sh" => "/bin/sh",
+            "security" => "/usr/bin/security",
             other => other,
         }
         .into(),
@@ -142,6 +143,7 @@ mod tests {
             PathBuf::from("/usr/sbin/system_profiler")
         );
         assert_eq!(tool("sh"), PathBuf::from("/bin/sh"));
+        assert_eq!(tool("security"), PathBuf::from("/usr/bin/security"));
         assert_eq!(tool("git"), PathBuf::from("git"), "user tools keep PATH");
     }
 
