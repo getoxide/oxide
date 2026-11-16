@@ -342,16 +342,13 @@ fn install_npm(
         "bin/node"
     });
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let system_npm = oxide_provider::command::find_in(
-        &path,
-        std::ffi::OsStr::new("npm"),
-        std::env::var_os("PATHEXT").as_deref(),
-    );
-    if !managed_node.exists() && system_npm.is_none() {
+    // Always the pinned runtime, never a `node` or `npm` from `PATH`: this install runs
+    // third-party packages, and the runtime must be the one whose hash Oxide checked.
+    let pin = pins::platform()
+        .and_then(pins::node)
+        .ok_or_else(|| error("Set a custom language server on this architecture."))?;
+    if !managed_node_is_pinned(&node_root, &managed_node, pin.binary_sha256) {
         progress("Installing a private Node.js runtime for language tools…");
-        let pin = pins::platform()
-            .and_then(pins::node)
-            .ok_or_else(|| error("Set a custom language server on this architecture."))?;
         let archive = temporary.join(pin.archive);
         download(
             client,
@@ -372,24 +369,29 @@ fn install_npm(
             .map_err(error)?;
         }
         let source = extracted.join(format!("node-{}-{}", pin.version, pin.platform));
+        let unpacked = source.join(if cfg!(windows) {
+            "node.exe"
+        } else {
+            "bin/node"
+        });
+        if !file_matches(&unpacked, pin.binary_sha256) {
+            return Err(error(
+                "The unpacked Node.js runtime failed checksum verification. Nothing was installed. Set a custom executable in Language tools.",
+            ));
+        }
         std::fs::rename(source, &node_root).map_err(error)?;
         make_executable(&managed_node)?;
     }
     progress("Installing language packages…");
     let prefix = home.join("tools/language-servers").join(language);
     write_package_set(&prefix, language)?;
-    let mut command = if managed_node.exists() {
-        let npm = node_root.join(if cfg!(windows) {
-            "node_modules/npm/bin/npm-cli.js"
-        } else {
-            "lib/node_modules/npm/bin/npm-cli.js"
-        });
-        let mut command = Command::new(&managed_node);
-        command.arg(npm);
-        command
+    let npm = node_root.join(if cfg!(windows) {
+        "node_modules/npm/bin/npm-cli.js"
     } else {
-        Command::new(system_npm.ok_or_else(|| error("npm was not found."))?)
-    };
+        "lib/node_modules/npm/bin/npm-cli.js"
+    });
+    let mut command = Command::new(&managed_node);
+    command.arg(npm);
     // Run inside the prefix: npm resolves the project from the working directory.
     command.args(NPM_ARGUMENTS).current_dir(&prefix);
     let mut paths = vec![node_root.clone(), node_root.join("bin")];
@@ -408,9 +410,43 @@ fn install_npm(
     Ok(())
 }
 
+/// Whether `managed_node` is the pinned runtime. A `tools/node` that is missing is simply not
+/// installed; one whose binary does not hash to the pin (a partial download, a swapped file, an
+/// older pin) is removed so it is reinstalled, and is never executed.
+fn managed_node_is_pinned(node_root: &Path, managed_node: &Path, expected: &str) -> bool {
+    if !node_root.exists() {
+        return false;
+    }
+    if file_matches(managed_node, expected) {
+        return true;
+    }
+    let _ = std::fs::remove_dir_all(node_root);
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_existing_node_is_reused_only_when_its_hash_matches_the_pin() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("tools/node");
+        let binary = root.join("bin/node");
+        assert!(!managed_node_is_pinned(&root, &binary, "00"));
+
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, b"not the real node").unwrap();
+        let mut hash = Sha256::new();
+        hash.update(b"not the real node");
+        let good = hex(&hash.finalize());
+        assert!(managed_node_is_pinned(&root, &binary, &good));
+        assert!(root.exists());
+
+        // A swapped binary is not run: the whole install is removed for a reinstall.
+        std::fs::write(&binary, b"swapped").unwrap();
+        assert!(!managed_node_is_pinned(&root, &binary, &good));
+        assert!(!root.exists());
+    }
     #[test]
     fn zip_extraction_rejects_paths_outside_install_root() {
         let temporary = tempfile::tempdir().unwrap();
