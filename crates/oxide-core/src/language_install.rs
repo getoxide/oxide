@@ -1,7 +1,7 @@
 //! User-local language support, downloaded only after an explicit Install action.
+use crate::language_pins as pins;
 use crate::{Error, LanguageServerConfig, Result};
 use reqwest::blocking::Client;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -10,23 +10,13 @@ use std::process::Command;
 use std::time::Duration;
 
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
+const NO_CHECKSUM: &str = "Oxide has no verified checksum for this download, so it will not install it. Set a custom executable in Language tools.";
 #[allow(clippy::needless_pass_by_value)]
 fn error(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-    digest: Option<String>,
-}
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    assets: Vec<Asset>,
 }
 
 pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<()> {
@@ -58,87 +48,62 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
                 name.into()
             };
             (
-                home.join("tools/language-servers/node_modules/.bin")
+                home.join("tools/language-servers")
+                    .join(language)
+                    .join("node_modules/.bin")
                     .join(shim),
                 vec!["--stdio".into()],
             )
         }
         "cpp" | "rust" => {
-            let repository = if language == "cpp" {
-                "clangd/clangd"
-            } else {
-                "rust-lang/rust-analyzer"
-            };
-            progress("Checking the official release…");
-            let release: Release = client
-                .get(format!(
-                    "https://api.github.com/repos/{repository}/releases/latest"
-                ))
-                .send()
-                .map_err(error)?
-                .error_for_status()
-                .map_err(error)?
-                .json()
-                .map_err(error)?;
             let executable = if language == "cpp" {
                 "clangd"
             } else {
                 "rust-analyzer"
             };
-            let asset = release.assets.iter().find(|asset| supported_asset(language, &asset.name)).ok_or_else(|| error("No official binary is available for this operating system / architecture. Set a custom executable in Language tools."))?;
-            if !asset.browser_download_url.starts_with(&format!(
-                "https://github.com/{repository}/releases/download/"
-            )) {
-                return Err(error("Unexpected language server download URL."));
-            }
-            let archive = temporary.path().join(&asset.name);
-            download(
-                &client,
-                &asset.browser_download_url,
-                &archive,
-                asset
-                    .digest
-                    .as_deref()
-                    .and_then(|d| d.strip_prefix("sha256:")),
-                progress,
-            )?;
-            progress("Unpacking language support…");
-            let extracted = temporary.path().join("unpacked");
-            std::fs::create_dir_all(&extracted).map_err(error)?;
-            if asset.name.ends_with(".zip") {
-                extract_zip(&archive, &extracted)?;
-            } else {
-                let mut reader = flate2::read::GzDecoder::new(File::open(&archive).map_err(error)?);
-                let mut file = File::create(extracted.join(executable)).map_err(error)?;
-                std::io::copy(&mut Read::by_ref(&mut reader).take(MAX_DOWNLOAD), &mut file)
-                    .map_err(error)?;
-            }
             let executable_name = if cfg!(windows) {
                 format!("{executable}.exe")
             } else {
                 executable.into()
             };
-            let relative = find_executable(&extracted, &executable_name, 5)
-                .ok_or_else(|| {
+            let pin = pins::platform()
+                .and_then(|platform| pins::language_server(language, platform))
+                .ok_or_else(|| error("No official binary is available for this operating system / architecture. Set a custom executable in Language tools."))?;
+            let destination = tools.join(executable).join(pin.tag);
+            let binary = if let Some(binary) =
+                reusable_install(&destination, &executable_name, pin.binary_sha256)
+            {
+                binary
+            } else {
+                let archive = temporary.path().join(pin.asset);
+                download(
+                    &client,
+                    &pin.url(),
+                    &archive,
+                    Some(pin.archive_sha256),
+                    progress,
+                )?;
+                progress("Unpacking language support…");
+                let extracted = temporary.path().join("unpacked");
+                std::fs::create_dir_all(&extracted).map_err(error)?;
+                if pin.asset.ends_with(".zip") {
+                    extract_zip(&archive, &extracted)?;
+                } else {
+                    gunzip_limited(&archive, &extracted.join(executable), MAX_DOWNLOAD)?;
+                }
+                let found = find_executable(&extracted, &executable_name, 5).ok_or_else(|| {
                     error("The download did not contain the language server executable.")
-                })?
-                .strip_prefix(&extracted)
-                .map_err(error)?
-                .to_path_buf();
-            let version = release
-                .tag_name
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.')
-                .collect::<String>();
-            if version.is_empty() {
-                return Err(error("Invalid release version."));
-            }
-            let destination = tools.join(executable).join(version);
-            std::fs::create_dir_all(destination.parent().unwrap()).map_err(error)?;
-            if !destination.exists() {
+                })?;
+                if !file_matches(&found, pin.binary_sha256) {
+                    return Err(error(
+                        "The unpacked language server failed checksum verification. Nothing was installed. Set a custom executable in Language tools.",
+                    ));
+                }
+                let relative = found.strip_prefix(&extracted).map_err(error)?.to_path_buf();
+                std::fs::create_dir_all(destination.parent().unwrap()).map_err(error)?;
                 std::fs::rename(&extracted, &destination).map_err(error)?;
-            }
-            let binary = destination.join(relative);
+                destination.join(relative)
+            };
             make_executable(&binary)?;
             (binary, vec![])
         }
@@ -162,39 +127,6 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
     Ok(())
 }
 
-fn supported_asset(language: &str, name: &str) -> bool {
-    if language == "cpp" {
-        let platform = if cfg!(windows) {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "mac"
-        } else {
-            "linux"
-        };
-        // Upstream's Linux clangd zip is x86_64; ARM Linux uses a user-supplied server.
-        if cfg!(all(target_os = "linux", not(target_arch = "x86_64"))) {
-            return false;
-        }
-        name.starts_with(&format!("clangd-{platform}-")) && name.ends_with(".zip")
-    } else {
-        let arch = if cfg!(target_arch = "aarch64") {
-            "aarch64"
-        } else if cfg!(target_arch = "x86_64") {
-            "x86_64"
-        } else {
-            return false;
-        };
-        let target = if cfg!(windows) {
-            "pc-windows-msvc.zip"
-        } else if cfg!(target_os = "macos") {
-            "apple-darwin.gz"
-        } else {
-            "unknown-linux-gnu.gz"
-        };
-        name == format!("rust-analyzer-{arch}-{target}")
-    }
-}
-
 fn download(
     client: &Client,
     url: &str,
@@ -202,6 +134,9 @@ fn download(
     expected: Option<&str>,
     progress: &impl Fn(&str),
 ) -> Result<()> {
+    let Some(expected) = expected else {
+        return Err(error(NO_CHECKSUM));
+    };
     let mut response = client
         .get(url)
         .send()
@@ -236,14 +171,65 @@ fn download(
             });
         }
     }
-    if let Some(expected) = expected
-        && !hex(&hash.finalize()).eq_ignore_ascii_case(expected)
-    {
+    drop(file);
+    if !hex(&hash.finalize()).eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(destination);
         return Err(error(
-            "The downloaded file failed checksum verification. Try again.",
+            "The downloaded file failed checksum verification. Nothing was installed. Set a custom executable in Language tools.",
         ));
     }
     Ok(())
+}
+
+/// Returns the binary of an existing install only if its SHA-256 equals the
+/// pinned one. Anything else (tampered, partial) is removed so it is reinstalled.
+fn reusable_install(destination: &Path, executable_name: &str, expected: &str) -> Option<PathBuf> {
+    if !destination.exists() {
+        return None;
+    }
+    let matching = find_executable(destination, executable_name, 5)
+        .filter(|binary| file_matches(binary, expected));
+    if matching.is_none() {
+        let _ = std::fs::remove_dir_all(destination);
+    }
+    matching
+}
+
+fn file_matches(path: &Path, expected: &str) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => hash.update(&buffer[..n]),
+            Err(_) => return false,
+        }
+    }
+    hex(&hash.finalize()).eq_ignore_ascii_case(expected)
+}
+
+/// Decompresses a gzip file to `destination`. A stream that goes past `limit`
+/// bytes is an error and leaves no file, never a silently truncated binary.
+fn gunzip_limited(archive: &Path, destination: &Path, limit: u64) -> Result<()> {
+    let reader = flate2::read::GzDecoder::new(File::open(archive).map_err(error)?);
+    let mut file = File::create(destination).map_err(error)?;
+    let copied = std::io::copy(&mut reader.take(limit.saturating_add(1)), &mut file);
+    drop(file);
+    match copied {
+        Ok(n) if n <= limit => Ok(()),
+        outcome => {
+            let _ = std::fs::remove_file(destination);
+            match outcome {
+                Ok(_) => Err(error(
+                    "Unpacked language server is larger than the supported limit.",
+                )),
+                Err(e) => Err(error(e)),
+            }
+        }
+    }
 }
 
 fn extract_zip(archive: &Path, root: &Path) -> Result<()> {
@@ -308,6 +294,37 @@ fn make_executable(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The package set Oxide ships for a Node-based language server: a
+/// `package.json` and the `package-lock.json` that fixes every transitive
+/// version and integrity hash. Regenerate with
+/// `npm install --package-lock-only --ignore-scripts` and review the diff.
+fn package_set(language: &str) -> Option<(&'static str, &'static str)> {
+    match language {
+        "python" => Some((
+            include_str!("../assets/language-servers/python/package.json"),
+            include_str!("../assets/language-servers/python/package-lock.json"),
+        )),
+        "typescript" => Some((
+            include_str!("../assets/language-servers/typescript/package.json"),
+            include_str!("../assets/language-servers/typescript/package-lock.json"),
+        )),
+        _ => None,
+    }
+}
+
+fn write_package_set(prefix: &Path, language: &str) -> Result<()> {
+    let (manifest, lockfile) =
+        package_set(language).ok_or_else(|| error("Unsupported language support."))?;
+    std::fs::create_dir_all(prefix).map_err(error)?;
+    std::fs::write(prefix.join("package.json"), manifest).map_err(error)?;
+    std::fs::write(prefix.join("package-lock.json"), lockfile).map_err(error)?;
+    Ok(())
+}
+
+/// `npm ci` installs exactly what the lockfile says and fails when it does not
+/// match; `--ignore-scripts` keeps third-party install scripts from running.
+const NPM_ARGUMENTS: [&str; 4] = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
+
 fn install_npm(
     client: &Client,
     home: &Path,
@@ -329,61 +346,15 @@ fn install_npm(
     );
     if !managed_node.exists() && system_npm.is_none() {
         progress("Installing a private Node.js runtime for language tools…");
-        let releases: Vec<serde_json::Value> = client
-            .get("https://nodejs.org/dist/index.json")
-            .send()
-            .map_err(error)?
-            .error_for_status()
-            .map_err(error)?
-            .json()
-            .map_err(error)?;
-        let release = releases
-            .iter()
-            .find(|r| r["lts"].is_string())
-            .and_then(|r| r["version"].as_str())
-            .ok_or_else(|| error("No Node.js LTS release found."))?;
-        if !release.starts_with('v')
-            || !release[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
-        {
-            return Err(error("Invalid Node.js version."));
-        }
-        let platform = if cfg!(windows) {
-            "win"
-        } else if cfg!(target_os = "macos") {
-            "darwin"
-        } else {
-            "linux"
-        };
-        let arch = if cfg!(target_arch = "aarch64") {
-            "arm64"
-        } else if cfg!(target_arch = "x86_64") {
-            "x64"
-        } else {
-            return Err(error("Set a custom language server on this architecture."));
-        };
-        let extension = if cfg!(windows) { "zip" } else { "tar.gz" };
-        let name = format!("node-{release}-{platform}-{arch}.{extension}");
-        let checksums = client
-            .get(format!("https://nodejs.org/dist/{release}/SHASUMS256.txt"))
-            .send()
-            .map_err(error)?
-            .error_for_status()
-            .map_err(error)?
-            .text()
-            .map_err(error)?;
-        let checksum = checksums
-            .lines()
-            .find_map(|line| {
-                let (hash, file) = line.split_once(' ')?;
-                (file.trim() == name).then_some(hash)
-            })
-            .ok_or_else(|| error("Missing Node.js checksum."))?;
-        let archive = temporary.join(&name);
+        let pin = pins::platform()
+            .and_then(pins::node)
+            .ok_or_else(|| error("Set a custom language server on this architecture."))?;
+        let archive = temporary.join(pin.archive);
         download(
             client,
-            &format!("https://nodejs.org/dist/{release}/{name}"),
+            &pin.url(),
             &archive,
-            Some(checksum),
+            Some(pin.archive_sha256),
             progress,
         )?;
         let extracted = temporary.join("node");
@@ -397,11 +368,13 @@ fn install_npm(
             .unpack(&extracted)
             .map_err(error)?;
         }
-        let source = extracted.join(format!("node-{release}-{platform}-{arch}"));
+        let source = extracted.join(format!("node-{}-{}", pin.version, pin.platform));
         std::fs::rename(source, &node_root).map_err(error)?;
         make_executable(&managed_node)?;
     }
     progress("Installing language packages…");
+    let prefix = home.join("tools/language-servers").join(language);
+    write_package_set(&prefix, language)?;
     let mut command = if managed_node.exists() {
         let npm = node_root.join(if cfg!(windows) {
             "node_modules/npm/bin/npm-cli.js"
@@ -414,17 +387,8 @@ fn install_npm(
     } else {
         Command::new(system_npm.ok_or_else(|| error("npm was not found."))?)
     };
-    let prefix = home.join("tools/language-servers");
-    command
-        .args(["install", "--no-audit", "--no-fund", "--prefix"])
-        .arg(&prefix);
-    if language == "python" {
-        command.arg("pyright@1.1.414");
-    } else {
-        // TypeScript 7 is native and no longer ships tsserver.js. This LSP server
-        // requires the JavaScript SDK; prefer a Project SDK at initialization, then this fallback.
-        command.args(["typescript@6.0.3", "typescript-language-server@6.0.2"]);
-    }
+    // Run inside the prefix: npm resolves the project from the working directory.
+    command.args(NPM_ARGUMENTS).current_dir(&prefix);
     let mut paths = vec![node_root.clone(), node_root.join("bin")];
     paths.extend(std::env::split_paths(&path));
     command.env("PATH", std::env::join_paths(paths).map_err(error)?);
@@ -458,11 +422,182 @@ mod tests {
         assert!(!temporary.path().parent().unwrap().join("escape").exists());
     }
     #[test]
-    fn only_the_runtime_asset_for_this_platform_is_selected() {
-        assert!(!supported_asset(
-            "cpp",
-            "clangd-debug-symbols-windows-23.1.0.7z"
-        ));
-        assert!(!supported_asset("rust", "rust-analyzer-win32-x64.vsix"));
+    fn node_packages_install_from_the_lockfile_without_running_scripts() {
+        let arguments = NPM_ARGUMENTS;
+        assert_eq!(arguments[0], "ci");
+        assert!(arguments.contains(&"--ignore-scripts"));
+        assert!(!arguments.contains(&"install"));
+    }
+    #[test]
+    fn shipped_lockfiles_pin_every_package_with_an_integrity_hash() {
+        for language in ["python", "typescript"] {
+            let (manifest, lockfile) = package_set(language).unwrap();
+            let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
+            let lock: serde_json::Value = serde_json::from_str(lockfile).unwrap();
+            assert_eq!(lock["lockfileVersion"], 3);
+            // The lockfile root must declare the same dependencies as the manifest.
+            assert_eq!(
+                lock["packages"][""]["dependencies"],
+                manifest["dependencies"]
+            );
+            let packages = lock["packages"].as_object().unwrap();
+            assert!(packages.len() > 1);
+            for (name, package) in packages.iter().filter(|(name, _)| !name.is_empty()) {
+                assert!(
+                    package["resolved"]
+                        .as_str()
+                        .is_some_and(|url| url.starts_with("https://registry.npmjs.org/")),
+                    "{language}: {name} is not pinned to the npm registry"
+                );
+                assert!(
+                    package["integrity"]
+                        .as_str()
+                        .is_some_and(|hash| hash.starts_with("sha512-")),
+                    "{language}: {name} has no integrity hash"
+                );
+            }
+        }
+    }
+    /// Hits the network: `cargo nextest run -p oxide-core --run-ignored only language_install`.
+    #[test]
+    #[ignore = "downloads the pinned language servers"]
+    fn live_install_of_each_pinned_language_server_then_reuse() {
+        for language in ["rust", "cpp", "typescript"] {
+            let home = tempfile::tempdir().unwrap();
+            install(home.path(), language, &|_| {}).unwrap();
+            let tool = crate::language_server::tools(home.path())
+                .into_iter()
+                .find(|t| t.language == language)
+                .unwrap();
+            assert!(Path::new(&tool.config.command).is_file(), "{language}");
+            // A second install reuses the verified destination.
+            install(home.path(), language, &|_| {}).unwrap();
+        }
+    }
+    #[test]
+    fn no_package_set_exists_for_other_languages() {
+        assert!(package_set("rust").is_none());
+    }
+    fn fake_install(destination: &Path, content: &[u8]) -> PathBuf {
+        let binary = destination.join("bin/tool");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, content).unwrap();
+        binary
+    }
+    #[test]
+    fn an_existing_install_is_reused_only_when_its_binary_matches_the_pin() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("1.0");
+        let binary = fake_install(&destination, b"hello");
+        assert_eq!(
+            reusable_install(&destination, "tool", HELLO_SHA256),
+            Some(binary)
+        );
+    }
+    #[test]
+    fn a_tampered_existing_install_is_removed_so_it_gets_reinstalled() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("1.0");
+        fake_install(&destination, b"tampered");
+        assert_eq!(reusable_install(&destination, "tool", HELLO_SHA256), None);
+        assert!(!destination.exists());
+    }
+    #[test]
+    fn an_install_without_the_binary_is_removed_too() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("1.0");
+        std::fs::create_dir_all(&destination).unwrap();
+        assert_eq!(reusable_install(&destination, "tool", HELLO_SHA256), None);
+        assert!(!destination.exists());
+    }
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+    #[test]
+    fn gzip_over_the_cap_fails_instead_of_truncating() {
+        let temporary = tempfile::tempdir().unwrap();
+        let archive = temporary.path().join("big.gz");
+        std::fs::write(&archive, gzip(&[7; 100])).unwrap();
+        let output = temporary.path().join("out");
+        assert!(gunzip_limited(&archive, &output, 99).is_err());
+        assert!(!output.exists());
+    }
+    #[test]
+    fn gzip_exactly_at_the_cap_is_extracted_whole() {
+        let temporary = tempfile::tempdir().unwrap();
+        let archive = temporary.path().join("ok.gz");
+        std::fs::write(&archive, gzip(&[7; 100])).unwrap();
+        let output = temporary.path().join("out");
+        gunzip_limited(&archive, &output, 100).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), vec![7; 100]);
+    }
+    /// Serves `body` once over plain HTTP and returns the URL.
+    fn serve_once(body: &'static [u8]) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://127.0.0.1:{port}/asset")
+    }
+    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    #[test]
+    fn download_without_an_expected_checksum_fails_and_keeps_nothing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        let result = download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            None,
+            &|_| {},
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("custom executable")
+        );
+        assert!(!target.exists());
+    }
+    #[test]
+    fn download_with_a_mismatched_checksum_fails_and_keeps_nothing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        let wrong = "0".repeat(64);
+        let result = download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            Some(&wrong),
+            &|_| {},
+        );
+        assert!(result.unwrap_err().to_string().contains("checksum"));
+        assert!(!target.exists());
+    }
+    #[test]
+    fn download_with_the_expected_checksum_succeeds() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = temporary.path().join("asset");
+        download(
+            &Client::new(),
+            &serve_once(b"hello"),
+            &target,
+            Some(HELLO_SHA256),
+            &|_| {},
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"hello");
     }
 }
