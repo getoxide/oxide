@@ -1,4 +1,5 @@
 import { commands } from "./bindings";
+import type { LaunchChoice } from "./launchPicker";
 
 /**
  * Read Settings at creation time so every entry point uses the current defaults.
@@ -7,9 +8,21 @@ import { commands } from "./bindings";
  * Agent terminal running Claude Code (ADR-0017). Flows that send a prompt (Fix, Issues) pass
  * nothing and keep the chat Thread until their own slice moves them.
  */
-export async function createDefaultThread(projectId: number, options: { terminal?: boolean } = {}) {
+export async function createDefaultThread(
+  projectId: number,
+  options: { terminal?: boolean; launch?: LaunchChoice } = {},
+) {
   const { settings } = await commands.getSettings();
-  if (options.terminal && settings.openThreadsAsTerminals) return commands.createTerminalThread(projectId);
+  if (options.terminal && settings.openThreadsAsTerminals) {
+    const { launch } = options;
+    return commands.createTerminalThread(
+      projectId,
+      launch?.provider ?? null,
+      launch?.model ?? null,
+      launch?.effort ?? null,
+      launch?.permissionMode ?? null,
+    );
+  }
   const provider = settings.defaultProvider || "claude";
   const defaults = settings.providers[provider];
   return commands.createThread(
