@@ -25,6 +25,10 @@ One conversation with a single Provider inside a Project, with its own Model, Ef
 A Thread's centre is its Agent terminal; chat Threads keep their Transcript until the chat is removed.
 _Avoid_: Agent, session, chat, Archived Thread
 
+**Custom agent**:
+An agent CLI the user added in Settings with a name and the command that launches it. Its Threads get a worktree, Issues, Fix and review like any other, but Oxide knows nothing about its status, Turns, Models or sessions unless it reports them.
+_Avoid_: Plugin, external Provider
+
 **Agent terminal**:
 The terminal at a Thread's centre, running the Thread's Provider CLI in the Thread's checkout. Oxide's core owns it, so it keeps running while the user moves around the app and shows its screen again when the Thread is reopened. Stop ends the agent; Restart resumes the same Provider session. It is not a Project terminal tab, which is a plain shell.
 _Avoid_: Console, agent tab, shell
@@ -121,7 +125,7 @@ _Avoid_: Review comment, review note
 ## Providers
 
 **Provider**:
-An agent CLI installed and logged in on the user's machine that Oxide drives: Claude Code, Codex, or Antigravity CLI (`agy`).
+An agent CLI installed on the user's machine that Oxide runs in an Agent terminal: Claude Code, Codex, Antigravity CLI (`agy`), or a Custom agent.
 _Avoid_: Agent, backend, harness
 
 **Model**:

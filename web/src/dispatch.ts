@@ -1,4 +1,5 @@
 import type { DispatchRequest, PermissionMode, Settings, TerminalIssue, Thread } from "./bindings";
+import { isCustomProvider } from "./customAgents";
 import { LAUNCH_RECIPES } from "./launchPicker";
 
 export interface DispatchForm {
@@ -69,7 +70,9 @@ export function dispatchRequest(projectId: number, form: DispatchForm, issue?: D
  * Provider has a launch recipe. Core builds the first prompt from the issue, so it is not edited.
  */
 export function startsAsTerminal(settings: Pick<Settings, "openThreadsAsTerminals">, provider: string, issue: DispatchIssue | undefined): boolean {
-  return issue !== undefined && settings.openThreadsAsTerminals && LAUNCH_RECIPES.includes(provider);
+  if (issue === undefined) return false;
+  // A Custom agent only ever runs in an Agent terminal.
+  return isCustomProvider(provider) || (settings.openThreadsAsTerminals && LAUNCH_RECIPES.includes(provider));
 }
 
 /** The issue as Core receives it; the title and body stay external content there. */

@@ -1,4 +1,4 @@
-import { BeakerIcon } from "@primer/octicons-react";
+import { BeakerIcon, TerminalIcon } from "@primer/octicons-react";
 import { OPENAI_PATH } from "./ProviderMark";
 import { providerName } from "./headerLines";
 
@@ -110,6 +110,13 @@ export function ProviderAvatar({ provider, height = 36 }: { provider: string; he
       >
         <path d={OPENAI_PATH} />
       </svg>
+    );
+  }
+  if (provider.startsWith("custom:")) {
+    return (
+      <span className="provider-avatar" role="img" aria-label="Custom agent" style={{ height }}>
+        <TerminalIcon size={height * 0.7} />
+      </span>
     );
   }
   // The fake Provider used in tests has no brand.

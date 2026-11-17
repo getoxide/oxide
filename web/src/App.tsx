@@ -4,7 +4,7 @@ import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ContextMenu } from "./ContextMenu";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type PermissionMode, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import { commands, type CustomAgent, type PermissionMode, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
 import { ModelEffortPicker } from "./ModelEffortPicker";
 import { cachedCatalogs, detectProviders, installedCache } from "./modelCatalogCache";
 import { launchableProviders, resolveLaunchFavourite, type LaunchChoice } from "./launchPicker";
@@ -107,6 +107,7 @@ export function App() {
   const modifierHeld = useModifierHeld();
   /** The "Open new Threads as terminals" preview: the Model picker then starts a new Thread. */
   const [terminalThreads, setTerminalThreads] = useState(false);
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
   const [launchDefaults, setLaunchDefaults] = useState<{ model: string | null; effort: string | null; permissionMode: PermissionMode | null }>({ model: null, effort: null, permissionMode: null });
   const defaultLaunchMode = launchDefaults.permissionMode;
@@ -649,6 +650,7 @@ export function App() {
       .then(({ settings }) => {
         if (!active) return;
         setTerminalThreads(settings.openThreadsAsTerminals);
+        setCustomAgents(settings.customAgents ?? []);
         const defaults = settings.providers.claude;
         setLaunchDefaults({ model: defaults?.model ?? null, effort: defaults?.effort ?? null, permissionMode: defaults?.permissionMode ?? null });
       })
@@ -1303,6 +1305,7 @@ export function App() {
               {selectedThread?.terminal ? (
                 <AgentTerminalView
                   key={selectedThread.id}
+                  customAgents={customAgents}
                   thread={selectedThread}
                   visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
                   gitControls={gitControlsFor(selected, currentThreadId)}
@@ -1497,6 +1500,7 @@ export function App() {
           open
           launch={{
             defaultPermissionMode: defaultLaunchMode,
+            customAgents,
             onLaunch: (choice) => void startNewThread(choice),
           }}
           onClose={() => setLaunchPickerOpen(false)}
