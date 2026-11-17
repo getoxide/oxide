@@ -43,9 +43,13 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf> {
     Ok(dest)
 }
 
-/// `https://host/owner/repo.git`, `git@host:owner/repo` or `/path/repo/` → `repo`.
+/// `https://host/owner/repo.git`, `git@host:owner/repo`, `/path/repo/` or `C:\path\repo` → `repo`.
 pub fn repository_name(url: &str) -> Option<&str> {
-    let last = url.trim().trim_end_matches('/').rsplit(['/', ':']).next()?;
+    let last = url
+        .trim()
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', ':', '\\'])
+        .next()?;
     let name = last.strip_suffix(".git").unwrap_or(last);
     (!name.is_empty()).then_some(name)
 }
@@ -135,6 +139,21 @@ pub fn github_clone_target(parent: &Path, name_with_owner: &str) -> Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_repository_from_every_kind_of_location() {
+        for (url, name) in [
+            ("https://host/owner/repo.git", "repo"),
+            ("git@host:owner/repo", "repo"),
+            ("/path/to/repo/", "repo"),
+            ("C:\\Users\\me\\repo", "repo"),
+            ("C:\\Users\\me\\repo.git\\", "repo"),
+        ] {
+            assert_eq!(repository_name(url), Some(name), "{url}");
+        }
+        assert_eq!(repository_name(""), None);
+        assert_eq!(repository_name("/"), None);
+    }
 
     #[test]
     fn refuses_what_is_not_a_normal_git_url() {
