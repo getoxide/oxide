@@ -51,6 +51,51 @@ pub(crate) struct AgentRun {
     /// The agent last reported that it waits for an answer (an Approval). Set as the report
     /// arrives, not when the sidebar catches up, so a paste can never answer it.
     needs_input: Arc<AtomicBool>,
+    /// A resume printed that the Provider session no longer exists.
+    session_gone: Arc<AtomicBool>,
+}
+
+/// What Claude Code prints when `--resume` names a session that does not exist.
+const SESSION_GONE_MARKER: &[u8] = b"No conversation found";
+
+/// Finds [`SESSION_GONE_MARKER`] in a stream of output chunks, also when it is split across two.
+#[derive(Default)]
+struct SessionGoneScanner {
+    tail: Vec<u8>,
+}
+
+impl SessionGoneScanner {
+    fn feed(&mut self, chunk: &[u8]) -> bool {
+        self.tail.extend_from_slice(chunk);
+        let found = self
+            .tail
+            .windows(SESSION_GONE_MARKER.len())
+            .any(|w| w == SESSION_GONE_MARKER);
+        let keep = SESSION_GONE_MARKER.len() - 1;
+        if self.tail.len() > keep {
+            self.tail.drain(..self.tail.len() - keep);
+        }
+        found
+    }
+}
+
+/// Why an agent is launched.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Launch {
+    /// A new Thread: Oxide assigns the session id.
+    Start,
+    /// The user restarts a stopped agent: resume the stored session.
+    Resume,
+    /// The Thread is opened: resume the stored session unless something already launched it.
+    Open,
+    /// The user accepted a fresh session after the old one was gone.
+    Fresh,
+}
+
+impl Launch {
+    fn resumes(self) -> bool {
+        matches!(self, Self::Resume | Self::Open)
+    }
 }
 
 pub(crate) type Agents = Arc<Mutex<HashMap<u32, Arc<AgentRun>>>>;
@@ -211,7 +256,7 @@ impl Core {
         };
         let started = self.ensure_worktree(thread_id).and_then(|ready| {
             if ready {
-                self.launch_agent(thread_id, false, prompt.as_deref())?;
+                self.launch_agent(thread_id, Launch::Start, prompt.as_deref())?;
             } else {
                 self.board.set_status(thread_id, ThreadStatus::Error);
             }
@@ -237,7 +282,70 @@ impl Core {
             self.board.set_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
         }
-        self.launch_agent(thread_id, true, None)?;
+        self.launch_agent(thread_id, Launch::Resume, None)?;
+        self.thread_summary(thread_id)
+    }
+
+    /// Opens a terminal Thread: after Oxide was relaunched its agent is stopped, and it is
+    /// resumed now, when the Thread is opened, not at startup. An agent the user stopped, one
+    /// that failed and one that runs are left alone.
+    ///
+    /// Starts a process (the Provider CLI, from an argument array).
+    pub fn open_agent(&self, thread_id: u32) -> Result<ThreadSummary> {
+        self.terminal_thread(thread_id)?;
+        let launched = self
+            .agents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&thread_id);
+        let stopped: bool = {
+            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            db.query_row(
+                "SELECT status = 'stopped' FROM threads WHERE id = ?1",
+                [thread_id],
+                |r| r.get(0),
+            )?
+        };
+        if !launched && stopped {
+            if self.ensure_worktree(thread_id)? {
+                self.launch_agent(thread_id, Launch::Open, None)?;
+            } else {
+                self.board.set_status(thread_id, ThreadStatus::Error);
+            }
+        }
+        self.thread_summary(thread_id)
+    }
+
+    /// Whether the last resume of the Thread's agent failed because its Provider session no
+    /// longer exists. The Thread then offers a fresh session.
+    pub fn agent_session_gone(&self, thread_id: u32) -> Result<bool> {
+        self.terminal_thread(thread_id)?;
+        Ok(self
+            .agents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&thread_id)
+            .is_some_and(|run| {
+                run.session.exit_success().is_some() && run.session_gone.load(Ordering::SeqCst)
+            }))
+    }
+
+    /// Starts a new Provider session in the same checkout and branch, after the old one was
+    /// found gone, and stores its id. This user action is the only way a Thread's session
+    /// changes; it is refused while the session is not known to be gone.
+    ///
+    /// Starts a process (the Provider CLI, from an argument array).
+    pub fn start_fresh_agent_session(&self, thread_id: u32) -> Result<ThreadSummary> {
+        if !self.agent_session_gone(thread_id)? {
+            return Err(Error::Terminal(
+                "The Provider session has not been lost.".into(),
+            ));
+        }
+        if !self.ensure_worktree(thread_id)? {
+            self.board.set_status(thread_id, ThreadStatus::Error);
+            return self.thread_summary(thread_id);
+        }
+        self.launch_agent(thread_id, Launch::Fresh, None)?;
         self.thread_summary(thread_id)
     }
 
@@ -397,7 +505,17 @@ impl Core {
 
     /// Starts the agent process in the Thread's checkout and records it as running. `prompt` is
     /// the first prompt of a new session; a resumed session is never given one.
-    fn launch_agent(&self, thread_id: u32, resume: bool, prompt: Option<&str>) -> Result<()> {
+    fn launch_agent(&self, thread_id: u32, launch: Launch, prompt: Option<&str>) -> Result<()> {
+        let resume = launch.resumes();
+        if launch == Launch::Open
+            && self
+                .agents
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&thread_id)
+        {
+            return Ok(());
+        }
         type Row = (
             String,
             Option<String>,
@@ -428,7 +546,11 @@ impl Core {
                 "{provider} has no Agent terminal yet."
             )));
         }
-        let session_id = session_id.unwrap_or_else(new_session_id);
+        let session_id = if launch == Launch::Fresh {
+            new_session_id()
+        } else {
+            session_id.unwrap_or_else(new_session_id)
+        };
         let args = claude_args(&ClaudeLaunch {
             session_id: &session_id,
             resume,
@@ -444,7 +566,7 @@ impl Core {
         };
         let id = next_id(&self.next_terminal_id);
         let stopped = Arc::new(AtomicBool::new(false));
-        if !resume {
+        if launch == Launch::Start {
             checkpoint::take_thread_start(std::path::Path::new(&checkout), thread_id);
         }
         let (signals, worker_signals) = crossbeam_channel::unbounded();
@@ -460,7 +582,13 @@ impl Core {
         let mut parser = Osc7501Parser::new();
         let needs_input = Arc::new(AtomicBool::new(false));
         let observed_needs_input = Arc::clone(&needs_input);
+        let session_gone = Arc::new(AtomicBool::new(false));
+        let gone_flag = Arc::clone(&session_gone);
+        let mut scanner = SessionGoneScanner::default();
         let observer = Box::new(move |output: &[u8]| {
+            if resume && scanner.feed(output) {
+                gone_flag.store(true, Ordering::SeqCst);
+            }
             let mut answer = Vec::new();
             for event in parser.feed(output) {
                 match event {
@@ -487,6 +615,9 @@ impl Core {
         });
         // Held until the run is recorded, so an agent that ends at once is not missed by `on_exit`.
         let mut agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        if launch == Launch::Open && agents.contains_key(&thread_id) {
+            return Ok(());
+        }
         let session = Arc::new(TerminalSession::start_agent(
             id,
             std::path::Path::new(&checkout),
@@ -509,6 +640,7 @@ impl Core {
                 session,
                 stopped,
                 needs_input,
+                session_gone,
             }),
         );
         self.board.set_status(thread_id, ThreadStatus::Running);
@@ -607,5 +739,21 @@ impl StatusWorker {
             checkpoint::take(&self.checkout, self.thread_id, index, Phase::End);
             self.board.end_agent_turn(id, status);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_missing_session_notice_is_found_whole_or_split_across_chunks() {
+        let mut whole = SessionGoneScanner::default();
+        assert!(whole.feed(b"x\r\nNo conversation found with session ID: a\r\n"));
+        let mut split = SessionGoneScanner::default();
+        assert!(!split.feed(b"No conv"));
+        assert!(split.feed(b"ersation found"));
+        let mut other = SessionGoneScanner::default();
+        assert!(!other.feed(b"All conversations are here"));
     }
 }

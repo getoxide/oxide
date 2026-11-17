@@ -48,13 +48,18 @@ const click = (label: string) => act(async () => {
   [...container.querySelectorAll("button")].find((b) => b.textContent?.includes(label))!.click();
 });
 
-function mount(t: Thread, onThreadUpdated: (thread: Thread) => void = () => {}) {
+function mount(
+  t: Thread,
+  onThreadUpdated: (thread: Thread) => void = () => {},
+  reply: Record<string, unknown> = {},
+) {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const channels: Channel<number[]>[] = [];
   mockIPC((name, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
     calls.push({ name, args: a });
     if (name === "attach_agent_terminal") channels.push(a.onOutput as Channel<number[]>);
+    if (name in reply) return reply[name];
     if (name === "restart_agent") return thread({ status: "running" });
     return null;
   });
@@ -144,4 +149,43 @@ it("shows the Setup command output when it failed and no agent started", async (
   await settle();
   expect(container.textContent).toContain("Setup command failed");
   expect(container.textContent).toContain("npm ERR! nope");
+});
+
+it("opens the Thread before attaching, so a relaunched Oxide resumes its agent lazily", async () => {
+  const updated: Thread[] = [];
+  const view = mount(thread({ status: "stopped" }), (t) => updated.push(t), {
+    open_agent: thread({ status: "running" }),
+  });
+  await view.start();
+  await settle();
+  const names = view.names();
+  expect(view.calls.find((c) => c.name === "open_agent")?.args.threadId).toBe(7);
+  expect(names.indexOf("open_agent")).toBeLessThan(names.indexOf("attach_agent_terminal"));
+  expect(updated.at(-1)?.status).toBe("running");
+});
+
+it("says the Provider session is gone and starts a fresh one only when the user accepts", async () => {
+  const updated: Thread[] = [];
+  const view = mount(thread({ status: "error" }), (t) => updated.push(t), {
+    agent_session_gone: true,
+    start_fresh_agent_session: thread({ status: "running" }),
+  });
+  await view.start();
+  await settle();
+  expect(container.textContent).toContain("no longer exists");
+  expect(view.names()).not.toContain("start_fresh_agent_session");
+
+  await click("Start a fresh session");
+  await settle();
+
+  expect(view.calls.find((c) => c.name === "start_fresh_agent_session")?.args.threadId).toBe(7);
+  expect(updated.at(-1)?.status).toBe("running");
+  expect(view.names().filter((n) => n === "attach_agent_terminal")).toHaveLength(2);
+});
+
+it("offers no fresh session while the session exists", async () => {
+  const view = mount(thread({ status: "stopped" }), () => {}, { agent_session_gone: false });
+  await view.start();
+  await settle();
+  expect(container.textContent).not.toContain("fresh session");
 });

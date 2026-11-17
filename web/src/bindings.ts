@@ -150,6 +150,18 @@ export const commands = {
 	stopAgent: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_agent", { threadId })),
 	/**  Relaunches a stopped terminal Thread's agent in the same Provider session. Starts a process. */
 	restartAgent: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("restart_agent", { threadId })),
+	/**
+	 *  Opens a terminal Thread: resumes its Provider session if Oxide was relaunched since its agent
+	 *  ran. Starts a process.
+	 */
+	openAgent: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("open_agent", { threadId })),
+	/**  Whether resuming the Thread's agent failed because its Provider session no longer exists. */
+	agentSessionGone: (threadId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("agent_session_gone", { threadId })),
+	/**
+	 *  Starts a new Provider session in the Thread's checkout after the old one was lost, and stores
+	 *  its id. Starts a process.
+	 */
+	startFreshAgentSession: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("start_fresh_agent_session", { threadId })),
 	writeFile: (projectId: number, threadId: number | null, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, threadId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	systemFonts: () => typedError<string[], AppError>(__TAURI_INVOKE("system_fonts")),

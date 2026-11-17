@@ -1057,6 +1057,36 @@ async fn restart_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thr
         .map(Thread::from)
 }
 
+/// Opens a terminal Thread: resumes its Provider session if Oxide was relaunched since its agent
+/// ran. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn open_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.open_agent(thread_id))
+        .await
+        .map(Thread::from)
+}
+
+/// Whether resuming the Thread's agent failed because its Provider session no longer exists.
+#[tauri::command]
+#[specta::specta]
+async fn agent_session_gone(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<bool, AppError> {
+    git_blocking(&core, move |core| core.agent_session_gone(thread_id)).await
+}
+
+/// Starts a new Provider session in the Thread's checkout after the old one was lost, and stores
+/// its id. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn start_fresh_agent_session(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.start_fresh_agent_session(thread_id))
+        .await
+        .map(Thread::from)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectServiceStatus {
@@ -3580,6 +3610,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         resize_agent_terminal,
         stop_agent,
         restart_agent,
+        open_agent,
+        agent_session_gone,
+        start_fresh_agent_session,
         write_file,
         language_tools,
         system_fonts,
