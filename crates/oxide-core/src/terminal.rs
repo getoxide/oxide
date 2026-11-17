@@ -49,6 +49,8 @@ pub struct AgentCommand {
     pub args: Vec<String>,
     /// Variables removed from the inherited environment.
     pub env_remove: &'static [&'static str],
+    /// Variables set in the agent's environment.
+    pub env: Vec<(String, String)>,
 }
 
 enum SessionCommand {
@@ -123,6 +125,9 @@ impl TerminalSession {
         command.args(&agent.args);
         for name in agent.env_remove {
             command.env_remove(name);
+        }
+        for (name, value) in &agent.env {
+            command.env(name, value);
         }
         command.cwd(dunce::simplified(cwd));
         command.env("TERM", "xterm-256color");
@@ -752,6 +757,7 @@ mod tests {
                 "echo \"PATH=[$PATH] HOME=[$HOME]\"; sleep 1".into(),
             ],
             env_remove: &["HOME"],
+            env: Vec::new(),
         };
         let session = TerminalSession::start_agent(
             1,

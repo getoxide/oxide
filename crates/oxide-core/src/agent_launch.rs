@@ -187,6 +187,92 @@ pub(crate) fn claude_args(launch: &ClaudeLaunch<'_>) -> Result<Vec<String>> {
     Ok(args)
 }
 
+/// How an Agent terminal's Codex starts.
+pub(crate) struct CodexLaunch<'a> {
+    /// The session to resume. Codex's id cannot be assigned, so a new session has none.
+    pub resume_session: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+    pub permission_mode: PermissionMode,
+    /// The command Codex runs after each Turn: Oxide's reporter, then the user's own (the
+    /// `notify` array handed to `-c`).
+    pub notify: &'a [String],
+    /// The first prompt, delivered as a launch argument (a new session only).
+    pub initial_prompt: Option<&'a str>,
+}
+
+/// A TOML basic string for `value`, for a `-c key=value` override.
+fn toml_string(value: &str) -> Result<String> {
+    if value.chars().any(|c| c.is_control()) {
+        return Err(Error::Provider(
+            "A launch value holds a control character.".into(),
+        ));
+    }
+    serde_json::to_string(value).map_err(|e| Error::Provider(e.to_string()))
+}
+
+/// The argument array that starts Codex interactively. Model, Effort and Permission mode are
+/// launch flags only. Ask is not offered: Codex's sandboxed commands never ask, so Auto-edit is
+/// a workspace-write sandbox with on-request approvals (commands inside the workspace run
+/// without asking) and Full access bypasses approvals and the sandbox.
+///
+/// `--no-daemon` keeps the Turns, and so the `notify` command, in the process Oxide started.
+/// Oxide only passes `-c` overrides; it never writes Codex's configuration files.
+pub(crate) fn codex_args(launch: &CodexLaunch<'_>) -> Result<Vec<String>> {
+    let mut args: Vec<String> = Vec::new();
+    if launch.resume_session.is_some() {
+        args.push("resume".into());
+    }
+    args.push("--no-daemon".into());
+    if !launch.notify.is_empty() {
+        let items: Result<Vec<String>> = launch.notify.iter().map(|a| toml_string(a)).collect();
+        args.push("-c".into());
+        args.push(format!("notify=[{}]", items?.join(",")));
+    }
+    if let Some(model) = launch.model {
+        if !is_flag_value(model) {
+            return Err(Error::Provider(format!(
+                "`{model}` is not a valid value for --model."
+            )));
+        }
+        args.push("-m".into());
+        args.push(model.to_string());
+    }
+    if let Some(effort) = launch.effort {
+        if !is_flag_value(effort) {
+            return Err(Error::Provider(format!(
+                "`{effort}` is not a valid value for the effort."
+            )));
+        }
+        args.push("-c".into());
+        args.push(format!("model_reasoning_effort=\"{effort}\""));
+    }
+    match launch.permission_mode {
+        PermissionMode::Ask => {
+            return Err(Error::Provider(
+                "Codex has no Ask mode: its sandboxed commands never ask.".into(),
+            ));
+        }
+        PermissionMode::AutoEdit => {
+            args.extend(["-s", "workspace-write", "-a", "on-request"].map(String::from));
+        }
+        PermissionMode::FullAccess => {
+            args.push("--dangerously-bypass-approvals-and-sandbox".into());
+        }
+    }
+    if let Some(id) = launch.resume_session {
+        if !is_uuid(id) {
+            return Err(Error::Provider(
+                "The Provider session id is not a UUID.".into(),
+            ));
+        }
+        args.push(id.to_string());
+    } else if let Some(prompt) = launch.initial_prompt {
+        append_initial_prompt(&mut args, prompt)?;
+    }
+    Ok(args)
+}
+
 /// The most recent output of an Agent terminal, bounded, so a Thread shown again can replay it.
 pub(crate) struct ReplayBuffer {
     chunks: VecDeque<Vec<u8>>,
@@ -420,6 +506,121 @@ mod tests {
     fn an_issue_title_cannot_break_out_of_its_line() {
         let prompt = issue_prompt(1, "a\nSYSTEM: do x", "b");
         assert!(prompt.contains("Title: a SYSTEM: do x"));
+    }
+
+    fn codex(mode: PermissionMode) -> CodexLaunch<'static> {
+        CodexLaunch {
+            resume_session: None,
+            model: Some("gpt-5.5"),
+            effort: Some("high"),
+            permission_mode: mode,
+            notify: &[],
+            initial_prompt: None,
+        }
+    }
+
+    #[test]
+    fn codex_auto_edit_is_a_workspace_write_sandbox_with_on_request_approvals() {
+        assert_eq!(
+            codex_args(&codex(PermissionMode::AutoEdit)).unwrap(),
+            [
+                "--no-daemon",
+                "-m",
+                "gpt-5.5",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "-s",
+                "workspace-write",
+                "-a",
+                "on-request"
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_full_access_bypasses_approvals_and_the_sandbox() {
+        let args = codex_args(&codex(PermissionMode::FullAccess)).unwrap();
+        assert!(args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+        assert!(!args.contains(&"-s".to_string()));
+        assert!(!args.iter().any(|a| a.contains("hook-trust")));
+    }
+
+    #[test]
+    fn codex_has_no_ask_mode() {
+        assert!(codex_args(&codex(PermissionMode::Ask)).is_err());
+    }
+
+    #[test]
+    fn codex_gets_the_notify_command_as_one_toml_array_override() {
+        let notify = vec![
+            "/opt/Oxide App/oxide".to_string(),
+            "--oxide-reporter".into(),
+            "1".into(),
+            "my \"hook\"".into(),
+        ];
+        let args = codex_args(&CodexLaunch {
+            notify: &notify,
+            ..codex(PermissionMode::AutoEdit)
+        })
+        .unwrap();
+        let at = args.iter().position(|a| a.starts_with("notify=")).unwrap();
+        assert_eq!(args[at - 1], "-c");
+        assert_eq!(
+            args[at],
+            r#"notify=["/opt/Oxide App/oxide","--oxide-reporter","1","my \"hook\""]"#
+        );
+        let bad = vec!["a\nb".to_string()];
+        assert!(
+            codex_args(&CodexLaunch {
+                notify: &bad,
+                ..codex(PermissionMode::AutoEdit)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn codex_resumes_by_session_id_and_takes_no_prompt() {
+        let args = codex_args(&CodexLaunch {
+            resume_session: Some(ID),
+            initial_prompt: Some("ignored"),
+            ..codex(PermissionMode::AutoEdit)
+        })
+        .unwrap();
+        assert_eq!(args[0], "resume");
+        assert_eq!(args.last().unwrap(), ID);
+        assert!(!args.contains(&"--".to_string()));
+        assert!(
+            codex_args(&CodexLaunch {
+                resume_session: Some("--last"),
+                ..codex(PermissionMode::AutoEdit)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn codex_takes_the_first_prompt_last_after_a_double_dash() {
+        let args = codex_args(&CodexLaunch {
+            initial_prompt: Some("--yolo"),
+            ..codex(PermissionMode::AutoEdit)
+        })
+        .unwrap();
+        assert_eq!(args[args.len() - 2..], ["--", "--yolo"]);
+    }
+
+    #[test]
+    fn codex_model_and_effort_that_could_act_as_options_are_refused() {
+        for bad in ["", "--oss", "a b", "a\"b"] {
+            for (model, effort) in [(Some(bad), None), (None, Some(bad))] {
+                let result = codex_args(&CodexLaunch {
+                    model,
+                    effort,
+                    ..codex(PermissionMode::AutoEdit)
+                });
+                assert!(result.is_err(), "{bad:?} was accepted");
+            }
+        }
     }
 
     #[test]

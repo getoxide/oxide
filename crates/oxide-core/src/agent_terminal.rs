@@ -5,8 +5,8 @@
 //! around the app, and a view that attaches later gets the recent output replayed.
 
 use crate::agent_launch::{
-    ClaudeLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV, claude_args,
-    issue_prompt, new_session_id,
+    ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV,
+    claude_args, codex_args, issue_prompt, new_session_id,
 };
 use crate::agent_status::{
     Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,
@@ -52,23 +52,30 @@ pub(crate) struct AgentRun {
     session_gone: Arc<AtomicBool>,
 }
 
-/// What Claude Code prints when `--resume` names a session that does not exist.
-const SESSION_GONE_MARKER: &[u8] = b"No conversation found";
+/// What a Provider prints when resuming names a session that does not exist.
+const CLAUDE_SESSION_GONE: &[u8] = b"No conversation found";
+const CODEX_SESSION_GONE: &[u8] = b"No saved session found";
 
-/// Finds [`SESSION_GONE_MARKER`] in a stream of output chunks, also when it is split across two.
-#[derive(Default)]
+/// Finds a Provider's missing-session notice in a stream of output chunks, also when it is split
+/// across two.
 struct SessionGoneScanner {
+    marker: &'static [u8],
     tail: Vec<u8>,
 }
 
 impl SessionGoneScanner {
+    fn new(marker: &'static [u8]) -> Self {
+        Self {
+            marker,
+            tail: Vec::new(),
+        }
+    }
+
     fn feed(&mut self, chunk: &[u8]) -> bool {
         self.tail.extend_from_slice(chunk);
-        let found = self
-            .tail
-            .windows(SESSION_GONE_MARKER.len())
-            .any(|w| w == SESSION_GONE_MARKER);
-        let keep = SESSION_GONE_MARKER.len() - 1;
+        let marker = self.marker;
+        let found = self.tail.windows(marker.len()).any(|w| w == marker);
+        let keep = marker.len() - 1;
         if self.tail.len() > keep {
             self.tail.drain(..self.tail.len() - keep);
         }
@@ -135,7 +142,17 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner()) = dirs;
     }
 
-    fn find_claude(&self) -> Result<PathBuf> {
+    fn find_provider(&self, provider: &str) -> Result<PathBuf> {
+        let name = if provider == "codex" {
+            "codex"
+        } else {
+            "claude"
+        };
+        let label = if provider == "codex" {
+            "Codex"
+        } else {
+            "Claude Code"
+        };
         let dirs = self
             .agent_search_path
             .lock()
@@ -143,13 +160,13 @@ impl Core {
             .clone()
             .unwrap_or_else(default_search_path);
         let path = std::env::join_paths(dirs)
-            .map_err(|_| Error::Provider("Claude Code could not be looked up.".into()))?;
+            .map_err(|_| Error::Provider(format!("{label} could not be looked up.")))?;
         oxide_provider::command::find_in(
             &path,
-            std::ffi::OsStr::new("claude"),
+            std::ffi::OsStr::new(name),
             std::env::var_os("PATHEXT").as_deref(),
         )
-        .ok_or_else(|| Error::Provider("Claude Code is not installed".to_string()))
+        .ok_or_else(|| Error::Provider(format!("{label} is not installed")))
     }
 
     /// Starts a new terminal Thread in the Project with Claude Code and the Settings defaults
@@ -209,32 +226,58 @@ impl Core {
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
-        if provider != "claude" {
+        if provider != "claude" && provider != "codex" {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
         }
-        self.find_claude()?;
+        let codex = provider == "codex";
+        self.find_provider(provider)?;
         let (default_model, default_effort, default_mode) =
-            self.default_settings_for_provider("claude");
+            self.default_settings_for_provider(provider);
         let model = choice.model.clone().or(default_model);
         let effort = choice.effort.clone().or(default_effort);
+        // Codex has no Ask mode: a default of Ask becomes Auto-edit, a chosen Ask is refused.
+        let default_mode = if codex && default_mode == PermissionMode::Ask {
+            PermissionMode::AutoEdit
+        } else {
+            default_mode
+        };
         let permission_mode = choice.permission_mode.unwrap_or(default_mode);
         // Refuse a value the CLI would take as a flag before a worktree exists.
-        claude_args(&ClaudeLaunch {
-            session_id: &new_session_id(),
-            resume: false,
-            model: model.as_deref(),
-            effort: effort.as_deref(),
-            permission_mode,
-            initial_prompt: prompt.as_deref(),
-        })?;
-        let session_id = new_session_id();
+        if codex {
+            codex_args(&CodexLaunch {
+                resume_session: None,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                notify: &[],
+                initial_prompt: prompt.as_deref(),
+            })?;
+        } else {
+            claude_args(&ClaudeLaunch {
+                session_id: &new_session_id(),
+                resume: false,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                initial_prompt: prompt.as_deref(),
+            })?;
+        }
+        // Claude Code takes the id Oxide assigns; Codex's is reported after its first Turn.
+        let session_id = (!codex).then(new_session_id);
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
-                "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, 'claude', ?2, ?3, ?4, ?5, 'running', 1)",
-                rusqlite::params![project_id, session_id, model, effort, permission_mode.as_str()],
+                "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', 1)",
+                rusqlite::params![
+                    project_id,
+                    provider,
+                    session_id,
+                    model,
+                    effort,
+                    permission_mode.as_str()
+                ],
             )?;
             let thread_id = db.last_insert_rowid() as u32;
             if let Some(issue) = issue {
@@ -417,6 +460,14 @@ impl Core {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&thread_id);
+        if let Some(server) = self
+            .reporter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            server.revoke(thread_id);
+        }
         if let Some(run) = run {
             run.stopped.store(true, Ordering::SeqCst);
             run.session.close();
@@ -514,28 +565,53 @@ impl Core {
                 },
             )?
         };
-        if provider != "claude" {
+        if provider != "claude" && provider != "codex" {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
         }
-        let session_id = if launch == Launch::Fresh {
-            new_session_id()
+        let permission_mode = mode.parse().unwrap_or(PermissionMode::AutoEdit);
+        // A session id to store: Claude Code's is assigned here, Codex's is reported later, so a
+        // Codex Thread that never finished a Turn has none and starts over instead of resuming.
+        let (session_id, resume, args, env) = if provider == "codex" {
+            let session_id = if launch == Launch::Fresh {
+                None
+            } else {
+                session_id
+            };
+            let resume_session = session_id.as_deref().filter(|_| resume);
+            let (notify, env) = self.codex_reporter(thread_id)?;
+            let args = codex_args(&CodexLaunch {
+                resume_session,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                notify: &notify,
+                initial_prompt: if resume { None } else { prompt },
+            })?;
+            let resumed = resume_session.is_some();
+            (session_id, resumed, args, env)
         } else {
-            session_id.unwrap_or_else(new_session_id)
+            let session_id = if launch == Launch::Fresh {
+                new_session_id()
+            } else {
+                session_id.unwrap_or_else(new_session_id)
+            };
+            let args = claude_args(&ClaudeLaunch {
+                session_id: &session_id,
+                resume,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                initial_prompt: if resume { None } else { prompt },
+            })?;
+            (Some(session_id), resume, args, Vec::new())
         };
-        let args = claude_args(&ClaudeLaunch {
-            session_id: &session_id,
-            resume,
-            model: model.as_deref(),
-            effort: effort.as_deref(),
-            permission_mode: mode.parse().unwrap_or(PermissionMode::AutoEdit),
-            initial_prompt: if resume { None } else { prompt },
-        })?;
         let agent = AgentCommand {
-            program: self.find_claude()?,
+            program: self.find_provider(&provider)?,
             args,
             env_remove: NESTED_SESSION_ENV,
+            env,
         };
         let id = next_id(&self.next_terminal_id);
         let stopped = Arc::new(AtomicBool::new(false));
@@ -555,7 +631,11 @@ impl Core {
         let mut parser = Osc7501Parser::new();
         let session_gone = Arc::new(AtomicBool::new(false));
         let gone_flag = Arc::clone(&session_gone);
-        let mut scanner = SessionGoneScanner::default();
+        let mut scanner = SessionGoneScanner::new(if provider == "codex" {
+            CODEX_SESSION_GONE
+        } else {
+            CLAUDE_SESSION_GONE
+        });
         let observer = Box::new(move |output: &[u8]| {
             if resume && scanner.feed(output) {
                 gone_flag.store(true, Ordering::SeqCst);
@@ -595,10 +675,13 @@ impl Core {
         )?);
         {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            db.execute(
-                "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",
-                rusqlite::params![session_id, thread_id],
-            )?;
+            // Codex's id stays what the reporter stored; a fresh session clears the old one.
+            if provider == "claude" || launch == Launch::Fresh {
+                db.execute(
+                    "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",
+                    rusqlite::params![session_id, thread_id],
+                )?;
+            }
         }
         agents.insert(
             thread_id,
@@ -611,6 +694,68 @@ impl Core {
         );
         self.board.set_status(thread_id, ThreadStatus::Running);
         Ok(())
+    }
+}
+
+impl Core {
+    /// What a Codex launch needs from the reporter: the `notify` command (Oxide's executable,
+    /// then the user's own command) and the environment carrying the socket and a token that is
+    /// new for this launch. Starts listening on the first call.
+    fn codex_reporter(&self, thread_id: u32) -> Result<(Vec<String>, Vec<(String, String)>)> {
+        let executable = match self
+            .reporter_executable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            Some(path) => path,
+            None => std::env::current_exe()
+                .map_err(|e| Error::Provider(format!("Oxide's executable is unknown: {e}")))?,
+        };
+        let user = crate::agent_reporter::user_notify_command(&crate::agent_reporter::codex_home(
+            &self.user_home,
+        ));
+        let mut reporter = self.reporter.lock().unwrap_or_else(|e| e.into_inner());
+        if reporter.is_none() {
+            let storage = self.storage.clone();
+            *reporter = Some(crate::agent_reporter::ReporterServer::start(
+                &self.home,
+                Arc::new(move |thread, session| {
+                    storage.set_provider_session_id_if_unset(thread, session.to_string());
+                }),
+            )?);
+        }
+        let Some(server) = reporter.as_ref() else {
+            return Err(Error::Provider(
+                "The session reporter is not running.".into(),
+            ));
+        };
+        let token = server.register(thread_id)?;
+        let env = vec![
+            (
+                crate::agent_reporter::SOCKET_ENV.to_string(),
+                server.socket_path().to_string_lossy().into_owned(),
+            ),
+            (crate::agent_reporter::TOKEN_ENV.to_string(), token),
+        ];
+        Ok((crate::agent_reporter::notify_array(&executable, &user), env))
+    }
+
+    /// Replaces the executable Codex runs as the reporter. Tests use a stand-in.
+    pub fn set_reporter_executable(&self, path: Option<PathBuf>) {
+        *self
+            .reporter_executable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = path;
+    }
+
+    /// The socket of the session reporter, once a Codex Thread has started it.
+    pub fn reporter_socket(&self) -> Option<PathBuf> {
+        self.reporter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|server| server.socket_path().to_path_buf())
     }
 }
 
@@ -714,12 +859,19 @@ mod tests {
 
     #[test]
     fn the_missing_session_notice_is_found_whole_or_split_across_chunks() {
-        let mut whole = SessionGoneScanner::default();
+        let mut whole = SessionGoneScanner::new(CLAUDE_SESSION_GONE);
         assert!(whole.feed(b"x\r\nNo conversation found with session ID: a\r\n"));
-        let mut split = SessionGoneScanner::default();
+        let mut split = SessionGoneScanner::new(CLAUDE_SESSION_GONE);
         assert!(!split.feed(b"No conv"));
         assert!(split.feed(b"ersation found"));
-        let mut other = SessionGoneScanner::default();
+        let mut other = SessionGoneScanner::new(CLAUDE_SESSION_GONE);
         assert!(!other.feed(b"All conversations are here"));
+    }
+
+    #[test]
+    fn codexs_missing_session_notice_is_found_too() {
+        let mut scanner = SessionGoneScanner::new(CODEX_SESSION_GONE);
+        assert!(!scanner.feed(b"ERROR: No saved ses"));
+        assert!(scanner.feed(b"sion found with ID x"));
     }
 }
