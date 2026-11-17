@@ -44,7 +44,8 @@ mod worktree;
 
 pub use activity::{Notification, NotificationKind, System};
 pub use blind_review::{
-    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, FindingDecision,
+    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, BlindReviewRun,
+    BlindReviewStatus, FindingDecision, OneShotRunner, PreparedBlindReview,
 };
 pub use board::{BoardCard, BoardEvent, PendingApproval};
 pub use continuation::{ContinuedThread, RECAP_MAX_CHARS};
@@ -200,6 +201,8 @@ pub struct Core {
     model_catalogs: Mutex<HashMap<String, Vec<ModelInfo>>>,
     slash_catalogs: Mutex<HashMap<String, Vec<SlashCommandInfo>>>,
     detections: detection_cache::DetectionCache,
+    /// How a one-shot Provider run (Blind review) is launched; replaceable in tests.
+    one_shot_runner: Mutex<OneShotRunner>,
 }
 
 impl Core {
@@ -242,6 +245,12 @@ impl Core {
         let board = Arc::new(board::BoardHub::new(home.join(DB_FILE)));
         let usage = Arc::new(usage::UsageHub::new(home.join(DB_FILE)));
         let ledger = Arc::new(review_ledger::LedgerStore::new(home.join(DB_FILE)));
+        let one_shot_runner: OneShotRunner = {
+            let processes = Arc::clone(&processes);
+            Arc::new(move |request| {
+                oxide_provider::oneshot::run_one_shot(request, Some(&processes))
+            })
+        };
         let core = Self {
             home: home.clone(),
             user_home: std::env::var_os("HOME")
@@ -273,6 +282,7 @@ impl Core {
             usage_poller: Mutex::new(None),
             model_catalogs: Mutex::new(HashMap::new()),
             detections: detection_cache::DetectionCache::default(),
+            one_shot_runner: Mutex::new(one_shot_runner),
             slash_catalogs: Mutex::new(
                 fs::read(home.join("cache/slash-commands/catalogs.json"))
                     .ok()
@@ -281,6 +291,7 @@ impl Core {
             ),
         };
         core.remove_abandoned_attachments();
+        core.recover_interrupted_blind_reviews();
         Ok(core)
     }
 

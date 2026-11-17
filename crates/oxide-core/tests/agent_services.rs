@@ -339,18 +339,6 @@ fn an_agent_command_on_a_port_held_by_a_service_reuses_it_and_completes() {
 type Receiver = crossbeam_channel::Receiver<oxide_core::SequencedThreadEvent>;
 type Answers = Arc<Mutex<Vec<(String, ApprovalDecision)>>>;
 
-/// A Provider whose prompt starts a Turn and asks Oxide to detach `command`, nothing else.
-/// `provider_approval` makes it also raise its own Approval for the command, as a real adapter
-/// does once the CLI asks for permission; `answers` records what Core tells the Provider.
-fn requesting_provider(
-    command: &str,
-    provider_approval: bool,
-    answers: Answers,
-) -> (FakeProvider, crossbeam_channel::Sender<ProviderEvent>) {
-    let approval = provider_approval.then(|| (command.to_string(), false));
-    requesting_provider_with(command, approval, answers)
-}
-
 /// `approval` is the summary of the Provider's own Approval and whether it arrives before the
 /// `CommandRequested` (the order the Codex adapter can produce).
 fn requesting_provider_with(
@@ -687,56 +675,4 @@ fn a_provider_approval_that_arrives_first_is_adopted_as_the_only_prompt() {
             assert!(wait_group_gone(pid));
         }
     }
-}
-
-#[test]
-fn a_blind_review_ignores_a_detach_request() {
-    use oxide_core::blind_review::BlindReviewRequest;
-    let dir = tempdir().unwrap();
-    let work = dir.path().join("work");
-    std::fs::create_dir_all(&work).unwrap();
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&work)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{args:?}");
-    };
-    git(&["init", "-q", "-b", "main"]);
-    git(&["config", "user.name", "Oxide Test"]);
-    git(&["config", "user.email", "test@oxide.local"]);
-    git(&["config", "commit.gpgsign", "false"]);
-    std::fs::write(work.join("a.rs"), "fn a() {}\n").unwrap();
-    git(&["add", "."]);
-    git(&["commit", "-qm", "initial"]);
-    let core = Core::open(dir.path().join("home")).unwrap();
-    core.set_real_time_ticker(false);
-    let project = core.add_project(&work.to_string_lossy()).unwrap();
-
-    let (review, prompt) = core
-        .create_blind_review_thread(BlindReviewRequest {
-            project_id: project.id,
-            thread_id: None,
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            scope: "uncommitted".into(),
-            turn_index: None,
-            issue: None,
-        })
-        .unwrap();
-    let (fake, _sender) = requesting_provider("sleep 300 &", false, Answers::default());
-    core.register_fake_provider(review.id, fake);
-    let (_snapshot, rx) = core.subscribe_thread(review.id).unwrap();
-    core.send_prompt(review.id, &prompt).unwrap();
-
-    while let Ok(event) = rx.recv_timeout(Duration::from_millis(800)) {
-        assert!(
-            !matches!(event.event, ThreadEvent::ApprovalRequested { .. }),
-            "a Blind review never asks to detach"
-        );
-    }
-    assert!(core.list_project_services(project.id).unwrap().is_empty());
-    core.shutdown();
 }
