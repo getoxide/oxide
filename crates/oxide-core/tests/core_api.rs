@@ -157,7 +157,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
 
     core.write_terminal(
         terminal.id,
-        b"sleep 60 & child=$!; echo CHILD=$child; echo READY$((6*7))\n",
+        // `jobs -p`, not `$!`: macOS bash 3.2 runs history expansion on typed input and
+        // reports "event not found" for the `!`.
+        b"sleep 60 & echo CHILD=$(jobs -p); echo READY$((6*7))\n",
     )
     .unwrap();
     let mut output = String::new();
