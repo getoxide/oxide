@@ -361,6 +361,12 @@ fn every_terminal_command_refuses_an_unknown_thread_and_a_chat_thread() {
         );
         assert!(f.core.stop_agent(id).is_err(), "stop {id}");
         assert!(f.core.restart_agent(id).is_err(), "restart {id}");
+        assert!(f.core.open_agent(id).is_err(), "open {id}");
+        assert!(f.core.agent_session_gone(id).is_err(), "gone {id}");
+        assert!(
+            f.core.start_fresh_agent_session(id).is_err(),
+            "fresh {id}"
+        );
     }
 }
 
@@ -485,4 +491,192 @@ fn a_model_that_is_not_a_plain_value_is_refused() {
     );
     assert!(result.is_err());
     assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
+}
+
+fn write_claude(f: &Fixture, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let claude = f._tmp.path().join("bin").join("claude");
+    std::fs::write(&claude, script).unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A Claude Code whose stored session no longer exists: resuming prints what the real one does.
+const GONE_CLAUDE: &str = r#"#!/bin/sh
+case "$*" in
+  *--resume*) echo "No conversation found with session ID: $2"; exit 1;;
+esac
+echo "ARGS:$*"
+echo "CWD:$(pwd)"
+echo "READY"
+while IFS= read -r line; do echo "ECHO:$line"; done
+"#;
+
+fn stored_session(home: &Path, thread_id: u32) -> String {
+    rusqlite::Connection::open(home.join("oxide.db"))
+        .unwrap()
+        .query_row(
+            "SELECT provider_session_id FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+/// Quits Oxide and opens the same data directory again, as a relaunch does.
+fn relaunch(f: Fixture) -> Fixture {
+    f.core.shutdown();
+    let Fixture {
+        _tmp,
+        core,
+        project,
+        work,
+        home,
+    } = f;
+    drop(core);
+    let core = Core::open(&home).unwrap();
+    core.set_real_time_ticker(false);
+    core.set_agent_search_path(Some(vec![
+        _tmp.path().join("bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/bin"),
+    ]));
+    Fixture {
+        _tmp,
+        core,
+        project,
+        work,
+        home,
+    }
+}
+
+#[test]
+fn opening_a_thread_after_a_relaunch_resumes_its_session_and_the_others_stay_stopped() {
+    let f = fixture();
+    let first = started(&f);
+    let second = started(&f);
+    let session = stored_session(&f.home, first.id);
+    let worktree = first.worktree_path.clone().unwrap();
+    let f = relaunch(f);
+    assert_eq!(status(&f, first.id), ThreadStatus::Stopped);
+
+    let opened = f.core.open_agent(first.id).unwrap();
+
+    assert_eq!(opened.status, ThreadStatus::Running);
+    let out = screen(&f.core, first.id, "READY");
+    assert!(out.contains(&format!("--resume {session}")), "{out}");
+    assert!(out.contains(&format!("CWD:{}", real(&worktree))), "{out}");
+    assert_eq!(status(&f, second.id), ThreadStatus::Stopped);
+    assert!(!f.core.agent_is_running(second.id));
+    assert_eq!(stored_session(&f.home, first.id), session);
+}
+
+#[test]
+fn opening_a_thread_does_not_relaunch_an_agent_the_user_stopped_or_one_that_runs() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+    f.core.open_agent(thread.id).unwrap();
+    assert!(f.core.agent_is_running(thread.id));
+
+    f.core.stop_agent(thread.id).unwrap();
+    wait_status(&f, thread.id, ThreadStatus::Stopped);
+    let opened = f.core.open_agent(thread.id).unwrap();
+
+    assert_eq!(opened.status, ThreadStatus::Stopped);
+    assert!(!f.core.agent_is_running(thread.id));
+}
+
+#[test]
+fn a_session_that_is_gone_is_reported_and_a_fresh_one_starts_in_the_same_checkout_and_branch() {
+    let f = fixture();
+    let thread = started(&f);
+    let old = stored_session(&f.home, thread.id);
+    let worktree = thread.worktree_path.clone().unwrap();
+    let branch = git(Path::new(&worktree), &["branch", "--show-current"]);
+    let f = relaunch(f);
+    write_claude(&f, GONE_CLAUDE);
+
+    f.core.open_agent(thread.id).unwrap();
+
+    wait_status(&f, thread.id, ThreadStatus::Error);
+    assert!(
+        wait_until(Duration::from_secs(10), || f
+            .core
+            .agent_session_gone(thread.id)
+            .unwrap()),
+        "the missing session was not noticed"
+    );
+    // Opening it again does not hide the failure or relaunch on its own.
+    f.core.open_agent(thread.id).unwrap();
+    assert!(f.core.agent_session_gone(thread.id).unwrap());
+    assert_eq!(stored_session(&f.home, thread.id), old);
+
+    let fresh = f.core.start_fresh_agent_session(thread.id).unwrap();
+
+    assert_eq!(fresh.status, ThreadStatus::Running);
+    let new = stored_session(&f.home, thread.id);
+    assert_ne!(new, old);
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(out.contains(&format!("--session-id {new}")), "{out}");
+    assert!(out.contains(&format!("CWD:{}", real(&worktree))), "{out}");
+    assert_eq!(
+        git(Path::new(&worktree), &["branch", "--show-current"]),
+        branch
+    );
+    assert!(!f.core.agent_session_gone(thread.id).unwrap());
+}
+
+#[test]
+fn a_fresh_session_is_only_offered_when_the_session_is_gone() {
+    let f = fixture();
+    let thread = started(&f);
+    let session = stored_session(&f.home, thread.id);
+    assert!(!f.core.agent_session_gone(thread.id).unwrap());
+    assert!(f.core.start_fresh_agent_session(thread.id).is_err());
+    f.core.stop_agent(thread.id).unwrap();
+    wait_status(&f, thread.id, ThreadStatus::Stopped);
+    assert!(f.core.start_fresh_agent_session(thread.id).is_err());
+    assert!(f.core.agent_session_gone(9999).is_err());
+    assert_eq!(stored_session(&f.home, thread.id), session);
+}
+
+#[test]
+fn quitting_oxide_ends_every_agent_process() {
+    let f = fixture();
+    let pids = f._tmp.path().join("pids");
+    write_claude(
+        &f,
+        &format!(
+            "#!/bin/sh\necho $$ >> '{}'\necho READY\nwhile IFS= read -r line; do :; done\nsleep 600\n",
+            pids.display()
+        ),
+    );
+    let a = started(&f);
+    let b = started(&f);
+    screen(&f.core, a.id, "READY");
+    screen(&f.core, b.id, "READY");
+    assert!(wait_until(Duration::from_secs(10), || {
+        std::fs::read_to_string(&pids).is_ok_and(|s| s.lines().count() == 2)
+    }));
+    let pids: Vec<String> = std::fs::read_to_string(&pids)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let alive = |pid: &str| {
+        Command::new("kill")
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(pids.iter().all(|p| alive(p)));
+
+    f.core.shutdown();
+
+    assert!(
+        wait_until(Duration::from_secs(10), || pids.iter().all(|p| !alive(p))),
+        "an agent process outlived Oxide: {pids:?}"
+    );
 }
