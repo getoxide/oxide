@@ -32,11 +32,6 @@ const MAX_INPUT_MESSAGE_BYTES: usize = 9_000_000;
 /// Image types Claude's `image` block accepts.
 const NATIVE_IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
-/// Pinned version range for Claude Code tested with Oxide.
-/// Range: >= 0.2.0, < 3.0.0
-pub const PINNED_VERSION_MIN: (u64, u64, u64) = (0, 2, 0);
-pub const PINNED_VERSION_MAX: (u64, u64, u64) = (3, 0, 0);
-
 /// Which of the user's own Claude Code customizations a session may load. Everything is off by
 /// default, which starts the CLI in `--safe-mode`; each flag opts one category back in.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,10 +263,6 @@ impl ClaudeCodeProvider {
 
     pub fn parse_version_string(raw: &str) -> Option<String> {
         crate::parse_version_string(raw)
-    }
-
-    pub fn is_version_within_pinned_range(version: &str) -> bool {
-        crate::is_version_within_range(version, PINNED_VERSION_MIN, PINNED_VERSION_MAX)
     }
 
     fn spawn_process(
@@ -1072,18 +1063,6 @@ impl Provider for ClaudeCodeProvider {
             }
         });
 
-        let warning = if let Some(ref ver) = parsed_version {
-            if !Self::is_version_within_pinned_range(ver) {
-                Some(format!(
-                    "Claude Code version {ver} is outside the pinned range tested with Oxide (>= 0.2.0, < 3.0.0)"
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         let mut auth_cmd = crate::command::provider_command(&self.command, &self.extra_env);
         auth_cmd.args(["auth", "status"]);
 
@@ -1101,7 +1080,7 @@ impl Provider for ClaudeCodeProvider {
             installed: true,
             version: parsed_version,
             authenticated,
-            warning,
+            warning: None,
         })
     }
 

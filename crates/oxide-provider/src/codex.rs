@@ -23,11 +23,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 pub const DEFAULT_CODEX_COMMAND: &str = "codex";
 
-/// Pinned version range for Codex CLI tested with Oxide.
-/// Range: >= 0.100.0, < 1.0.0
-pub const PINNED_VERSION_MIN: (u64, u64, u64) = (0, 100, 0);
-pub const PINNED_VERSION_MAX: (u64, u64, u64) = (1, 0, 0);
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexModelEntry {
     pub id: String,
@@ -184,7 +179,6 @@ struct AppServerProcess {
 
 struct AppServerInner {
     process: AppServerProcess,
-    handshake_warning: Option<String>,
     models: Vec<CodexModelEntry>,
     skills_cache: HashMap<PathBuf, Vec<serde_json::Value>>,
     next_request_id: AtomicU64,
@@ -688,7 +682,6 @@ impl CodexAppServer {
 
         let app_inner = AppServerInner {
             process: AppServerProcess { child, stdin },
-            handshake_warning: None,
             models: Vec::new(),
             skills_cache: HashMap::new(),
             next_request_id: AtomicU64::new(1),
@@ -773,29 +766,7 @@ impl CodexAppServer {
             }
         });
 
-        let res = self.send_request("initialize", &params)?;
-        let user_agent = res.get("userAgent").and_then(|s| s.as_str()).unwrap_or("");
-
-        let parsed_ver = CodexProvider::parse_version_string(user_agent);
-        let warning = if let Some(ref ver) = parsed_ver {
-            if !CodexProvider::is_version_within_pinned_range(ver) {
-                Some(format!(
-                    "Codex app-server version {ver} is outside the pinned range tested with Oxide (>= 0.100.0, < 1.0.0)"
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(w) = warning {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(ref mut inner) = *guard {
-                inner.handshake_warning = Some(w);
-            }
-        }
-
+        self.send_request("initialize", &params)?;
         Ok(())
     }
 
@@ -853,11 +824,6 @@ impl CodexAppServer {
     pub fn models(&self) -> Vec<CodexModelEntry> {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.as_ref().map(|i| i.models.clone()).unwrap_or_default()
-    }
-
-    pub fn warning(&self) -> Option<String> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_ref().and_then(|i| i.handshake_warning.clone())
     }
 
     fn respond_to_server_request(
@@ -1149,10 +1115,6 @@ impl CodexProvider {
         crate::parse_version_string(raw)
     }
 
-    pub fn is_version_within_pinned_range(version: &str) -> bool {
-        crate::is_version_within_range(version, PINNED_VERSION_MIN, PINNED_VERSION_MAX)
-    }
-
     fn map_permission_mode_to_thread_start(mode: PermissionMode) -> (&'static str, &'static str) {
         match mode {
             PermissionMode::Ask => ("read-only", "untrusted"),
@@ -1306,17 +1268,7 @@ impl Provider for CodexProvider {
             }
         });
 
-        let mut warning = if let Some(ref ver) = parsed_version {
-            if !Self::is_version_within_pinned_range(ver) {
-                Some(format!(
-                    "Codex version {ver} is outside the pinned range tested with Oxide (>= 0.100.0, < 1.0.0)"
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let mut warning: Option<String> = None;
 
         let mut auth_cmd =
             crate::command::provider_command(&self.app_server.command, &self.app_server.extra_env);

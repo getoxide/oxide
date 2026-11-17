@@ -562,13 +562,14 @@ fn detect_reports_version_and_auth() {
 }
 
 #[test]
-fn detect_warns_but_does_not_block_outside_the_pinned_range() {
+fn detect_accepts_any_version_without_a_warning() {
     let fake = fake_agy();
     let mut provider = AgyProvider::with_command(fake.command());
     provider.set_env("OXIDE_FAKE_VERSION", "2.0.1");
     let detection = provider.detect().unwrap();
     assert!(detection.available);
-    assert!(detection.warning.unwrap().contains("2.0.1"));
+    assert_eq!(detection.warning, None);
+    assert_eq!(detection.version.as_deref(), Some("2.0.1"));
 }
 
 #[test]
