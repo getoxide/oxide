@@ -1241,6 +1241,9 @@ html.macos .header,
 .model-row:hover .fav-toggle-btn, .model-row.highlighted .fav-toggle-btn, .fav-toggle-btn.on { opacity: 1; }
 .fav-toggle-btn.on { color: var(--yellow); }
 .model-shortcut { font: 10.5px var(--mono); color: var(--dim); background: var(--bg3); border: 1px solid var(--line); padding: 0 5px; border-radius: 4px; }
+.permission-modes { display: flex; gap: 4px; justify-content: center; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.permission-mode { padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; }
+.permission-mode.active { color: var(--fg-bright); border-color: var(--line-strong); background: var(--bg3); }
 .picker-legend { padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--faint); }
 
 /* Effort panel: a Faster-to-Smarter slider whose colour and flourish grow with the level. */

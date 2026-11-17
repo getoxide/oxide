@@ -4,7 +4,10 @@ import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ContextMenu } from "./ContextMenu";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import { commands, type PermissionMode, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import { ModelEffortPicker } from "./ModelEffortPicker";
+import { cachedCatalogs, detectProviders, installedCache } from "./modelCatalogCache";
+import { launchableProviders, resolveLaunchFavourite, type LaunchChoice } from "./launchPicker";
 import type { CodeOpenRequest } from "./codeOpen";
 import {
   ChevronRightIcon,
@@ -101,6 +104,11 @@ export function App() {
   const shortcuts = useShortcuts();
   const keys = (action: ShortcutAction) => formatAccelerator(shortcuts[action]);
   const modifierHeld = useModifierHeld();
+  /** The "Open new Threads as terminals" preview: the Model picker then starts a new Thread. */
+  const [terminalThreads, setTerminalThreads] = useState(false);
+  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const [launchDefaults, setLaunchDefaults] = useState<{ model: string | null; effort: string | null; permissionMode: PermissionMode | null }>({ model: null, effort: null, permissionMode: null });
+  const defaultLaunchMode = launchDefaults.permissionMode;
   const [showTools, setShowTools] = useState(false);
   const [fallbackTool, setFallbackTool] = useState<string>("Files");
   const [activeToolsByProject, setActiveToolsByProject] = useState<Record<number, string>>({});
@@ -493,8 +501,8 @@ export function App() {
   }, [setProjectThreads]);
 
   /** A new Thread in the Project with Settings defaults; `null` if it could not be created. */
-  const createThreadIn = useCallback(async (projectId: number): Promise<Thread | null> => {
-    const created = await createDefaultThread(projectId, { terminal: true });
+  const createThreadIn = useCallback(async (projectId: number, launch?: LaunchChoice): Promise<Thread | null> => {
+    const created = await createDefaultThread(projectId, { terminal: true, launch });
     if (created.status === "error") {
       setOpenError(created.error.message);
       return null;
@@ -549,7 +557,7 @@ export function App() {
 
   // Only one unused Thread (no Turn, no draft, not working) at a time: asking for another reopens it.
   const startingThread = useRef(false);
-  const startNewThread = useCallback(async () => {
+  const startNewThread = useCallback(async (launch?: LaunchChoice) => {
     if (!selected || startingThread.current) return;
     startingThread.current = true;
     try {
@@ -559,7 +567,8 @@ export function App() {
       const askForComposerFocus = (threadId: number) =>
         setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
       // Only Threads that could be unused need a Turn count; a failed lookup just rules one out.
-      const candidates = (threads ?? []).filter((t) => t.status !== "working" && !t.terminal && getDraft(drafts, t.id).trim() === "");
+      // A chosen Provider, Model or Permission mode always starts a Thread of its own.
+      const candidates = launch ? [] : (threads ?? []).filter((t) => t.status !== "working" && !t.terminal && getDraft(drafts, t.id).trim() === "");
       const counts = await Promise.all(
         candidates.map((t) => commands.listTurns(t.id, 0, 1).catch(() => null)),
       );
@@ -573,7 +582,7 @@ export function App() {
         askForComposerFocus(empty.id);
         return;
       }
-      const created = await createThreadIn(selected.id).catch((cause: unknown) => {
+      const created = await createThreadIn(selected.id, launch).catch((cause: unknown) => {
         setOpenError(cause instanceof Error ? cause.message : String(cause));
         return null;
       });
@@ -589,6 +598,34 @@ export function App() {
       startingThread.current = false;
     }
   }, [selected, threads, drafts, createThreadIn, expandProject, selectThread, setProjectThreads]);
+
+  // Whether Threads open as terminals, and the Permission mode the picker preselects.
+  useEffect(() => {
+    if (showSettings) return;
+    let active = true;
+    void Promise.resolve(commands.getSettings())
+      .then(({ settings }) => {
+        if (!active) return;
+        setTerminalThreads(settings.openThreadsAsTerminals);
+        const defaults = settings.providers.claude;
+        setLaunchDefaults({ model: defaults?.model ?? null, effort: defaults?.effort ?? null, permissionMode: defaults?.permissionMode ?? null });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [showSettings]);
+
+  /** ⌘1..9 outside the picker: a new Thread with the nth Favourite Model, in Provider order. */
+  const startWithFavourite = useCallback(async (index: number) => {
+    await detectProviders();
+    const launchable = launchableProviders(installedCache);
+    if (launchable.length === 0) return;
+    const [favourites, catalogs] = await Promise.all([commands.getFavouriteModels(), cachedCatalogs(launchable)]);
+    if (favourites.status !== "ok") return;
+    const choice = resolveLaunchFavourite(index, catalogs, favourites.data, launchable, defaultLaunchMode);
+    if (choice) await startNewThread(choice);
+  }, [defaultLaunchMode, startNewThread]);
 
   /** Jumps to a Thread waiting on the user, by default the most urgent. Never answers or clears it. */
   const jumpToAttention = useCallback((target: AttentionTarget | null = attentionTarget(attentionCards, openProjectIds)) => {
@@ -799,7 +836,21 @@ export function App() {
         jumpToAttention();
         return;
       }
-      // The Model picker belongs to the open Thread, which handles it.
+      // The Model picker belongs to the open Thread, which handles it; with terminal Threads it
+      // starts a new one, so it lives here.
+      if (terminalThreads && selected && !showSettings && action === "modelPicker") {
+        e.preventDefault();
+        setLaunchPickerOpen((open) => !open);
+        return;
+      }
+      if (terminalThreads && selected && !showSettings && !launchPickerOpen) {
+        const index = modelDigitShortcut(e);
+        if (index !== null) {
+          e.preventDefault();
+          void startWithFavourite(index);
+          return;
+        }
+      }
       if (!action || action === "modelPicker") return;
       if (action === "newThread") {
         if (selected) {
@@ -871,7 +922,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shortcuts, selected, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
+  }, [shortcuts, selected, terminalThreads, launchPickerOpen, startWithFavourite, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
 
   // ⌘1..9 (Ctrl+1..9 elsewhere) picks the nth visible sidebar Thread. Capture runs before the
   // Thread's own digit shortcuts, but an open picker or dialog keeps those digits for itself.
@@ -1203,6 +1254,7 @@ export function App() {
                 />
               ) : (
               <ThreadView
+                modelShortcuts={!terminalThreads}
                 visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
                 threadId={currentThreadId}
                 projectId={selected.id}
@@ -1383,6 +1435,22 @@ export function App() {
             )}
           </aside>
       </div>
+      {launchPickerOpen && selected && (
+        <ModelEffortPicker
+          open
+          launch={{
+            defaultPermissionMode: defaultLaunchMode,
+            onLaunch: (choice) => void startNewThread(choice),
+          }}
+          onClose={() => setLaunchPickerOpen(false)}
+          currentProvider="claude"
+          currentModel={launchDefaults.model}
+          currentEffort={launchDefaults.effort}
+          turnCount={0}
+          midThreadModelSwitch
+          onSelectModelAndEffort={() => {}}
+        />
+      )}
     </div>
   );
 }

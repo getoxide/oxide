@@ -128,10 +128,10 @@ _Avoid_: Agent, backend, harness
 A specific LLM a Provider offers, chosen per conversation (e.g. Opus 5.5).
 
 **Model picker**:
-The single overlay where a Thread's Provider, Model and Effort are chosen together, opened with ⌘⇧M or from the composer's Model control. Providers are tabs along the top, that Provider's Models are listed on the left, and the highlighted Model's Effort slider sits on the right: it takes on a colour and more flourish (glow, shimmer, sparkles) as the Effort rises. ↑↓ move through Models, ←→ step the Effort, Tab cycles Providers, Enter applies and Esc closes.
+The overlay where a new Thread's Provider, Model, Effort and Permission mode are chosen before it launches, opened with ⌘⇧M, with the Settings defaults preselected. Providers are tabs along the top, Models on the left, the Effort slider on the right. Enter launches the Thread and Esc closes. A running Thread's Model is changed in the Provider's own UI.
 
 **Favourite Model**:
-A Model the user starred in the Model picker (see **Model picker**). Starred with the star on a Model row; ⌘1..9 outside the picker switches the Thread to the nth Favourite, in Provider order.
+A Model the user starred in the Model picker (see **Model picker**). Starred with the star on a Model row; ⌘1..9 outside the picker starts a new Thread with the nth Favourite, in Provider order.
 
 **Effort**:
 The reasoning-depth setting a Provider exposes for a Model (e.g. low, high).

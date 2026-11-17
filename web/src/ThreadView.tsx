@@ -85,6 +85,8 @@ const STICK_TO_BOTTOM = 48;
 /** How long (ms) the visible range must hold still before paging older Turns in. */
 const PAGE_LOAD_DELAY = 80;
 interface ThreadViewProps {
+  /** Off when new Threads open as terminals: the app then owns ⌘⇧M and ⌘1..9 (they start Threads). */
+  modelShortcuts?: boolean;
   visible?: boolean;
   onInitialLoad?: () => void;
   threadId: number | null;
@@ -176,6 +178,7 @@ export function getOfferedPermissionModes(
 }
 
 export function ThreadView({
+  modelShortcuts = true,
   visible = true,
   onInitialLoad,
   threadId,
@@ -918,7 +921,7 @@ export function ThreadView({
   const modelShortcutRef = useRef<(e: KeyboardEvent) => void>(() => {});
   useEffect(() => {
     modelShortcutRef.current = (e) => {
-      if (!visible) return;
+      if (!visible || !modelShortcuts) return;
       if (matchesAccelerator(e, shortcuts.modelPicker)) {
         e.preventDefault();
         if (isTurnActive || sending) return;
