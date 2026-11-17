@@ -122,7 +122,8 @@ impl GitCommand {
         full
     }
 
-    /// The process to start. This is the only `Command::new` for Git.
+    /// The process to start. Besides `filter_overrides`, which only lists configuration
+    /// and so cannot run a repository's program, this is the only `Command::new` for Git.
     pub(crate) fn build(&self) -> Result<Command> {
         let git = crate::desktop_tools::resolve("git").unwrap_or_else(|| "git".into());
         let (hooks, filters) = match self.mode {
@@ -163,8 +164,8 @@ impl GitCommand {
 fn subcommand_index(args: &[OsString]) -> Option<usize> {
     let mut i = 0;
     while i < args.len() {
-        let arg = args[i].to_str()?;
-        match arg {
+        let arg = args[i].to_string_lossy();
+        match arg.as_ref() {
             "-c" | "-C" => i += 2,
             _ if arg.starts_with('-') => i += 1,
             _ => return Some(i),

@@ -2418,6 +2418,10 @@ impl Core {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&terminal_id);
+        self.acted_terminals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&terminal_id);
         session.close();
         Ok(())
     }

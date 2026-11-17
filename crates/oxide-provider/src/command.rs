@@ -106,6 +106,7 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
             "system_profiler" => "/usr/sbin/system_profiler",
             "sh" => "/bin/sh",
             "security" => "/usr/bin/security",
+            "ps" => "/bin/ps",
             other => other,
         }
         .into(),
@@ -126,7 +127,11 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
             }
             .into()
         }
-        OsFamily::Other => name.into(),
+        OsFamily::Other => match name {
+            "ps" => "/bin/ps",
+            other => other,
+        }
+        .into(),
     }
 }
 
@@ -144,6 +149,7 @@ mod tests {
         );
         assert_eq!(tool("sh"), PathBuf::from("/bin/sh"));
         assert_eq!(tool("security"), PathBuf::from("/usr/bin/security"));
+        assert_eq!(tool("ps"), PathBuf::from("/bin/ps"));
         assert_eq!(tool("git"), PathBuf::from("git"), "user tools keep PATH");
     }
 

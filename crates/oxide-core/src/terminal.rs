@@ -348,7 +348,10 @@ fn write_terminal_input(
 
 #[cfg(unix)]
 fn interrupt_session_processes(session_id: i32) -> bool {
-    let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() else {
+    let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+        .args(["-A", "-o", "pid="])
+        .output()
+    else {
         return false;
     };
     let mut interrupted = false;
@@ -365,7 +368,10 @@ fn interrupt_session_processes(session_id: i32) -> bool {
 
 #[cfg(unix)]
 fn kill_session_processes(session_id: i32) {
-    if let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() {
+    if let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+        .args(["-A", "-o", "pid="])
+        .output()
+    {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Ok(pid) = line.trim().parse::<i32>()
                 && session_of(pid) == Some(session_id)

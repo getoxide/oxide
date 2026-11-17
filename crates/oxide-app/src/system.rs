@@ -134,8 +134,8 @@ impl System for HostSystem {
     }
 
     fn open_url(&self, url: &str) {
-        // Core passes only links it has checked: https GitHub pages and Project Service
-        // loopback URLs.
+        // Core passes only links it has checked: https GitHub pages, Project Service
+        // loopback URLs and https links to other hosts the user confirmed.
         #[cfg(target_os = "macos")]
         let _ = std::process::Command::new(oxide_core::desktop_tools::os_tool("open"))
             .arg(url)

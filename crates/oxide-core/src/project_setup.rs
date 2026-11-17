@@ -89,7 +89,9 @@ pub fn checked_clone_url(url: &str) -> Result<&str> {
     }
     let remote = ["https://", "ssh://", "git://"].iter().any(|scheme| {
         url.len() > scheme.len()
-            && url[..scheme.len()].eq_ignore_ascii_case(scheme)
+            && url
+                .get(..scheme.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
             && !url.contains(char::is_whitespace)
     });
     if remote || is_scp_like(url) || Path::new(url).exists() {
@@ -150,6 +152,8 @@ mod tests {
             "nonexistent-folder-synthetic",
             "https://",
             "a b@host:path",
+            "abcdeé/x",
+            "abcdefgé/x",
             "",
         ] {
             assert!(checked_clone_url(url).is_err(), "{url:?} should be refused");

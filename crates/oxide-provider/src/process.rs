@@ -398,7 +398,7 @@ fn leader_runs(pid: i32, executable: &str, _identity: Option<&ProcessIdentity>) 
     if pid <= 0 || unsafe { libc::getpgid(pid) } != pid {
         return false;
     }
-    let Ok(output) = Command::new("ps")
+    let Ok(output) = Command::new(crate::command::os_tool("ps"))
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
     else {
