@@ -391,7 +391,9 @@ impl Core {
         };
         // A Custom agent has no session to resume: opening its Thread leaves it stopped, and
         // Restart starts its command again.
-        let custom = self.thread_provider(thread_id)?.starts_with(PROVIDER_PREFIX);
+        let custom = self
+            .thread_provider(thread_id)?
+            .starts_with(PROVIDER_PREFIX);
         if !launched && stopped && !custom {
             if self.ensure_worktree(thread_id)? {
                 self.launch_agent(thread_id, Launch::Open, None)?;
