@@ -7,6 +7,7 @@ pub mod claude;
 pub mod codex;
 pub mod command;
 pub mod contract_suite;
+pub mod oneshot;
 pub mod process;
 pub mod service_command;
 pub mod time;

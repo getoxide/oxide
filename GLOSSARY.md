@@ -99,7 +99,7 @@ A command that counts as a check (tests, type checks, lint, build), recognized f
 _Avoid_: Test command, check script
 
 **Blind review**:
-A review of a change by a Provider session that received only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
+A review of a change by a one-shot run of a Provider that receives only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
 _Avoid_: Second opinion, AI review, auto-review
 
 **Review ledger**:

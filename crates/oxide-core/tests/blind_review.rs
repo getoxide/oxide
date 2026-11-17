@@ -4,13 +4,13 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
-use oxide_core::blind_review::BlindReviewRequest;
-use oxide_core::{Core, Error, FindingDecision, PermissionMode, ThreadStatus};
-use oxide_provider::{FakeProvider, ItemKind, ProviderEvent, TurnStatus};
+use oxide_core::blind_review::{BlindReviewRequest, BlindReviewRun, BlindReviewStatus};
+use oxide_core::{Core, Error, FindingDecision, PermissionMode};
+use oxide_provider::FakeProvider;
+use oxide_provider::oneshot::OneShotRequest;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -58,60 +58,56 @@ fn fixture() -> Fixture {
     }
 }
 
-fn first_turn(core: &Core, thread_id: u32) -> oxide_core::TurnSnapshot {
-    for _ in 0..1000 {
-        if let Some(turn) = core.get_thread_snapshot(thread_id).unwrap().turns.first() {
-            return turn.clone();
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("the Thread never started a Turn");
-}
-
-fn wait_completed(core: &Core, thread_id: u32) {
-    for _ in 0..1000 {
-        if core.get_thread_snapshot(thread_id).unwrap().thread.status != ThreadStatus::Working {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("the Thread never finished its Turn");
-}
-
 struct Reviewed {
     fixture: Fixture,
     original: u32,
-    review: u32,
-    prompts: Arc<Mutex<Vec<String>>>,
+    run: BlindReviewRun,
 }
 
 /// An original Thread with a one-line change, and a Blind review of it whose Provider replies with
 /// `reply` as its closing message.
 fn reviewed(reply: &str) -> Reviewed {
     let fixture = fixture();
-    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let original = original_with_change(&fixture);
+    install_runner(&fixture.core, Ok(reply.to_string()));
+    let run = fixture
+        .core
+        .run_blind_review(request(&fixture, original, "fake"))
+        .unwrap();
+    Reviewed {
+        fixture,
+        original,
+        run,
+    }
+}
+
+fn request(fixture: &Fixture, thread_id: u32, provider: &str) -> BlindReviewRequest {
+    BlindReviewRequest {
+        project_id: fixture.project_id,
+        thread_id: Some(thread_id),
+        provider: provider.into(),
+        model: None,
+        effort: None,
+        scope: "uncommitted".into(),
+        turn_index: None,
+        issue: Some("Add a greeting".into()),
+    }
+}
+
+/// A Thread whose checkout has an uncommitted one-line change. It has been given a prompt, so
+/// there is a Transcript the review must never see.
+fn original_with_change(fixture: &Fixture) -> u32 {
     let original = fixture
         .core
         .create_thread(fixture.project_id, "fake", None, None, PermissionMode::Ask)
         .unwrap();
-    let fake = FakeProvider::default();
-    let sender = fake.sender();
-    let seen = prompts.clone();
-    fake.on_prompt(move |prompt| {
-        seen.lock().unwrap().push(prompt.to_string());
-        let _ = sender.send(ProviderEvent::TurnStarted {
-            turn_index: 0,
-            prompt: prompt.to_string(),
-        });
-        let _ = sender.send(ProviderEvent::TurnCompleted {
-            turn_index: 0,
-            status: TurnStatus::Completed,
-        });
-    });
-    fixture.core.register_fake_provider(original.id, fake);
-    fixture.core.send_prompt(original.id, "implement").unwrap();
-    let _ = first_turn(&fixture.core, original.id);
-
+    fixture
+        .core
+        .register_fake_provider(original.id, FakeProvider::scripted());
+    fixture
+        .core
+        .send_prompt(original.id, "implement with secret reasoning")
+        .unwrap();
     let checkout = PathBuf::from(
         fixture
             .core
@@ -123,59 +119,20 @@ fn reviewed(reply: &str) -> Reviewed {
         "fn hello() { println!(\"world\"); }\n",
     )
     .unwrap();
+    original.id
+}
 
-    let (review, prompt) = fixture
-        .core
-        .create_blind_review_thread(BlindReviewRequest {
-            project_id: fixture.project_id,
-            thread_id: Some(original.id),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            scope: "uncommitted".into(),
-            turn_index: None,
-            issue: Some("Add a greeting".into()),
-        })
-        .unwrap();
-
-    let review_fake = FakeProvider::default();
-    let sender = review_fake.sender();
-    let reply = reply.to_string();
-    review_fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
-            turn_index: 0,
-            prompt: prompt.to_string(),
-        });
-        let _ = sender.send(ProviderEvent::ItemStarted {
-            item_index: 0,
-            kind: ItemKind::AgentMessage,
-            parent_item_index: None,
-            category: None,
-        });
-        let _ = sender.send(ProviderEvent::ItemCompleted {
-            item_index: 0,
-            kind: ItemKind::AgentMessage,
-            content: reply.clone(),
-            parent_item_index: None,
-            category: None,
-            command: None,
-        });
-        let _ = sender.send(ProviderEvent::TurnCompleted {
-            turn_index: 0,
-            status: TurnStatus::Completed,
-        });
-    });
-    fixture.core.register_fake_provider(review.id, review_fake);
-    fixture.core.send_prompt(review.id, &prompt).unwrap();
-    let _ = first_turn(&fixture.core, review.id);
-    wait_completed(&fixture.core, review.id);
-
-    Reviewed {
-        fixture,
-        original: original.id,
-        review: review.id,
-        prompts,
-    }
+/// Replaces the CLI launch with a fake that records what it was asked and replies with `reply`.
+fn install_runner(core: &Core, reply: Result<String, String>) -> Arc<Mutex<Vec<OneShotRequest>>> {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    core.set_one_shot_runner(Arc::new(move |request: &OneShotRequest| {
+        seen.lock().unwrap().push(request.clone());
+        reply
+            .clone()
+            .map_err(oxide_provider::ProviderError::CommandFailed)
+    }));
+    requests
 }
 
 #[test]
@@ -187,6 +144,7 @@ fn findings_are_parsed_from_the_closing_message_and_anchored_to_the_reviewed_dif
         ]
         ```"#,
     );
+    assert_eq!(r.run.status, BlindReviewStatus::Finished);
     let findings = r
         .fixture
         .core
@@ -195,7 +153,7 @@ fn findings_are_parsed_from_the_closing_message_and_anchored_to_the_reviewed_dif
     assert_eq!(findings.len(), 1, "one finding was parsed");
     let finding = &findings[0];
     assert_eq!(finding.provider, "fake");
-    assert_eq!(finding.review_thread_id, r.review);
+    assert_eq!(finding.review_id, r.run.id);
     assert_eq!(finding.path.as_deref(), Some("hello.rs"));
     assert_eq!(finding.line, Some(1));
     assert_eq!(finding.side, Some(oxide_core::CommentSide::New));
@@ -203,11 +161,6 @@ fn findings_are_parsed_from_the_closing_message_and_anchored_to_the_reviewed_dif
     assert_eq!(finding.body, "Why print here?");
     assert!(!finding.plain);
     assert_eq!(finding.decision, FindingDecision::Pending);
-
-    // The review Thread shows the same findings.
-    let from_review = r.fixture.core.list_blind_review_findings(r.review).unwrap();
-    assert_eq!(from_review.len(), 1);
-    assert_eq!(from_review[0].id, finding.id);
 }
 
 #[test]
@@ -250,7 +203,7 @@ fn a_finding_that_cannot_be_anchored_is_kept_as_plain_text_beside_the_anchored_o
 }
 
 #[test]
-fn keeping_a_finding_makes_a_draft_and_dismissing_one_never_reaches_the_thread() {
+fn keeping_a_finding_makes_a_line_comment_and_dismissing_one_never_reaches_the_thread() {
     let r = reviewed(
         r#"[
           {"path": "hello.rs", "line": 1, "body": "Keep this finding"},
@@ -269,7 +222,7 @@ fn keeping_a_finding_makes_a_draft_and_dismissing_one_never_reaches_the_thread()
         .core
         .keep_blind_review_finding(findings[0].id)
         .unwrap()
-        .expect("an anchored finding becomes a draft");
+        .expect("an anchored finding becomes a Line comment");
     assert_eq!(kept.provider.as_deref(), Some("fake"));
     assert_eq!(kept.body, "Keep this finding");
 
@@ -279,10 +232,10 @@ fn keeping_a_finding_makes_a_draft_and_dismissing_one_never_reaches_the_thread()
         .unwrap();
 
     let drafts = r.fixture.core.list_line_comments(r.original).unwrap();
-    assert_eq!(drafts.len(), 1, "only the kept finding is a draft");
+    assert_eq!(drafts.len(), 1, "only the kept finding is a Line comment");
     assert_eq!(drafts[0].body, "Keep this finding");
 
-    // Keeping twice does not duplicate the draft.
+    // Keeping twice does not duplicate the Line comment.
     r.fixture
         .core
         .keep_blind_review_finding(findings[0].id)
@@ -291,35 +244,131 @@ fn keeping_a_finding_makes_a_draft_and_dismissing_one_never_reaches_the_thread()
         r.fixture.core.list_line_comments(r.original).unwrap().len(),
         1
     );
-
-    // The existing send flow delivers only what was kept.
-    r.fixture.core.send_line_comments(r.original).unwrap();
-    r.fixture.core.tick_thread(r.original);
-    let prompts = r.prompts.lock().unwrap();
-    let sent = prompts.last().expect("the Thread received a prompt");
-    assert!(sent.contains("Keep this finding"));
-    assert!(!sent.contains("Dismiss this finding"));
 }
 
 #[test]
-fn deleting_a_review_thread_keeps_the_draft_it_put_on_the_reviewed_thread() {
-    let r = reviewed(r#"[{"path": "hello.rs", "line": 1, "body": "Keep me"}]"#);
-    let findings = r
-        .fixture
-        .core
-        .list_blind_review_findings(r.original)
+fn the_review_creates_no_thread() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let before = f.core.list_threads(f.project_id).unwrap().len();
+    install_runner(&f.core, Ok("[]".into()));
+    f.core
+        .run_blind_review(request(&f, original, "fake"))
         .unwrap();
-    r.fixture
-        .core
-        .keep_blind_review_finding(findings[0].id)
+    let threads = f.core.list_threads(f.project_id).unwrap();
+    assert_eq!(threads.len(), before, "no Thread appears in the sidebar");
+    assert!(threads.iter().all(|t| !t.blind_review));
+}
+
+#[test]
+fn the_reviewer_receives_only_the_diff_and_the_issue_in_a_detached_worktree() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let checkout = PathBuf::from(f.core.checkout_path(f.project_id, Some(original)).unwrap());
+    let requests = install_runner(&f.core, Ok("[]".into()));
+    let mut req = request(&f, original, "fake");
+    req.model = Some("some-model".into());
+    f.core.run_blind_review(req).unwrap();
+
+    let seen = requests.lock().unwrap();
+    assert_eq!(seen.len(), 1, "one headless run");
+    let run = &seen[0];
+    let prompt = &run.prompt;
+    assert!(prompt.contains("<issue>") && prompt.contains("Add a greeting"));
+    assert!(prompt.contains("<diff>") && prompt.contains("println!"));
+    assert!(prompt.contains("```json"));
+    assert!(
+        !prompt.contains("secret reasoning"),
+        "the original Thread's Transcript must not leak"
+    );
+    assert_eq!(run.provider, "fake");
+    assert_eq!(run.model.as_deref(), Some("some-model"));
+    assert_ne!(run.working_dir, checkout);
+    assert_ne!(run.working_dir, f.work);
+    assert!(
+        !run.working_dir.exists(),
+        "the worktree is removed once the run ends"
+    );
+}
+
+#[test]
+fn the_run_happens_in_a_detached_worktree_that_cannot_reach_the_checkout() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let checkout = PathBuf::from(f.core.checkout_path(f.project_id, Some(original)).unwrap());
+    let observed = Arc::new(Mutex::new(None));
+    let seen = observed.clone();
+    let (main, co) = (f.work.clone(), checkout.clone());
+    f.core
+        .set_one_shot_runner(Arc::new(move |request: &OneShotRequest| {
+            let dir = &request.working_dir;
+            let branch = git(dir, &["branch", "--show-current"]);
+            let status = git(dir, &["status"]);
+            // A writing reviewer would only reach its own worktree.
+            std::fs::write(dir.join("isolation.txt"), "x").unwrap();
+            *seen.lock().unwrap() = Some((
+                branch,
+                status,
+                dir.clone(),
+                main.join("isolation.txt").exists() || co.join("isolation.txt").exists(),
+            ));
+            Ok("[]".to_string())
+        }));
+    f.core
+        .run_blind_review(request(&f, original, "fake"))
         .unwrap();
+    let (branch, status, dir, leaked) = observed.lock().unwrap().take().unwrap();
+    assert!(branch.is_empty(), "no branch, got '{branch}'");
+    assert!(status.contains("HEAD detached") || status.contains("Not currently on any branch"));
+    assert_ne!(dir, checkout);
+    assert!(
+        !leaked,
+        "a write in the review worktree never reaches the checkout"
+    );
+}
 
-    r.fixture.core.delete_thread(r.review, true).unwrap();
+#[test]
+fn a_failed_run_is_reported_and_leaves_no_findings() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    install_runner(&f.core, Err("the CLI crashed".into()));
+    let run = f
+        .core
+        .run_blind_review(request(&f, original, "fake"))
+        .unwrap();
+    assert_eq!(run.status, BlindReviewStatus::Failed);
+    assert!(
+        run.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("the CLI crashed")
+    );
+    assert!(
+        f.core
+            .list_blind_review_findings(original)
+            .unwrap()
+            .is_empty()
+    );
+    let runs = f.core.blind_review_runs(original).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, BlindReviewStatus::Failed);
+}
 
-    let drafts = r.fixture.core.list_line_comments(r.original).unwrap();
-    assert_eq!(drafts.len(), 1, "the kept draft outlives the review Thread");
-    assert_eq!(drafts[0].body, "Keep me");
-    assert_eq!(drafts[0].provider.as_deref(), Some("fake"));
+#[test]
+fn a_review_that_was_running_when_oxide_quit_is_reported_as_interrupted() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let prepared = f
+        .core
+        .prepare_blind_review(request(&f, original, "fake"))
+        .unwrap();
+    assert_eq!(prepared.run().status, BlindReviewStatus::Running);
+    let home = f._tmp.path().join("home");
+    f.core.shutdown();
+    let core = Core::open(home).unwrap();
+    let runs = core.blind_review_runs(original).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, BlindReviewStatus::Failed);
 }
 
 #[test]
@@ -340,7 +389,14 @@ fn deleting_the_reviewed_thread_with_a_kept_finding_leaves_nothing_behind() {
     assert!(
         r.fixture
             .core
-            .list_blind_review_findings(r.review)
+            .blind_review_runs(r.original)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        r.fixture
+            .core
+            .list_blind_review_findings(r.original)
             .unwrap()
             .is_empty(),
         "the findings die with the Thread they were about"
@@ -363,17 +419,11 @@ fn agy_cannot_honour_non_writing_and_is_not_offered_for_blind_review() {
             .any(|o| o.provider == "agy" || o.provider == "antigravity")
     );
 
-    let req = BlindReviewRequest {
-        project_id: f.project_id,
-        thread_id: None,
-        provider: "agy".into(),
-        model: None,
-        effort: None,
-        scope: "uncommitted".into(),
-        turn_index: None,
-        issue: None,
-    };
-    let err = f.core.start_blind_review(req).unwrap_err();
+    let original = original_with_change(&f);
+    let err = f
+        .core
+        .run_blind_review(request(&f, original, "agy"))
+        .unwrap_err();
     match err {
         Error::Provider(msg) => {
             assert!(msg.contains("cannot honour a non-writing configuration"));
@@ -392,182 +442,4 @@ fn single_provider_allowed_and_clearly_labelled_as_same_provider() {
         .expect("fake provider present");
     assert!(fake_opt.same_provider);
     assert!(fake_opt.label.contains("same provider"));
-}
-
-#[test]
-fn blind_review_runs_in_detached_worktree_with_isolated_checkout() {
-    let f = fixture();
-    // Make a change in the working directory
-    std::fs::write(
-        f.work.join("hello.rs"),
-        "fn hello() { println!(\"world\"); }\n",
-    )
-    .unwrap();
-
-    let req = BlindReviewRequest {
-        project_id: f.project_id,
-        thread_id: None,
-        provider: "fake".into(),
-        model: None,
-        effort: None,
-        scope: "uncommitted".into(),
-        turn_index: None,
-        issue: Some("Fix issue #42: add greeting".into()),
-    };
-
-    let thread = f.core.start_blind_review(req).unwrap();
-    assert!(
-        thread.blind_review,
-        "Thread must be identifiable as a blind review"
-    );
-    assert_eq!(thread.permission_mode, PermissionMode::Ask);
-    assert!(
-        thread
-            .title
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("Blind review")
-    );
-
-    let worktree_path = PathBuf::from(
-        thread
-            .worktree_path
-            .expect("detached worktree path must be set"),
-    );
-    assert!(worktree_path.exists(), "worktree folder must exist");
-    assert_ne!(
-        worktree_path, f.work,
-        "worktree must not be the main checkout"
-    );
-
-    // Assert checkout isolation: worktree is detached
-    let current_branch = git(&worktree_path, &["branch", "--show-current"]);
-    assert!(
-        current_branch.is_empty(),
-        "detached worktree must not be on any branch, got '{current_branch}'"
-    );
-    let status_output = git(&worktree_path, &["status"]);
-    assert!(
-        status_output.contains("Not currently on any branch")
-            || status_output.contains("HEAD detached")
-            || status_output.contains("detached at"),
-        "worktree must be in detached HEAD state, got: {status_output}"
-    );
-
-    // Changes in main checkout do not affect detached worktree
-    std::fs::write(f.work.join("isolation_main.txt"), "from main").unwrap();
-    assert!(!worktree_path.join("isolation_main.txt").exists());
-
-    // Changes in detached worktree do not affect main checkout
-    std::fs::write(
-        worktree_path.join("isolation_worktree.txt"),
-        "from worktree",
-    )
-    .unwrap();
-    assert!(!f.work.join("isolation_worktree.txt").exists());
-
-    // Deleting the Thread removes its detached worktree
-    let outcome = f.core.delete_thread(thread.id, true).unwrap();
-    assert_eq!(outcome, oxide_core::DeleteOutcome::Deleted);
-    assert!(
-        !worktree_path.exists(),
-        "detached worktree must be removed on thread deletion"
-    );
-}
-
-#[test]
-fn blind_review_prompt_contains_only_diff_issue_and_required_format_delimited() {
-    let f = fixture();
-    // Start an initial chat thread that made changes
-    let original_thread = f
-        .core
-        .create_thread(f.project_id, "fake", None, None, PermissionMode::AutoEdit)
-        .unwrap();
-    // Simulate some transcript on original thread
-    f.core
-        .send_prompt(
-            original_thread.id,
-            "Please implement feature X with secret reasoning",
-        )
-        .unwrap();
-    let _ = first_turn(&f.core, original_thread.id);
-
-    // Make an edit in original thread's checkout
-    let original_checkout = PathBuf::from(
-        f.core
-            .checkout_path(f.project_id, Some(original_thread.id))
-            .unwrap(),
-    );
-    std::fs::write(
-        original_checkout.join("feature.rs"),
-        "pub fn feature_x() -> i32 { 42 }\n",
-    )
-    .unwrap();
-
-    let recorded_prompts = Arc::new(Mutex::new(Vec::new()));
-    let (seen, sender_slot) = (recorded_prompts, Arc::new(Mutex::new(None)));
-    let fake = FakeProvider::default();
-    let sender = fake.sender();
-    *sender_slot.lock().unwrap() = Some(sender.clone());
-
-    let (seen_clone, sender_clone) = (seen.clone(), sender);
-    fake.on_prompt(move |prompt| {
-        seen_clone.lock().unwrap().push(prompt.to_string());
-        let _ = sender_clone.send(ProviderEvent::TurnStarted {
-            turn_index: 0,
-            prompt: prompt.to_string(),
-        });
-        let _ = sender_clone.send(ProviderEvent::TurnCompleted {
-            turn_index: 0,
-            status: TurnStatus::Completed,
-        });
-    });
-
-    let (thread_summary, prompt) = f
-        .core
-        .create_blind_review_thread(BlindReviewRequest {
-            project_id: f.project_id,
-            thread_id: Some(original_thread.id),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            scope: "uncommitted".into(),
-            turn_index: None,
-            issue: Some("Issue #100: Add Feature X\nDetailed requirements...".into()),
-        })
-        .unwrap();
-
-    f.core.register_fake_provider(thread_summary.id, fake);
-    f.core.send_prompt(thread_summary.id, &prompt).unwrap();
-
-    let _ = first_turn(&f.core, thread_summary.id);
-    let captured = seen
-        .lock()
-        .unwrap()
-        .first()
-        .cloned()
-        .expect("a prompt was received");
-
-    // Prompt assertions:
-    // 1. Contains issue delimited as data
-    assert!(captured.contains("<issue>"));
-    assert!(captured.contains("</issue>"));
-    assert!(captured.contains("Issue #100: Add Feature X"));
-
-    // 2. Contains diff delimited as data
-    assert!(captured.contains("<diff>"));
-    assert!(captured.contains("</diff>"));
-    assert!(captured.contains("pub fn feature_x()"));
-
-    // 3. Contains required output format
-    assert!(captured.contains("```json"));
-    assert!(captured.contains("\"path\":"));
-    assert!(captured.contains("\"line\":"));
-    assert!(captured.contains("\"body\":"));
-
-    // 4. Contains NO transcript content from original thread
-    assert!(
-        !captured.contains("secret reasoning"),
-        "transcript content must not leak into blind review prompt"
-    );
 }

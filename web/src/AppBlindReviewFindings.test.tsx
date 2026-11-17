@@ -19,7 +19,7 @@ const thread = { id: 2, projectId: 1, title: "Existing", provider: "claude", sta
 
 type Finding = {
   id: number;
-  reviewThreadId: number;
+  reviewId: number;
   provider: string;
   path: string | null;
   side: "new" | "old" | null;
@@ -33,18 +33,20 @@ type Finding = {
 const calls: { command: string; args: Record<string, unknown> }[] = [];
 let findings: Finding[];
 let drafts: Record<string, unknown>[];
+let runs: Record<string, unknown>[];
 
 beforeEach(() => {
   clearQueryCache();
   calls.length = 0;
   drafts = [];
+  runs = [];
   findings = [
     {
-      id: 10, reviewThreadId: 9, provider: "claude", path: "src/a.ts", side: "new", line: 2,
+      id: 10, reviewId: 9, provider: "claude", path: "src/a.ts", side: "new", line: 2,
       code: "new", body: "Is this rename needed?", plain: false, decision: "pending",
     },
     {
-      id: 11, reviewThreadId: 9, provider: "claude", path: null, side: null, line: null,
+      id: 11, reviewId: 9, provider: "claude", path: null, side: null, line: null,
       code: "", body: "The reply could not be parsed.", plain: true, decision: "pending",
     },
   ];
@@ -60,6 +62,7 @@ beforeEach(() => {
     if (command === "last_selection") return { projectId: 1, threadId: 2 };
     if (command === "list_threads") return [thread];
     if (command === "list_blind_review_findings") return findings;
+    if (command === "list_blind_reviews") return runs;
     if (command === "keep_blind_review_finding") {
       const finding = findings.find((f) => f.id === args.id && !f.plain)!;
       finding.decision = "kept";
@@ -120,4 +123,18 @@ it("shows Blind review findings under the Thread header, keeps the anchored one 
   expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([
     { command: "send_line_comments", args: { threadId: 2 } },
   ]);
+});
+
+it("says a Blind review is running and why one failed, without a Thread", async () => {
+  findings = [];
+  runs = [
+    { id: 1, threadId: 2, provider: "codex", scope: "branch", status: "running", error: null },
+    { id: 2, threadId: 2, provider: "claude", scope: "branch", status: "failed", error: "the CLI crashed" },
+  ];
+  await openThread();
+
+  const section = host.querySelector('[aria-label="Blind review findings"]')!;
+  expect(section.textContent).toContain("Blind review running with codex");
+  expect(section.textContent).toContain("Blind review with claude failed: the CLI crashed");
+  expect(calls.some((c) => c.command === "list_threads")).toBe(true);
 });

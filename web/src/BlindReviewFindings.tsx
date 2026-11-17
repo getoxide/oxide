@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EyeIcon } from "@primer/octicons-react";
-import { commands, type BlindReviewFinding } from "./bindings";
+import { commands, type BlindReviewFinding, type BlindReviewRun } from "./bindings";
 import { commentsPrefix } from "./LineComments";
 import { invalidateQueries, useQuery, type QueryResult } from "./queryCache";
 
@@ -13,6 +13,8 @@ interface Props {
 
 /** Cache prefix of a Thread's Blind review findings, refreshed by the review and by keep/dismiss. */
 export const blindReviewFindingsPrefix = (projectId: number) => `p${projectId}:blindFindings:`;
+/** Cache prefix of a Thread's Blind reviews (running, finished or failed). */
+export const blindReviewRunsPrefix = (projectId: number) => `p${projectId}:blindRuns:`;
 
 /** The findings of the Blind reviews of a Thread, each kept or dismissed by the reviewer. */
 export function BlindReviewFindings({ projectId, threadId, refreshKey }: Props) {
@@ -22,18 +24,35 @@ export function BlindReviewFindings({ projectId, threadId, refreshKey }: Props) 
       commands.listBlindReviewFindings(threadId),
     refreshKey,
   );
+  const runsQuery = useQuery(
+    `${blindReviewRunsPrefix(projectId)}${threadId}`,
+    async (): Promise<QueryResult<BlindReviewRun[]>> => commands.listBlindReviews(threadId),
+    refreshKey,
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const findings = query.state === "ready" ? (query.data ?? []) : [];
-  // On the reviewed Thread a kept anchored finding is a draft in the list below, so showing it
-  // here too would duplicate it. On the review Thread there is no such list: it stays, marked,
-  // so keeping never looks like losing it.
+  const runs = runsQuery.state === "ready" ? (runsQuery.data ?? []) : [];
+  const running = runs.filter((r) => r.status === "running");
+  const failed = runs.filter((r) => r.status === "failed").slice(-1);
+  const isRunning = running.length > 0;
+  // The review runs in the background: look again until it ends.
+  useEffect(() => {
+    if (!isRunning) return;
+    const timer = setInterval(() => {
+      invalidateQueries(blindReviewFindingsPrefix(projectId));
+      invalidateQueries(blindReviewRunsPrefix(projectId));
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [isRunning, projectId]);
+  // A kept anchored finding is a Line comment in the list below, so showing it here too would
+  // duplicate it.
   const visible = findings.filter((f) => {
     if (f.decision === "dismissed") return false;
-    if (f.decision === "kept" && !f.plain && f.reviewThreadId !== threadId) return false;
+    if (f.decision === "kept" && !f.plain) return false;
     return true;
   });
-  if (visible.length === 0) return null;
+  if (visible.length === 0 && !isRunning && failed.length === 0) return null;
   const pending = findings.filter((f) => f.decision === "pending").length;
 
   const refresh = () => {
@@ -60,6 +79,16 @@ export function BlindReviewFindings({ projectId, threadId, refreshKey }: Props) 
         </strong>
         <span className="grow" />
       </header>
+      {isRunning && (
+        <p className="hint" role="status">
+          Blind review running with {running.map((r) => r.provider).join(", ")}…
+        </p>
+      )}
+      {failed.map((run) => (
+        <div key={run.id} className="error" role="alert">
+          Blind review with {run.provider} failed{run.error ? `: ${run.error}` : "."}
+        </div>
+      ))}
       <ul className="line-comment-list">
         {visible.map((finding) => (
           <li

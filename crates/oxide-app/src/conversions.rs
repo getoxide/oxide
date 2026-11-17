@@ -852,11 +852,28 @@ impl From<oxide_core::FindingDecision> for FindingDecision {
     }
 }
 
+impl From<oxide_core::BlindReviewRun> for BlindReviewRun {
+    fn from(r: oxide_core::BlindReviewRun) -> Self {
+        Self {
+            id: r.id,
+            thread_id: r.thread_id,
+            provider: r.provider,
+            scope: r.scope,
+            status: match r.status {
+                oxide_core::BlindReviewStatus::Running => BlindReviewStatus::Running,
+                oxide_core::BlindReviewStatus::Finished => BlindReviewStatus::Finished,
+                oxide_core::BlindReviewStatus::Failed => BlindReviewStatus::Failed,
+            },
+            error: r.error,
+        }
+    }
+}
+
 impl From<oxide_core::BlindReviewFinding> for BlindReviewFinding {
     fn from(f: oxide_core::BlindReviewFinding) -> Self {
         Self {
             id: f.id,
-            review_thread_id: f.review_thread_id,
+            review_id: f.review_id,
             provider: f.provider,
             path: f.path,
             side: f.side.map(Into::into),
