@@ -203,10 +203,7 @@ mod tests {
         assert_eq!(list_problem(&[a.clone(), same_id]).map(|p| p.1), Some("id"));
         let mut same_name = agent("AGENT", "run");
         same_name.id = "other".into();
-        assert_eq!(
-            list_problem(&[a.clone(), same_name]).map(|p| p.1),
-            Some("name")
-        );
+        assert_eq!(list_problem(&[a, same_name]).map(|p| p.1), Some("name"));
         let many: Vec<CustomAgent> = (0..=MAX_AGENTS)
             .map(|i| CustomAgent {
                 id: format!("a{i}"),

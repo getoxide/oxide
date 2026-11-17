@@ -55,7 +55,7 @@ fn fixture() -> Fixture {
     std::fs::write(work.join("a.txt"), "committed\n").unwrap();
     git(&work, &["add", "a.txt"]);
     git(&work, &["commit", "-qm", "first"]);
-    let core = Core::open(&tmp.path().join("oxide-home")).unwrap();
+    let core = Core::open(tmp.path().join("oxide-home")).unwrap();
     core.set_real_time_ticker(false);
     let project = core.add_project(&work.to_string_lossy()).unwrap();
     let mut settings = core.settings().settings;
