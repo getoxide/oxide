@@ -5,8 +5,8 @@
 //! around the app, and a view that attaches later gets the recent output replayed.
 
 use crate::agent_launch::{
-    ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV,
-    bracketed_paste, claude_args, codex_args, issue_prompt, new_session_id,
+    AgyLaunch, ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV,
+    agy_args, bracketed_paste, claude_args, codex_args, issue_prompt, new_session_id,
 };
 use crate::agent_status::{
     Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,
@@ -58,6 +58,13 @@ pub(crate) struct AgentRun {
 /// What a Provider prints when resuming names a session that does not exist.
 const CLAUDE_SESSION_GONE: &[u8] = b"No conversation found";
 const CODEX_SESSION_GONE: &[u8] = b"No saved session found";
+/// `agy` warns and carries on in a new conversation.
+const AGY_SESSION_GONE: &[u8] = b"warning: conversation \"";
+
+/// Whether `provider` names Antigravity CLI (the Provider's id is `antigravity`, its command `agy`).
+fn is_agy(provider: &str) -> bool {
+    matches!(provider, "antigravity" | "agy")
+}
 
 /// Finds a Provider's missing-session notice in a stream of output chunks, also when it is split
 /// across two.
@@ -113,6 +120,9 @@ const STATUS_INTERVAL: Duration = Duration::from_millis(400);
 /// What the reading side of an Agent terminal tells its status worker.
 enum AgentSignal {
     Report(ReportedState),
+    /// The agent printed that the conversation it was asked to resume is gone, and carries on in a
+    /// new one: it is ended so the user decides (a fresh session, or leave the Thread).
+    SessionGone,
     /// The agent ended; the Thread's status is now this.
     Ended(ThreadStatus),
 }
@@ -146,15 +156,10 @@ impl Core {
     }
 
     fn find_provider(&self, provider: &str) -> Result<PathBuf> {
-        let name = if provider == "codex" {
-            "codex"
-        } else {
-            "claude"
-        };
-        let label = if provider == "codex" {
-            "Codex"
-        } else {
-            "Claude Code"
+        let (name, label) = match provider {
+            "codex" => ("codex", "Codex"),
+            p if is_agy(p) => ("agy", "Antigravity CLI"),
+            _ => ("claude", "Claude Code"),
         };
         let dirs = self
             .agent_search_path
@@ -229,26 +234,36 @@ impl Core {
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
-        if provider != "claude" && provider != "codex" {
+        if provider != "claude" && provider != "codex" && !is_agy(provider) {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
         }
         let codex = provider == "codex";
+        let agy = is_agy(provider);
         self.find_provider(provider)?;
         let (default_model, default_effort, default_mode) =
             self.default_settings_for_provider(provider);
         let model = choice.model.clone().or(default_model);
         let effort = choice.effort.clone().or(default_effort);
-        // Codex has no Ask mode: a default of Ask becomes Auto-edit, a chosen Ask is refused.
-        let default_mode = if codex && default_mode == PermissionMode::Ask {
+        // Codex and agy have no Ask mode: a default of Ask becomes Auto-edit, a chosen Ask is refused.
+        let default_mode = if (codex || agy) && default_mode == PermissionMode::Ask {
             PermissionMode::AutoEdit
         } else {
             default_mode
         };
         let permission_mode = choice.permission_mode.unwrap_or(default_mode);
         // Refuse a value the CLI would take as a flag before a worktree exists.
-        if codex {
+        if agy {
+            agy_args(&AgyLaunch {
+                resume_conversation: None,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                settings: "",
+                initial_prompt: prompt,
+            })?;
+        } else if codex {
             codex_args(&CodexLaunch {
                 resume_session: None,
                 model: model.as_deref(),
@@ -267,8 +282,8 @@ impl Core {
                 initial_prompt: prompt,
             })?;
         }
-        // Claude Code takes the id Oxide assigns; Codex's is reported after its first Turn.
-        let session_id = (!codex).then(new_session_id);
+        // Claude Code takes the id Oxide assigns; Codex's and agy's are reported by their reporter.
+        let session_id = (!codex && !agy).then(new_session_id);
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
@@ -592,22 +607,49 @@ impl Core {
                 },
             )?
         };
-        if provider != "claude" && provider != "codex" {
+        if provider != "claude" && provider != "codex" && !is_agy(&provider) {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
         }
+        let agy = is_agy(&provider);
         let permission_mode = mode.parse().unwrap_or(PermissionMode::AutoEdit);
-        // A session id to store: Claude Code's is assigned here, Codex's is reported later, so a
-        // Codex Thread that never finished a Turn has none and starts over instead of resuming.
-        let (session_id, resume, args, env) = if provider == "codex" {
+        // A session id to store: Claude Code's is assigned here, Codex's and agy's are reported
+        // later, so a Thread that never reported one has none and starts over instead of resuming.
+        let (session_id, resume, args, env) = if agy {
+            let session_id = if launch == Launch::Fresh {
+                None
+            } else {
+                session_id
+            };
+            let resume_conversation = session_id.as_deref().filter(|_| resume);
+            let (executable, env) = self.reporter_launch(thread_id)?;
+            let settings = crate::agent_reporter::status_line_settings(
+                &executable,
+                crate::agent_reporter::user_status_line(&self.user_home).as_ref(),
+            );
+            let args = agy_args(&AgyLaunch {
+                resume_conversation,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                settings: &settings,
+                initial_prompt: if resume { None } else { prompt },
+            })?;
+            let resumed = resume_conversation.is_some();
+            (session_id, resumed, args, env)
+        } else if provider == "codex" {
             let session_id = if launch == Launch::Fresh {
                 None
             } else {
                 session_id
             };
             let resume_session = session_id.as_deref().filter(|_| resume);
-            let (notify, env) = self.codex_reporter(thread_id)?;
+            let (executable, env) = self.reporter_launch(thread_id)?;
+            let user = crate::agent_reporter::user_notify_command(
+                &crate::agent_reporter::codex_home(&self.user_home),
+            );
+            let notify = crate::agent_reporter::notify_array(&executable, &user);
             let args = codex_args(&CodexLaunch {
                 resume_session,
                 model: model.as_deref(),
@@ -660,14 +702,17 @@ impl Core {
         let observed_needs_input = Arc::clone(&needs_input);
         let session_gone = Arc::new(AtomicBool::new(false));
         let gone_flag = Arc::clone(&session_gone);
-        let mut scanner = SessionGoneScanner::new(if provider == "codex" {
+        let gone_signals = signals.clone();
+        let mut scanner = SessionGoneScanner::new(if agy {
+            AGY_SESSION_GONE
+        } else if provider == "codex" {
             CODEX_SESSION_GONE
         } else {
             CLAUDE_SESSION_GONE
         });
         let observer = Box::new(move |output: &[u8]| {
-            if resume && scanner.feed(output) {
-                gone_flag.store(true, Ordering::SeqCst);
+            if resume && scanner.feed(output) && !gone_flag.swap(true, Ordering::SeqCst) && agy {
+                let _ = gone_signals.send(AgentSignal::SessionGone);
             }
             let mut answer = Vec::new();
             for event in parser.feed(output) {
@@ -731,14 +776,14 @@ impl Core {
     }
 }
 
-/// The `notify` command and the environment a Codex launch is given.
-type ReporterLaunch = (Vec<String>, Vec<(String, String)>);
+/// Oxide's executable and the environment a reporter launch is given.
+type ReporterLaunch = (PathBuf, Vec<(String, String)>);
 
 impl Core {
-    /// What a Codex launch needs from the reporter: the `notify` command (Oxide's executable,
-    /// then the user's own command) and the environment carrying the socket and a token that is
-    /// new for this launch. Starts listening on the first call.
-    fn codex_reporter(&self, thread_id: u32) -> Result<ReporterLaunch> {
+    /// What a Codex or agy launch needs from the reporter: Oxide's executable (the command the
+    /// Provider runs) and the environment carrying the socket and a token that is new for this
+    /// launch. Starts listening on the first call.
+    fn reporter_launch(&self, thread_id: u32) -> Result<ReporterLaunch> {
         let executable = match self
             .reporter_executable
             .lock()
@@ -749,9 +794,6 @@ impl Core {
             None => std::env::current_exe()
                 .map_err(|e| Error::Provider(format!("Oxide's executable is unknown: {e}")))?,
         };
-        let user = crate::agent_reporter::user_notify_command(&crate::agent_reporter::codex_home(
-            &self.user_home,
-        ));
         let mut reporter = self.reporter.lock().unwrap_or_else(|e| e.into_inner());
         if reporter.is_none() {
             let storage = self.storage.clone();
@@ -775,7 +817,7 @@ impl Core {
             ),
             (crate::agent_reporter::TOKEN_ENV.to_string(), token),
         ];
-        Ok((crate::agent_reporter::notify_array(&executable, &user), env))
+        Ok((executable, env))
     }
 
     /// Replaces the executable Codex runs as the reporter. Tests use a stand-in.
@@ -786,7 +828,7 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner()) = path;
     }
 
-    /// The socket of the session reporter, once a Codex Thread has started it.
+    /// The socket of the session reporter, once a Codex or agy Thread has started it.
     pub fn reporter_socket(&self) -> Option<PathBuf> {
         self.reporter
             .lock()
@@ -869,6 +911,19 @@ impl StatusWorker {
                     }
                     if let Some(status) = gate.offer(Instant::now(), thread_status(state)) {
                         self.board.set_status(self.thread_id, status);
+                    }
+                }
+                Some(AgentSignal::SessionGone) => {
+                    let run = self
+                        .agents
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&self.thread_id)
+                        .filter(|run| run.id == self.run_id)
+                        .cloned();
+                    if let Some(run) = run {
+                        run.stopped.store(true, Ordering::SeqCst);
+                        run.session.close();
                     }
                 }
                 Some(AgentSignal::Ended(status)) => {
