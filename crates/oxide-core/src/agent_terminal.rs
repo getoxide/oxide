@@ -13,6 +13,7 @@ use crate::agent_status::{
     TurnTracker, thread_status,
 };
 use crate::checkpoint::{self, Phase};
+use crate::custom_agents::{CustomAgent, PROVIDER_PREFIX, custom_id, shell_invocation};
 use crate::terminal::{AgentCommand, TerminalSession, next_id};
 use crate::{Core, Error, PermissionMode, Result, ThreadStatus, ThreadSummary};
 use crossbeam_channel::Receiver;
@@ -212,32 +213,61 @@ impl Core {
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
-        if provider != "claude" {
+        // A Custom agent takes no prompt as an argument (Oxide does not know how it takes one):
+        // the caller pastes the prompt the user confirms, once the agent runs.
+        let custom = custom_id(provider).is_some();
+        if custom {
+            self.custom_agent_for(provider)?;
+        } else if provider != "claude" {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
         }
-        self.find_claude()?;
-        let (default_model, default_effort, default_mode) =
-            self.default_settings_for_provider("claude");
-        let model = choice.model.clone().or(default_model);
-        let effort = choice.effort.clone().or(default_effort);
-        let permission_mode = choice.permission_mode.unwrap_or(default_mode);
-        // Refuse a value the CLI would take as a flag before a worktree exists.
-        claude_args(&ClaudeLaunch {
-            session_id: &new_session_id(),
-            resume: false,
-            model: model.as_deref(),
-            effort: effort.as_deref(),
-            permission_mode,
-            initial_prompt: prompt.as_deref(),
-        })?;
-        let session_id = new_session_id();
+        let (provider_column, session_id, model, effort, permission_mode) = if custom {
+            (
+                provider.to_string(),
+                None,
+                None,
+                None,
+                PermissionMode::AutoEdit,
+            )
+        } else {
+            self.find_claude()?;
+            let (default_model, default_effort, default_mode) =
+                self.default_settings_for_provider("claude");
+            let model = choice.model.clone().or(default_model);
+            let effort = choice.effort.clone().or(default_effort);
+            let permission_mode = choice.permission_mode.unwrap_or(default_mode);
+            // Refuse a value the CLI would take as a flag before a worktree exists.
+            claude_args(&ClaudeLaunch {
+                session_id: &new_session_id(),
+                resume: false,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode,
+                initial_prompt: prompt.as_deref(),
+            })?;
+            (
+                "claude".to_string(),
+                Some(new_session_id()),
+                model,
+                effort,
+                permission_mode,
+            )
+        };
+        let prompt = if custom { None } else { prompt };
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
-                "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, 'claude', ?2, ?3, ?4, ?5, 'running', 1)",
-                rusqlite::params![project_id, session_id, model, effort, permission_mode.as_str()],
+                "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', 1)",
+                rusqlite::params![
+                    project_id,
+                    provider_column,
+                    session_id,
+                    model,
+                    effort,
+                    permission_mode.as_str()
+                ],
             )?;
             let thread_id = db.last_insert_rowid() as u32;
             if let Some(issue) = issue {
@@ -278,6 +308,8 @@ impl Core {
         if self.agent_is_running(thread_id) {
             return Err(Error::Terminal("The agent is already running.".into()));
         }
+        // A removed Custom agent cannot be launched again.
+        self.refuse_removed_custom_agent(thread_id)?;
         if !self.ensure_worktree(thread_id)? {
             self.board.set_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
@@ -306,7 +338,12 @@ impl Core {
                 |r| r.get(0),
             )?
         };
-        if !launched && stopped {
+        // A Custom agent has no session to resume: opening its Thread leaves it stopped, and
+        // Restart starts its command again.
+        let custom = self
+            .thread_provider(thread_id)?
+            .starts_with(PROVIDER_PREFIX);
+        if !launched && stopped && !custom {
             if self.ensure_worktree(thread_id)? {
                 self.launch_agent(thread_id, Launch::Open, None)?;
             } else {
@@ -410,6 +447,45 @@ impl Core {
             ));
         }
         run.session.write(&bracketed_paste(prompt)?)
+    }
+
+    /// The prompt that starts work on an issue, for the user to read and confirm before it is
+    /// delivered into a Custom agent (which takes no prompt at launch).
+    pub fn issue_prompt_preview(&self, issue: &TerminalIssue) -> String {
+        issue_prompt(issue.number, &issue.title, &issue.body)
+    }
+
+    /// The Custom agent a `custom:<id>` provider names, as configured now.
+    fn custom_agent_for(&self, provider: &str) -> Result<CustomAgent> {
+        let id = custom_id(provider).unwrap_or_default();
+        self.settings()
+            .settings
+            .custom_agents
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or_else(|| {
+                Error::Provider(
+                    "That Custom agent was removed from Settings. Add it again to launch it."
+                        .into(),
+                )
+            })
+    }
+
+    fn thread_provider(&self, thread_id: u32) -> Result<String> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT provider FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn refuse_removed_custom_agent(&self, thread_id: u32) -> Result<()> {
+        let provider = self.thread_provider(thread_id)?;
+        if custom_id(&provider).is_some() {
+            self.custom_agent_for(&provider)?;
+        }
+        Ok(())
     }
 
     /// Whether the Thread is a terminal Thread (its agent runs in an Agent terminal).
@@ -541,28 +617,45 @@ impl Core {
                 },
             )?
         };
-        if provider != "claude" {
+        let (agent, session_id) = if custom_id(&provider).is_some() {
+            // The user's own command, through their shell (ADR-0016). No session, no prompt
+            // argument.
+            let custom = self.custom_agent_for(&provider)?;
+            let (program, args) = shell_invocation(&custom.command);
+            (
+                AgentCommand {
+                    program,
+                    args,
+                    env_remove: &[],
+                },
+                None,
+            )
+        } else if provider != "claude" {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
-        }
-        let session_id = if launch == Launch::Fresh {
-            new_session_id()
         } else {
-            session_id.unwrap_or_else(new_session_id)
-        };
-        let args = claude_args(&ClaudeLaunch {
-            session_id: &session_id,
-            resume,
-            model: model.as_deref(),
-            effort: effort.as_deref(),
-            permission_mode: mode.parse().unwrap_or(PermissionMode::AutoEdit),
-            initial_prompt: if resume { None } else { prompt },
-        })?;
-        let agent = AgentCommand {
-            program: self.find_claude()?,
-            args,
-            env_remove: NESTED_SESSION_ENV,
+            let session_id = if launch == Launch::Fresh {
+                new_session_id()
+            } else {
+                session_id.unwrap_or_else(new_session_id)
+            };
+            let args = claude_args(&ClaudeLaunch {
+                session_id: &session_id,
+                resume,
+                model: model.as_deref(),
+                effort: effort.as_deref(),
+                permission_mode: mode.parse().unwrap_or(PermissionMode::AutoEdit),
+                initial_prompt: if resume { None } else { prompt },
+            })?;
+            (
+                AgentCommand {
+                    program: self.find_claude()?,
+                    args,
+                    env_remove: NESTED_SESSION_ENV,
+                },
+                Some(session_id),
+            )
         };
         let id = next_id(&self.next_terminal_id);
         let stopped = Arc::new(AtomicBool::new(false));
@@ -626,7 +719,7 @@ impl Core {
             observer,
             on_exit,
         )?);
-        {
+        if session_id.is_some() {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
                 "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",

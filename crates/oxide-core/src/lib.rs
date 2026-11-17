@@ -12,6 +12,7 @@ mod board;
 mod checkpoint;
 mod clock;
 mod continuation;
+pub mod custom_agents;
 mod db;
 pub mod desktop_tools;
 mod detection_cache;
