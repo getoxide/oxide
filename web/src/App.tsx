@@ -55,6 +55,8 @@ import { useShortcuts } from "./useShortcuts";
 import { useModifierHeld } from "./useModifierHeld";
 import { getDraft, isUnusedThread, setDraft } from "./threadDrafts";
 import { createDefaultThread } from "./createDefaultThread";
+import { AgentTerminalView } from "./AgentTerminalView";
+import { withBoardStatus } from "./board";
 import { filterThreads, sidebarProjects, threadTitle } from "./threadList";
 import { relativeAge } from "./relativeTime";
 import { rovingTab } from "./editorTabs";
@@ -124,7 +126,7 @@ export function App() {
   }, []);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [threadsByProject, setThreadsByProject] = useState<Record<number, Thread[]>>({});
+  const [loadedThreads, setThreadsByProject] = useState<Record<number, Thread[]>>({});
   const [expandedProjectIds, setExpandedProjectIds] = useState<number[]>([]);
   const lastAutoExpandedProjectId = useRef<number | null>(null);
   const [lastSelectionLoaded, setLastSelectionLoaded] = useState(false);
@@ -142,6 +144,10 @@ export function App() {
   const [prefill, setPrefill] = useState<{ threadId: number; text: string } | null>(null);
   // The Project and Thread of the last session: `undefined` until read, `null` once applied.
   const restore = useRef<{ projectId: number; threadId: number | null } | null | undefined>(undefined);
+  const openProjectIds = useMemo(() => sidebarProjects(projects ?? []).map((project) => project.id), [projects]);
+  const attentionCards = useAttention(openProjectIds);
+  // A terminal Thread has no Transcript to report its status: Core's Board feed does.
+  const threadsByProject = useMemo(() => withBoardStatus(loadedThreads, attentionCards), [loadedThreads, attentionCards]);
   // Derived, so it always reflects the latest list (missing badge) and
   // disappears when the Project is hidden.
   const selected = projects?.find((p) => p.id === selectedId && !p.hidden) ?? null;
@@ -166,8 +172,6 @@ export function App() {
         : { ...previous, [selectedId]: "thread" });
     }
   }, [selectedId]);
-  const openProjectIds = useMemo(() => sidebarProjects(projects ?? []).map((project) => project.id), [projects]);
-  const attentionCards = useAttention(openProjectIds);
   // A requested jump: kept until its Thread is shown and the response focused, so loading or failure never drops it.
   const [attentionJump, setAttentionJump] = useState<{ target: AttentionTarget; failed: boolean } | null>(null);
   const pendingThread = useRef<number | null>(null);
@@ -490,7 +494,7 @@ export function App() {
 
   /** A new Thread in the Project with Settings defaults; `null` if it could not be created. */
   const createThreadIn = useCallback(async (projectId: number): Promise<Thread | null> => {
-    const created = await createDefaultThread(projectId);
+    const created = await createDefaultThread(projectId, { terminal: true });
     if (created.status === "error") {
       setOpenError(created.error.message);
       return null;
@@ -555,7 +559,7 @@ export function App() {
       const askForComposerFocus = (threadId: number) =>
         setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
       // Only Threads that could be unused need a Turn count; a failed lookup just rules one out.
-      const candidates = (threads ?? []).filter((t) => t.status !== "working" && getDraft(drafts, t.id).trim() === "");
+      const candidates = (threads ?? []).filter((t) => t.status !== "working" && !t.terminal && getDraft(drafts, t.id).trim() === "");
       const counts = await Promise.all(
         candidates.map((t) => commands.listTurns(t.id, 0, 1).catch(() => null)),
       );
@@ -950,6 +954,25 @@ export function App() {
     };
   }, [selected, createThreadIn, threadReload, selectThread, setProjectThreads]);
 
+  const gitControlsFor = (project: Project, threadId: number) => !project.missing ? (
+      <GitHeader
+        projectId={project.id}
+        threadId={threadId}
+        threadsKey={threadsKey}
+        agentBusy={["working", "needs-input"].includes(selectedThread?.status ?? "")}
+        threadProvider={selectedThread?.provider}
+        threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
+        threadWorking={selectedThread?.status === "working"}
+        onThreadCreated={(thread) => {
+          setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
+          selectThread(thread.id);
+        }}
+        onRestored={onRestored}
+        onOpenPullRequest={openPullRequest}
+        onChanged={onGitChanged}
+      />
+    ) : undefined;
+
   const starting = !projectsLoaded || !lastSelectionLoaded || (selected !== null && threads === null);
 
   useEffect(() => {
@@ -1173,28 +1196,21 @@ export function App() {
                 </button>
               </div>
             <main className="centre" aria-label="Thread" hidden={centreView === "code"}>
+              {selectedThread?.terminal ? (
+                <AgentTerminalView
+                  key={selectedThread.id}
+                  thread={selectedThread}
+                  visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
+                  gitControls={gitControlsFor(selected, currentThreadId)}
+                  onThreadUpdated={onThreadUpdated}
+                  onThreadTitleChange={onThreadTitleChange}
+                />
+              ) : (
               <ThreadView
                 visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
                 threadId={currentThreadId}
                 projectId={selected.id}
-                gitControls={!selected.missing ? (
-                  <GitHeader
-                    projectId={selected.id}
-                    threadId={currentThreadId}
-                    threadsKey={threadsKey}
-                    agentBusy={["working", "needs-input"].includes(selectedThread?.status ?? "")}
-                    threadProvider={selectedThread?.provider}
-                    threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
-                    threadWorking={selectedThread?.status === "working"}
-                    onThreadCreated={(thread) => {
-                      setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                      selectThread(thread.id);
-                    }}
-                    onRestored={onRestored}
-                    onOpenPullRequest={openPullRequest}
-                    onChanged={onGitChanged}
-                  />
-                ) : undefined}
+                gitControls={gitControlsFor(selected, currentThreadId)}
                 draft={getDraft(drafts, currentThreadId)}
                 onDraftChange={(text) =>
                   setDrafts((prev) => setDraft(prev, currentThreadId, text))
@@ -1227,6 +1243,7 @@ export function App() {
                 newThreadFocus={newThreadFocus?.threadId === currentThreadId ? newThreadFocus : null}
                 onNewThreadFocusHandled={() => setNewThreadFocus(null)}
               />
+              )}
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key

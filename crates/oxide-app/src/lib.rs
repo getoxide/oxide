@@ -915,6 +915,84 @@ fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), Ap
     Ok(core.close_terminal(terminal_id)?)
 }
 
+/// Opens a terminal Thread: a worktree and Setup command (unless the Project keeps Threads in
+/// its main checkout), then Claude Code in an Agent terminal. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn create_terminal_thread(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.start_terminal_thread(project_id))
+        .await
+        .map(Thread::from)
+}
+
+/// Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
+/// it prints. A newer attachment replaces the previous one.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn attach_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    on_output: tauri::ipc::Channel<Vec<u8>>,
+) -> Result<(), AppError> {
+    let attachment = core.attach_agent_terminal(thread_id)?;
+    std::thread::spawn(move || {
+        if !attachment.replay.is_empty() && on_output.send(attachment.replay).is_err() {
+            return;
+        }
+        while let Ok(chunk) = attachment.feed.recv() {
+            if on_output.send(chunk).is_err() {
+                break;
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Writes what the user typed, pasted or dropped into a terminal Thread's agent. Writes into a
+/// process; Core refuses unknown or chat Threads and input over 1 MiB.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn write_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    input: Vec<u8>,
+) -> Result<(), AppError> {
+    Ok(core.write_agent_terminal(thread_id, &input)?)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn resize_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    rows: u16,
+    cols: u16,
+) -> Result<(), AppError> {
+    Ok(core.resize_agent_terminal(thread_id, rows, cols)?)
+}
+
+/// Ends a terminal Thread's agent.
+#[tauri::command]
+#[specta::specta]
+async fn stop_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.stop_agent(thread_id)).await
+}
+
+/// Relaunches a stopped terminal Thread's agent in the same Provider session. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn restart_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.restart_agent(thread_id))
+        .await
+        .map(Thread::from)
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectServiceStatus {
@@ -3327,6 +3405,12 @@ pub fn builder() -> Builder<tauri::Wry> {
         dismiss_rule_suggestion,
         accept_rule_suggestion,
         start_block_terminal,
+        create_terminal_thread,
+        attach_agent_terminal,
+        write_agent_terminal,
+        resize_agent_terminal,
+        stop_agent,
+        restart_agent,
         write_file,
         language_tools,
         system_fonts,

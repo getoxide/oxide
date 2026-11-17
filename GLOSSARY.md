@@ -22,17 +22,22 @@ _Avoid_: Project switcher, quick open
 
 **Thread**:
 One conversation with a single Provider inside a Project, with its own Model, Effort and context (Model and Effort can change between Turns); it maps one-to-one to the Provider's own session. `/clear` and ⌘N start a new Thread in the same Project; the old one stays in the sidebar until the user deletes it. A finished Thread is deleted, not archived: deleting removes its Transcript, Approvals, Attachments and Checkpoints for good, and its worktree with them (its branch stays). The Settings option "Delete merged branches and worktrees" (off by default) removes a Thread's worktree and local branch once its pull request is merged on GitHub, and keeps the Thread; it skips anything with uncommitted changes or unmerged commits. The Provider's own session files are left to the Provider. A new chat Thread works in a worktree of its own by default. See ADR-0005 and ADR-0011.
+A Thread's centre is its Agent terminal; chat Threads keep their Transcript until the chat is removed.
 _Avoid_: Agent, session, chat, Archived Thread
 
+**Agent terminal**:
+The terminal at a Thread's centre, running the Thread's Provider CLI in the Thread's checkout. Oxide's core owns it, so it keeps running while the user moves around the app and shows its screen again when the Thread is reopened. Stop ends the agent; Restart resumes the same Provider session. It is not a Project terminal tab, which is a plain shell.
+_Avoid_: Console, agent tab, shell
+
 **Thread status**:
-Where a Thread stands right now: working (a Turn is running), needs input (the Provider is waiting on an approval or answer), completed (the last Turn finished and it's the user's move), error (the Turn failed), or interrupted (the Turn was stopped by the user or by quitting Oxide).
+Where a Thread stands right now: working (the Provider reports a Turn running), needs input (the Provider reports it is waiting on an Approval or an answer), completed (the Provider reports the Turn finished, or is idle), running (the agent is alive but has reported nothing, so its state is unknown), stopped (the agent is not running), or error (the Turn failed, or the agent exited with a failure). Oxide never guesses a status the Provider did not report. A chat Thread can also be interrupted (the Turn was stopped by the user or by quitting Oxide).
 _Avoid_: State, phase
 
 **Continue in new Thread**:
 What a Thread offers instead of its composer when resuming its Provider session fails because the session is gone. It creates a new Thread with the same Provider, Model, Effort and permission mode, whose first prompt is prefilled with a recap (user prompts and final agent messages, no tool output, cut to a fixed length). The two Threads link to each other.
 
 **Turn**:
-One user prompt in a Thread and everything the Provider does in response, until it completes, is interrupted, or fails.
+One user prompt in a Thread and everything the Provider does in response, as the Provider reports it: from its working report until it reports done, idle or error.
 _Avoid_: Run, exchange, round
 
 **Attachment**:

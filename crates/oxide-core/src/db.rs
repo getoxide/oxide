@@ -464,7 +464,12 @@ mod tests {
     fn migrating_keeps_fetch_on_for_projects_with_threads_and_off_for_the_rest() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("oxide.db");
-        let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
+        // Everything before the migration under test, whatever is added after it.
+        let under_test = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("UPDATE projects SET acted_upon = 1"))
+            .unwrap();
+        let before = &MIGRATIONS[..under_test];
         let old = open(&path, before).unwrap();
         old.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
             .unwrap();

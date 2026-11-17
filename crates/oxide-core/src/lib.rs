@@ -2580,9 +2580,21 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
          UPDATE turns SET status = 'interrupted', completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE status = 'running';
          UPDATE threads SET status = 'interrupted', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE status IN ('working', 'needs-input', 'needs_input');
-         UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status = 'running';",
+             WHERE status IN ('working', 'needs-input', 'needs_input');",
     )?;
+    // An Agent terminal ends with the app. (Databases opened with only some migrations, as the
+    // migration tests do, have no such column yet.)
+    let has_terminal: bool = db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('threads') WHERE name = 'terminal')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_terminal {
+        db.execute(
+            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status = 'running'",
+            [],
+        )?;
+    }
     Ok(())
 }
 

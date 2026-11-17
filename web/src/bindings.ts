@@ -118,6 +118,26 @@ export const commands = {
 	/**  Starts a Thread that proposes the rule in the Project's agent instructions. */
 	acceptRuleSuggestion: (projectId: number, id: number, provider: string) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("accept_rule_suggestion", { projectId, id, provider })),
 	startBlockTerminal: (projectId: number, threadId: number | null, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, threadId, onOutput })),
+	/**
+	 *  Opens a terminal Thread: a worktree and Setup command (unless the Project keeps Threads in
+	 *  its main checkout), then Claude Code in an Agent terminal. Starts a process.
+	 */
+	createTerminalThread: (projectId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread", { projectId })),
+	/**
+	 *  Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
+	 *  it prints. A newer attachment replaces the previous one.
+	 */
+	attachAgentTerminal: (threadId: number, onOutput: Channel<number[]>) => typedError<null, AppError>(__TAURI_INVOKE("attach_agent_terminal", { threadId, onOutput })),
+	/**
+	 *  Writes what the user typed, pasted or dropped into a terminal Thread's agent. Writes into a
+	 *  process; Core refuses unknown or chat Threads and input over 1 MiB.
+	 */
+	writeAgentTerminal: (threadId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_agent_terminal", { threadId, input })),
+	resizeAgentTerminal: (threadId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_agent_terminal", { threadId, rows, cols })),
+	/**  Ends a terminal Thread's agent. */
+	stopAgent: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_agent", { threadId })),
+	/**  Relaunches a stopped terminal Thread's agent in the same Provider session. Starts a process. */
+	restartAgent: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("restart_agent", { threadId })),
 	writeFile: (projectId: number, threadId: number | null, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, threadId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	systemFonts: () => typedError<string[], AppError>(__TAURI_INVOKE("system_fonts")),
@@ -1389,6 +1409,7 @@ export type Settings_Deserialize = {
 	providers: Providers_Deserialize,
 	confirmQuit: boolean,
 	deleteMergedBranches: boolean,
+	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
 };
@@ -1398,6 +1419,7 @@ export type Settings_Serialize = {
 	providers: Providers_Serialize,
 	confirmQuit: boolean,
 	deleteMergedBranches: boolean,
+	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
 };
@@ -1577,7 +1599,7 @@ export type ThreadSnapshot_Serialize = {
 	supportedPermissionModes: PermissionMode[],
 };
 
-export type ThreadStatus = "working" | "needs-input" | "completed" | "error" | "interrupted";
+export type ThreadStatus = "working" | "needs-input" | "completed" | "error" | "interrupted" | "running" | "stopped";
 
 export type Thread_Deserialize = {
 	id: number,
@@ -1598,6 +1620,7 @@ export type Thread_Deserialize = {
 	setupOutput?: string | null,
 	issueNumber?: number | null,
 	blindReview: boolean,
+	terminal: boolean,
 };
 
 export type Thread_Serialize = {
@@ -1619,6 +1642,7 @@ export type Thread_Serialize = {
 	setupOutput: string | null,
 	issueNumber: number | null,
 	blindReview: boolean,
+	terminal: boolean,
 };
 
 export type TurnError = TurnError_Serialize | TurnError_Deserialize;

@@ -228,6 +228,20 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           When a Thread's pull request is merged on GitHub, remove its worktree and local branch.
           Skipped when there are uncommitted changes or commits that were not merged.
         </p>
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={draft.openThreadsAsTerminals}
+            onChange={(e) => set({ openThreadsAsTerminals: e.target.checked })}
+          />
+          Open new Threads as terminals (preview)
+          {fieldErrors("openThreadsAsTerminals")}
+        </label>
+        <p className="settings-hint">
+          A new Thread runs Claude Code's own terminal interface in the Thread's checkout instead of
+          Oxide's chat, with the Model, Effort and Permission mode from Settings as launch options.
+          Threads started from an Issue, a pull request or a review keep the chat for now.
+        </p>
       </div>
     </section>
   );
