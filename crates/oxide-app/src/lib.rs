@@ -2581,12 +2581,33 @@ pub enum FindingDecision {
     Dismissed,
 }
 
+/// Where a Blind review stands.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum BlindReviewStatus {
+    Running,
+    Finished,
+    Failed,
+}
+
+/// One Blind review of a Thread's change.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewRun {
+    pub id: u32,
+    pub thread_id: Option<u32>,
+    pub provider: String,
+    pub scope: String,
+    pub status: BlindReviewStatus,
+    pub error: Option<String>,
+}
+
 /// One finding of a Blind review, anchored to the reviewed Diff or kept as plain text.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BlindReviewFinding {
     pub id: u32,
-    pub review_thread_id: u32,
+    pub review_id: u32,
     pub provider: String,
     pub path: Option<String>,
     pub side: Option<CommentSide>,
@@ -2616,20 +2637,38 @@ fn blind_review_providers(
         .collect())
 }
 
+/// Starts a Blind review: sets it up, then runs the reviewing Provider once in the background.
+/// Returns at once with the running review; its findings appear when it finishes.
 #[tauri::command]
 #[specta::specta]
 async fn start_blind_review(
     core: State<'_, Arc<Core>>,
     request: BlindReviewRequest,
-) -> Result<Thread, AppError> {
+) -> Result<BlindReviewRun, AppError> {
     let req: oxide_core::BlindReviewRequest = request.into();
-    git_blocking(&core, move |core| core.start_blind_review(req))
-        .await
-        .map(Thread::from)
+    let prepared = git_blocking(&core, move |core| core.prepare_blind_review(req)).await?;
+    let run = BlindReviewRun::from(prepared.run().clone());
+    let background = Arc::clone(&core);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = background.execute_blind_review(prepared);
+    });
+    Ok(run)
 }
 
-/// The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
-/// review's closing message and validated against the reviewed Diff.
+/// The Blind reviews of a Thread, with whether each is running, finished or failed.
+#[tauri::command]
+#[specta::specta]
+async fn list_blind_reviews(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Vec<BlindReviewRun>, AppError> {
+    git_blocking(&core, move |core| core.blind_review_runs(thread_id))
+        .await
+        .map(|runs| runs.into_iter().map(BlindReviewRun::from).collect())
+}
+
+/// The Blind review findings of a Thread, parsed once from the review's closing message and
+/// validated against the reviewed Diff.
 #[tauri::command]
 #[specta::specta]
 async fn list_blind_review_findings(
@@ -3289,6 +3328,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         dispatch_thread,
         blind_review_providers,
         start_blind_review,
+        list_blind_reviews,
         list_blind_review_findings,
         keep_blind_review_finding,
         dismiss_blind_review_finding,

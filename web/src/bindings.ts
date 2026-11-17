@@ -49,10 +49,16 @@ export const commands = {
 	/**  Creates the Thread's worktree and branch, runs the Project's Setup command, starts its first Turn. */
 	dispatchThread: (request: DispatchRequest_Deserialize) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("dispatch_thread", { request })),
 	blindReviewProviders: (currentProvider: string | null) => typedError<BlindReviewProviderOption[], AppError>(__TAURI_INVOKE("blind_review_providers", { currentProvider })),
-	startBlindReview: (request: BlindReviewRequest_Deserialize) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("start_blind_review", { request })),
 	/**
-	 *  The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
-	 *  review's closing message and validated against the reviewed Diff.
+	 *  Starts a Blind review: sets it up, then runs the reviewing Provider once in the background.
+	 *  Returns at once with the running review; its findings appear when it finishes.
+	 */
+	startBlindReview: (request: BlindReviewRequest_Deserialize) => typedError<BlindReviewRun_Serialize, AppError>(__TAURI_INVOKE("start_blind_review", { request })),
+	/**  The Blind reviews of a Thread, with whether each is running, finished or failed. */
+	listBlindReviews: (threadId: number) => typedError<BlindReviewRun_Serialize[], AppError>(__TAURI_INVOKE("list_blind_reviews", { threadId })),
+	/**
+	 *  The Blind review findings of a Thread, parsed once from the review's closing message and
+	 *  validated against the reviewed Diff.
 	 */
 	listBlindReviewFindings: (threadId: number) => typedError<BlindReviewFinding_Serialize[], AppError>(__TAURI_INVOKE("list_blind_review_findings", { threadId })),
 	/**  Keeps one finding: an anchored finding becomes a draft Line comment on the reviewed Thread. */
@@ -321,7 +327,7 @@ export type BlindReviewFinding = BlindReviewFinding_Serialize | BlindReviewFindi
 /**  One finding of a Blind review, anchored to the reviewed Diff or kept as plain text. */
 export type BlindReviewFinding_Deserialize = {
 	id: number,
-	reviewThreadId: number,
+	reviewId: number,
 	provider: string,
 	path?: string | null,
 	side?: CommentSide | null,
@@ -335,7 +341,7 @@ export type BlindReviewFinding_Deserialize = {
 /**  One finding of a Blind review, anchored to the reviewed Diff or kept as plain text. */
 export type BlindReviewFinding_Serialize = {
 	id: number,
-	reviewThreadId: number,
+	reviewId: number,
 	provider: string,
 	path: string | null,
 	side: CommentSide | null,
@@ -376,6 +382,32 @@ export type BlindReviewRequest_Serialize = {
 	turnIndex: number | null,
 	issue: string | null,
 };
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun = BlindReviewRun_Serialize | BlindReviewRun_Deserialize;
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun_Deserialize = {
+	id: number,
+	threadId?: number | null,
+	provider: string,
+	scope: string,
+	status: BlindReviewStatus,
+	error?: string | null,
+};
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun_Serialize = {
+	id: number,
+	threadId: number | null,
+	provider: string,
+	scope: string,
+	status: BlindReviewStatus,
+	error: string | null,
+};
+
+/**  Where a Blind review stands. */
+export type BlindReviewStatus = "running" | "finished" | "failed";
 
 /**  A Thread on the Thread Board with the Approvals it is waiting on. */
 export type BoardCard = BoardCard_Serialize | BoardCard_Deserialize;

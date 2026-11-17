@@ -1186,10 +1186,6 @@ export function App() {
                     threadProvider={selectedThread?.provider}
                     threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
                     threadWorking={selectedThread?.status === "working"}
-                    onThreadCreated={(thread) => {
-                      setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                      selectThread(thread.id);
-                    }}
                     onRestored={onRestored}
                     onOpenPullRequest={openPullRequest}
                     onChanged={onGitChanged}
