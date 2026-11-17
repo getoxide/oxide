@@ -44,6 +44,7 @@ import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
 import { ProjectServices } from "./ProjectServices";
 import { ServiceConflictDialog } from "./ServiceConflictDialog";
+import { DeliveryDialog } from "./DeliveryDialog";
 import { LinkConfirmDialog } from "./LinkConfirmDialog";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
@@ -510,15 +511,51 @@ export function App() {
     return created.data;
   }, []);
 
+  /** A Fix waiting for the user to read its prompt and confirm; nothing reaches an agent before. */
+  const [fixRequest, setFixRequest] = useState<
+    { projectId: number; prompt: string; ownerThreadId: number | null; reviewRound: boolean } | null
+  >(null);
   const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false) => {
+    setFixRequest({ projectId, prompt, ownerThreadId, reviewRound });
+  };
+
+  /** Where a confirmed Fix goes: the branch's Thread if it can take it, else a new Thread. */
+  const fixOwner = (ownerThreadId: number | null) => {
+    const owner = ownerThreadId === null ? null : (threads ?? []).find((thread) => thread.id === ownerThreadId) ?? null;
+    if (!owner) return null;
+    // A terminal Thread takes a paste while its agent runs; a chat Thread only while idle.
+    if (owner.terminal) return owner.status === "stopped" || owner.status === "error" ? null : owner;
+    return owner.status === "working" ? null : owner;
+  };
+
+  const deliverFix = async ({ projectId, prompt, ownerThreadId, reviewRound }: NonNullable<typeof fixRequest>) => {
+    const owner = fixOwner(ownerThreadId);
+    if (owner?.terminal) {
+      // Pasted into the running agent, without Enter; Core refuses while it waits for an answer.
+      const sent = reviewRound
+        ? await commands.sendReviewerComments(owner.id, prompt)
+        : await commands.deliverAgentPrompt(owner.id, prompt);
+      if (sent.status === "error") throw new Error(sent.error.message);
+      if (currentProjectRef.current === projectId) {
+        setSelectedThreadId(owner.id);
+        setMaximized(false);
+      }
+      return;
+    }
+    if (!owner && terminalThreads) {
+      const created = await commands.createTerminalThreadWithFix(projectId, prompt, reviewRound, null, null, null, null);
+      if (created.status === "error") throw new Error(created.error.message);
+      if (currentProjectRef.current === projectId) {
+        setProjectThreads(projectId, (prev) => [created.data, ...(prev ?? [])]);
+        setSelectedThreadId(created.data.id);
+        setMaximized(false);
+      }
+      return;
+    }
     const send = (threadId: number) =>
       reviewRound
         ? commands.sendReviewerComments(threadId, prompt)
         : commands.sendPrompt(threadId, [{ kind: "text", text: prompt }]);
-    // The branch's Thread takes the request unless it is busy; otherwise a new Thread does.
-    const owner = ownerThreadId === null
-      ? null
-      : (threads ?? []).find((thread) => thread.id === ownerThreadId && thread.status !== "working") ?? null;
     if (owner) {
       // Keep the request recoverable in the composer if the Thread has no draft of its own.
       const hadDraft = Boolean(drafts[owner.id]);
@@ -545,6 +582,11 @@ export function App() {
       const sent = await send(thread.id);
       if (sent.status === "error") throw new Error(sent.error.message);
       setDrafts((prev) => setDraft(prev, thread.id, ""));
+    } catch (error) {
+      // The Thread exists now and keeps the request as its draft: sending again from the dialog
+      // would make a second one, so the dialog closes and the failure is reported.
+      setFixRequest(null);
+      setOpenError(error instanceof Error ? error.message : String(error));
     } finally {
       if (currentProjectRef.current === projectId) {
         setProjectThreads(projectId, (prev) => [thread, ...(prev ?? [])]);
@@ -1014,6 +1056,7 @@ export function App() {
         threadProvider={selectedThread?.provider}
         threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
         threadWorking={selectedThread?.status === "working"}
+        threadNeedsInput={selectedThread?.status === "needs-input"}
         onRestored={onRestored}
         onOpenPullRequest={openPullRequest}
         onChanged={onGitChanged}
@@ -1040,6 +1083,20 @@ export function App() {
         }}
       />
       <QuitDialog />
+      {fixRequest && (() => {
+        const owner = fixOwner(fixRequest.ownerThreadId);
+        return (
+          <DeliveryDialog
+            title="Send Fix to the agent"
+            prompt={fixRequest.prompt}
+            destination={!owner && terminalThreads ? "new-thread" : "paste"}
+            blocked={owner?.terminal && owner.status === "needs-input" ? "The agent is waiting for an answer. Answer it in the terminal, then send the Fix." : null}
+            confirmLabel={owner ? "Send to Thread" : "Start new Thread"}
+            onConfirm={async () => { await deliverFix(fixRequest); setFixRequest(null); }}
+            onCancel={() => setFixRequest(null)}
+          />
+        );
+      })()}
       <LinkConfirmDialog />
       <WorkspaceOverlays ref={overlays} projects={projects ?? []} onProjectsScanned={onProjectsScanned}
         onStartThread={startThreadIn} onOpenProject={openProject} onThreadDeleted={onThreadDeleted} />

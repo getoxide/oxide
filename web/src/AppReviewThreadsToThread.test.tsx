@@ -99,6 +99,11 @@ async function openPullRequest() {
   await vi.waitFor(() => expect(host.querySelector('[aria-label="Review threads to send"]')).not.toBeNull());
 }
 
+/** Fix shows its prompt first; this confirms it. */
+const confirmFix = async () => {
+  expect(host.querySelector('[role="dialog"] pre')).not.toBeNull();
+  await click(host.querySelector('[role="dialog"] .primary'));
+};
 const checkboxes = () => [...host.querySelectorAll<HTMLInputElement>('[aria-label="Review threads to send"] input[type="checkbox"]')];
 
 it("sends only the review threads the user selected, and only when they ask for a fix", async () => {
@@ -114,6 +119,8 @@ it("sends only the review threads the user selected, and only when they ask for 
   expect(called("send_prompt")).toEqual([]);
   expect(called("send_reviewer_comments")).toEqual([]);
   await click(byText("Fix PR"));
+  expect(called("send_reviewer_comments")).toEqual([]);
+  await confirmFix();
 
   await vi.waitFor(() => expect(called("send_reviewer_comments")).toHaveLength(1));
   expect(called("send_prompt")).toEqual([]);
@@ -135,6 +142,7 @@ it("starts a new fix Thread when the branch's Thread is working", async () => {
   await openPullRequest();
   await click(checkboxes()[0]);
   await click(byText("Fix PR"));
+  await confirmFix();
 
   await vi.waitFor(() => expect(called("send_reviewer_comments")).toHaveLength(1));
   expect(called("create_thread")).toHaveLength(1);
@@ -148,6 +156,7 @@ it("uses a Thread that records the branch even when another Thread is selected",
   await openPullRequest();
   await click(checkboxes()[0]);
   await click(byText("Fix PR"));
+  await confirmFix();
 
   await vi.waitFor(() => expect(called("send_reviewer_comments")).toHaveLength(1));
   expect(called("create_thread")).toEqual([]);

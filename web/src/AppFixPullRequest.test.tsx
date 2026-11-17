@@ -65,6 +65,11 @@ async function fix() {
   await act(async () => host.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Pull request"]')!.click());
   const button = [...host.querySelectorAll("button")].find((button) => button.textContent === "Fix PR")!;
   await act(async () => button.click());
+  // The prompt is shown first; nothing is created or sent before the user confirms.
+  expect(host.querySelector('[role="dialog"] pre')?.textContent).toContain("Fix PR #42");
+  expect(calls.some(({ command }) => ["create_thread", "send_prompt"].includes(command))).toBe(false);
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="dialog"] .primary')!.click());
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
 }
 
 it("creates a fresh Thread with Settings defaults, sends automatically, and opens it", async () => {
@@ -83,7 +88,8 @@ it("opens the created Thread with the request preserved when sending fails", asy
   sendError = true;
   await fix();
   expect(host.querySelector('[data-thread="3"]')?.textContent).toContain("Fix PR #42");
-  expect(onError).toHaveBeenCalledWith(new Error("Agent unavailable"));
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe("Agent unavailable");
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
 });
 
 it("keeps the current Thread and reports creation failures without sending", async () => {
@@ -91,5 +97,5 @@ it("keeps the current Thread and reports creation failures without sending", asy
   await fix();
   expect(host.querySelector('[data-thread="2"]')).not.toBeNull();
   expect(calls.some(({ command }) => command === "send_prompt")).toBe(false);
-  expect(onError).toHaveBeenCalledWith(new Error("Cannot create Thread"));
+  expect(host.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe("Cannot create Thread");
 });

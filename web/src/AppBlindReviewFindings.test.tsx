@@ -78,6 +78,7 @@ beforeEach(() => {
       return null;
     }
     if (command === "list_line_comments") return drafts;
+    if (command === "line_comments_prompt") return "I reviewed your changes.";
     if (command === "send_line_comments") { drafts = []; return null; }
     if (command === "plugin:event|listen") return 1;
     return null;
@@ -120,8 +121,12 @@ it("shows Blind review findings under the Thread header, keeps the anchored one 
   expect(draftsSection.textContent).toContain("Is this rename needed?");
 
   await press('[aria-label="Line comments"] .btn.primary');
+  // The prompt is shown and nothing is sent until the user confirms it.
+  expect(host.querySelector('[role="dialog"] pre')?.textContent).toBe("I reviewed your changes.");
+  expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([]);
+  await press('[role="dialog"] .primary');
   expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([
-    { command: "send_line_comments", args: { threadId: 2 } },
+    { command: "send_line_comments", args: { threadId: 2, confirmed: "I reviewed your changes." } },
   ]);
 });
 
