@@ -68,8 +68,11 @@ function mount(t: Thread, onThreadUpdated: (thread: Thread) => void = () => {}) 
   };
 }
 
-it("labels only running, stopped and error for an Agent terminal", () => {
+it("labels the status an Agent terminal reports and how it ended", () => {
   expect(agentStatusLabel("running")).toBe("Running");
+  expect(agentStatusLabel("working")).toBe("Working");
+  expect(agentStatusLabel("needs-input")).toBe("Needs input");
+  expect(agentStatusLabel("completed")).toBe("Completed");
   expect(agentStatusLabel("stopped")).toBe("Stopped");
   expect(agentStatusLabel("error")).toBe("Exited with an error");
 });
@@ -101,6 +104,17 @@ it("shows Stop while the agent runs, and unmounting the view never stops it", as
 
   await act(async () => root.render(null));
   expect(view.names()).not.toContain("stop_agent");
+});
+
+it("keeps Stop for an agent that reports working, needs input or completed", async () => {
+  for (const status of ["working", "needs-input", "completed"] as const) {
+    const view = mount(thread({ status }));
+    await view.start();
+    await settle();
+    expect(container.textContent).toContain("Stop");
+    expect(container.textContent).not.toContain("Restart");
+    await act(async () => root.render(null));
+  }
 });
 
 it("Stop asks Core to end the agent", async () => {

@@ -38,6 +38,21 @@ pub(crate) fn take(cwd: &Path, thread_id: u32, turn_index: u32, phase: Phase) {
     });
 }
 
+/// Records the Checkpoint of a Thread's starting state, the one Restore can always go back to.
+/// Best effort, like [`take`].
+pub(crate) fn take_thread_start(cwd: &Path, thread_id: u32) {
+    let _ = snapshot(cwd).and_then(|commit| {
+        run(
+            cwd,
+            &[
+                "update-ref",
+                &format!("refs/oxide/checkpoints/{thread_id}/thread-start"),
+                &commit,
+            ],
+        )
+    });
+}
+
 /// Drops every Checkpoint of the Thread. Best effort, like [`take`].
 pub(crate) fn forget(cwd: &Path, thread_id: u32) {
     let prefix = format!("refs/oxide/checkpoints/{thread_id}/");

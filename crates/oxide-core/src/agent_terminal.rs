@@ -8,6 +8,11 @@ use crate::agent_launch::{
     ClaudeLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV, claude_args,
     issue_prompt, new_session_id,
 };
+use crate::agent_status::{
+    Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,
+    TurnTracker, thread_status,
+};
+use crate::checkpoint::{self, Phase};
 use crate::terminal::{AgentCommand, TerminalSession, next_id};
 use crate::{Core, Error, PermissionMode, Result, ThreadStatus, ThreadSummary};
 use crossbeam_channel::Receiver;
@@ -15,6 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// What the user chose for a new terminal Thread; `None` takes the Settings default.
 #[derive(Debug, Clone, Default)]
@@ -45,6 +51,16 @@ pub(crate) struct AgentRun {
 }
 
 pub(crate) type Agents = Arc<Mutex<HashMap<u32, Arc<AgentRun>>>>;
+
+/// How long a status stays on the sidebar before the next one may replace it.
+const STATUS_INTERVAL: Duration = Duration::from_millis(400);
+
+/// What the reading side of an Agent terminal tells its status worker.
+enum AgentSignal {
+    Report(ReportedState),
+    /// The agent ended; the Thread's status is now this.
+    Ended(ThreadStatus),
+}
 
 /// What a view attaching to an Agent terminal receives: the replayed screen, then the live feed.
 pub struct AgentAttachment {
@@ -401,20 +417,40 @@ impl Core {
         };
         let id = next_id(&self.next_terminal_id);
         let stopped = Arc::new(AtomicBool::new(false));
-        let agents = Arc::clone(&self.agents);
-        let board = Arc::clone(&self.board);
+        if !resume {
+            checkpoint::take_thread_start(std::path::Path::new(&checkout), thread_id);
+        }
+        let (signals, worker_signals) = crossbeam_channel::unbounded();
+        let worker = StatusWorker {
+            thread_id,
+            run_id: id,
+            checkout: PathBuf::from(&checkout),
+            agents: Arc::clone(&self.agents),
+            board: Arc::clone(&self.board),
+        };
+        std::thread::spawn(move || worker.run(&worker_signals));
+        let observer_signals = signals.clone();
+        let mut parser = Osc7501Parser::new();
+        let observer = Box::new(move |output: &[u8]| {
+            let mut answer = Vec::new();
+            for event in parser.feed(output) {
+                match event {
+                    Osc7501Event::Report(state) => {
+                        let _ = observer_signals.send(AgentSignal::Report(state));
+                    }
+                    Osc7501Event::Query => answer.extend_from_slice(QUERY_REPLY),
+                }
+            }
+            answer
+        });
         let exit_stopped = Arc::clone(&stopped);
         let on_exit = Box::new(move |success: bool| {
-            // A restart may already have replaced this run: its ending says nothing new.
-            let agents = agents.lock().unwrap_or_else(|e| e.into_inner());
-            if agents.get(&thread_id).is_some_and(|run| run.id == id) {
-                let status = if success || exit_stopped.load(Ordering::SeqCst) {
-                    ThreadStatus::Stopped
-                } else {
-                    ThreadStatus::Error
-                };
-                board.set_status(thread_id, status);
-            }
+            let status = if success || exit_stopped.load(Ordering::SeqCst) {
+                ThreadStatus::Stopped
+            } else {
+                ThreadStatus::Error
+            };
+            let _ = signals.send(AgentSignal::Ended(status));
         });
         // Held until the run is recorded, so an agent that ends at once is not missed by `on_exit`.
         let mut agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
@@ -423,6 +459,7 @@ impl Core {
             std::path::Path::new(&checkout),
             Arc::clone(&self.processes),
             &agent,
+            observer,
             on_exit,
         )?);
         {
@@ -442,5 +479,99 @@ impl Core {
         );
         self.board.set_status(thread_id, ThreadStatus::Running);
         Ok(())
+    }
+}
+
+/// Turns what the agent reports into the Thread's status, Turns and Checkpoints, in order and
+/// off the thread that reads the terminal (a Checkpoint runs Git).
+struct StatusWorker {
+    thread_id: u32,
+    run_id: u32,
+    checkout: PathBuf,
+    agents: Agents,
+    board: Arc<crate::board::BoardHub>,
+}
+
+impl StatusWorker {
+    /// A restart or a deletion may have replaced this run: what it says then is stale.
+    fn is_current(&self) -> bool {
+        self.agents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&self.thread_id)
+            .is_some_and(|run| run.id == self.run_id)
+    }
+
+    fn run(&self, signals: &Receiver<AgentSignal>) {
+        let mut gate = StatusGate::new(STATUS_INTERVAL);
+        let mut turns = TurnTracker::default();
+        let mut open: Option<(u32, u32)> = None;
+        loop {
+            let signal = match gate.due() {
+                Some(due) => {
+                    match signals.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                        Ok(signal) => Some(signal),
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => None,
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                None => match signals.recv() {
+                    Ok(signal) => Some(signal),
+                    Err(_) => break,
+                },
+            };
+            match signal {
+                None => {
+                    if self.is_current()
+                        && let Some(status) = gate.flush(Instant::now())
+                    {
+                        self.board.set_status(self.thread_id, status);
+                    }
+                }
+                Some(AgentSignal::Report(state)) => {
+                    if !self.is_current() {
+                        continue;
+                    }
+                    match turns.apply(state) {
+                        Some(TurnChange::Started) => {
+                            if let Ok((id, index)) = self.board.start_agent_turn(self.thread_id) {
+                                checkpoint::take(
+                                    &self.checkout,
+                                    self.thread_id,
+                                    index,
+                                    Phase::Start,
+                                );
+                                open = Some((id, index));
+                            }
+                        }
+                        Some(TurnChange::Ended(end)) => {
+                            let status = match end {
+                                TurnEnd::Completed => "completed",
+                                TurnEnd::Error => "error",
+                            };
+                            self.end_turn(&mut open, status);
+                        }
+                        None => {}
+                    }
+                    if let Some(status) = gate.offer(Instant::now(), thread_status(state)) {
+                        self.board.set_status(self.thread_id, status);
+                    }
+                }
+                Some(AgentSignal::Ended(status)) => {
+                    self.end_turn(&mut open, "interrupted");
+                    if self.is_current() {
+                        self.board.set_status(self.thread_id, status);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    fn end_turn(&self, open: &mut Option<(u32, u32)>, status: &str) {
+        if let Some((id, index)) = open.take() {
+            checkpoint::take(&self.checkout, self.thread_id, index, Phase::End);
+            self.board.end_agent_turn(id, status);
+        }
     }
 }
