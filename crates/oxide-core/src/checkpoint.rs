@@ -53,6 +53,19 @@ pub(crate) fn take_thread_start(cwd: &Path, thread_id: u32) {
     });
 }
 
+/// Whether the Thread has its starting-state Checkpoint.
+pub(crate) fn has_thread_start(cwd: &Path, thread_id: u32) -> bool {
+    thread_start_tree(cwd, thread_id).is_ok()
+}
+
+/// The tree of the Thread's starting-state Checkpoint.
+pub(crate) fn thread_start_tree(cwd: &Path, thread_id: u32) -> Result<String> {
+    tree_of(
+        cwd,
+        &format!("refs/oxide/checkpoints/{thread_id}/thread-start"),
+    )
+}
+
 /// Drops every Checkpoint of the Thread. Best effort, like [`take`].
 pub(crate) fn forget(cwd: &Path, thread_id: u32) {
     let prefix = format!("refs/oxide/checkpoints/{thread_id}/");

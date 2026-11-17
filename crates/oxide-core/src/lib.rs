@@ -62,6 +62,8 @@ pub struct TurnPick {
     pub prompt: String,
     /// Whether the Turn has Checkpoints; without them it has no diff.
     pub checkpointed: bool,
+    /// When the Turn started; Oxide records no prompt for a terminal Thread, so this names it.
+    pub started_at: String,
 }
 pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
 pub use git_diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus};
@@ -108,7 +110,7 @@ pub use oxide_provider::{
     CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
     SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
 };
-pub use restore::{PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
+pub use restore::{PendingRestore, START_STATE as RESTORE_START_STATE, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
 pub use review_ledger::{
     FollowUpStatus, RECENT_ENTRIES, ReviewFollowUp, ReviewLedger, ReviewLedgerEntry, ReviewRevert,
     ReviewRoundGroup, ReviewSizeBand, ReviewWorkKind,
@@ -1637,6 +1639,7 @@ impl Core {
             .map(|turn| TurnPick {
                 turn_index: turn.turn_index,
                 checkpointed: checkpoint::has_start(&cwd, thread_id, turn.turn_index),
+                started_at: turn.started_at,
                 prompt: turn.prompt,
             })
             .collect())
@@ -1644,9 +1647,30 @@ impl Core {
 
     /// What restoring the Thread's files to how they were before `turn_index` would change.
     pub fn restore_preview(&self, thread_id: u32, turn_index: u32) -> Result<RestorePreview> {
+        self.preview_to(thread_id, Some(turn_index))
+    }
+
+    /// What restoring the Thread's files to its starting state would change.
+    pub fn restore_start_preview(&self, thread_id: u32) -> Result<RestorePreview> {
+        self.preview_to(thread_id, None)
+    }
+
+    /// Whether the Thread has a starting state to go back to.
+    pub fn start_state_available(&self, thread_id: u32) -> bool {
+        self.thread_target(thread_id)
+            .is_ok_and(|target| checkpoint::has_thread_start(&target.root, thread_id))
+    }
+
+    /// Puts the Thread's files back to how they were when it started.
+    pub fn restore_to_start(&self, thread_id: u32) -> Result<RestoreOutcome> {
+        self.restore_to(thread_id, None)
+    }
+
+    fn preview_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestorePreview> {
         let target = self.thread_target(thread_id)?;
         self.restore_refused(thread_id, &target)?;
-        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        let source = self.restore_source(&target.root, thread_id, turn_index)?;
+        let turn_index = turn_index.unwrap_or(restore::START_STATE);
         let files = restore::plan(&target.root, &source)?;
         Ok(RestorePreview { turn_index, files })
     }
@@ -1654,9 +1678,14 @@ impl Core {
     /// Puts the Thread's files back to how they were before `turn_index`. A Checkpoint of
     /// the files is taken first, so the restore can be undone.
     pub fn restore_turn(&self, thread_id: u32, turn_index: u32) -> Result<RestoreOutcome> {
+        self.restore_to(thread_id, Some(turn_index))
+    }
+
+    fn restore_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestoreOutcome> {
         let target = self.thread_target(thread_id)?;
         self.restore_refused(thread_id, &target)?;
-        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        let source = self.restore_source(&target.root, thread_id, turn_index)?;
+        let turn_index = turn_index.unwrap_or(restore::START_STATE);
         // The files are written under the checkout's lock, like every other change to
         // it: the plan, the safety Checkpoint and the restore happen together.
         let (safety, files) = self.git.mutate(&target.root, || {
@@ -1668,10 +1697,7 @@ impl Core {
         })?;
         // The restore is kept only once it happened: one that failed is not undoable.
         self.record_restore(thread_id, turn_index, &safety, &files)?;
-        self.record_restore_in_transcript(thread_id, turn_index, &files, false)?;
-        // The agent is told on its next prompt which files went back.
-        self.storage
-            .set_restore_notice(thread_id, restore::notice(turn_index, &files, false))?;
+        self.note_restore(thread_id, turn_index, &files, false)?;
         Ok(RestoreOutcome {
             turn_index,
             files,
@@ -1702,14 +1728,48 @@ impl Core {
             restore::undo(&target.root, &source, &record.files)
         })?;
         self.mark_restore_undone(thread_id)?;
-        self.record_restore_in_transcript(thread_id, record.turn_index, &files, true)?;
-        self.storage
-            .set_restore_notice(thread_id, restore::notice(record.turn_index, &files, true))?;
+        self.note_restore(thread_id, record.turn_index, &files, true)?;
         Ok(RestoreOutcome {
             turn_index: record.turn_index,
             files,
             undone: true,
         })
+    }
+
+    /// Tells a chat Thread about a restore: a marker in its Transcript and a notice for the
+    /// agent's next prompt. A terminal Thread has neither, since Oxide sees none of its prompts.
+    fn note_restore(
+        &self,
+        thread_id: u32,
+        turn_index: u32,
+        files: &[RestoreFile],
+        undone: bool,
+    ) -> Result<()> {
+        if self.is_terminal_thread(thread_id) {
+            return Ok(());
+        }
+        self.record_restore_in_transcript(thread_id, turn_index, files, undone)?;
+        self.storage
+            .set_restore_notice(thread_id, restore::notice(turn_index, files, undone))?;
+        Ok(())
+    }
+
+    /// The tree a restore goes back to: a Turn's start Checkpoint, or the Thread's starting state.
+    fn restore_source(
+        &self,
+        cwd: &Path,
+        thread_id: u32,
+        turn_index: Option<u32>,
+    ) -> Result<String> {
+        match turn_index {
+            Some(turn_index) => self.turn_checkpoint_tree(cwd, thread_id, turn_index),
+            None if checkpoint::has_thread_start(cwd, thread_id) => {
+                checkpoint::thread_start_tree(cwd, thread_id)
+            }
+            None => Err(Error::Git(
+                "This Thread has no starting state to restore to.".into(),
+            )),
+        }
     }
 
     /// Writes the mark of a restore into the Transcript, at the end of the Thread's last

@@ -12,6 +12,9 @@ use std::path::Path;
 /// overflow the command line.
 const PATHS_PER_CALL: usize = 64;
 
+/// The `turn_index` of a restore to the Thread's starting state, which is no Turn's.
+pub const START_STATE: u32 = u32::MAX;
+
 /// What a restore does to one file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,7 +94,13 @@ pub(crate) fn take_safety(cwd: &Path, thread_id: u32) -> Result<String> {
 
 /// What the Transcript records about a restore.
 pub(crate) fn marker(turn_index: u32, files: &[RestoreFile], undone: bool) -> String {
-    let mut marker = if undone {
+    let mut marker = if turn_index == START_STATE {
+        if undone {
+            "Undid the restore to the Thread's starting state".to_string()
+        } else {
+            "Restored the files to how they were when the Thread started".to_string()
+        }
+    } else if undone {
         format!("Undid the restore to before Turn {}", turn_index + 1)
     } else {
         format!(
@@ -115,7 +124,13 @@ pub(crate) fn marker(turn_index: u32, files: &[RestoreFile], undone: bool) -> St
 
 /// What the agent is told on the next prompt after a restore.
 pub(crate) fn notice(turn_index: u32, files: &[RestoreFile], undone: bool) -> String {
-    let mut notice = if undone {
+    let mut notice = if turn_index == START_STATE {
+        if undone {
+            "Oxide undid the restore to the Thread's starting state. These files changed on disk:\n".to_string()
+        } else {
+            "Oxide restored this Thread's files to how they were when it started. These files changed on disk:\n".to_string()
+        }
+    } else if undone {
         format!(
             "Oxide undid the restore to before Turn {}. The Thread's files are back as they were before the restore. These files changed on disk:\n",
             turn_index + 1
