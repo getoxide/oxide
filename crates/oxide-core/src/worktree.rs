@@ -465,11 +465,19 @@ impl Core {
             let base = git::run(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?
                 .trim()
                 .to_string();
-            let slug = format!("thread-{thread_id}");
-            let (_branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
+            // A Thread started from an issue is named after it, like a dispatched one.
+            let issue_slug = self.issue_slug(thread_id)?;
+            let slug = issue_slug
+                .clone()
+                .unwrap_or_else(|| format!("thread-{thread_id}"));
+            let (branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
             self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
-                "UPDATE threads SET worktree_path = ?1 WHERE id = ?2",
-                rusqlite::params![worktree.to_string_lossy(), thread_id],
+                "UPDATE threads SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
+                rusqlite::params![
+                    worktree.to_string_lossy(),
+                    issue_slug.map(|_| branch),
+                    thread_id
+                ],
             )?;
             return self.run_setup_in(project.id, &worktree, &root, thread_id);
         }
@@ -479,6 +487,25 @@ impl Core {
             self.recreate_worktree(&root, &worktree, "HEAD")?;
         }
         Ok(true)
+    }
+
+    /// `<number>-<slug of the title>` for a Thread that remembers the issue it came from.
+    fn issue_slug(&self, thread_id: u32) -> Result<Option<String>> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let (number, title): (Option<u32>, Option<String>) = db.query_row(
+            "SELECT issue_number, issue_title FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(number.map(|n| {
+            format!(
+                "{n}-{}",
+                slugify(
+                    &crate::thread::truncate_title(&title.unwrap_or_default()),
+                    "thread"
+                )
+            )
+        }))
     }
 
     fn recreate_worktree(&self, root: &Path, worktree: &Path, rev: &str) -> Result<()> {
