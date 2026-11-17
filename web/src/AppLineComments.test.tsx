@@ -38,6 +38,7 @@ beforeEach(() => {
     if (command === "last_selection") return { projectId: 1, threadId: 2 };
     if (command === "list_threads") return [thread()];
     if (command === "list_line_comments") return drafts;
+    if (command === "line_comments_prompt") return "I reviewed your changes.";
     if (command === "send_line_comments") { drafts = []; return null; }
     if (command === "plugin:event|listen") return 1;
     return null;
@@ -63,7 +64,11 @@ it("sends the drafts in one action once the Thread is idle", async () => {
   expect(list.textContent).toContain("src/a.ts:1");
   expect(list.textContent).toContain("Why was this renamed?");
   await press('[aria-label="Line comments"] .btn.primary');
-  expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([{ command: "send_line_comments", args: { threadId: 2 } }]);
+  // The prompt is shown and nothing is sent until the user confirms it.
+  expect(host.querySelector('[role="dialog"] pre')?.textContent).toBe("I reviewed your changes.");
+  expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([]);
+  await press('[role="dialog"] .primary');
+  expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([{ command: "send_line_comments", args: { threadId: 2, confirmed: "I reviewed your changes." } }]);
   expect(host.querySelector('[aria-label="Line comments"]')).toBeNull();
 });
 

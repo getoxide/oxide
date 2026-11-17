@@ -15,6 +15,11 @@ function threadLocation(thread: PullRequestReviewThread): string {
   return `${thread.path}${line != null ? `:${line}` : ""}${notes.length > 0 ? ` (${notes.join(", ")})` : ""}`;
 }
 
+/** A name chosen by someone else, kept on one line so it cannot start a line of instructions. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** Reviewer text is a blockquote, so a line of its own can never close the external markers. */
 function quoteExternal(body: string): string {
   return body.split("\n").map((line) => `> ${line}`).join("\n");
@@ -45,7 +50,7 @@ export function pullRequestFixPrompt(
       "",
       "Problems reported by GitHub:",
       ...(conflicts ? [`- Resolve merge conflicts between ${pr.head} and ${pr.base}.`] : []),
-      ...failing.map((check) => `- Fix failing CI check: ${check.name}${check.url ? ` (${check.url})` : ""}.`),
+      ...failing.map((check) => `- Fix failing CI check: ${oneLine(check.name)}${check.url ? ` (${check.url})` : ""}.`),
     );
   }
   if (quoted.length > 0) {

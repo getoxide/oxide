@@ -1699,3 +1699,8 @@ html.macos .header,
 .agent-terminal { position: relative; flex: 1 1 0; min-height: 0; padding: 8px 12px; background: var(--bg); }
 .agent-terminal-host { height: 100%; width: 100%; }
 .agent-terminal[data-dragging] { outline: 1px dashed var(--acc); outline-offset: -4px; }
+
+/* ── Delivery dialog: the prompt Oxide is about to give an agent ── */
+.delivery-dialog { width: min(640px, calc(100vw - 32px)); }
+.delivery-dialog .hint { margin: 0; font-size: 12px; color: var(--dim); }
+.delivery-prompt { margin: 0; max-height: 50vh; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: 12px/1.5 var(--mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

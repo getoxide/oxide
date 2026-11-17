@@ -388,3 +388,28 @@ fn a_thread_that_last_reported_working_or_completed_reopens_as_stopped_not_inter
         .unwrap();
     assert_eq!(again.status, ThreadStatus::Stopped);
 }
+
+#[test]
+fn delivery_is_refused_while_the_agent_waits_for_an_answer_and_allowed_after() {
+    let f = fixture(REPORTING_AGENT);
+    let thread = f.core.start_terminal_thread(f.project.id).unwrap();
+    screen_has(&f, thread.id, "READY");
+
+    type_into(&f, thread.id, "ask");
+    wait_status(&f, thread.id, ThreadStatus::NeedsInput);
+
+    let refused = f
+        .core
+        .deliver_agent_prompt(thread.id, "Fix the failing check")
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("waiting for an answer"),
+        "{refused}"
+    );
+
+    type_into(&f, thread.id, "finish");
+    wait_status(&f, thread.id, ThreadStatus::Completed);
+    f.core
+        .deliver_agent_prompt(thread.id, "Fix the failing check")
+        .unwrap();
+}

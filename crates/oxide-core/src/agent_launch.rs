@@ -117,6 +117,34 @@ pub(crate) fn append_initial_prompt(args: &mut Vec<String>, prompt: &str) -> Res
     Ok(())
 }
 
+/// The bytes that put `prompt` into an agent's input as a bracketed paste, and nothing else: no
+/// Enter, so the user reads it in the Provider's UI and submits it themselves (ADR-0016).
+///
+/// Everything that could end the paste early or act as a terminal control is dropped first (the
+/// prompt carries external content): only text, newlines and tabs remain. Newlines become the
+/// carriage returns a real paste carries.
+pub(crate) fn bracketed_paste(prompt: &str) -> Result<Vec<u8>> {
+    let text: String = prompt
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
+        .map(|c| if c == '\n' { '\r' } else { c })
+        .collect();
+    if text.trim().is_empty() {
+        return Err(Error::Terminal("There is nothing to send.".into()));
+    }
+    let mut bytes = Vec::with_capacity(text.len() + 12);
+    bytes.extend_from_slice(b"\x1b[200~");
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.extend_from_slice(b"\x1b[201~");
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(Error::Terminal(
+            "That prompt is too large for the terminal.".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
 /// The prompt that starts work on a GitHub issue. The number is Oxide's; the title and body are
 /// written by someone else, so they are quoted in a fence and the agent is told they are
 /// external content to read, not instructions to obey. The body is cut to fit a launch argument.
@@ -649,5 +677,28 @@ mod tests {
         assert_eq!(buffer.snapshot(), b"cdefghij");
         buffer.push(b"0123456789");
         assert_eq!(buffer.snapshot(), b"23456789");
+    }
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::bracketed_paste;
+
+    #[test]
+    fn a_paste_is_wrapped_and_never_ends_with_enter() {
+        let bytes = bracketed_paste("one\ntwo").unwrap();
+        assert_eq!(bytes, b"\x1b[200~one\rtwo\x1b[201~");
+    }
+
+    #[test]
+    fn external_content_cannot_end_the_paste_or_inject_controls() {
+        let bytes = bracketed_paste("a\x1b[201~\x03b\u{9b}c\r\nd").unwrap();
+        assert_eq!(bytes, b"\x1b[200~a[201~bc\rd\x1b[201~");
+    }
+
+    #[test]
+    fn an_empty_or_oversized_prompt_is_refused() {
+        assert!(bracketed_paste("  \n").is_err());
+        assert!(bracketed_paste(&"x".repeat(super::MAX_INPUT_BYTES)).is_err());
     }
 }

@@ -6,7 +6,7 @@
 
 use crate::agent_launch::{
     ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV,
-    claude_args, codex_args, issue_prompt, new_session_id,
+    bracketed_paste, claude_args, codex_args, issue_prompt, new_session_id,
 };
 use crate::agent_status::{
     Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,
@@ -48,6 +48,9 @@ pub(crate) struct AgentRun {
     session: Arc<TerminalSession>,
     /// The user stopped it, so how it ended is not a failure.
     stopped: Arc<AtomicBool>,
+    /// The agent last reported that it waits for an answer (an Approval). Set as the report
+    /// arrives, not when the sidebar catches up, so a paste can never answer it.
+    needs_input: Arc<AtomicBool>,
     /// A resume printed that the Provider session no longer exists.
     session_gone: Arc<AtomicBool>,
 }
@@ -433,6 +436,30 @@ impl Core {
         run.session.write(bytes)
     }
 
+    /// Pastes `prompt` into the Thread's agent as a bracketed paste, without Enter: the user
+    /// submits it in the Provider's UI. Only called after the user confirmed this exact prompt.
+    ///
+    /// Refused while the agent waits for an answer, so a paste can never answer an Approval,
+    /// and when the agent is not running.
+    pub fn deliver_agent_prompt(&self, thread_id: u32, prompt: &str) -> Result<()> {
+        let run = self.agent_run(thread_id)?;
+        if run.session.exit_success().is_some() {
+            return Err(Error::Terminal("The agent is not running.".into()));
+        }
+        if run.needs_input.load(Ordering::SeqCst) {
+            return Err(Error::Terminal(
+                "The agent is waiting for an answer. Answer it in the terminal, then send again."
+                    .into(),
+            ));
+        }
+        run.session.write(&bracketed_paste(prompt)?)
+    }
+
+    /// Whether the Thread is a terminal Thread (its agent runs in an Agent terminal).
+    pub fn is_terminal_thread(&self, thread_id: u32) -> bool {
+        self.terminal_thread(thread_id).is_ok()
+    }
+
     /// Tells the agent's terminal how big the view is.
     pub fn resize_agent_terminal(&self, thread_id: u32, rows: u16, cols: u16) -> Result<()> {
         if !(MIN_DIMENSION..=MAX_DIMENSION).contains(&rows)
@@ -629,6 +656,8 @@ impl Core {
         std::thread::spawn(move || worker.run(&worker_signals));
         let observer_signals = signals.clone();
         let mut parser = Osc7501Parser::new();
+        let needs_input = Arc::new(AtomicBool::new(false));
+        let observed_needs_input = Arc::clone(&needs_input);
         let session_gone = Arc::new(AtomicBool::new(false));
         let gone_flag = Arc::clone(&session_gone);
         let mut scanner = SessionGoneScanner::new(if provider == "codex" {
@@ -644,6 +673,10 @@ impl Core {
             for event in parser.feed(output) {
                 match event {
                     Osc7501Event::Report(state) => {
+                        observed_needs_input.store(
+                            thread_status(state) == ThreadStatus::NeedsInput,
+                            Ordering::SeqCst,
+                        );
                         let _ = observer_signals.send(AgentSignal::Report(state));
                     }
                     Osc7501Event::Query => answer.extend_from_slice(QUERY_REPLY),
@@ -689,6 +722,7 @@ impl Core {
                 id,
                 session,
                 stopped,
+                needs_input,
                 session_gone,
             }),
         );

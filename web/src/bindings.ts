@@ -208,8 +208,24 @@ export const commands = {
 	deleteLineComment: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("delete_line_comment", { id })),
 	/**  A Thread's draft comments, each flagged when its line has changed. */
 	listLineComments: (threadId: number) => typedError<LineComment_Serialize[], AppError>(__TAURI_INVOKE("list_line_comments", { threadId })),
-	/**  Sends every draft to the Thread as one prompt. */
-	sendLineComments: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("send_line_comments", { threadId })),
+	/**  The prompt that sending the Thread's drafts would deliver, for the user to read and confirm. */
+	lineCommentsPrompt: (threadId: number) => typedError<string, AppError>(__TAURI_INVOKE("line_comments_prompt", { threadId })),
+	/**
+	 *  Sends every draft to the Thread as one prompt. For a terminal Thread, `confirmed` is the
+	 *  prompt the user was shown and confirmed: it is pasted (no Enter) only if it still is what the
+	 *  drafts produce, and never while the agent waits for an answer.
+	 */
+	sendLineComments: (threadId: number, confirmed: string | null) => typedError<null, AppError>(__TAURI_INVOKE("send_line_comments", { threadId, confirmed })),
+	/**
+	 *  Pastes a prompt the user confirmed into a terminal Thread's agent, without pressing Enter.
+	 *  Refused while the agent waits for an answer.
+	 */
+	deliverAgentPrompt: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("deliver_agent_prompt", { threadId, prompt })),
+	/**
+	 *  Opens a terminal Thread whose agent starts with the Fix prompt the user confirmed. Starts a
+	 *  process.
+	 */
+	createTerminalThreadWithFix: (projectId: number, prompt: string, reviewRound: boolean, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_with_fix", { projectId, prompt, reviewRound, provider, model, effort, permissionMode })),
 	/**  Sends a request that addresses selected reviewer comments, counting it as a review round. */
 	sendReviewerComments: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("send_reviewer_comments", { threadId, prompt })),
 	/**  Checks out a branch; a remote one (`origin/x`) becomes a tracking branch. */

@@ -192,6 +192,8 @@ it("starts a fix Thread from a failing pull request and selects it", async () =>
   await open("Pull request");
   await click(byText("Fix the thing"));
   await click(byText("Fix PR"));
+  expect(called("create_thread")).toHaveLength(0);
+  await click(host.querySelector('[role="dialog"] .primary'));
   expect(called("create_thread")).toHaveLength(1);
   expect(called("send_prompt")[0]?.threadId).toBe(10);
   expect(host.querySelector('[data-thread="10"]')).not.toBeNull();

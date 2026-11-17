@@ -40,6 +40,7 @@ interface GitHeaderProps {
   threadIssue?: string | null;
   /** The Thread is running a Turn, so its draft Line comments cannot be sent yet. */
   threadWorking?: boolean;
+  threadNeedsInput?: boolean;
   /** Called after a restore, so the Transcript shows that it happened. */
   onRestored?: () => void;
   onOpenPullRequest: () => void;
@@ -56,7 +57,7 @@ export function GitHeader(props: GitHeaderProps) {
   return <GitHeaderBody key={`${props.projectId}:${props.threadId}`} {...props} />;
 }
 
-function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvider, threadIssue, threadWorking = false, onRestored, onOpenPullRequest, onChanged }: GitHeaderProps) {
+function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvider, threadIssue, threadWorking = false, threadNeedsInput = false, onRestored, onOpenPullRequest, onChanged }: GitHeaderProps) {
   const [dialog, setDialog] = useState<"commit" | "restore" | "blind" | null>(null);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -283,7 +284,7 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvi
         onStarted={() => { invalidateQueries(blindReviewFindingsPrefix(projectId)); onChanged(); }} />
     )}
     <BlindReviewFindings projectId={projectId} threadId={threadId} refreshKey={reviewKey} />
-    <LineComments projectId={projectId} threadId={threadId} working={threadWorking} refreshKey={reviewKey} />
+    <LineComments projectId={projectId} threadId={threadId} working={threadWorking} needsInput={threadNeedsInput} refreshKey={reviewKey} />
     </div>
   );
 }
