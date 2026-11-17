@@ -3,6 +3,7 @@
 
 mod activity;
 mod agent_launch;
+mod agent_status;
 mod agent_terminal;
 pub use agent_terminal::{AgentAttachment, TerminalLaunch};
 pub mod attachments;
@@ -2584,6 +2585,20 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
     if !has_threads {
         return Ok(());
     }
+    // An Agent terminal ends with the app, whatever it last reported (a view of a ended agent
+    // must not offer to stop it). Its error stays. (Databases opened with only some migrations,
+    // as the migration tests do, have no such column yet.)
+    let has_terminal: bool = db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('threads') WHERE name = 'terminal')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_terminal {
+        db.execute(
+            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status IN ('running', 'working', 'needs-input', 'completed')",
+            [],
+        )?;
+    }
     db.execute_batch(
         "UPDATE approvals SET decision = 'deny', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE decision IS NULL
@@ -2593,19 +2608,6 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
          UPDATE threads SET status = 'interrupted', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE status IN ('working', 'needs-input', 'needs_input');",
     )?;
-    // An Agent terminal ends with the app. (Databases opened with only some migrations, as the
-    // migration tests do, have no such column yet.)
-    let has_terminal: bool = db.query_row(
-        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('threads') WHERE name = 'terminal')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_terminal {
-        db.execute(
-            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status = 'running'",
-            [],
-        )?;
-    }
     Ok(())
 }
 

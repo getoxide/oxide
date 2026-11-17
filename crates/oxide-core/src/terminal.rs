@@ -35,6 +35,14 @@ pub struct TerminalSession {
     size: Mutex<(u16, u16)>,
 }
 
+/// Looks at everything an Agent terminal prints, in order, and returns what to write back to the
+/// program (the answer to a terminal query), or nothing. It runs on the reading thread, so it
+/// must not block.
+pub type OutputObserver = Box<dyn FnMut(&[u8]) -> Vec<u8> + Send>;
+
+/// Runs once when an Agent terminal's process ends, with whether it succeeded.
+pub type ExitHook = Box<dyn Fn(bool) + Send>;
+
 /// What an Agent terminal runs: a Provider CLI started from an argument array, never a shell.
 pub struct AgentCommand {
     pub program: PathBuf,
@@ -108,6 +116,7 @@ impl TerminalSession {
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         agent: &AgentCommand,
+        observer: OutputObserver,
         on_exit: Box<dyn Fn(bool) + Send>,
     ) -> Result<Self> {
         let mut command = CommandBuilder::new(&agent.program);
@@ -118,7 +127,15 @@ impl TerminalSession {
         command.cwd(dunce::simplified(cwd));
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
-        Self::spawn(id, cwd, registry, command, None, false, Some(on_exit))
+        Self::spawn(
+            id,
+            cwd,
+            registry,
+            command,
+            None,
+            false,
+            Some((observer, on_exit)),
+        )
     }
 
     fn spawn(
@@ -129,8 +146,12 @@ impl TerminalSession {
         #[cfg(unix)] shell_init: Option<PathBuf>,
         #[cfg(windows)] _shell_init: Option<PathBuf>,
         blocks: bool,
-        on_exit: Option<Box<dyn Fn(bool) + Send>>,
+        agent_hooks: Option<(OutputObserver, ExitHook)>,
     ) -> Result<Self> {
+        let (observer, on_exit) = match agent_hooks {
+            Some((observer, on_exit)) => (Some(observer), Some(on_exit)),
+            None => (None, None),
+        };
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
@@ -207,17 +228,19 @@ impl TerminalSession {
         let agent = on_exit.is_some();
         let replay = agent.then(|| Arc::new(Mutex::new(ReplayBuffer::new(REPLAY_CAPACITY))));
         let output_replay = replay.clone();
+        let (commands, receiver) = unbounded();
+        let answers = commands.clone();
         std::thread::spawn(move || {
             read_output(
                 reader,
                 &output_subscribers,
                 output_replay.as_deref(),
                 blocks,
+                observer.map(|observer| (observer, answers)),
             );
         });
         let exit = Arc::new(Mutex::new(None::<bool>));
         let actor_exit = Arc::clone(&exit);
-        let (commands, receiver) = unbounded();
         std::thread::spawn(move || {
             #[cfg(unix)]
             let shell_init = shell_init;
@@ -647,21 +670,32 @@ fn read_output(
     subscribers: &Mutex<Vec<Sender<Vec<u8>>>>,
     replay: Option<&Mutex<ReplayBuffer>>,
     blocks: bool,
+    mut observer: Option<(OutputObserver, Sender<SessionCommand>)>,
 ) {
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
-            Ok(count) => match replay {
-                // Record and deliver under the replay lock, so a view attaching meanwhile gets
-                // each chunk exactly once, either in the replay or in its feed.
-                Some(replay) => {
-                    let mut replay = replay.lock().unwrap_or_else(|e| e.into_inner());
-                    replay.push(&buffer[..count]);
-                    deliver(subscribers, &buffer[..count]);
+            Ok(count) => {
+                if let Some((observe, answers)) = &mut observer {
+                    let answer = observe(&buffer[..count]);
+                    if !answer.is_empty() {
+                        // Nobody waits for the write's outcome: a program that is gone needs no answer.
+                        let (reply, _) = bounded(1);
+                        let _ = answers.send(SessionCommand::Write(answer, reply));
+                    }
                 }
-                None => deliver(subscribers, &buffer[..count]),
-            },
+                match replay {
+                    // Record and deliver under the replay lock, so a view attaching meanwhile gets
+                    // each chunk exactly once, either in the replay or in its feed.
+                    Some(replay) => {
+                        let mut replay = replay.lock().unwrap_or_else(|e| e.into_inner());
+                        replay.push(&buffer[..count]);
+                        deliver(subscribers, &buffer[..count]);
+                    }
+                    None => deliver(subscribers, &buffer[..count]),
+                }
+            }
         }
     }
     if blocks {
@@ -719,9 +753,15 @@ mod tests {
             ],
             env_remove: &["HOME"],
         };
-        let session =
-            TerminalSession::start_agent(1, dir.path(), registry, &agent, Box::new(|_| {}))
-                .unwrap();
+        let session = TerminalSession::start_agent(
+            1,
+            dir.path(),
+            registry,
+            &agent,
+            Box::new(|_| Vec::new()),
+            Box::new(|_| {}),
+        )
+        .unwrap();
         let (replay, feed) = session.attach();
         let mut seen = replay;
         while !String::from_utf8_lossy(&seen).contains("HOME=[") {

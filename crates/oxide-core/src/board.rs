@@ -114,8 +114,7 @@ impl BoardHub {
             });
     }
 
-    /// Records an Agent terminal's status (the only state a terminal Thread's agent reports
-    /// until status signals land) and tells the Project's subscribers.
+    /// Records an Agent terminal's status and tells the Project's subscribers.
     pub(crate) fn set_status(&self, thread_id: u32, status: thread::ThreadStatus) {
         let written = self.with_conn(|conn| {
             conn.execute(
@@ -127,6 +126,34 @@ impl BoardHub {
         if written.is_ok() {
             self.publish(thread_id);
         }
+    }
+
+    /// Records the start of a terminal Thread's Turn: its start only, as Oxide never sees the
+    /// prompt. Returns the Turn's row id and its index within the Thread.
+    pub(crate) fn start_agent_turn(&self, thread_id: u32) -> Result<(u32, u32)> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO turns (thread_id, turn_index, prompt, status) VALUES (?1, (SELECT COALESCE(MAX(turn_index) + 1, 0) FROM turns WHERE thread_id = ?1), '', 'running')",
+                [thread_id],
+            )?;
+            let id = conn.last_insert_rowid();
+            let index: u32 =
+                conn.query_row("SELECT turn_index FROM turns WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })?;
+            Ok((id as u32, index))
+        })
+    }
+
+    /// Records the end of a terminal Thread's Turn (`completed`, `error` or `interrupted`).
+    pub(crate) fn end_agent_turn(&self, turn_id: u32, status: &str) {
+        let _ = self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE turns SET status = ?1, completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
+                rusqlite::params![status, turn_id],
+            )?;
+            Ok(())
+        });
     }
 
     /// Tells the Project's subscribers that the Thread is gone.

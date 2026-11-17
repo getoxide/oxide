@@ -21,10 +21,13 @@ interface Props {
   onThreadTitleChange?: (threadId: number, title: string) => void;
 }
 
-/** What the sidebar and header say about an Agent terminal until status signals land. */
+/** What the header says about an Agent terminal; the sidebar shows the same status. */
 export function agentStatusLabel(status: Thread["status"]): string {
   switch (status) {
     case "running": return "Running";
+    case "working": return "Working";
+    case "needs-input": return "Needs input";
+    case "completed": return "Completed";
     case "stopped": return "Stopped";
     case "error": return "Exited with an error";
     default: return status;
@@ -49,7 +52,9 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const threadId = thread.id;
-  const running = thread.status === "running";
+  // The agent reports working, needs input and completed while it lives; `error` and `stopped`
+  // are how it ended (an agent that reported an error and is still alive is not told apart).
+  const running = thread.status !== "stopped" && thread.status !== "error";
 
   const write = (data: string) =>
     void commands.writeAgentTerminal(threadId, [...new TextEncoder().encode(data)]).then((result) => {
