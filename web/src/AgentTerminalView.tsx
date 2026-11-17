@@ -49,6 +49,8 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
   const [busy, setBusy] = useState(false);
   // Bumped by Restart: the new process has its own screen to attach to.
   const [run, setRun] = useState(0);
+  // Resuming failed because the Provider session no longer exists: a fresh one is offered.
+  const [sessionGone, setSessionGone] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const threadId = thread.id;
@@ -60,8 +62,12 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
     void commands.writeAgentTerminal(threadId, [...new TextEncoder().encode(data)]).then((result) => {
       if (result.status === "error") setError(result.error.message);
     });
+  const onUpdated = useRef(onThreadUpdated);
   const latestWrite = useRef(write);
-  useLayoutEffect(() => { latestWrite.current = write; });
+  useLayoutEffect(() => {
+    latestWrite.current = write;
+    onUpdated.current = onThreadUpdated;
+  });
 
   const transfer = useTerminalTransfer(frame, visible && running, (text) => {
     terminal.current?.paste(text);
@@ -96,8 +102,13 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
       pending.push(Uint8Array.from(chunk));
       if (!animation) animation = requestAnimationFrame(flush);
     };
-    void commands.attachAgentTerminal(threadId, channel).then((result) => {
-      if (active && result.status === "error") setError(result.error.message);
+    // Opening the Thread resumes an agent that is stopped because Oxide was relaunched.
+    void commands.openAgent(threadId).then((opened) => {
+      if (!active) return;
+      if (opened.status === "ok" && opened.data) onUpdated.current(opened.data);
+      return commands.attachAgentTerminal(threadId, channel).then((result) => {
+        if (active && result.status === "error") setError(result.error.message);
+      });
     });
     const resize = () => {
       if (!element.clientWidth || !element.clientHeight) return;
@@ -132,6 +143,15 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
   }, [threadId, run]);
 
   useEffect(() => {
+    if (running) return;
+    let active = true;
+    void commands.agentSessionGone(threadId).then((result) => {
+      if (active) setSessionGone(result.status === "ok" && result.data === true);
+    });
+    return () => { active = false; };
+  }, [threadId, running, run]);
+
+  useEffect(() => {
     if (visible) terminal.current?.focus();
   }, [visible, threadId, run]);
 
@@ -149,6 +169,18 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
     if (result.status === "error") setError(result.error.message);
     else {
       onThreadUpdated(result.data);
+      setRun((n) => n + 1);
+    }
+    setBusy(false);
+  };
+  const freshSession = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await commands.startFreshAgentSession(threadId);
+    if (result.status === "error") setError(result.error.message);
+    else {
+      onThreadUpdated(result.data);
+      setSessionGone(false);
       setRun((n) => n + 1);
     }
     setBusy(false);
@@ -203,6 +235,15 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
           <summary>Setup command{failedSetup ? " failed" : ""}</summary>
           <pre>{thread.setupOutput || "(no output)"}</pre>
         </details>
+      )}
+      {sessionGone && !running && (
+        <div className="editor-error" role="alert">
+          The Provider session no longer exists, so this Thread cannot resume it. Its worktree and branch are unchanged.
+          {" "}
+          <button type="button" className="btn sm" disabled={busy} onClick={() => void freshSession()}>
+            Start a fresh session
+          </button>
+        </div>
       )}
       {error && <div className="editor-error" role="alert">{error}</div>}
       {transfer.error && <div className="editor-error" role="alert">{transfer.error}</div>}

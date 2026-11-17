@@ -363,10 +363,7 @@ fn every_terminal_command_refuses_an_unknown_thread_and_a_chat_thread() {
         assert!(f.core.restart_agent(id).is_err(), "restart {id}");
         assert!(f.core.open_agent(id).is_err(), "open {id}");
         assert!(f.core.agent_session_gone(id).is_err(), "gone {id}");
-        assert!(
-            f.core.start_fresh_agent_session(id).is_err(),
-            "fresh {id}"
-        );
+        assert!(f.core.start_fresh_agent_session(id).is_err(), "fresh {id}");
     }
 }
 
