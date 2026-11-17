@@ -4,6 +4,7 @@ import {
   launchChoice,
   launchableProviders,
   nextPermissionMode,
+  permissionModeNote,
   permissionModesFor,
   resolveLaunchFavourite,
 } from "./launchPicker";
@@ -19,8 +20,9 @@ const model = (id: string, supportedEfforts: string[] = ["low", "high"]): ModelI
 describe("launch recipes", () => {
   it("offers only Providers that have a terminal launch recipe and are installed", () => {
     const installed = new Map([["claude", true], ["codex", true], ["antigravity", true]]);
-    expect(launchableProviders(installed)).toEqual(["claude"]);
-    expect(launchableProviders(new Map([["claude", false], ["codex", true]]))).toEqual([]);
+    expect(launchableProviders(installed)).toEqual(["claude", "codex"]);
+    expect(launchableProviders(new Map([["claude", false], ["codex", true]]))).toEqual(["codex"]);
+    expect(launchableProviders(new Map([["claude", false], ["antigravity", true]]))).toEqual([]);
     expect(launchableProviders(new Map())).toEqual([]);
   });
 
@@ -28,8 +30,17 @@ describe("launch recipes", () => {
     expect(permissionModesFor("claude")).toEqual(["ask", "auto-edit", "full-access"]);
   });
 
-  it("offers Ask for no Provider that cannot honour it", () => {
-    expect(permissionModesFor("codex")).not.toContain("ask");
+  it("does not offer Ask for Codex, whose sandboxed commands never ask", () => {
+    expect(permissionModesFor("codex")).toEqual(["auto-edit", "full-access"]);
+  });
+
+  it("says that Codex Auto-edit lets commands inside the workspace run without asking", () => {
+    expect(permissionModeNote("codex", "auto-edit")).toMatch(/without asking/);
+    expect(permissionModeNote("codex", "full-access")).toBeNull();
+    expect(permissionModeNote("claude", "auto-edit")).toBeNull();
+  });
+
+  it("offers Ask for no other Provider that cannot honour it", () => {
     expect(permissionModesFor("antigravity")).not.toContain("ask");
   });
 });

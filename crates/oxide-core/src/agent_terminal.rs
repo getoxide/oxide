@@ -203,7 +203,7 @@ impl Core {
         choice: &TerminalLaunch,
     ) -> Result<ThreadSummary> {
         let prompt = issue_prompt(issue.number, &issue.title, &issue.body);
-        self.start_agent_thread(project_id, choice, Some(issue), Some(prompt))
+        self.start_agent_thread(project_id, choice, Some(issue), Some(&prompt))
     }
 
     /// Starts a terminal Thread whose agent receives `prompt` as its first prompt.
@@ -211,7 +211,7 @@ impl Core {
         &self,
         project_id: u32,
         choice: &TerminalLaunch,
-        prompt: String,
+        prompt: &str,
     ) -> Result<ThreadSummary> {
         self.start_agent_thread(project_id, choice, None, Some(prompt))
     }
@@ -222,7 +222,7 @@ impl Core {
         project_id: u32,
         choice: &TerminalLaunch,
         issue: Option<&TerminalIssue>,
-        prompt: Option<String>,
+        prompt: Option<&str>,
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
@@ -252,7 +252,7 @@ impl Core {
                 effort: effort.as_deref(),
                 permission_mode,
                 notify: &[],
-                initial_prompt: prompt.as_deref(),
+                initial_prompt: prompt,
             })?;
         } else {
             claude_args(&ClaudeLaunch {
@@ -261,7 +261,7 @@ impl Core {
                 model: model.as_deref(),
                 effort: effort.as_deref(),
                 permission_mode,
-                initial_prompt: prompt.as_deref(),
+                initial_prompt: prompt,
             })?;
         }
         // Claude Code takes the id Oxide assigns; Codex's is reported after its first Turn.
@@ -296,7 +296,7 @@ impl Core {
         };
         let started = self.ensure_worktree(thread_id).and_then(|ready| {
             if ready {
-                self.launch_agent(thread_id, Launch::Start, prompt.as_deref())?;
+                self.launch_agent(thread_id, Launch::Start, prompt)?;
             } else {
                 self.board.set_status(thread_id, ThreadStatus::Error);
             }
@@ -697,11 +697,14 @@ impl Core {
     }
 }
 
+/// The `notify` command and the environment a Codex launch is given.
+type ReporterLaunch = (Vec<String>, Vec<(String, String)>);
+
 impl Core {
     /// What a Codex launch needs from the reporter: the `notify` command (Oxide's executable,
     /// then the user's own command) and the environment carrying the socket and a token that is
     /// new for this launch. Starts listening on the first call.
-    fn codex_reporter(&self, thread_id: u32) -> Result<(Vec<String>, Vec<(String, String)>)> {
+    fn codex_reporter(&self, thread_id: u32) -> Result<ReporterLaunch> {
         let executable = match self
             .reporter_executable
             .lock()

@@ -9,6 +9,9 @@
 //! The socket accepts one short JSON message of a session id and a status for one Agent terminal.
 //! Input is bounded, a wrong token or an unknown field is refused, and nothing else is accepted.
 
+// The socket is Unix-only for now; elsewhere only the chaining and the launch recipe remain.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -365,7 +368,8 @@ mod imp {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
