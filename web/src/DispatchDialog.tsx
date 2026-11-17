@@ -1,10 +1,17 @@
 import { Skeleton } from "./Skeleton";
 import { useEffect, useState } from "react";
-import { commands, type PermissionMode, type Settings, type Thread } from "./bindings";
+import {
+  commands,
+  type PermissionMode,
+  type Settings,
+  type Thread,
+} from "./bindings";
 import {
   defaultDispatchForm,
   dispatchRequest,
   issueDispatchForm,
+  startsAsTerminal,
+  terminalIssue,
   withProvider,
   type DispatchForm,
   type DispatchIssue,
@@ -31,7 +38,12 @@ interface DispatchDialogProps {
 }
 
 /** Hands a task off to a new background Thread in a worktree of its own. */
-export function DispatchDialog({ projectId, issue, onClose, onDispatched }: DispatchDialogProps) {
+export function DispatchDialog({
+  projectId,
+  issue,
+  onClose,
+  onDispatched,
+}: DispatchDialogProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [form, setForm] = useState<DispatchForm | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -40,17 +52,20 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
 
   useEffect(() => {
     let active = true;
-    void Promise.all([commands.getSettings(), commands.gitStatus(projectId, null), commands.listBranches(projectId, null)]).then(
-      ([state, status, list]) => {
-        if (!active) return;
-        const current = status.status === "ok" ? status.data.branch : null;
-        setSettings(state.settings);
-        const form = defaultDispatchForm(state.settings, current);
-        setForm(issue ? issueDispatchForm(form, issue) : form);
-        if (list.status === "ok") setBranches(list.data.filter((b) => !b.remote).map((b) => b.name));
-        if (status.status === "error") setError(status.error.message);
-      },
-    );
+    void Promise.all([
+      commands.getSettings(),
+      commands.gitStatus(projectId, null),
+      commands.listBranches(projectId, null),
+    ]).then(([state, status, list]) => {
+      if (!active) return;
+      const current = status.status === "ok" ? status.data.branch : null;
+      setSettings(state.settings);
+      const form = defaultDispatchForm(state.settings, current);
+      setForm(issue ? issueDispatchForm(form, issue) : form);
+      if (list.status === "ok")
+        setBranches(list.data.filter((b) => !b.remote).map((b) => b.name));
+      if (status.status === "error") setError(status.error.message);
+    });
     return () => {
       active = false;
     };
@@ -68,13 +83,30 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
     if (!form || busy) return;
     setBusy(true);
     setError(null);
-    const res = await commands.dispatchThread(dispatchRequest(projectId, form, issue));
+    const res =
+      settings && startsAsTerminal(settings, form.provider, issue)
+        ? await commands.createTerminalThreadFromIssue(
+            projectId,
+            terminalIssue(issue!),
+            form.provider,
+            form.model.trim() || null,
+            form.effort.trim() || null,
+            form.permissionMode,
+          )
+        : await commands.dispatchThread(
+            dispatchRequest(projectId, form, issue),
+          );
     setBusy(false);
     if (res.status === "ok") onDispatched(res.data);
     else setError(res.error.message);
   };
 
-  const set = (patch: Partial<DispatchForm>) => setForm((f) => (f ? { ...f, ...patch } : f));
+  const asTerminal =
+    settings !== null &&
+    form !== null &&
+    startsAsTerminal(settings, form.provider, issue);
+  const set = (patch: Partial<DispatchForm>) =>
+    setForm((f) => (f ? { ...f, ...patch } : f));
 
   return (
     <div className="modal-backdrop" onMouseDown={() => !busy && onClose()}>
@@ -88,33 +120,45 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
           void dispatch();
         }}
       >
-        <h2>{issue ? `Start a Thread from #${issue.number}` : "Dispatch a task"}</h2>
+        <h2>
+          {issue ? `Start a Thread from #${issue.number}` : "Dispatch a task"}
+        </h2>
         {form === null || settings === null ? (
           <Skeleton kind="form" label="Loading task settings…" />
         ) : (
           <>
-            <label>
-              Prompt
-              <textarea
-                autoFocus
-                rows={5}
-                value={form.prompt}
-                disabled={busy}
-                onChange={(e) => set({ prompt: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    void dispatch();
-                  }
-                }}
-              />
-            </label>
+            {asTerminal ? (
+              <p className="hint">
+                The agent starts with the issue&apos;s number, title and body as
+                its first prompt; the title and body are quoted and marked as
+                external content.
+              </p>
+            ) : (
+              <label>
+                Prompt
+                <textarea
+                  autoFocus
+                  rows={5}
+                  value={form.prompt}
+                  disabled={busy}
+                  onChange={(e) => set({ prompt: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      void dispatch();
+                    }
+                  }}
+                />
+              </label>
+            )}
             <label>
               Provider
               <select
                 value={form.provider}
                 disabled={busy}
-                onChange={(e) => setForm(withProvider(form, settings, e.target.value))}
+                onChange={(e) =>
+                  setForm(withProvider(form, settings, e.target.value))
+                }
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -146,7 +190,9 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
               <select
                 value={form.permissionMode}
                 disabled={busy}
-                onChange={(e) => set({ permissionMode: e.target.value as PermissionMode })}
+                onChange={(e) =>
+                  set({ permissionMode: e.target.value as PermissionMode })
+                }
               >
                 {PERMISSION_MODES.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -155,18 +201,33 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
                 ))}
               </select>
             </label>
-            <label>
-              Base branch
-              <select value={form.baseBranch} disabled={busy} onChange={(e) => set({ baseBranch: e.target.value })}>
-                {!branches.includes(form.baseBranch) && <option value={form.baseBranch}>{form.baseBranch || "HEAD"}</option>}
-                {branches.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="hint">Starts from the branch&apos;s commits; uncommitted changes are not carried over.</p>
+            {!asTerminal && (
+              <label>
+                Base branch
+                <select
+                  value={form.baseBranch}
+                  disabled={busy}
+                  onChange={(e) => set({ baseBranch: e.target.value })}
+                >
+                  {!branches.includes(form.baseBranch) && (
+                    <option value={form.baseBranch}>
+                      {form.baseBranch || "HEAD"}
+                    </option>
+                  )}
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {!asTerminal && (
+              <p className="hint">
+                Starts from the branch&apos;s commits; uncommitted changes are
+                not carried over.
+              </p>
+            )}
           </>
         )}
         {error && <p className="error">{error}</p>}
@@ -174,7 +235,15 @@ export function DispatchDialog({ projectId, issue, onClose, onDispatched }: Disp
           <button type="button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className={busy ? "pending" : undefined} disabled={busy || form === null || form.prompt.trim() === ""}>
+          <button
+            type="submit"
+            className={busy ? "pending" : undefined}
+            disabled={
+              busy ||
+              form === null ||
+              (!asTerminal && form.prompt.trim() === "")
+            }
+          >
             {busy ? "Dispatching…" : "Dispatch"}
           </button>
         </div>

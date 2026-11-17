@@ -940,6 +940,58 @@ async fn create_terminal_thread(
     .map(Thread::from)
 }
 
+/// The GitHub issue a terminal Thread starts from.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIssue {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+impl From<TerminalIssue> for oxide_core::TerminalIssue {
+    fn from(issue: TerminalIssue) -> Self {
+        Self {
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            url: issue.url,
+            labels: issue.labels,
+        }
+    }
+}
+
+/// Opens a terminal Thread for a GitHub issue: a worktree and branch named after it, the Setup
+/// command, then the agent launched with a prompt built from the issue (its title and body quoted
+/// as external content). Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn create_terminal_thread_from_issue(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    issue: TerminalIssue,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
+) -> Result<Thread, AppError> {
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    let issue: oxide_core::TerminalIssue = issue.into();
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_from_issue(project_id, &issue, &choice)
+    })
+    .await
+    .map(Thread::from)
+}
+
 /// Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
 /// it prints. A newer attachment replaces the previous one.
 #[tauri::command]
@@ -3458,6 +3510,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         accept_rule_suggestion,
         start_block_terminal,
         create_terminal_thread,
+        create_terminal_thread_from_issue,
         attach_agent_terminal,
         write_agent_terminal,
         resize_agent_terminal,

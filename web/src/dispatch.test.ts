@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Settings } from "./bindings";
-import { defaultDispatchForm, dispatchRequest, isBoardThread, issueDispatchForm, withProvider } from "./dispatch";
+import { defaultDispatchForm, dispatchRequest, isBoardThread, issueDispatchForm, startsAsTerminal, terminalIssue, withProvider } from "./dispatch";
 
 const settings = {
   defaultProvider: "claude",
@@ -69,5 +69,22 @@ describe("dispatch form", () => {
   it("tells Board Threads from chat Threads by their branch", () => {
     expect(isBoardThread({ branch: "oxide/x" })).toBe(true);
     expect(isBoardThread({ branch: null })).toBe(false);
+  });
+});
+
+describe("starting from an issue as a terminal Thread", () => {
+  const issue = { number: 7, title: "Crash", body: "- it crashes", url: "https://github.com/o/r/issues/7" };
+
+  it("needs the preview, a Provider with a launch recipe and an issue", () => {
+    const on = { openThreadsAsTerminals: true };
+    expect(startsAsTerminal(on, "claude", issue)).toBe(true);
+    expect(startsAsTerminal(on, "codex", issue)).toBe(false);
+    expect(startsAsTerminal(on, "claude", undefined)).toBe(false);
+    expect(startsAsTerminal({ openThreadsAsTerminals: false }, "claude", issue)).toBe(false);
+  });
+
+  it("hands Core the issue as it is, leaving the quoting to Core", () => {
+    expect(terminalIssue({ ...issue, labels: ["bug"] })).toEqual({ ...issue, labels: ["bug"] });
+    expect(terminalIssue(issue).labels).toEqual([]);
   });
 });
