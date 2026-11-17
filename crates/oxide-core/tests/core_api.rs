@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::Core;
 use rusqlite::Connection;
 
@@ -151,7 +157,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
 
     core.write_terminal(
         terminal.id,
-        b"sleep 60 & child=$(pgrep -P $$ sleep); echo CHILD=$child; echo READY$((6*7))\n",
+        // `jobs -p`, not `$!`: macOS bash 3.2 runs history expansion on typed input and
+        // reports "event not found" for the `!`.
+        b"sleep 60 & echo CHILD=$(jobs -p); echo READY$((6*7))\n",
     )
     .unwrap();
     let mut output = String::new();
@@ -181,7 +189,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     core.close_terminal(terminal.id).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
+        // SAFETY: signal 0 only probes whether the target exists; nothing is delivered.
         let result = unsafe { libc::kill(-(pid as i32), 0) };
+        // SAFETY: same as above.
         let child_result = unsafe { libc::kill(child_pid, 0) };
         let missing = |result| {
             result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)

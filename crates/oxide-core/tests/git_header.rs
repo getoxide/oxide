@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{Core, FETCH_INTERVAL, PermissionMode, ProjectSummary};
 use oxide_provider::{FakeProvider, ProviderEvent};
 use std::path::{Path, PathBuf};
@@ -73,6 +79,8 @@ fn fixture() -> Fixture {
     let core = Core::open(root.join("home")).unwrap();
     core.set_real_time_ticker(false);
     let project = core.add_project(&work.to_string_lossy()).unwrap();
+    // Automatic fetch only runs in a Project the user has acted in.
+    core.mark_project_acted_upon(project.id).unwrap();
     Fixture {
         _tmp: tmp,
         core,

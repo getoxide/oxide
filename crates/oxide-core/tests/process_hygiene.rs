@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 #![cfg(unix)]
 
 use crossbeam_channel::Receiver;
@@ -231,9 +237,7 @@ fn next_launch_leaves_a_reused_pid_alone() {
 
     assert!(group_alive(pgid), "an unrelated process must not be killed");
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-pgid, libc::SIGKILL)
-    };
+    oxide_provider::process::signal_group(pgid, libc::SIGKILL).unwrap();
     #[cfg(not(unix))]
     let _ = bystander.kill();
     assert!(wait_group_gone(&mut bystander));

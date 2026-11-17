@@ -1,6 +1,7 @@
 //! Local language servers. Core owns process lifetime and stdio framing; the editor owns LSP.
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, bounded};
+use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, read_bounded_line};
 use oxide_provider::command::find_in;
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, release_job, spawn_in_own_group,
@@ -84,7 +85,8 @@ fn configurations(home: &Path) -> HashMap<String, LanguageServerConfig> {
 
 fn resolve(program: &str, home: &Path) -> Option<PathBuf> {
     let mut directories = vec![
-        home.join("tools/language-servers/node_modules/.bin"),
+        home.join("tools/language-servers/python/node_modules/.bin"),
+        home.join("tools/language-servers/typescript/node_modules/.bin"),
         home.join("tools/language-servers/bin"),
     ];
     if let Some(user) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
@@ -128,9 +130,11 @@ pub fn tools(home: &Path) -> Vec<LanguageTool> {
                 });
             let resolved = resolve(&config.command, home);
             let install_command = match *id {
-                "python" => format!("npm install --prefix \"{prefix}\" pyright@1.1.414"),
+                "python" => format!(
+                    "npm install --ignore-scripts --prefix \"{prefix}/python\" pyright@1.1.414"
+                ),
                 "typescript" => format!(
-                    "npm install --prefix \"{prefix}\" typescript@6.0.3 typescript-language-server@6.0.2"
+                    "npm install --ignore-scripts --prefix \"{prefix}/typescript\" typescript@6.0.3 typescript-language-server@6.0.2"
                 ),
                 "rust" => "rustup component add rust-analyzer".into(),
                 _ if cfg!(windows) => "winget install --id LLVM.LLVM --exact".into(),
@@ -158,14 +162,29 @@ pub fn tools(home: &Path) -> Vec<LanguageTool> {
         .collect()
 }
 
-pub fn configure(home: &Path, language: &str, config: LanguageServerConfig) -> Result<()> {
+pub fn configure(home: &Path, language: &str, mut config: LanguageServerConfig) -> Result<()> {
     definition(language)?;
-    if config.command.trim().is_empty()
-        || config.command.contains(['\n', '\r', '\0'])
-        || config.args.iter().any(|a| a.contains('\0'))
+    let command = config.command.trim();
+    if command.is_empty()
+        || command.chars().any(char::is_control)
+        || config.args.iter().any(|a| a.chars().any(char::is_control))
     {
         return Err(failure("Enter an executable path and valid arguments."));
     }
+    // A path with directories must be absolute: a relative one would depend on the app's
+    // working directory. A bare name is looked up in the same places the server starts from.
+    let given = Path::new(command);
+    if given.components().count() > 1 && !given.is_absolute() {
+        return Err(failure("Enter the full path of the executable."));
+    }
+    // The absolute path as found, symlinks left in place: `~/.cargo/bin/rust-analyzer` is a
+    // proxy that dispatches on its own name, and a Homebrew link must survive an upgrade. A
+    // symlink is followed only to check that it ends at a regular file.
+    let resolved = resolve(command, home)
+        .and_then(|found| std::path::absolute(found).ok())
+        .filter(|found| found.is_file())
+        .ok_or_else(|| failure(format!("{command} is not an existing executable file.")))?;
+    config.command = dunce::simplified(&resolved).to_string_lossy().into_owned();
     let path = home.join("language-servers.json");
     let mut saved: HashMap<String, LanguageServerConfig> = if path.exists() {
         serde_json::from_slice(&std::fs::read(&path).map_err(failure)?)
@@ -249,7 +268,7 @@ impl LanguageServers {
         let tool = tools(home)
             .into_iter()
             .find(|t| t.language == language)
-            .unwrap();
+            .ok_or_else(|| failure(format!("{language} has no language server tool")))?;
         let executable = tool.resolved_path.ok_or_else(|| {
             failure(format!(
                 "{} is not installed. Open Language tools to install or configure it.",
@@ -275,9 +294,13 @@ impl LanguageServers {
         attach_child_to_job(&mut child).map_err(failure)?;
         let pid = child.id() as i32;
         registry.register(pid, &executable);
-        let input = child.stdin.take().unwrap();
-        let output = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let (Some(input), Some(output), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            let _ = child.kill();
+            registry.unregister(pid);
+            return Err(failure("language server pipes were not available"));
+        };
         let session = Arc::new(Session {
             root: root.to_path_buf(),
             child: Mutex::new(child),
@@ -300,12 +323,14 @@ impl LanguageServers {
             );
         });
         std::thread::spawn(move || {
-            for line in BufReader::new(stderr)
-                .lines()
-                .map_while(std::result::Result::ok)
+            let mut stderr = BufReader::new(stderr);
+            for line in
+                BoundedLines::new(&mut stderr, LOG_LINE_CAP).map_while(std::result::Result::ok)
             {
                 if errors.send(serde_json::json!({"jsonrpc":"2.0", "method":"window/logMessage", "params":{"type":4,"message":line.chars().take(2000).collect::<String>()}}).to_string()).is_err() { break; }
             }
+            // A line over the cap ends the log feed; keep emptying the pipe so the server never blocks.
+            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.sessions
@@ -319,8 +344,9 @@ impl LanguageServers {
                 language: language.into(),
                 initialization_options: if language == "typescript" {
                     let local = root.join("node_modules/typescript/lib/tsserver.js");
-                    let managed =
-                        home.join("tools/language-servers/node_modules/typescript/lib/tsserver.js");
+                    let managed = home.join(
+                        "tools/language-servers/typescript/node_modules/typescript/lib/tsserver.js",
+                    );
                     let sdk = if local.is_file() {
                         Some(local)
                     } else if managed.is_file() {
@@ -403,11 +429,13 @@ fn read_message(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     let mut length = None;
     let mut total = 0;
     loop {
-        let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
+        let mut line = Vec::new();
+        if !read_bounded_line(reader, &mut line, LOG_LINE_CAP)? {
             return Ok(None);
         }
-        total += header.len();
+        let header = String::from_utf8_lossy(&line);
+        // The terminator is stripped by the reader; count it back for the total.
+        total += header.len() + 2;
         if total > 8192 {
             return Err(std::io::Error::other("LSP header too large"));
         }
@@ -445,6 +473,114 @@ mod tests {
         assert_eq!(read_message(&mut reader).unwrap().as_deref(), Some(first));
         assert_eq!(read_message(&mut reader).unwrap().as_deref(), Some("{}"));
         assert!(read_message(&mut reader).unwrap().is_none());
+    }
+    fn config(command: &str, args: &[&str]) -> LanguageServerConfig {
+        LanguageServerConfig {
+            command: command.into(),
+            args: args.iter().map(|a| (*a).into()).collect(),
+            interpreter: None,
+        }
+    }
+
+    #[test]
+    fn configuring_refuses_a_missing_executable_a_directory_and_a_relative_path() {
+        let home = tempfile::tempdir().unwrap();
+        let missing = home.path().join("nope");
+        for command in [
+            missing.to_string_lossy().into_owned(),
+            home.path().to_string_lossy().into_owned(),
+            "definitely-not-installed-oxide-ls".into(),
+            "./relative/server".into(),
+            "bad\ncommand".into(),
+        ] {
+            assert!(
+                configure(home.path(), "python", config(&command, &[])).is_err(),
+                "{command}"
+            );
+        }
+        assert!(!home.path().join("language-servers.json").exists());
+    }
+
+    #[test]
+    fn configuring_refuses_control_characters_in_arguments() {
+        let home = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let command = executable.to_string_lossy();
+        for argument in ["a\nb", "a\0b", "a\u{1b}[0m"] {
+            assert!(configure(home.path(), "python", config(&command, &[argument])).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configuring_keeps_a_symlink_as_given_and_refuses_a_dangling_one() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // `rust-analyzer` in `~/.cargo/bin` is a link to `rustup`, which acts on its own name.
+        let real = bin.join("rustup");
+        std::fs::write(&real, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = bin.join("rust-analyzer");
+        symlink(&real, &link).unwrap();
+        let dangling = bin.join("gone");
+        symlink(bin.join("missing"), &dangling).unwrap();
+
+        configure(home.path(), "rust", config(&link.to_string_lossy(), &[])).unwrap();
+        assert!(
+            configure(
+                home.path(),
+                "python",
+                config(&dangling.to_string_lossy(), &[])
+            )
+            .is_err()
+        );
+
+        let saved: HashMap<String, LanguageServerConfig> = serde_json::from_slice(
+            &std::fs::read(home.path().join("language-servers.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved["rust"].command, link.to_string_lossy());
+    }
+
+    #[test]
+    fn configuring_stores_the_resolved_absolute_path() {
+        let home = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().unwrap();
+        configure(
+            home.path(),
+            "python",
+            config(
+                &format!("  {}  ", executable.to_string_lossy()),
+                &["--stdio"],
+            ),
+        )
+        .unwrap();
+        let saved = configurations(home.path());
+        let stored = Path::new(&saved["python"].command);
+        assert!(stored.is_absolute() && stored.is_file());
+        assert_eq!(saved["python"].args, ["--stdio"]);
+    }
+
+    /// A server that never ends its header line must fail the session, not fill memory.
+    #[test]
+    fn a_header_line_over_the_cap_is_an_error_with_bounded_memory() {
+        struct Endless(usize);
+        impl std::io::Read for Endless {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                self.0 += out.len();
+                assert!(
+                    self.0 < 10 * 1024 * 1024,
+                    "reader kept consuming past the cap"
+                );
+                out.fill(b'x');
+                Ok(out.len())
+            }
+        }
+        let mut reader = BufReader::new(Endless(0));
+        let error = read_message(&mut reader).unwrap_err();
+        assert!(oxide_provider::bounded_lines::is_line_too_long(&error));
     }
     #[test]
     fn rejects_unbounded_messages_and_invalid_utf8() {

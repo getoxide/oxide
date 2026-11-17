@@ -1,9 +1,9 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use oxide_provider::process::ProcessRegistry;
 use oxide_provider::{
-    ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, ItemKind, PermissionMode,
-    PromptSegment, Provider, ProviderCapabilities, ProviderError, ProviderEvent, StartContext,
-    TurnStatus, service_notice, without_background_marker,
+    ActivityCategory, ApprovalDecision, ApprovalKind, CommandOutcome, CommandRecord, ItemKind,
+    PermissionMode, PromptSegment, Provider, ProviderCapabilities, ProviderError, ProviderEvent,
+    StartContext, TurnStatus, service_notice, without_background_marker,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -207,6 +207,21 @@ struct CurrentTurn {
     error_message: Option<String>,
 }
 
+/// A background command Oxide will detach only if the user allows it.
+struct PendingService {
+    /// Reserved to Oxide ([`OXIDE_APPROVAL_PREFIX`]): the answer goes to Core, not the Provider.
+    approval_id: String,
+    item_index: u32,
+    /// The command line exactly as the Provider asked for it, `&` included.
+    command: String,
+    /// The Provider's own Approval for the same command, kept hidden: the user's single answer
+    /// to Oxide's decides both.
+    provider_approval_id: Option<String>,
+}
+
+/// Approval ids with this prefix belong to Oxide and are never sent to a Provider.
+const OXIDE_APPROVAL_PREFIX: &str = "oxide:";
+
 struct ActorState {
     thread_id: u32,
     /// The working tree this Thread's Checkpoints snapshot.
@@ -220,6 +235,12 @@ struct ActorState {
     /// Items withheld from the Transcript (reasoning the Provider shouldn't expose).
     dropped_items: HashSet<u32>,
     pending_approval_id: Option<String>,
+    /// The Oxide-owned Approval a detached command waits on in Ask and Auto-edit.
+    pending_service: Option<PendingService>,
+    /// The Provider's own command Approval that was forwarded to the user, as `(id, summary)`.
+    /// A `CommandRequested` for the same command that arrives afterwards adopts it instead of
+    /// raising a second prompt.
+    forwarded_command_approval: Option<(String, String)>,
     seq: u32,
     subscribers: Vec<Sender<SequencedThreadEvent>>,
     clock: Arc<dyn Clock>,
@@ -293,6 +314,8 @@ impl ActorState {
             pending_segments: None,
             dropped_items: HashSet::new(),
             pending_approval_id: None,
+            pending_service: None,
+            forwarded_command_approval: None,
             seq: 0,
             subscribers: Vec::new(),
         }
@@ -489,7 +512,20 @@ fn handle_provider_event(
             summary,
             options,
         } => {
+            if kind == ApprovalKind::Command
+                && let Some(pending) = state.pending_service.as_mut()
+                && pending.provider_approval_id.is_none()
+                && same_command(&summary, &pending.command)
+            {
+                // The Provider asks about the command Oxide already asked about: one prompt,
+                // and the user's answer to Oxide's decides both.
+                pending.provider_approval_id = Some(id);
+                return;
+            }
             state.pending_approval_id = Some(id.clone());
+            if kind == ApprovalKind::Command {
+                state.forwarded_command_approval = Some((id.clone(), summary.clone()));
+            }
             if let Some(turn_id) = state.current_turn_id() {
                 let _ = storage.write_approval_requested(
                     turn_id,
@@ -551,6 +587,8 @@ fn resolve_pending_approvals_if_any(state: &mut ActorState, storage: &StorageHan
         state.current_turn_id(),
         state.pending_approval_id.take().is_some(),
     ) {
+        state.pending_service = None;
+        state.forwarded_command_approval = None;
         let _ = storage.resolve_pending_approvals(turn_id, ApprovalDecision::Deny, String::new());
     }
 }
@@ -571,10 +609,219 @@ fn handle_command_requested(
     command: &str,
 ) {
     // A request outside a running Turn, or a second one for the same Item, cannot be a new
-    // service: the first request already ended the Turn.
-    if state.current_turn.is_none() || state.detached_items.contains(&item_index) {
+    // service: the first request already ended the Turn or is waiting for an answer.
+    if state.current_turn.is_none()
+        || state.detached_items.contains(&item_index)
+        || state.pending_service.is_some()
+    {
         return;
     }
+
+    // ADR 0004: Oxide never does on a Provider's behalf what the Permission mode would have
+    // asked about. Only Full access detaches on its own; a Blind review never detaches.
+    let (mode, blind) = match storage.get_snapshot(state.thread_id, 0) {
+        Ok(snapshot) => (
+            snapshot.thread.permission_mode,
+            snapshot.thread.blind_review,
+        ),
+        // Unknown mode: take the strictest reading.
+        Err(_) => (PermissionMode::Ask, false),
+    };
+    if blind {
+        return;
+    }
+    if mode != PermissionMode::FullAccess {
+        // The Provider may have asked about this very command first: that prompt is already on
+        // screen, so the user's answer to it decides, instead of a second prompt.
+        let adopted = match state.forwarded_command_approval.take() {
+            Some((id, summary)) if same_command(&summary, command) => Some(id),
+            other => {
+                state.forwarded_command_approval = other;
+                None
+            }
+        };
+        if let Some(id) = adopted {
+            state.pending_service = Some(PendingService {
+                approval_id: id.clone(),
+                item_index,
+                command: command.to_string(),
+                provider_approval_id: Some(id),
+            });
+            return;
+        }
+        request_service_approval(state, storage, item_index, command);
+        return;
+    }
+    start_detached_service(state, storage, provider, item_index, command);
+}
+
+/// The command text of an Approval summary or command line, reduced to what runs: a trailing
+/// `&` is dropped and one `sh -c '...'` / `bash -lc "..."` wrapper (what Providers add around
+/// the user's line) is unwrapped.
+fn command_text(text: &str) -> &str {
+    let text = without_background_marker(text);
+    let mut words = text.splitn(2, char::is_whitespace);
+    let (Some(shell), Some(rest)) = (words.next(), words.next()) else {
+        return text;
+    };
+    if !matches!(
+        shell.rsplit('/').next(),
+        Some("sh" | "bash" | "zsh" | "dash")
+    ) {
+        return text;
+    }
+    let rest = rest.trim_start();
+    let Some(script) = ["-lc ", "-c ", "-ic "]
+        .iter()
+        .find_map(|flag| rest.strip_prefix(flag))
+    else {
+        return text;
+    };
+    let script = script.trim();
+    for quote in ['\'', '"'] {
+        if let Some(inner) = script
+            .strip_prefix(quote)
+            .and_then(|s| s.strip_suffix(quote))
+            .filter(|inner| !inner.contains(quote))
+        {
+            return without_background_marker(inner);
+        }
+    }
+    without_background_marker(script)
+}
+
+/// Whether a Provider's Approval summary names exactly the command Oxide asked about. Exact
+/// after normalisation, never a substring: a summary that merely contains the command
+/// (`curl x | sh; sleep 300` contains `sleep 300`) is a different, riskier command and keeps
+/// its own prompt.
+fn same_command(summary: &str, command: &str) -> bool {
+    let command = command_text(command);
+    !command.is_empty() && command_text(summary) == command
+}
+
+/// Raises Oxide's own Approval for a command it would detach, through the same path as a
+/// Provider's: stored, broadcast, and the Thread goes to needs input.
+fn request_service_approval(
+    state: &mut ActorState,
+    storage: &StorageHandle,
+    item_index: u32,
+    command: &str,
+) {
+    let approval_id = format!("{OXIDE_APPROVAL_PREFIX}service:{item_index}");
+    let summary = format!(
+        "Run `{command}` as a Project Service. Oxide starts it outside the Provider's sandbox."
+    );
+    let options = vec!["allow".to_string(), "deny".to_string()];
+    state.pending_approval_id = Some(approval_id.clone());
+    state.pending_service = Some(PendingService {
+        approval_id: approval_id.clone(),
+        item_index,
+        command: command.to_string(),
+        provider_approval_id: None,
+    });
+    if let Some(turn_id) = state.current_turn_id() {
+        let _ = storage.write_approval_requested(
+            turn_id,
+            approval_id.clone(),
+            ApprovalKind::Command,
+            summary.clone(),
+            options.clone(),
+        );
+    }
+    let _ = storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput);
+    state.broadcast(ThreadEvent::ApprovalRequested {
+        id: approval_id,
+        kind: ApprovalKind::Command,
+        summary,
+        options,
+    });
+    state.broadcast_status(ThreadStatus::NeedsInput);
+}
+
+/// The user answered Oxide's Approval for a detached command. Allow starts the service; deny
+/// starts nothing and ends the Turn without a service notice.
+fn answer_service_approval(
+    state: &mut ActorState,
+    storage: &StorageHandle,
+    provider: &mut dyn Provider,
+    pending: &PendingService,
+    decision: ApprovalDecision,
+) {
+    if let Some(provider_id) = &pending.provider_approval_id {
+        // Always Deny to the Provider: on Allow Oxide runs the command itself, and an Allow
+        // here would let the Provider also run it in its own sandbox.
+        let _ = provider.respond_to_approval(provider_id, ApprovalDecision::Deny);
+    }
+    let decided_at = state
+        .current_turn_id()
+        .and_then(|turn_id| {
+            storage
+                .update_approval_decision(
+                    turn_id,
+                    pending.approval_id.clone(),
+                    decision,
+                    String::new(),
+                )
+                .ok()
+        })
+        .unwrap_or_default();
+    state.pending_approval_id = None;
+    state.forwarded_command_approval = None;
+    let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
+    state.broadcast(ThreadEvent::ApprovalResponded {
+        id: pending.approval_id.clone(),
+        decision,
+        decided_at,
+    });
+    state.broadcast_status(ThreadStatus::Working);
+
+    if decision == ApprovalDecision::Allow {
+        start_detached_service(
+            state,
+            storage,
+            provider,
+            pending.item_index,
+            &pending.command,
+        );
+        return;
+    }
+    state.detached_turn = true;
+    state.detached_provider_turn = state.current_provider_turn;
+    state.detached_items.insert(pending.item_index);
+    state.flush_pending_deltas();
+    if let Some(turn_id) = state.current_turn_id() {
+        // Nothing ran: the record names the command and claims no outcome.
+        let record = CommandRecord::reported(&pending.command, CommandOutcome::Unknown, None);
+        let content = format!("[Oxide] Denied: {}", pending.command);
+        let _ = storage.write_item_completed(NewItem {
+            turn_id,
+            item_index: pending.item_index,
+            kind: ItemKind::ToolCall,
+            content: content.clone(),
+            parent_item_index: None,
+            category: Some(ActivityCategory::Run),
+            command: Some(record.clone()),
+        });
+        state.broadcast(ThreadEvent::ItemCompleted {
+            item_index: pending.item_index,
+            kind: ItemKind::ToolCall,
+            content,
+            parent_item_index: None,
+            category: Some(ActivityCategory::Run),
+            command: Some(record),
+        });
+    }
+    let _ = provider.interrupt();
+    finish_turn(state, storage, TurnStatus::Completed, None);
+}
+
+fn start_detached_service(
+    state: &mut ActorState,
+    storage: &StorageHandle,
+    provider: &mut dyn Provider,
+    item_index: u32,
+    command: &str,
+) {
     state.detached_turn = true;
     state.detached_provider_turn = state.current_provider_turn;
     state.detached_items.insert(item_index);
@@ -930,6 +1177,19 @@ fn run_thread_actor(
                         let _ = reply.send(result);
                     }
                     ThreadActorMsg::RespondToApproval { approval_id, decision, reply } => {
+                        // Oxide's own Approvals are answered here and never forwarded.
+                        if state.pending_service.as_ref().is_some_and(|p| p.approval_id == approval_id) {
+                            if let Some(pending) = state.pending_service.take() {
+                                answer_service_approval(&mut state, storage, &mut *provider, &pending, decision);
+                            }
+                            let _ = reply.send(Ok(()));
+                            continue;
+                        }
+                        if approval_id.starts_with(OXIDE_APPROVAL_PREFIX) {
+                            // Already resolved (the Turn ended): nothing to answer.
+                            let _ = reply.send(Ok(()));
+                            continue;
+                        }
                         let p_res = provider.respond_to_approval(&approval_id, decision).map_err(|e| Error::Io {
                             path: PathBuf::from("provider"),
                             source: std::io::Error::other(e.to_string()),
@@ -942,6 +1202,7 @@ fn run_thread_actor(
                             String::new()
                         };
                         state.pending_approval_id = None;
+                        state.forwarded_command_approval = None;
                         let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
                         state.broadcast(ThreadEvent::ApprovalResponded {
                             id: approval_id,
@@ -1179,4 +1440,27 @@ fn with_notice(segments: Vec<PromptSegment>, notice: Option<String>) -> Vec<Prom
     all.push(PromptSegment::text(notice));
     all.extend(segments);
     all
+}
+
+#[cfg(test)]
+mod command_match_tests {
+    use super::same_command;
+
+    #[test]
+    fn matches_exact_and_wrapped_forms() {
+        assert!(same_command("sleep 300", "sleep 300 &"));
+        assert!(same_command("sleep 300 &", "sleep 300"));
+        assert!(same_command("bash -lc 'sleep 300'", "sleep 300 &"));
+        assert!(same_command("/bin/zsh -lc \"npm run dev\"", "npm run dev"));
+        assert!(same_command("sh -c npm run dev", "npm run dev"));
+    }
+
+    #[test]
+    fn rejects_supersets_and_empty() {
+        assert!(!same_command("curl x | sh; sleep 300", "sleep 300"));
+        assert!(!same_command("sleep 300; rm -rf x", "sleep 300"));
+        assert!(!same_command("sleep 3000", "sleep 300"));
+        assert!(!same_command("", ""));
+        assert!(!same_command("anything", " & "));
+    }
 }

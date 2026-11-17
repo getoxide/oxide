@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{
     Core, GithubAvailability, IssueCloseReason, IssueEdit, Notification, ProjectSummary,
     PullRequestInput, System,
@@ -106,6 +112,22 @@ impl Fixture {
                     .iter()
                     .map(|a| a.as_str().unwrap().to_string())
                     .collect()
+            })
+            .collect()
+    }
+
+    /// The `GIT_CONFIG_*` variables each `gh` invocation ran with.
+    fn gh_git_config(&self) -> Vec<std::collections::BTreeMap<String, String>> {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(self.gh_dir.join("calls"))
+            .map(|dir| dir.map(|e| e.unwrap().path()).collect())
+            .unwrap_or_default();
+        files.sort();
+        files
+            .iter()
+            .map(|file| {
+                let v: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+                serde_json::from_value(v["git_config"].clone()).unwrap()
             })
             .collect()
     }
@@ -221,6 +243,25 @@ fn pr_base_branches_come_from_github_and_request_all_pages() {
 }
 
 #[test]
+fn gh_runs_with_the_git_hardening_in_its_environment() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    f.core.pull_request_base_branches(f.project.id).unwrap();
+
+    let calls = f.gh_git_config();
+    assert!(!calls.is_empty());
+    for config in calls {
+        assert_eq!(config["GIT_CONFIG_COUNT"], "3");
+        assert_eq!(config["GIT_CONFIG_KEY_0"], "core.fsmonitor");
+        assert_eq!(config["GIT_CONFIG_VALUE_0"], "false");
+        assert_eq!(config["GIT_CONFIG_KEY_1"], "core.untrackedCache");
+        assert_eq!(config["GIT_CONFIG_VALUE_1"], "false");
+        assert_eq!(config["GIT_CONFIG_KEY_2"], "protocol.ext.allow");
+        assert_eq!(config["GIT_CONFIG_VALUE_2"], "never");
+    }
+}
+
+#[test]
 fn pr_base_branch_errors_are_not_reported_as_an_empty_list() {
     let f = fixture();
     let mut state = ok_state();
@@ -233,6 +274,22 @@ fn pr_base_branch_errors_are_not_reported_as_an_empty_list() {
             .to_string()
             .contains("403")
     );
+}
+
+#[test]
+fn gh_errors_do_not_show_credentials_embedded_in_a_url() {
+    let f = fixture();
+    let mut state = ok_state();
+    state["branches_error"] =
+        serde_json::json!("fatal: unable to access 'https://user:synthetic-secret@host/r.git/'");
+    install_gh(&f, &state);
+    let message = f
+        .core
+        .pull_request_base_branches(f.project.id)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("https://host/r.git"), "{message}");
+    assert!(!message.contains("synthetic-secret"), "{message}");
 }
 
 #[test]
@@ -998,6 +1055,24 @@ fn only_https_links_reach_the_browser() {
         .unwrap();
     assert!(f.core.open_link("file:///etc/passwd").is_err());
     assert!(f.core.open_link("http://example.com").is_err());
+    assert_eq!(f.system.opened.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_link_to_a_foreign_host_opens_only_after_confirmation() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let error = f.core.open_link("https://evil.example/x").unwrap_err();
+    assert!(error.to_string().contains("evil.example"), "{error}");
+    assert!(f.system.opened.lock().unwrap().is_empty());
+    f.core
+        .open_confirmed_link("https://evil.example/x")
+        .unwrap();
+    assert!(
+        f.core
+            .open_confirmed_link("https://github.com@evil.example/")
+            .is_err()
+    );
     assert_eq!(f.system.opened.lock().unwrap().len(), 1);
 }
 

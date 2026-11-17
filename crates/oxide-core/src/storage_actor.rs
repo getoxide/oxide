@@ -132,13 +132,15 @@ pub enum StorageMsg {
 #[derive(Clone)]
 pub struct StorageHandle {
     sender: Sender<StorageMsg>,
+    /// The actor's thread, taken by the first [`StorageHandle::shutdown`] that joins it.
+    thread: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl StorageHandle {
     pub fn new(db_path: PathBuf) -> Result<Self> {
         let (tx, rx) = crossbeam_channel::unbounded();
         let path = db_path.clone();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("storage-actor".into())
             .spawn(move || {
                 let conn = match Connection::open(&path) {
@@ -158,7 +160,10 @@ impl StorageHandle {
                 source: e,
             })?;
 
-        Ok(Self { sender: tx })
+        Ok(Self {
+            sender: tx,
+            thread: std::sync::Arc::new(std::sync::Mutex::new(Some(thread))),
+        })
     }
 
     pub fn write_turn_started(
@@ -402,8 +407,16 @@ impl StorageHandle {
         reply_rx.recv().ok().flatten()
     }
 
+    /// Stops the actor and waits until its database connection is closed, so SQLite has
+    /// removed its `-wal` and `-shm` files when this returns. Later calls do nothing.
     pub fn shutdown(&self) {
         let _ = self.sender.send(StorageMsg::Shutdown);
+        let thread = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(thread) = thread
+            && thread.thread().id() != std::thread::current().id()
+        {
+            let _ = thread.join();
+        }
     }
 }
 

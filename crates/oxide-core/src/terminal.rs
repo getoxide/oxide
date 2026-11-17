@@ -2,7 +2,7 @@ use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
 use oxide_provider::process::ProcessRegistry;
 #[cfg(unix)]
-use oxide_provider::process::{SHUTDOWN_GRACE, terminate_group};
+use oxide_provider::process::{SHUTDOWN_GRACE, signal_group, signal_process, terminate_group};
 #[cfg(unix)]
 use portable_pty::MasterPty;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -65,6 +65,7 @@ impl TerminalSession {
 
     pub fn start(
         id: u32,
+        home: &Path,
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         blocks: bool,
@@ -80,12 +81,15 @@ impl TerminalSession {
             .map_err(|e| Error::Terminal(format!("open terminal: {e}")))?;
         #[cfg(unix)]
         let shell_init = if blocks {
-            Some(create_shell_init_file(id)?)
+            Some(create_shell_init_file(home, id)?)
         } else {
             None
         };
         #[cfg(windows)]
-        let shell_init: Option<PathBuf> = None;
+        let shell_init: Option<PathBuf> = {
+            let _ = home;
+            None
+        };
         let mut command = shell_command(cwd, blocks, shell_init.as_deref());
         // Installers can update PATH after the GUI process started. New shells must
         // see the same Git/GitHub CLI executables that Core just detected.
@@ -117,7 +121,18 @@ impl TerminalSession {
                 return Err(Error::Terminal(format!("start terminal shell: {error}")));
             }
         };
-        let pid = child.process_id().unwrap_or_default();
+        let pid = match require_pid(child.process_id()) {
+            Ok(pid) => pid,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                #[cfg(unix)]
+                if let Some(path) = &shell_init {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        };
         if let Err(error) = oxide_provider::process::attach_running_to_job(pid) {
             let _ = child.kill();
             let _ = child.wait();
@@ -165,7 +180,7 @@ impl TerminalSession {
                         #[cfg(unix)]
                         {
                             // Interactive shells ignore SIGTERM but hang up on SIGHUP.
-                            unsafe { libc::kill(-process_group, libc::SIGHUP) };
+                            let _ = signal_group(process_group, libc::SIGHUP);
                             terminate_group(process_group, SHUTDOWN_GRACE, || {
                                 let _ = child.try_wait();
                             });
@@ -319,7 +334,7 @@ fn write_terminal_input(
                 && if process_group == shell_pid {
                     interrupt_session_processes(shell_pid)
                 } else {
-                    (unsafe { libc::kill(-process_group, libc::SIGINT) }) == 0
+                    signal_group(process_group, libc::SIGINT).is_ok()
                 }
         });
         if !signaled {
@@ -333,7 +348,10 @@ fn write_terminal_input(
 
 #[cfg(unix)]
 fn interrupt_session_processes(session_id: i32) -> bool {
-    let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() else {
+    let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+        .args(["-A", "-o", "pid="])
+        .output()
+    else {
         return false;
     };
     let mut interrupted = false;
@@ -341,8 +359,8 @@ fn interrupt_session_processes(session_id: i32) -> bool {
         let Ok(pid) = line.trim().parse::<i32>() else {
             continue;
         };
-        if pid != session_id && unsafe { libc::getsid(pid) } == session_id {
-            interrupted |= unsafe { libc::kill(pid, libc::SIGTERM) } == 0;
+        if pid != session_id && session_of(pid) == Some(session_id) {
+            interrupted |= signal_process(pid, libc::SIGTERM).is_ok();
         }
     }
     interrupted
@@ -350,17 +368,42 @@ fn interrupt_session_processes(session_id: i32) -> bool {
 
 #[cfg(unix)]
 fn kill_session_processes(session_id: i32) {
-    if let Ok(output) = Command::new("ps").args(["-A", "-o", "pid="]).output() {
+    if let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+        .args(["-A", "-o", "pid="])
+        .output()
+    {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Ok(pid) = line.trim().parse::<i32>() {
-                let sid = unsafe { libc::getsid(pid) };
-                if sid == session_id {
-                    unsafe { libc::kill(pid, libc::SIGKILL) };
-                }
+            if let Ok(pid) = line.trim().parse::<i32>()
+                && session_of(pid) == Some(session_id)
+            {
+                let _ = signal_process(pid, libc::SIGKILL);
             }
         }
     }
-    unsafe { libc::kill(-session_id, libc::SIGKILL) };
+    let _ = signal_group(session_id, libc::SIGKILL);
+}
+
+/// The session id of `pid`, or `None` when it is gone or not a real process id.
+#[cfg(unix)]
+fn session_of(pid: i32) -> Option<i32> {
+    if pid < 2 {
+        return None;
+    }
+    // SAFETY: `getsid` takes a plain integer, touches no memory and only reports an error; `pid`
+    // is at least 2 so it never means the calling process (0).
+    let sid = unsafe { libc::getsid(pid) };
+    (sid >= 0).then_some(sid)
+}
+
+/// The shell's process id; a PTY child that has none (or reports 0) fails the start instead of
+/// letting 0 stand in as a process or group id.
+fn require_pid(pid: Option<u32>) -> Result<u32> {
+    match pid {
+        Some(pid) if pid > 0 => Ok(pid),
+        _ => Err(Error::Terminal(
+            "terminal shell has no process id".to_string(),
+        )),
+    }
 }
 
 impl Drop for TerminalSession {
@@ -409,11 +452,19 @@ fn shell_command(
 }
 
 #[cfg(unix)]
-fn create_shell_init_file(id: u32) -> Result<PathBuf> {
+fn create_shell_init_file(home: &Path, id: u32) -> Result<PathBuf> {
     use std::io::Write as _;
 
     static NEXT_INIT_FILE: AtomicU32 = AtomicU32::new(0);
-    let path = std::env::temp_dir().join(format!(
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    // In Oxide's private home, not the shared temp directory: any local account could otherwise
+    // plant or read a file there.
+    let dir = home.join("terminal");
+    crate::private::create_dir_all(&dir).map_err(|error| {
+        Error::Terminal(format!("create terminal shell init directory: {error}"))
+    })?;
+    let path = dir.join(format!(
         "oxide-terminal-{}-{id}-{}.bashrc",
         std::process::id(),
         NEXT_INIT_FILE.fetch_add(1, Ordering::Relaxed)
@@ -421,6 +472,7 @@ fn create_shell_init_file(id: u32) -> Result<PathBuf> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
+        .mode(0o600)
         .open(&path)
         .map_err(|error| Error::Terminal(format!("create terminal shell init file: {error}")))?;
     file.write_all(
@@ -467,4 +519,16 @@ fn read_output(
 
 pub fn next_id(counter: &AtomicU32) -> u32 {
     counter.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pty_child_without_a_pid_fails_the_start() {
+        assert!(matches!(require_pid(None), Err(Error::Terminal(_))));
+        assert!(matches!(require_pid(Some(0)), Err(Error::Terminal(_))));
+        assert_eq!(require_pid(Some(4242)).unwrap(), 4242);
+    }
 }

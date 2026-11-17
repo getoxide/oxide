@@ -65,7 +65,7 @@ fn claude_token(user_home: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok();
     #[cfg(target_os = "macos")]
     let raw = raw.or_else(|| {
-        let out = std::process::Command::new("security")
+        let out = std::process::Command::new(oxide_provider::command::os_tool("security"))
             .args([
                 "find-generic-password",
                 "-s",
@@ -85,29 +85,61 @@ fn claude_token(user_home: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+fn build_client(https_only: bool) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .https_only(https_only)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.without_url().to_string())
+}
+
+/// HTTPS only, redirects never followed: a bearer token must reach only the intended endpoint.
 fn http_client() -> Result<&'static reqwest::blocking::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
     CLIENT
-        .get_or_init(|| {
-            reqwest::blocking::Client::builder()
-                .timeout(HTTP_TIMEOUT)
-                .build()
-                .map_err(|e| e.to_string())
-        })
+        .get_or_init(|| build_client(true))
         .as_ref()
         .map_err(Clone::clone)
 }
 
+/// Short, fixed description of a transport failure. It never echoes the request: the URL, the
+/// headers and the token stay out of the error, and so out of logs.
+fn describe_transport_error(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "request timed out"
+    } else if e.is_connect() {
+        "connection failed"
+    } else if e.is_builder() {
+        "request refused (HTTPS required)"
+    } else if e.is_decode() {
+        "invalid response body"
+    } else {
+        "request failed"
+    }
+}
+
 fn http_get_json(url: &str, headers: &[(&str, String)]) -> Result<Value, String> {
-    let mut req = http_client()?.get(url);
+    get_json_with(http_client()?, url, headers)
+}
+
+fn get_json_with(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    headers: &[(&str, String)],
+) -> Result<Value, String> {
+    let mut req = client.get(url);
     for (k, v) in headers {
         req = req.header(*k, v);
     }
-    let resp = req.send().map_err(|e| e.to_string())?;
+    let resp = req
+        .send()
+        .map_err(|e| describe_transport_error(&e).to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json().map_err(|e| e.to_string())
+    resp.json()
+        .map_err(|e| describe_transport_error(&e).to_string())
 }
 
 fn fetch_claude(user_home: &Path) -> Result<Vec<UsageWindow>, String> {
@@ -389,17 +421,82 @@ pub(crate) fn spawn(hub: Arc<UsageHub>, user_home: PathBuf) -> PollerHandle {
                 }
             }
         })
-        .expect("failed to spawn usage-poll thread");
-    PollerHandle {
-        stop_tx,
-        handle: Some(handle),
-    }
+        .map_err(|e| eprintln!("failed to spawn usage-poll thread: {e}"))
+        .ok();
+    PollerHandle { stop_tx, handle }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    const FAKE_TOKEN: &str = "fake-token-0123456789-not-a-credential";
+
+    fn auth_headers() -> Vec<(&'static str, String)> {
+        vec![("Authorization", format!("Bearer {FAKE_TOKEN}"))]
+    }
+
+    /// Serves one canned response and reports whether (and what) a request arrived.
+    fn serve_once(response: String) -> (String, std::thread::JoinHandle<Option<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok((mut sock, _)) = listener.accept() {
+                    sock.set_nonblocking(false).unwrap();
+                    let mut buf = [0u8; 4096];
+                    let n = sock.read(&mut buf).unwrap_or(0);
+                    let _ = sock.write_all(response.as_bytes());
+                    return Some(String::from_utf8_lossy(&buf[..n]).into_owned());
+                }
+                if std::time::Instant::now() > deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        (url, h)
+    }
+
+    #[test]
+    fn plain_http_is_refused_without_sending_anything() {
+        let (url, server) = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".into());
+        let err = http_get_json(&url, &auth_headers()).unwrap_err();
+        assert!(err.contains("HTTPS"), "{err}");
+        assert!(!err.contains(FAKE_TOKEN), "{err}");
+        assert!(server.join().unwrap().is_none(), "no request must be sent");
+    }
+
+    #[test]
+    fn failing_request_error_has_no_token_or_authorization_header() {
+        let client = build_client(false).unwrap();
+        // Nothing listens on port 1: the request fails at connect time.
+        let err = get_json_with(&client, "http://127.0.0.1:1/", &auth_headers()).unwrap_err();
+        assert!(!err.contains(FAKE_TOKEN), "{err}");
+        assert!(!err.to_ascii_lowercase().contains("authorization"), "{err}");
+        assert!(!err.contains("Bearer"), "{err}");
+    }
+
+    #[test]
+    fn redirect_is_not_followed() {
+        let (target, target_server) =
+            serve_once("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".into());
+        let (url, server) = serve_once(format!(
+            "HTTP/1.1 302 Found\r\nlocation: {target}\r\ncontent-length: 0\r\n\r\n"
+        ));
+        let client = build_client(false).unwrap();
+        let err = get_json_with(&client, &url, &auth_headers()).unwrap_err();
+        assert_eq!(err, "HTTP 302 Found");
+        assert!(server.join().unwrap().is_some());
+        assert!(
+            target_server.join().unwrap().is_none(),
+            "the redirect target must not be contacted"
+        );
+    }
 
     #[test]
     fn claude_percent_is_not_rescaled() {

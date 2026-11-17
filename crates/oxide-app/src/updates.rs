@@ -242,11 +242,58 @@ fn applescript_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// System helpers the macOS updater runs, by absolute path so nothing earlier on `PATH` (the
+/// login shell's `PATH` is merged in at startup) can shadow them.
+#[cfg(any(target_os = "macos", test))]
+mod helpers {
+    pub const HDIUTIL: &str = "/usr/bin/hdiutil";
+    pub const DITTO: &str = "/usr/bin/ditto";
+    pub const XATTR: &str = "/usr/bin/xattr";
+    pub const OSASCRIPT: &str = "/usr/bin/osascript";
+    pub const TOUCH: &str = "/usr/bin/touch";
+    pub const MV: &str = "/bin/mv";
+    pub const RM: &str = "/bin/rm";
+}
+
+/// Shell script for the privileged install. It copies from the read-only mounted image, inside
+/// the privileged shell, so nothing unprivileged can change what is installed after the
+/// signature check. On failure the previous bundle is put back.
+#[cfg(any(target_os = "macos", test))]
+fn privileged_install_script(source: &str, target: &str, backup: &str) -> String {
+    use helpers::{DITTO, MV, RM, XATTR};
+    install_script_with([MV, DITTO, XATTR, RM], source, target, backup)
+}
+
+/// The script body with the four helpers (`mv`, `ditto`, `xattr`, `rm`) injected, so a test can
+/// run the real control flow against harmless stand-ins.
+///
+/// The first `mv` must succeed before anything else is touched: if it fails, the installed
+/// bundle is still where it was and the script just stops. Only a failure after the bundle
+/// was moved aside removes the partial copy and puts the backup back.
+#[cfg(any(target_os = "macos", test))]
+fn install_script_with(
+    [mv, ditto, xattr, rm]: [&str; 4],
+    source: &str,
+    target: &str,
+    backup: &str,
+) -> String {
+    let (s, t, b) = (
+        shell_quote(source),
+        shell_quote(target),
+        shell_quote(backup),
+    );
+    format!(
+        "{mv} {t} {b} || exit 1; \
+         ( {ditto} {s} {t} && {xattr} -dr com.apple.quarantine {t} ) \
+         || {{ {rm} -rf {t}; {mv} {b} {t}; exit 1; }}"
+    )
+}
+
 #[cfg(target_os = "macos")]
 mod macos_dmg {
-    use super::{applescript_string, find_app_bundle, shell_quote};
+    use super::{applescript_string, find_app_bundle, helpers, privileged_install_script};
     use std::fs;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -262,7 +309,7 @@ mod macos_dmg {
             for attempt in 0..16u32 {
                 let path =
                     parent.join(format!("{prefix}-{}-{nanos}-{attempt}", std::process::id()));
-                match fs::create_dir(&path) {
+                match fs::DirBuilder::new().mode(0o700).create(&path) {
                     Ok(()) => return Ok(Self(path)),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(e) => return Err(format!("Failed to create temporary directory: {e}")),
@@ -282,11 +329,19 @@ mod macos_dmg {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn new_scoped_dir_for_test(parent: &Path) -> PathBuf {
+        let dir = ScopedDir::new_in(parent, "oxide-update-test").unwrap();
+        let path = dir.0.clone();
+        std::mem::forget(dir);
+        path
+    }
+
     struct MountedDmg(PathBuf);
 
     impl Drop for MountedDmg {
         fn drop(&mut self) {
-            let _ = Command::new("hdiutil")
+            let _ = Command::new(helpers::HDIUTIL)
                 .args(["detach", "-force"])
                 .arg(&self.0)
                 .status();
@@ -333,16 +388,17 @@ mod macos_dmg {
         Ok(())
     }
 
-    fn run_privileged_replace(target: &Path, staged: &Path, backup: &Path) -> Result<(), String> {
-        let t = shell_quote(&target.to_string_lossy());
-        let s = shell_quote(&staged.to_string_lossy());
-        let b = shell_quote(&backup.to_string_lossy());
-        let script = format!("mv {t} {b} && mv {s} {t} || {{ mv {b} {t}; exit 1; }}");
+    fn run_privileged_install(source: &Path, target: &Path, backup: &Path) -> Result<(), String> {
+        let script = privileged_install_script(
+            &source.to_string_lossy(),
+            &target.to_string_lossy(),
+            &backup.to_string_lossy(),
+        );
         let apple_script = format!(
             "do shell script {} with administrator privileges",
             applescript_string(&script)
         );
-        let out = Command::new("osascript")
+        let out = Command::new(helpers::OSASCRIPT)
             .args(["-e", &apple_script])
             .output()
             .map_err(|e| format!("Failed to request administrator privileges: {e}"))?;
@@ -355,6 +411,48 @@ mod macos_dmg {
             });
         }
         Ok(())
+    }
+
+    enum InstallError {
+        PermissionDenied,
+        Failed(String),
+    }
+
+    fn stage_and_replace(
+        source_app: &Path,
+        target: &Path,
+        staged_app: &Path,
+        backup_app: &Path,
+    ) -> Result<(), InstallError> {
+        let copy = Command::new(helpers::DITTO)
+            .arg(source_app)
+            .arg(staged_app)
+            .output()
+            .map_err(|e| {
+                InstallError::Failed(format!("Failed to copy updated application: {e}"))
+            })?;
+        if !copy.status.success() {
+            let stderr = String::from_utf8_lossy(&copy.stderr).trim().to_string();
+            return Err(InstallError::Failed(format!(
+                "Failed to copy updated application: {stderr}"
+            )));
+        }
+        let _ = Command::new(helpers::XATTR)
+            .args(["-dr", "com.apple.quarantine"])
+            .arg(staged_app)
+            .output();
+        fs::set_permissions(staged_app, fs::Permissions::from_mode(0o755)).map_err(|e| {
+            InstallError::Failed(format!("Failed to set application permissions: {e}"))
+        })?;
+        match replace_bundle(target, staged_app, backup_app) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                Err(InstallError::PermissionDenied)
+            }
+            Err(e) => Err(InstallError::Failed(format!(
+                "Failed to install updated application: {e}"
+            ))),
+        }
     }
 
     pub(super) fn install(bytes: &[u8]) -> Result<(), String> {
@@ -371,7 +469,7 @@ mod macos_dmg {
             .map_err(|e| format!("Failed to write update disk image: {e}"))?;
 
         let mount_dir = ScopedDir::new_in(&sys_tmp, "oxide-update-mnt")?;
-        let attach = Command::new("hdiutil")
+        let attach = Command::new(helpers::HDIUTIL)
             .args([
                 "attach",
                 "-nobrowse",
@@ -394,33 +492,20 @@ mod macos_dmg {
         let stage_dir = ScopedDir::new_in(&volume_root, "oxide-update-stage")?;
         let backup_dir = ScopedDir::new_in(&volume_root, "oxide-update-backup")?;
         let staged_app = stage_dir.path().join("Oxide.app");
-
-        let copy = Command::new("ditto")
-            .arg(&source_app)
-            .arg(&staged_app)
-            .output()
-            .map_err(|e| format!("Failed to copy updated application: {e}"))?;
-        if !copy.status.success() {
-            let stderr = String::from_utf8_lossy(&copy.stderr).trim().to_string();
-            return Err(format!("Failed to copy updated application: {stderr}"));
-        }
-        let _ = Command::new("xattr")
-            .args(["-dr", "com.apple.quarantine"])
-            .arg(&staged_app)
-            .output();
-        fs::set_permissions(&staged_app, fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("Failed to set application permissions: {e}"))?;
-
         let backup_app = backup_dir.path().join("Oxide.app");
-        match replace_bundle(&target, &staged_app, &backup_app) {
+
+        match stage_and_replace(&source_app, &target, &staged_app, &backup_app) {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                run_privileged_replace(&target, &staged_app, &backup_app)?;
+            Err(InstallError::PermissionDenied) => {
+                // Copy from the mounted image inside the privileged script: the user-writable
+                // staged copy is never what gets installed.
+                let _ = fs::remove_dir_all(&staged_app);
+                run_privileged_install(&source_app, &target, &backup_app)?;
             }
-            Err(e) => return Err(format!("Failed to install updated application: {e}")),
+            Err(InstallError::Failed(message)) => return Err(message),
         }
 
-        let _ = Command::new("touch").arg(&target).status();
+        let _ = Command::new(helpers::TOUCH).arg(&target).status();
         Ok(())
     }
 }
@@ -465,5 +550,117 @@ mod tests {
             applescript_string("echo \"hi\" \\"),
             "\"echo \\\"hi\\\" \\\\\""
         );
+    }
+    #[test]
+    fn helpers_are_absolute_paths() {
+        for tool in [
+            helpers::HDIUTIL,
+            helpers::DITTO,
+            helpers::XATTR,
+            helpers::OSASCRIPT,
+            helpers::TOUCH,
+            helpers::MV,
+            helpers::RM,
+        ] {
+            assert!(
+                tool.starts_with("/usr/bin/") || tool.starts_with("/bin/"),
+                "{tool}"
+            );
+        }
+    }
+    #[test]
+    fn privileged_script_copies_from_the_image_and_quotes_both_quote_kinds() {
+        let target = "/Applications/O'Br\"ien.app";
+        let script = privileged_install_script("/mnt/Oxide.app", target, "/b/Oxide.app");
+        let quoted = shell_quote(target);
+        assert_eq!(quoted, "'/Applications/O'\\''Br\"ien.app'");
+        assert!(script.contains(&format!("{} '/mnt/Oxide.app' {quoted}", helpers::DITTO)));
+        assert!(!script.contains("stage"));
+        // The AppleScript layer escapes every double quote, so none survives unescaped.
+        let wrapped = applescript_string(&script);
+        let inner = &wrapped[1..wrapped.len() - 1];
+        assert!(!inner.replace("\\\\", "").replace("\\\"", "").contains('"'));
+    }
+    /// Runs the script text with `/bin/sh` and stand-in helpers: `mv` and `rm` are the real
+    /// ones (on temp paths), `ditto` and `xattr` are shell functions that succeed or fail.
+    #[cfg(unix)]
+    fn run_install_script(mv: &str, ditto: &str, xattr: &str) -> (bool, bool, bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Oxide.app");
+        let backup = dir.path().join("backup.app");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("marker"), "installed").unwrap();
+        let tools = dir.path().join("tools");
+        std::fs::create_dir(&tools).unwrap();
+        let tool = |name: &str, body: &str| {
+            use std::os::unix::fs::PermissionsExt;
+            let path = tools.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let mv = tool("mv", mv);
+        let ditto = tool("ditto", ditto);
+        let xattr = tool("xattr", xattr);
+        let script = install_script_with(
+            [&mv, &ditto, &xattr, "/bin/rm"],
+            "/nonexistent/source.app",
+            &target.to_string_lossy(),
+            &backup.to_string_lossy(),
+        );
+        let ok = std::process::Command::new("/bin/sh")
+            .args(["-c", &script])
+            .status()
+            .unwrap()
+            .success();
+        (ok, target.join("marker").exists(), backup.exists())
+    }
+
+    #[cfg(unix)]
+    const REAL_MV: &str = "/bin/mv \"$@\"";
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_first_move_leaves_the_installed_app_alone() {
+        let (ok, installed_survives, _) = run_install_script("exit 1", "exit 0", "exit 0");
+        assert!(!ok);
+        assert!(installed_survives, "the installed app was deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_copy_puts_the_previous_app_back() {
+        let (ok, installed_survives, backup_left) = run_install_script(REAL_MV, "exit 1", "exit 0");
+        assert!(!ok);
+        assert!(installed_survives, "the previous app was not restored");
+        assert!(!backup_left);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_quarantine_removal_puts_the_previous_app_back() {
+        let (ok, installed_survives, _) = run_install_script(REAL_MV, "exit 0", "exit 1");
+        assert!(!ok);
+        assert!(installed_survives);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_good_install_succeeds_and_keeps_the_backup() {
+        // The stand-in ditto creates nothing, so the target is gone and the backup holds the old app.
+        let (ok, installed_survives, backup_left) = run_install_script(REAL_MV, "exit 0", "exit 0");
+        assert!(ok);
+        assert!(!installed_survives);
+        assert!(backup_left);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn staging_folders_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = macos_dmg::new_scoped_dir_for_test(&std::env::temp_dir());
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(mode, 0o700);
     }
 }

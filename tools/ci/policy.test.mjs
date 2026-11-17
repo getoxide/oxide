@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkUpdateFeed, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
-  downloadsSection, localPlan, previousReleaseTag, releaseNotes, updateManifest,
+  ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes, updateManifest,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -498,10 +498,16 @@ describe("localPlan", () => {
     for (const { reason } of plan.skipped) assert.ok(reason.length > 0);
   });
 
-  test("fast has only rustfmt, ESLint and TypeScript, on every platform", () => {
+  test("fast has only rustfmt, the process-builder check, ESLint and TypeScript, on every platform", () => {
     for (const platform of ["darwin", "win32", "linux"]) {
-      assert.deepEqual(lines(localPlan(platform, "fast")), ["cargo fmt --all --check", "pnpm --dir web lint", "pnpm --dir web typecheck"]);
+      assert.deepEqual(lines(localPlan(platform, "fast")), [
+        "cargo fmt --all --check", "node tools/checks/process-builders.mjs", "pnpm --dir web lint", "pnpm --dir web typecheck",
+      ]);
     }
+  });
+
+  test("the full tier checks that Git and gh start only in the hardened builders", () => {
+    for (const platform of ["darwin", "win32", "linux"]) assert.ok(lines(localPlan(platform)).includes("node tools/checks/process-builders.mjs"), platform);
   });
 
   test("an unknown platform or tier fails", () => {
@@ -541,5 +547,42 @@ describe("downloadsSection", () => {
 
   test("is empty when there is no installer", () => {
     assert.equal(downloadsSection(["notes.txt"]), "");
+  });
+});
+
+describe("ADVISORY_SCANS", () => {
+  const read = (name) => readFileSync(fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)), "utf8");
+  const needs = (workflow, job) => {
+    const block = workflow.split(/^ {2}(?=[a-z][\w-]*:$)/m).find((part) => part.startsWith(`${job}:`)) ?? "";
+    return block.match(/^ {4}needs: (.+)$/m)?.[1] ?? "";
+  };
+
+  test("covers both Rust and JavaScript, at the severity the release refuses", () => {
+    assert.deepEqual(ADVISORY_SCANS.map(({ id }) => id), ["cargo-deny-advisories", "pnpm-audit"]);
+    assert.ok(ADVISORY_SCANS.some(({ command }) => commandLine(command) === "pnpm --dir web audit --prod --audit-level high"));
+    assert.ok(ADVISORY_SCANS.some(({ command }) => commandLine(command) === "cargo deny --locked check advisories"));
+  });
+
+  test("the daily workflow and the release workflow run every scan", () => {
+    for (const name of ["advisories.yml", "release.yml"]) {
+      const workflow = read(name);
+      for (const { command } of ADVISORY_SCANS) assert.ok(workflow.includes(commandLine(command)), `${commandLine(command)} is not in ${name}`);
+    }
+  });
+
+  test("a release cannot build until both scans pass", () => {
+    const release = read("release.yml");
+    const build = needs(release, "build");
+    assert.match(build, /verify/);
+    for (const job of ["audit-rust", "audit-js"]) {
+      assert.match(release, new RegExp(`^ {2}${job}:$`, "m"));
+      assert.match(build, new RegExp(job));
+    }
+  });
+
+  test("the daily workflow tracks JavaScript findings in an issue like the Rust ones", () => {
+    const advisories = read("advisories.yml");
+    assert.match(advisories, /^ {2}pnpm-audit:$/m);
+    assert.match(advisories, /Security advisories found in JavaScript dependencies/);
   });
 });

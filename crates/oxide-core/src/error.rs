@@ -23,6 +23,10 @@ pub enum Error {
     Github(String),
     #[error("{0}")]
     Editor(String),
+    /// A link from repository content to a host outside the allowlist: the UI shows the host
+    /// and asks before opening it. The prefix is matched by the webview.
+    #[error("Unlisted link host: {host}")]
+    UnlistedLinkHost { host: String },
     #[error("provider error: {0}")]
     Provider(String),
     #[error("{0}")]

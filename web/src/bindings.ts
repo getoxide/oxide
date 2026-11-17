@@ -129,6 +129,8 @@ export const commands = {
 	setEditorDirty: (id: string, dirty: boolean) => __TAURI_INVOKE<void>("set_editor_dirty", { id, dirty }),
 	runTerminalBlock: (terminalId: number, command: string, token: string) => typedError<null, AppError>(__TAURI_INVOKE("run_terminal_block", { terminalId, command, token })),
 	completeTerminal: (terminalId: number, line: string, cursor: number, cwd: string) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor, cwd })),
+	/**  Opens a link whose host the user confirmed after `open_link` refused it as unlisted. */
+	openConfirmedLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_confirmed_link", { url })),
 	configureLanguageServer: (language: string, config: LanguageServerConfig_Deserialize) => typedError<null, AppError>(__TAURI_INVOKE("configure_language_server", { language, config })),
 	startLanguageServer: (projectId: number, threadId: number | null, language: string, onMessage: Channel<string>) => typedError<LanguageServer, AppError>(__TAURI_INVOKE("start_language_server", { projectId, threadId, language, onMessage })),
 	languageServerMessage: (id: number, message: string) => typedError<null, AppError>(__TAURI_INVOKE("language_server_message", { id, message })),
@@ -199,8 +201,13 @@ export const commands = {
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
 	/**  Checks the pull request's branch out in a Thread's checkout (`None`: the main one). */
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
-	/**  Opens a GitHub link, such as a check's run, in the system browser. */
-	openLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_link", { url })),
+	/**
+	 *  Opens a GitHub link, such as a check's run, in the system browser. A well-formed link
+	 *  outside GitHub and the fixed documentation is not opened: the answer is `Some(host)` (with
+	 *  the port, if any) for the webview to confirm with the user, then `open_confirmed_link`.
+	 *  `None` means the link was opened.
+	 */
+	openLink: (url: string) => typedError<string | null, AppError>(__TAURI_INVOKE("open_link", { url })),
 	/**
 	 *  Opens a localhost URL detected in a Project Service's log in the system browser. Only
 	 *  loopback `http` addresses are accepted; the webview never opens pages itself.

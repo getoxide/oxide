@@ -365,11 +365,23 @@ const OS_NAMES = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 const EVERY_OS = Object.keys(OS_NAMES);
 const CI_JOB_ONLY = (job, what) => `CI only: the ${job} job ${what}`;
 
+/**
+ * The advisory scans: run daily by advisories.yml (which tracks findings in an
+ * issue) and as a gate before a release builds. Not PR checks: a new advisory
+ * against an untouched dependency would block unrelated work.
+ */
+export const ADVISORY_SCANS = [
+  { id: "cargo-deny-advisories", command: ["cargo", "deny", "--locked", "check", "advisories"] },
+  { id: "pnpm-audit", command: ["pnpm", "--dir", "web", "audit", "--prod", "--audit-level", "high"] },
+];
+
 // What the PR lanes run, in the order the local runner runs it. A check with
 // `ci` instead of a command needs a tool or context that only CI has.
 const CHECKS = [
   { id: "web-install", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "install", "--frozen-lockfile"] },
   { id: "rust-fmt", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["cargo", "fmt", "--all", "--check"] },
+  // ADR-0016: Git and gh start only in the hardened builders. Pure Node, so it is cheap enough for `fast`.
+  { id: "process-builders", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/process-builders.mjs"] },
   { id: "web-lint", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "lint"] },
   { id: "web-typecheck", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "typecheck"] },
   { id: "web-test", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "test"] },

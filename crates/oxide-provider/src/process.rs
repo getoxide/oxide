@@ -3,7 +3,6 @@
 //! disk so a crashed Oxide's orphans can be killed on the next launch.
 
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
@@ -20,30 +19,47 @@ pub const STDERR_TAIL_LINES: usize = 20;
 
 /// Drains a child's piped stderr on a background thread so verbose output cannot fill the OS
 /// pipe buffer and deadlock the child. Returns up to the last `STDERR_TAIL_LINES` lines.
+/// Unwraps a stdio handle that was configured as piped. A missing pipe kills the child (it
+/// would otherwise run unattended) and becomes a start error instead of a panic.
+pub fn require_pipe<T>(
+    pipe: Option<T>,
+    child: &mut Child,
+    name: &str,
+) -> Result<T, crate::ProviderError> {
+    pipe.ok_or_else(|| {
+        let _ = child.kill();
+        crate::ProviderError::StartFailed(format!("child {name} was not piped"))
+    })
+}
+
 pub fn drain_stderr(stderr: std::process::ChildStderr) -> std::thread::JoinHandle<Option<String>> {
     std::thread::spawn(move || {
+        use crate::bounded_lines::{BoundedLines, LOG_LINE_CAP, is_line_too_long};
         use std::collections::VecDeque;
-        use std::io::{BufRead, BufReader};
+        use std::io::BufReader;
 
         let mut reader = BufReader::new(stderr);
         let mut tail = VecDeque::with_capacity(STDERR_TAIL_LINES);
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    while matches!(buf.last(), Some(b'\n' | b'\r')) {
-                        buf.pop();
+        let mut push = |line: String| {
+            if tail.len() == STDERR_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        };
+        let mut lines = BoundedLines::new(&mut reader, LOG_LINE_CAP);
+        for line in lines.by_ref() {
+            match line {
+                Ok(line) => push(line),
+                Err(error) => {
+                    if is_line_too_long(&error) {
+                        push(format!("[stderr line over {LOG_LINE_CAP} bytes discarded]"));
                     }
-                    let line = String::from_utf8_lossy(&buf).into_owned();
-                    if tail.len() == STDERR_TAIL_LINES {
-                        tail.pop_front();
-                    }
-                    tail.push_back(line);
+                    break;
                 }
             }
         }
+        // Keep emptying the pipe so a chatty child never blocks on it, without keeping anything.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
         let joined = tail.into_iter().collect::<Vec<_>>().join("\n");
         (!joined.is_empty()).then_some(joined)
     })
@@ -79,14 +95,70 @@ pub fn spawn_in_own_group(command: &mut Command) -> &mut Command {
     command
 }
 
+/// Smallest process id or group id Oxide will ever signal. Group 0 is Oxide's own group,
+/// `kill(-1, ..)` reaches every process of the user, and 1 is init: all of them are refused.
+#[cfg(unix)]
+const MIN_SIGNAL_TARGET: i32 = 2;
+
+/// Sends `signal` to every process of group `pgid`. This is the only place that signals a group:
+/// ids of 1 or less (0, 1, negatives) fail with `InvalidInput` and nothing is sent.
+#[cfg(unix)]
+pub fn signal_group(pgid: i32, signal: i32) -> std::io::Result<()> {
+    if pgid < MIN_SIGNAL_TARGET {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to signal process group {pgid}"),
+        ));
+    }
+    // SAFETY: `kill` takes plain integers and touches no memory. `pgid` is at least 2, so the
+    // negated value targets one specific process group and never 0, -1 or init's group.
+    if unsafe { libc::kill(-pgid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Sends `signal` to the single process `pid`; ids of 1 or less fail with `InvalidInput`.
+#[cfg(unix)]
+pub fn signal_process(pid: i32, signal: i32) -> std::io::Result<()> {
+    if pid < MIN_SIGNAL_TARGET {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to signal process {pid}"),
+        ));
+    }
+    // SAFETY: `kill` takes plain integers and touches no memory. `pid` is at least 2, so it
+    // names one specific process and never a group, every process (-1) or init.
+    if unsafe { libc::kill(pid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Ends group `pgid` at once without waiting for it; used when its stdout turned hostile.
+pub fn kill_group(pgid: i32) {
+    #[cfg(unix)]
+    {
+        let _ = signal_group(pgid, libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    terminate_group(pgid, Duration::ZERO, || {});
+    #[cfg(not(any(unix, windows)))]
+    let _ = pgid;
+}
+
 /// Whether any process of group `pgid` still exists (zombies included).
 #[cfg(unix)]
 pub fn group_alive(pgid: i32) -> bool {
     if pgid <= 0 {
         return false;
     }
-    let rc = unsafe { libc::kill(-pgid, 0) };
-    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    match signal_group(pgid, 0) {
+        Ok(()) => true,
+        Err(error) => error.raw_os_error() == Some(libc::EPERM),
+    }
 }
 
 #[cfg(windows)]
@@ -107,7 +179,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
     if pgid <= 0 {
         return;
     }
-    unsafe { libc::kill(-pgid, libc::SIGTERM) };
+    let _ = signal_group(pgid, libc::SIGTERM);
     let deadline = Instant::now() + grace;
     let mut killed = false;
     loop {
@@ -116,7 +188,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
             return;
         }
         if !killed && Instant::now() >= deadline {
-            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            let _ = signal_group(pgid, libc::SIGKILL);
             killed = true;
         }
         // After SIGKILL the group dies at once; this bound only guards against uninterruptible
@@ -297,20 +369,35 @@ impl ProcessRegistry {
             return;
         };
         let tmp = self.path.with_extension("json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
+        if write_private(&tmp, &json).is_ok() {
             let _ = std::fs::rename(&tmp, &self.path);
         }
     }
+}
+
+/// Writes `bytes` to `path`; on Unix a new file is `0600`, like the rest of Oxide's home.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(bytes)
 }
 
 /// Whether `pid` leads its own process group and its command line starts with `executable`
 /// (directly, or as the script of an interpreter such as `node claude`).
 #[cfg(unix)]
 fn leader_runs(pid: i32, executable: &str, _identity: Option<&ProcessIdentity>) -> bool {
+    // SAFETY: `getpgid` takes a plain integer, touches no memory and only reports an error.
     if pid <= 0 || unsafe { libc::getpgid(pid) } != pid {
         return false;
     }
-    let Ok(output) = Command::new("ps")
+    let Ok(output) = Command::new(crate::command::os_tool("ps"))
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
     else {
@@ -390,6 +477,9 @@ mod windows_process {
         {
             return Ok(());
         }
+        // SAFETY: every Win32 call in this block gets a handle created here, is checked for
+        // null or failure before use, and the handles are closed on every exit path. The zeroed
+        // limits struct is plain C data that is fully initialised before it is passed in.
         unsafe {
             let job = CreateJobObjectW(null(), null());
             if job.is_null() {
@@ -445,21 +535,29 @@ mod windows_process {
         }
     }
 
+    /// # Safety
+    ///
+    /// `job` must be a live job object handle.
     unsafe fn attach_existing_descendants(root_pid: u32, job: HANDLE) -> io::Result<()> {
         let mut attached = HashSet::from([root_pid]);
         loop {
+            // SAFETY: plain flags and a pid; the snapshot handle is checked before use.
             let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
             if snapshot == -1_isize as HANDLE {
                 return Err(io::Error::last_os_error());
             }
+            // SAFETY: `PROCESSENTRY32W` is plain C data for which all-zero is valid.
             let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
             entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
             let mut parents = Vec::new();
+            // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
             let mut found = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
             while found {
                 parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+                // SAFETY: same as above.
                 found = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
             }
+            // SAFETY: `snapshot` is a valid handle that is closed exactly once.
             unsafe { CloseHandle(snapshot) };
 
             let mut descendants = HashSet::new();
@@ -481,6 +579,7 @@ mod windows_process {
                 .collect::<Vec<_>>()
             {
                 attached.insert(pid);
+                // SAFETY: `OpenProcess` takes plain values; a null result is handled below.
                 let process = unsafe {
                     OpenProcess(
                         PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -492,10 +591,13 @@ mod windows_process {
                     continue;
                 }
                 let mut already_in_job = 0;
+                // SAFETY: `process` is a valid, non-null handle and `job` is the caller's live job.
                 let checked = unsafe { IsProcessInJob(process, job, &mut already_in_job) } != 0;
                 let assigned = checked
                     && (already_in_job != 0
+                        // SAFETY: same handles as the check above.
                         || unsafe { AssignProcessToJobObject(job, process) } != 0);
+                // SAFETY: `process` is a valid handle that is closed exactly once.
                 unsafe { CloseHandle(process) };
                 added |= assigned;
             }
@@ -505,22 +607,30 @@ mod windows_process {
         }
     }
 
+    /// # Safety
+    ///
+    /// `pid` must name a process created suspended by this module.
     unsafe fn resume_primary_thread(pid: u32) -> io::Result<()> {
+        // SAFETY: plain flags and a pid; the snapshot handle is checked before use.
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
         if snapshot == -1_isize as HANDLE {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `THREADENTRY32` is plain C data for which all-zero is valid.
         let mut entry: THREADENTRY32 = unsafe { zeroed() };
         entry.dwSize = size_of::<THREADENTRY32>() as u32;
         let mut thread_id = None;
+        // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
         let mut found = unsafe { Thread32First(snapshot, &mut entry) } != 0;
         while found {
             if entry.th32OwnerProcessID == pid {
                 thread_id = Some(entry.th32ThreadID);
                 break;
             }
+            // SAFETY: same as above.
             found = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
         }
+        // SAFETY: `snapshot` is a valid handle that is closed exactly once.
         unsafe { CloseHandle(snapshot) };
         let Some(thread_id) = thread_id else {
             return Err(io::Error::new(
@@ -528,12 +638,15 @@ mod windows_process {
                 "suspended process thread was not found",
             ));
         };
+        // SAFETY: `OpenThread` takes plain values; a null result is handled just below.
         let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id) };
         if thread.is_null() {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `thread` is a valid, non-null handle.
         let resumed = unsafe { ResumeThread(thread) } != u32::MAX;
         let error = (!resumed).then(io::Error::last_os_error);
+        // SAFETY: `thread` is a valid handle that is closed exactly once.
         unsafe { CloseHandle(thread) };
         error.map_or(Ok(()), Err)
     }
@@ -545,6 +658,8 @@ mod windows_process {
         let jobs = jobs().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(&job) = jobs.get(&pid) {
             let job = job as HANDLE;
+            // SAFETY: `job` is a live job handle owned by the registry (guarded by the lock held
+            // here), and the zeroed accounting struct is plain C data the call fills in.
             unsafe {
                 let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = zeroed();
                 return QueryInformationJobObject(
@@ -557,6 +672,8 @@ mod windows_process {
                     && accounting.ActiveProcesses != 0;
             }
         }
+        // SAFETY: `OpenProcess` takes plain values; the handle is checked for null and closed
+        // once.
         unsafe {
             let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
             if process.is_null() {
@@ -579,9 +696,12 @@ mod windows_process {
             .copied();
         if let Some(job) = job {
             let job = job as HANDLE;
+            // SAFETY: `job` is a live job handle owned by the registry.
             unsafe { TerminateJobObject(job, 1) };
             return;
         }
+        // SAFETY: `OpenProcess` takes plain values; the handle is checked for null and closed
+        // once.
         unsafe {
             let process = OpenProcess(PROCESS_TERMINATE, 0, pid as u32);
             if !process.is_null() {
@@ -597,6 +717,7 @@ mod windows_process {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&pid)
         {
+            // SAFETY: the handle was just removed from the registry, so this is its only close.
             unsafe { CloseHandle(job as HANDLE) };
         }
     }
@@ -632,6 +753,8 @@ mod windows_process {
         if pid <= 0 {
             return None;
         }
+        // SAFETY: the handle is checked for null and closed once; the buffers outlive the calls
+        // and `length` holds the buffer size in characters, as the API requires.
         unsafe {
             let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
             if process.is_null() {
@@ -662,6 +785,10 @@ mod windows_process {
 }
 
 #[cfg(all(test, windows))]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test module: clippy only recognises plain cfg(test)"
+)]
 mod windows_tests {
     use super::*;
     use std::process::Stdio;
@@ -734,6 +861,10 @@ mod windows_tests {
 }
 
 #[cfg(all(test, unix))]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test module: clippy only recognises plain cfg(test)"
+)]
 mod tests {
     use super::*;
     use std::process::Stdio;
@@ -757,11 +888,33 @@ mod tests {
     }
 
     #[test]
+    fn signal_group_refuses_ids_that_would_reach_oxide_or_every_process() {
+        // Signal 0 only checks existence, so a regression here cannot hurt the test run.
+        for pgid in [0, 1, -1, -2, i32::MIN] {
+            let error = signal_group(pgid, 0).expect_err("must refuse");
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "pgid {pgid}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_process_refuses_ids_that_would_reach_every_process() {
+        for pid in [0, 1, -1, i32::MIN] {
+            let error = signal_process(pid, 0).expect_err("must refuse");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "pid {pid}");
+        }
+    }
+
+    #[test]
     fn child_leads_its_own_group() {
         let mut child = spawn_sleeper("sleep");
         let pid = child.id() as i32;
+        // SAFETY: `getpgid` takes a plain integer and touches no memory.
         assert_eq!(unsafe { libc::getpgid(pid) }, pid);
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
+        signal_group(pid, libc::SIGKILL).unwrap();
         assert!(wait_gone(pid, &mut child));
     }
 
@@ -823,7 +976,7 @@ mod tests {
 
         assert!(killed.is_empty());
         assert!(group_alive(pid));
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
+        signal_group(pid, libc::SIGKILL).unwrap();
         assert!(wait_gone(pid, &mut bystander));
     }
 
@@ -837,13 +990,20 @@ mod tests {
         registry.unregister(4_000_001);
 
         let next = ProcessRegistry::open(&path);
-        assert_eq!(next.state.lock().unwrap().stale.len(), 1);
+        assert_eq!(
+            next.state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stale
+                .len(),
+            1
+        );
         next.reap_stale();
         assert!(
             ProcessRegistry::open(&path)
                 .state
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .stale
                 .is_empty()
         );

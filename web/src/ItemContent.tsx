@@ -65,6 +65,7 @@ const CodeBlock = memo(function CodeBlock({
 
   if (html !== undefined) {
     // Shiki's output, generated from escaped source in our own worker.
+    // eslint-disable-next-line no-restricted-syntax -- documented HTML sink: Shiki output from escaped source.
     return <div className="code-block" dangerouslySetInnerHTML={{ __html: html }} />;
   }
   return (

@@ -137,7 +137,7 @@ How much a Thread's Provider may do without asking: Ask (every file edit and com
 _Avoid_: Sandbox, approval policy, trust level
 
 **Approval**:
-A Provider's request, during a Turn, for the user to allow or deny one action (a command, a file change, a tool call). A pending Approval puts the Thread in needs input and waits until answered or the Turn ends.
+A request, during a Turn, for the user to allow or deny one action (a command, a file change, a tool call). Raised by the Provider, or by Oxide when it would act on the Provider's behalf. A pending Approval puts the Thread in needs input and waits until answered or the Turn ends.
 _Avoid_: Permission prompt, confirmation
 
 **Usage limit**:

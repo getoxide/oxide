@@ -69,19 +69,20 @@ pub(crate) fn slugify(text: &str, fallback: &str) -> String {
 /// The first `slug`, `slug-2`, `slug-3`… that is neither a branch `oxide/<name>` nor a folder in
 /// `parent`.
 pub(crate) fn free_name(checkout: &Path, parent: &Path, slug: &str) -> String {
-    (1..)
-        .map(|n| {
-            if n == 1 {
-                slug.to_string()
-            } else {
-                format!("{slug}-{n}")
-            }
-        })
-        .find(|name| {
-            !parent.join(name).exists()
-                && !git::ref_exists(checkout, &format!("refs/heads/oxide/{name}"))
-        })
-        .expect("an unbounded range has a free name")
+    let mut n = 1u32;
+    loop {
+        let name = if n == 1 {
+            slug.to_string()
+        } else {
+            format!("{slug}-{n}")
+        };
+        if !parent.join(&name).exists()
+            && !git::ref_exists(checkout, &format!("refs/heads/oxide/{name}"))
+        {
+            return name;
+        }
+        n = n.saturating_add(1);
+    }
 }
 
 /// What deleting a Thread did.
@@ -102,13 +103,13 @@ struct SetupRun {
 fn setup_command(command: &str, worktree: &Path, project_root: &Path) -> Command {
     #[cfg(unix)]
     let mut cmd = {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new(oxide_provider::command::os_tool("sh"));
         cmd.arg("-c").arg(format!("exec 2>&1\n{command}"));
         cmd
     };
     #[cfg(windows)]
     let mut cmd = {
-        let mut cmd = Command::new("cmd");
+        let mut cmd = Command::new(oxide_provider::command::os_tool("cmd"));
         cmd.arg("/C").arg(format!("{command} 2>&1"));
         oxide_provider::process::hide_console(&mut cmd);
         cmd
@@ -284,7 +285,7 @@ impl Core {
             let name = free_name(root, &parent, slug);
             let branch = format!("oxide/{name}");
             let worktree = parent.join(&name);
-            git::run(
+            git::run_user_initiated(
                 root,
                 &[
                     "worktree",
@@ -489,7 +490,7 @@ impl Core {
                     source,
                 })?;
             }
-            git::run(
+            git::run_user_initiated(
                 root,
                 &["worktree", "add", "-q", &worktree.to_string_lossy(), rev],
             )?;

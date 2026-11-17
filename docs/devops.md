@@ -40,7 +40,7 @@ tag vX.Y.Z  (immutable once pushed)
                                                                                     (dmg, exe, AppImage, deb, rpm, notes, checksums; metadata/SBOM as run artifact)
 Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (publishes `latest.json` on `updater` branch)
 
-daily  ──► Advisories (RustSec) ──► one tracking issue on failure
+daily  ──► Advisories (RustSec + pnpm audit) ──► one tracking issue per ecosystem on failure
 weekly ──► Dependabot ──► auto-merge low-risk / `manual-review`
 ```
 
@@ -94,10 +94,10 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 
 ### `rust-fmt`
 
-- **What:** `cargo fmt --all --check`.
-- **Why:** mechanical, and it fails in seconds without waiting for a compile.
+- **What:** `cargo fmt --all --check`, then `node tools/checks/process-builders.mjs`, which fails on a `Command::new` of `git` or `gh` outside the hardened builders (`git_command.rs`, `github.rs`; integration tests under `tests/` are exempt). See [ADR-0016](adr/0016-security-boundaries.md).
+- **Why:** both are mechanical and fail in seconds without waiting for a compile. The builder check keeps a repository's own configuration from running programs on Oxide's behalf.
 - **When / where:** `rust` lane, Linux.
-- **Local:** `cargo fmt --all --check` (also in `fast`).
+- **Local:** `cargo fmt --all --check` and `node tools/checks/process-builders.mjs` (both also in `fast`).
 
 ### `rust (macos)`, `rust (windows)` and `rust (linux)`
 
@@ -189,7 +189,7 @@ nextest runs each test in its own process with the settings in [`.config/nextest
 
 Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
-1. **`verify`** (read-only): the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
+1. **`verify`**, **`audit-rust`** and **`audit-js`** (parallel, read-only). `audit-rust` runs `cargo deny --locked check advisories` and `audit-js` runs `pnpm --dir web audit --prod --audit-level high`; `build` needs all three. *Why:* a daily scan only finds an advisory within a day, and nothing else stopped a tag from shipping one; failing here means no signing secret is unlocked and nothing is built. A high advisory with no fix blocks the release until it is resolved. `verify`: the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
 2. **`build`** (all five platforms in parallel, `release: true`) waits for approval of the `release` environment.
 3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names and the updater signature stays valid, because it signs the content) for the release, attests build provenance for them, writes `latest.json`, `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
@@ -212,9 +212,9 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `advisories.yml` (Advisories)
 
-- **What:** daily (and on manual dispatch) `cargo deny check advisories` over the whole Rust tree. Yanked crates are denied; unmaintained crates are reported for direct dependencies only. On failure it opens, or comments on, one `needs-triage` tracking issue.
-- **Why not on PRs:** a new advisory against an untouched crate would block unrelated work. *Why on top of Dependabot alerts:* RustSec also reports unmaintained and yanked crates. npm needs no daily job: Dependabot alerts cover existing packages and dependency review covers new ones.
-- **Blocking:** no. **Local:** `cargo deny check advisories`.
+- **What:** daily (and on manual dispatch) two jobs. `cargo-deny` runs `cargo deny check advisories` over the whole Rust tree (yanked crates are denied; unmaintained crates are reported for direct dependencies only). `pnpm-audit` runs `pnpm --dir web audit --prod --audit-level high` over the production JavaScript dependencies. On failure each opens, or comments on, its own `needs-triage` tracking issue ("Security advisories found in Rust dependencies" or "... in JavaScript dependencies").
+- **Why not on PRs:** a new advisory against an untouched dependency would block unrelated work. *Why on top of Dependabot alerts:* RustSec also reports unmaintained and yanked crates, and a scheduled `pnpm audit` gives the JavaScript side the same tracking issue and the same release gate (see `release.yml`) instead of relying on alerts alone. The scans are listed in `ADVISORY_SCANS` in `policy.mjs`, and a test requires both workflows to run them.
+- **Blocking:** not for PRs; it does block a release (`audit-rust` and `audit-js` in `release.yml`). **Local:** `cargo deny --locked check advisories`, `pnpm --dir web audit --prod --audit-level high`.
 
 ### `dependabot-auto-merge.yml` (Dependabot auto-merge)
 

@@ -15,13 +15,17 @@ mod discovery;
 mod error;
 mod files;
 mod git;
+mod git_command;
 mod git_diff;
 mod github;
 mod language_install;
+mod language_pins;
 mod language_server;
 mod line_comments;
+mod private;
 mod project_services;
 mod project_setup;
+mod redact;
 mod restore;
 mod review_ledger;
 mod rule_suggestions;
@@ -178,6 +182,11 @@ pub struct Core {
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
     next_terminal_id: AtomicU32,
+    /// The Project each open terminal belongs to, to mark it acted upon on its first command.
+    terminal_projects: Mutex<HashMap<u32, u32>>,
+    /// Terminals whose Project has already been marked acted upon, so a keystroke does not
+    /// write the database again.
+    acted_terminals: Mutex<std::collections::HashSet<u32>>,
     project_services: Arc<project_services::ProjectServices>,
     language_servers: language_server::LanguageServers,
     dirty_editors: Mutex<std::collections::HashSet<String>>,
@@ -212,16 +221,23 @@ impl Core {
 
     pub fn open_with_migrations(home: impl Into<PathBuf>, migrations: &[&str]) -> Result<Self> {
         let home = home.into();
-        fs::create_dir_all(&home).map_err(|source| Error::Io {
+        private::prepare_home(&home).map_err(|source| Error::Io {
             path: home.clone(),
             source,
         })?;
+        git_command::set_home(&home);
         let db = db::open(&home.join(DB_FILE), migrations)?;
         let (settings, _settings_watcher) = SettingsStore::open(&home)?;
         // A crashed run leaves its Provider and shell groups behind; its Threads were mid-flight.
         let processes = Arc::new(ProcessRegistry::open(home.join(PROCESSES_FILE)));
         processes.reap_stale();
         mark_unfinished_work_interrupted(&db)?;
+        // The pieces above created their own files (database sidecars, the process list):
+        // make sure none of them is looser than the rest of the home.
+        private::prepare_home(&home).map_err(|source| Error::Io {
+            path: home.clone(),
+            source,
+        })?;
         let storage = StorageHandle::new(home.join(DB_FILE))?;
         let board = Arc::new(board::BoardHub::new(home.join(DB_FILE)));
         let usage = Arc::new(usage::UsageHub::new(home.join(DB_FILE)));
@@ -243,6 +259,8 @@ impl Core {
             processes,
             terminals: Mutex::new(HashMap::new()),
             next_terminal_id: AtomicU32::new(1),
+            terminal_projects: Mutex::new(HashMap::new()),
+            acted_terminals: Mutex::new(std::collections::HashSet::new()),
             project_services: Arc::new(project_services::ProjectServices::new()),
             language_servers: language_server::LanguageServers::default(),
             dirty_editors: Mutex::new(std::collections::HashSet::new()),
@@ -515,13 +533,13 @@ impl Core {
     /// Creates `parent/name` with `git init` and registers it as a Project.
     pub fn create_project(&self, parent: &str, name: &str) -> Result<ProjectSummary> {
         let dest = project_setup::create(&self.expand_home(parent.trim()), name)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
     }
 
     /// Clones a Git URL into `parent/<repository name>` and registers it as a Project.
     pub fn clone_project(&self, url: &str, parent: &str) -> Result<ProjectSummary> {
         let dest = project_setup::clone_url(&self.expand_home(parent.trim()), url)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
     }
 
     /// The user's GitHub repositories matching `query`, found through `gh`.
@@ -539,7 +557,46 @@ impl Core {
         let dest =
             project_setup::github_clone_target(&self.expand_home(parent.trim()), name_with_owner)?;
         github::clone_repository(&self.gh, name_with_owner, &dest)?;
-        self.add_project(&dest.to_string_lossy())
+        self.add_created_project(&dest)
+    }
+
+    /// Registers a folder Oxide itself created or cloned: the user chose its content, so it
+    /// counts as acted upon from the start.
+    fn add_created_project(&self, dest: &Path) -> Result<ProjectSummary> {
+        let project = self.add_project(&dest.to_string_lossy())?;
+        self.mark_project_acted_upon(project.id)?;
+        Ok(project)
+    }
+
+    /// Records that the user did something in the Project (a prompt, a terminal command, Pull or
+    /// Push), which lets Oxide fetch its remote on its own from then on.
+    pub fn mark_project_acted_upon(&self, project_id: u32) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute(
+            "UPDATE projects SET acted_upon = 1 WHERE id = ?1 AND acted_upon = 0",
+            [project_id],
+        )?;
+        Ok(())
+    }
+
+    /// Whether the user has acted in the Project, so that automatic fetch is on.
+    pub fn project_acted_upon(&self, project_id: u32) -> Result<bool> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT acted_upon FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn mark_thread_project_acted_upon(&self, thread_id: u32) -> Result<()> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        db.execute(
+            "UPDATE projects SET acted_upon = 1
+             WHERE id = (SELECT project_id FROM threads WHERE id = ?1)",
+            [thread_id],
+        )?;
+        Ok(())
     }
 
     /// Shows the Project's checkout, or the Thread's, in Finder.
@@ -905,7 +962,7 @@ impl Core {
                 if let Some(models) = models.filter(|m| !m.is_empty()) {
                     self.model_catalogs
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(provider.to_string(), models);
                 }
                 det
@@ -957,7 +1014,10 @@ impl Core {
 
     pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
         if !refresh {
-            let cache = self.model_catalogs.lock().unwrap();
+            let cache = self
+                .model_catalogs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(models) = cache.get(provider) {
                 return Ok(models.clone());
             }
@@ -987,7 +1047,7 @@ impl Core {
         if !models.is_empty() {
             self.model_catalogs
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(provider.to_string(), models.clone());
         }
         Ok(models)
@@ -1073,12 +1133,12 @@ impl Core {
     pub fn register_fake_provider(&self, thread_id: u32, provider: impl ProviderTrait) {
         self.fake_providers
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(thread_id, Box::new(provider));
     }
 
     pub fn get_or_create_thread_actor(&self, thread_id: u32) -> Result<ThreadActorHandle> {
-        let mut actors = self.thread_actors.lock().unwrap();
+        let mut actors = self.thread_actors.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(actor) = actors.get(&thread_id) {
             return Ok(actor.clone());
         }
@@ -1094,34 +1154,38 @@ impl Core {
             (row.0, PathBuf::from(row.1))
         };
 
-        let provider: Box<dyn ProviderTrait> =
-            if let Some(p) = self.fake_providers.lock().unwrap().remove(&thread_id) {
-                p
-            } else if snapshot.thread.provider == "claude" {
-                if !self.detect_provider("claude").installed {
-                    return Err(Error::Provider("Claude Code is not installed".to_string()));
-                }
-                let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
-                claude.set_registry(Arc::clone(&self.processes));
-                claude.set_user_customizations(self.settings().settings.claude_customizations);
-                Box::new(claude)
-            } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-                if !self.detect_provider(&snapshot.thread.provider).installed {
-                    return Err(Error::Provider(
-                        "Antigravity CLI is not installed".to_string(),
-                    ));
-                }
-                let mut agy = oxide_provider::agy::AgyProvider::new();
-                agy.set_registry(Arc::clone(&self.processes));
-                Box::new(agy)
-            } else if snapshot.thread.provider == "codex" {
-                if !self.detect_provider("codex").installed {
-                    return Err(Error::Provider("Codex is not installed".to_string()));
-                }
-                Box::new(oxide_provider::codex::CodexProvider::new())
-            } else {
-                Box::new(oxide_provider::FakeProvider::scripted())
-            };
+        let provider: Box<dyn ProviderTrait> = if let Some(p) = self
+            .fake_providers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&thread_id)
+        {
+            p
+        } else if snapshot.thread.provider == "claude" {
+            if !self.detect_provider("claude").installed {
+                return Err(Error::Provider("Claude Code is not installed".to_string()));
+            }
+            let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
+            claude.set_registry(Arc::clone(&self.processes));
+            claude.set_user_customizations(self.settings().settings.claude_customizations);
+            Box::new(claude)
+        } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
+            if !self.detect_provider(&snapshot.thread.provider).installed {
+                return Err(Error::Provider(
+                    "Antigravity CLI is not installed".to_string(),
+                ));
+            }
+            let mut agy = oxide_provider::agy::AgyProvider::new();
+            agy.set_registry(Arc::clone(&self.processes));
+            Box::new(agy)
+        } else if snapshot.thread.provider == "codex" {
+            if !self.detect_provider("codex").installed {
+                return Err(Error::Provider("Codex is not installed".to_string()));
+            }
+            Box::new(oxide_provider::codex::CodexProvider::new())
+        } else {
+            Box::new(oxide_provider::FakeProvider::scripted())
+        };
 
         let mut provider = provider;
         provider.allow_attachments_dir(&self.attachments_dir());
@@ -1161,6 +1225,7 @@ impl Core {
     /// them.
     pub fn send_prompt_segments(&self, thread_id: u32, input: &[PromptInput]) -> Result<()> {
         let segments = self.attachment_store().resolve(input)?;
+        self.mark_thread_project_acted_upon(thread_id)?;
         // Giving a chat Thread its own worktree (and running the Setup command) happens on its
         // first prompt; a failed Setup means no Turn is started.
         let start_turn = self.ensure_worktree(thread_id)?;
@@ -1247,7 +1312,7 @@ impl Core {
                     source,
                 })?;
                 let path = folder.join("catalogs.json");
-                fs::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
+                private::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
                 Ok(catalog)
             }
             Err(error) => Err(Error::Provider(format!(
@@ -1383,6 +1448,7 @@ impl Core {
         let id = next_id(&self.next_terminal_id);
         let session = Arc::new(TerminalSession::start(
             id,
+            &self.home,
             Path::new(&cwd),
             Arc::clone(&self.processes),
             blocks,
@@ -1392,6 +1458,10 @@ impl Core {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, session);
+        self.terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, project_id);
         Ok(summary)
     }
 
@@ -1801,6 +1871,11 @@ impl Core {
 
     /// Like [`Core::fetch_project`], with the current time injected.
     pub fn fetch_project_at(&self, project_id: u32, now: std::time::Instant) -> Result<bool> {
+        // A folder the user has not acted in yet is not contacted: its own configuration may
+        // name what a fetch would run.
+        if !self.project_acted_upon(project_id)? {
+            return Ok(false);
+        }
         let checkout = self.main_checkout(project_id)?;
         let fetched = self.git.fetch(&checkout, now)?;
         if fetched {
@@ -1813,6 +1888,7 @@ impl Core {
     /// `git pull --ff-only` in a Thread's checkout (`None`: the main one); a diverged branch
     /// fails with Git's message.
     pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
+        self.mark_project_acted_upon(project_id)?;
         // Pulling rewrites files like a checkout does, so it takes the same guard.
         self.switch_branch(project_id, thread_id, git::pull)
     }
@@ -1838,6 +1914,7 @@ impl Core {
         thread_id: Option<u32>,
         allow_protected: bool,
     ) -> Result<()> {
+        self.mark_project_acted_upon(project_id)?;
         let cwd = self.git_target(project_id, thread_id)?.root;
         self.git.mutate(&cwd, || git::push(&cwd, allow_protected))?;
         Ok(())
@@ -1988,6 +2065,12 @@ impl Core {
     /// Opens a GitHub link, such as a check's run, in the system browser.
     pub fn open_link(&self, url: &str) -> Result<()> {
         self.activity.open_url(github::checked_url(url)?);
+        Ok(())
+    }
+
+    /// Opens a link on a host outside the allowlist, after the user confirmed the host.
+    pub fn open_confirmed_link(&self, url: &str) -> Result<()> {
+        self.activity.open_url(github::confirmed_url(url)?);
         Ok(())
     }
 
@@ -2227,6 +2310,23 @@ impl Core {
         Ok(PathBuf::from(self.checkout_path(project_id, None)?))
     }
 
+    /// Every checkout of an open Project: its folder and the worktrees of its Threads.
+    fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
+        for path in projects.query_map([], |r| r.get::<_, String>(0))? {
+            paths.push(PathBuf::from(path?));
+        }
+        let mut worktrees = db.prepare(
+            "SELECT t.worktree_path FROM threads t JOIN projects p ON p.id = t.project_id WHERE p.opened_at IS NOT NULL AND t.worktree_path IS NOT NULL",
+        )?;
+        for path in worktrees.query_map([], |r| r.get::<_, String>(0))? {
+            paths.push(PathBuf::from(path?));
+        }
+        Ok(paths)
+    }
+
     pub fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         Ok(match thread_id {
@@ -2247,11 +2347,48 @@ impl Core {
     }
 
     pub fn write_terminal(&self, terminal_id: u32, bytes: &[u8]) -> Result<()> {
-        self.terminal(terminal_id)?.write(bytes)
+        let session = self.terminal(terminal_id)?;
+        self.mark_terminal_project_acted_upon(terminal_id)?;
+        session.write(bytes)
     }
 
     pub fn run_terminal_block(&self, terminal_id: u32, command: &str, token: &str) -> Result<()> {
-        self.terminal(terminal_id)?.run_block(command, token)
+        let session = self.terminal(terminal_id)?;
+        self.mark_terminal_project_acted_upon(terminal_id)?;
+        session.run_block(command, token)
+    }
+
+    fn mark_terminal_project_acted_upon(&self, terminal_id: u32) -> Result<()> {
+        let first = self
+            .acted_terminals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(terminal_id);
+        if !first {
+            return Ok(());
+        }
+        let result = self.mark_terminal_project_in_db(terminal_id);
+        if result.is_err() {
+            // Not written: the next keystroke tries again.
+            self.acted_terminals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&terminal_id);
+        }
+        result
+    }
+
+    fn mark_terminal_project_in_db(&self, terminal_id: u32) -> Result<()> {
+        let project = self
+            .terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&terminal_id)
+            .copied();
+        match project {
+            Some(project) => self.mark_project_acted_upon(project),
+            None => Ok(()),
+        }
     }
     pub fn complete_terminal(
         &self,
@@ -2261,7 +2398,9 @@ impl Core {
         cwd: &str,
     ) -> Result<TerminalCompletion> {
         let session = self.terminal(terminal_id)?;
-        terminal_completion::complete(&session, line, cursor, cwd)
+        let cwd =
+            terminal_completion::trusted_cwd(cwd, &self.open_checkouts()?, &session.summary.cwd);
+        terminal_completion::complete(&session, line, cursor, &cwd)
     }
 
     pub fn resize_terminal(&self, terminal_id: u32, rows: u16, cols: u16) -> Result<()> {
@@ -2275,6 +2414,14 @@ impl Core {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&terminal_id)
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
+        self.terminal_projects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&terminal_id);
+        self.acted_terminals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&terminal_id);
         session.close();
         Ok(())
     }
@@ -2361,7 +2508,12 @@ impl Core {
     }
 
     pub fn tick_thread(&self, thread_id: u32) {
-        if let Some(actor) = self.thread_actors.lock().unwrap().get(&thread_id) {
+        if let Some(actor) = self
+            .thread_actors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&thread_id)
+        {
             actor.tick();
         }
     }
@@ -2396,6 +2548,8 @@ impl Core {
 impl Drop for Core {
     fn drop(&mut self) {
         self.shutdown();
+        // Last: the actors above may still be writing their final records.
+        self.storage.shutdown();
     }
 }
 

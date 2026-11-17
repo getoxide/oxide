@@ -11,3 +11,7 @@ Oxide defines three Permission modes—Ask, Auto-edit, and Full access—configu
 - The composer chip renders only the Permission modes offered by the selected Provider. For `agy`, Ask is omitted, and Auto-edit is labelled with `soft-deny` to make the lack of interactive Approvals transparent without faking them.
 - Adapters translate Oxide's Permission mode into Provider-specific CLI flags or RPC settings on every Turn and mid-Thread update.
 - Claude Code and Codex adapters handle Approval requests during a Turn, while the `agy` adapter never produces Approval requests.
+
+## Amendment: Oxide does not act around the Permission mode
+
+Oxide never performs on a Provider's behalf an action the Thread's Permission mode would have asked about. Any path where Core acts on a Provider event names the Approval that gates it. For a background command Core would detach as a Project Service (ADR 0012), that Approval is Oxide's own, with an id reserved to Oxide.

@@ -1,8 +1,9 @@
 name: Advisories
 
-# Daily RustSec scan of the whole Rust dependency tree. Not a PR gate: a new
+# Daily RustSec scan of the whole Rust dependency tree and npm audit of the
+# production JavaScript dependencies. Not a PR gate: a new
 # advisory against a crate nobody touched would block unrelated PRs. A failure
-# opens, or comments on, one `needs-triage` tracking issue.
+# opens, or comments on, one `needs-triage` tracking issue per ecosystem.
 
 on:
   schedule:
@@ -43,6 +44,53 @@ jobs:
           title="Security advisories found in Rust dependencies"
           {
             echo "The daily \`cargo deny check advisories\` scan failed: ${RUN_URL}"
+            echo
+            echo '```'
+            tail -c 50000 "${RUNNER_TEMP}/advisories.txt"
+            echo '```'
+          } > "${RUNNER_TEMP}/body.md"
+          existing=$(gh issue list --state open --label needs-triage --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "${RUNNER_TEMP}/body.md"
+          else
+            gh issue create --title "$title" --label needs-triage --body-file "${RUNNER_TEMP}/body.md"
+          fi
+      - name: Fail the run
+        if: steps.scan.outputs.status != '0'
+        run: exit 1
+
+  pnpm-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - id: scan
+        name: pnpm audit
+        run: |
+          set +e
+          pnpm --dir web audit --prod --audit-level high 2>&1 | tee "${RUNNER_TEMP}/advisories.txt"
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Open or update the tracking issue
+        if: steps.scan.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Security advisories found in JavaScript dependencies"
+          {
+            echo "The daily \`pnpm audit --prod --audit-level high\` scan failed: ${RUN_URL}"
             echo
             echo '```'
             tail -c 50000 "${RUNNER_TEMP}/advisories.txt"

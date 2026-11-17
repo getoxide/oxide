@@ -368,6 +368,18 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE projects DROP COLUMN verification_commands;
 ",
+    // Oxide fetches a Project's remote on its own only once the user has acted in it, so that
+    // a folder obtained from elsewhere is not contacted before then. Existing Projects start
+    // unacted: the first prompt, terminal command, Pull or Push sets it.
+    "
+    ALTER TABLE projects ADD COLUMN acted_upon INTEGER NOT NULL DEFAULT 0;
+",
+    // A Project that already has Threads was acted upon before the flag existed: keep its
+    // background fetch running instead of silently stopping it for existing users.
+    "
+    UPDATE projects SET acted_upon = 1
+    WHERE EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id);
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -386,12 +398,15 @@ pub(crate) fn with_conn<T>(
     f: impl FnOnce(&Connection) -> Result<T>,
 ) -> Result<T> {
     let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        let conn = Connection::open(db_path)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        *guard = Some(conn);
-    }
-    f(guard.as_ref().expect("connection opened above"))
+    let conn = match &mut *guard {
+        Some(conn) => conn,
+        empty @ None => {
+            let conn = Connection::open(db_path)?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            empty.insert(conn)
+        }
+    };
+    f(conn)
 }
 
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing
@@ -439,6 +454,39 @@ fn backup(conn: &Connection, path: &Path, version: u32) -> Result<()> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn migrating_keeps_fetch_on_for_projects_with_threads_and_off_for_the_rest() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
+        let old = open(&path, before).unwrap();
+        old.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
+            .unwrap();
+        old.execute("INSERT INTO projects (name, path) VALUES ('q', '/q')", [])
+            .unwrap();
+        old.execute(
+            "INSERT INTO threads (project_id, provider, permission_mode, status) \
+             SELECT id, 'fake', 'ask', 'idle' FROM projects WHERE path = '/p'",
+            [],
+        )
+        .unwrap();
+        drop(old);
+
+        let migrated = open(&path, MIGRATIONS).unwrap();
+
+        let acted = |project: &str| -> i64 {
+            migrated
+                .query_row(
+                    "SELECT acted_upon FROM projects WHERE path = ?1",
+                    [project],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(acted("/p"), 1, "a Project with a Thread was acted upon");
+        assert_eq!(acted("/q"), 0, "an untouched Project stays unacted");
+    }
 
     /// Oxide writes the database from several connections at once. A transaction that
     /// reads before it writes must hold the write lock while it does, or another

@@ -41,6 +41,7 @@ import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
 import { ProjectServices } from "./ProjectServices";
 import { ServiceConflictDialog } from "./ServiceConflictDialog";
+import { LinkConfirmDialog } from "./LinkConfirmDialog";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
 import { SettingsView } from "./SettingsView";
@@ -969,6 +970,7 @@ export function App() {
         }}
       />
       <QuitDialog />
+      <LinkConfirmDialog />
       <WorkspaceOverlays ref={overlays} projects={projects ?? []} onProjectsScanned={onProjectsScanned}
         onStartThread={startThreadIn} onOpenProject={openProject} onThreadDeleted={onThreadDeleted} />
       {serviceConflict && (

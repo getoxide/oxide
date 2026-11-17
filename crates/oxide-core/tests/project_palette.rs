@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::{Core, Notification, System};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -148,15 +154,29 @@ fn clone_from_url_registers_the_clone() {
 
     let project = f
         .core
-        .clone_project(
-            &format!("file://{}", origin.display()),
-            parent.to_str().unwrap(),
-        )
+        .clone_project(&origin.display().to_string(), parent.to_str().unwrap())
         .unwrap();
 
     assert_eq!(project.name, "widgets");
     assert!(parent.join("widgets/a.txt").is_file());
     assert_eq!(f.core.list_projects().unwrap().len(), 1);
+}
+
+#[test]
+fn a_file_url_to_a_real_repository_is_refused_and_nothing_is_cloned() {
+    let f = fixture();
+    let origin = f.root().join("origin/widgets");
+    make_repo(&origin);
+    let parent = f.root().join("code");
+
+    let err = f.core.clone_project(
+        &format!("file://{}", origin.display()),
+        parent.to_str().unwrap(),
+    );
+
+    assert!(err.is_err(), "a file:// URL must not be cloned");
+    assert!(!parent.join("widgets").exists());
+    assert!(f.core.list_projects().unwrap().is_empty());
 }
 
 #[test]

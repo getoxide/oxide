@@ -396,10 +396,11 @@ fn write_file(path: &Path, settings: &Settings) -> Result<()> {
         path: path.to_path_buf(),
         source,
     };
-    let mut text = serde_json::to_string_pretty(settings).expect("settings serialize");
+    let mut text = serde_json::to_string_pretty(settings)
+        .map_err(|source| io(std::io::Error::other(source)))?;
     text.push('\n');
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, text).map_err(io)?;
+    crate::private::write(&tmp, text).map_err(io)?;
     fs::rename(&tmp, path).map_err(io)
 }
 
@@ -460,15 +461,15 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
             // Older files held one on/off switch for every category.
             if let Some(Value::Bool(all)) = root.get("claudeCustomizations") {
                 let all = *all;
-                root.insert(
-                    "claudeCustomizations".into(),
-                    serde_json::to_value(if all {
-                        ClaudeCustomizations::ALL
-                    } else {
-                        ClaudeCustomizations::default()
-                    })
-                    .expect("serialize"),
-                );
+                // A struct of bools always serializes; if it somehow did not, the bad value is
+                // reported by `field` below and the default applies.
+                if let Ok(value) = serde_json::to_value(if all {
+                    ClaudeCustomizations::ALL
+                } else {
+                    ClaudeCustomizations::default()
+                }) {
+                    root.insert("claudeCustomizations".into(), value);
+                }
             }
             field(
                 &mut root,

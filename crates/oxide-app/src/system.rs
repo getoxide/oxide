@@ -25,6 +25,13 @@ impl HostSystem {
     }
 }
 
+/// The `explorer /select,` argument for `path`, quoted whole so a comma in a folder name cannot
+/// split it into several arguments.
+#[cfg(any(windows, test))]
+fn explorer_select_arg(path: &str) -> String {
+    format!("/select,\"{}\"", path.replace('/', "\\"))
+}
+
 impl System for HostSystem {
     #[cfg(target_os = "macos")]
     fn hold_activity(&self) {
@@ -65,10 +72,14 @@ impl System for HostSystem {
                     use windows_sys::Win32::System::Power::{
                         ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
                     };
+                    // SAFETY: `SetThreadExecutionState` takes flag constants only and affects just
+                    // this thread's execution state; it touches no memory of ours.
                     unsafe {
                         SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
                     }
                     let _ = rx.recv();
+                    // SAFETY: same as above; `ES_CONTINUOUS` alone clears the request made by this
+                    // thread.
                     unsafe {
                         SetThreadExecutionState(ES_CONTINUOUS);
                     }
@@ -123,10 +134,12 @@ impl System for HostSystem {
     }
 
     fn open_url(&self, url: &str) {
-        // Core passes only links it has checked: https GitHub pages and Project Service
-        // loopback URLs.
+        // Core passes only links it has checked: https GitHub pages, Project Service
+        // loopback URLs and https links to other hosts the user confirmed.
         #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("open").arg(url).spawn();
+        let _ = std::process::Command::new(oxide_core::desktop_tools::os_tool("open"))
+            .arg(url)
+            .spawn();
 
         #[cfg(target_os = "windows")]
         {
@@ -153,7 +166,7 @@ impl System for HostSystem {
                 )
             };
             if (result as usize) <= 32 {
-                let _ = std::process::Command::new("rundll32")
+                let _ = std::process::Command::new(oxide_core::desktop_tools::os_tool("rundll32"))
                     .args(["url.dll,FileProtocolHandler", url])
                     .spawn();
             }
@@ -165,7 +178,7 @@ impl System for HostSystem {
 
     #[cfg(target_os = "macos")]
     fn reveal_in_finder(&self, path: &std::path::Path) {
-        let _ = std::process::Command::new("open")
+        let _ = std::process::Command::new(oxide_core::desktop_tools::os_tool("open"))
             .arg("-R")
             .arg(path)
             .spawn();
@@ -173,9 +186,10 @@ impl System for HostSystem {
 
     #[cfg(target_os = "windows")]
     fn reveal_in_finder(&self, path: &std::path::Path) {
-        let path_str = path.to_string_lossy().replace('/', "\\");
-        let _ = std::process::Command::new("explorer")
-            .arg(format!("/select,{path_str}"))
+        use std::os::windows::process::CommandExt;
+        // `raw_arg`: the quoted path is one argument, so a comma in a folder name cannot split it.
+        let _ = std::process::Command::new(oxide_core::desktop_tools::os_tool("explorer"))
+            .raw_arg(explorer_select_arg(&path.to_string_lossy()))
             .spawn();
     }
 
@@ -199,6 +213,8 @@ struct ActivityToken(
 );
 
 #[cfg(target_os = "macos")]
+// SAFETY: the wrapped activity object is documented as thread-safe, and the token is only ever
+// used to call `endActivity:`, which may run on any thread.
 unsafe impl Send for ActivityToken {}
 
 #[cfg(target_os = "windows")]
@@ -228,9 +244,12 @@ mod tests {
             use windows_sys::Win32::System::Power::{
                 ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
             };
+            // SAFETY: `SetThreadExecutionState` takes flag constants only and affects just this
+            // thread's execution state; it touches no memory of ours.
             let prev = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
             assert_ne!(prev, 0, "SetThreadExecutionState must succeed");
             let _ = rx.recv();
+            // SAFETY: same as above; `ES_CONTINUOUS` alone clears this thread's request.
             let restored = unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
             assert_ne!(
                 restored, 0,
@@ -262,6 +281,21 @@ pub fn set_dev_dock_icon(png: &[u8]) {
     };
     let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(png));
     if let Some(image) = image {
+        // SAFETY: `main` proves we are on the main thread, which AppKit requires, and `image` is
+        // a valid NSImage that outlives the call.
         unsafe { NSApplication::sharedApplication(main).setApplicationIconImage(Some(&image)) };
+    }
+}
+
+#[cfg(test)]
+mod explorer_tests {
+    use super::explorer_select_arg;
+
+    #[test]
+    fn explorer_receives_the_path_as_one_quoted_argument() {
+        assert_eq!(
+            explorer_select_arg("C:/Users/me/a, b/file.txt"),
+            "/select,\"C:\\Users\\me\\a, b\\file.txt\""
+        );
     }
 }

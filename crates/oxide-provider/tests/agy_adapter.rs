@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use crossbeam_channel::Receiver;
 use oxide_provider::agy::AgyProvider;
 use oxide_provider::contract_suite::verify_provider_contract;
@@ -406,7 +412,31 @@ fn prompts_preserve_newlines_quotes_and_shell_characters() {
     provider.shutdown().unwrap();
 }
 
-#[cfg(windows)]
+#[test]
+fn the_prompt_travels_on_stdin_and_never_in_the_arguments() {
+    let (mut provider, log, _fake) = provider_with_log();
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    let prompt = "confidential plan: rotate the keys tomorrow";
+    provider.send_prompt(prompt).unwrap();
+    collect_turn(&rx);
+    let runs = wire_argv(log.path());
+    assert_eq!(runs.len(), 1);
+    assert!(
+        runs[0].1.iter().all(|arg| !arg.contains("confidential")),
+        "the process list must not show the prompt: {:?}",
+        runs[0].1
+    );
+    assert!(!runs[0].1.contains(&"-p".to_string()));
+    assert!(
+        runs[0]
+            .1
+            .windows(2)
+            .any(|w| w == ["--input-format", "stream-json"])
+    );
+    assert_eq!(wire_prompts(log.path()), [prompt]);
+    provider.shutdown().unwrap();
+}
+
 #[test]
 fn large_prompts_and_startup_logs_do_not_block_each_other() {
     let (done, rx) = crossbeam_channel::bounded(1);
@@ -604,4 +634,26 @@ fn agy_reports_background_commands_for_detachment() {
         "only the server command is detached; `echo hi` follows the normal path"
     );
     provider.shutdown().unwrap();
+}
+
+#[test]
+fn a_line_over_the_cap_ends_the_session_with_an_error() {
+    let fake = fake_agy();
+    let mut provider = AgyProvider::with_command(fake.command());
+    let rx = provider.start(&context(PermissionMode::AutoEdit)).unwrap();
+    provider.send_prompt("oversized_test").unwrap();
+    let mut errored = false;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(ProviderEvent::Error { message, .. }) => {
+                assert!(message.contains("16 MiB"), "{message}");
+                errored = true;
+            }
+            Ok(ProviderEvent::Exited { .. }) => break,
+            Ok(ProviderEvent::TurnCompleted { .. }) => panic!("no result was sent"),
+            Ok(_) => {}
+            Err(error) => panic!("the session never ended: {error}"),
+        }
+    }
+    assert!(errored, "the Thread must see why the session ended");
 }

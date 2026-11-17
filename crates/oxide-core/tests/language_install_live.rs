@@ -1,4 +1,10 @@
 //! Opt-in network smoke test. Installs only under a disposable Oxide home.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
 use oxide_core::Core;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
