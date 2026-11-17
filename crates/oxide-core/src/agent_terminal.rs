@@ -305,7 +305,7 @@ impl Core {
     }
 
     /// Whether the Thread is a terminal Thread (its agent runs in an Agent terminal).
-    pub(crate) fn is_terminal_thread(&self, thread_id: u32) -> bool {
+    pub fn is_terminal_thread(&self, thread_id: u32) -> bool {
         self.terminal_thread(thread_id).is_ok()
     }
 

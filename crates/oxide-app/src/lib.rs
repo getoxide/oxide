@@ -1744,11 +1744,75 @@ async fn list_line_comments(
         .map(|c| c.into_iter().map(LineComment::from).collect())
 }
 
-/// Sends every draft to the Thread as one prompt.
+/// The prompt that sending the Thread's drafts would deliver, for the user to read and confirm.
 #[tauri::command]
 #[specta::specta]
-async fn send_line_comments(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.send_line_comments(thread_id)).await
+async fn line_comments_prompt(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| core.line_comments_prompt(thread_id)).await
+}
+
+/// Sends every draft to the Thread as one prompt. For a terminal Thread, `confirmed` is the
+/// prompt the user was shown and confirmed: it is pasted (no Enter) only if it still is what the
+/// drafts produce, and never while the agent waits for an answer.
+#[tauri::command]
+#[specta::specta]
+async fn send_line_comments(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    confirmed: Option<String>,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| match confirmed {
+        Some(prompt) if core.is_terminal_thread(thread_id) => {
+            core.send_line_comments_confirmed(thread_id, &prompt)
+        }
+        _ => core.send_line_comments(thread_id),
+    })
+    .await
+}
+
+/// Pastes a prompt the user confirmed into a terminal Thread's agent, without pressing Enter.
+/// Refused while the agent waits for an answer.
+#[tauri::command]
+#[specta::specta]
+async fn deliver_agent_prompt(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    prompt: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.deliver_agent_prompt(thread_id, &prompt)
+    })
+    .await
+}
+
+/// Opens a terminal Thread whose agent starts with the Fix prompt the user confirmed. Starts a
+/// process.
+#[tauri::command]
+#[specta::specta]
+async fn create_terminal_thread_with_fix(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    prompt: String,
+    review_round: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
+) -> Result<Thread, AppError> {
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_with_fix(project_id, &choice, &prompt, review_round)
+    })
+    .await
+    .map(Thread::from)
 }
 
 /// Sends a request that addresses selected reviewer comments, counting it as a review round.
@@ -3548,7 +3612,10 @@ pub fn builder() -> Builder<tauri::Wry> {
         edit_line_comment,
         delete_line_comment,
         list_line_comments,
+        line_comments_prompt,
         send_line_comments,
+        deliver_agent_prompt,
+        create_terminal_thread_with_fix,
         send_reviewer_comments,
         checkout_branch,
         create_branch,
