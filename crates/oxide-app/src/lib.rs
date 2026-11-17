@@ -1841,6 +1841,7 @@ async fn deliver_agent_prompt(
 /// process.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)] // flat arguments are the IPC contract
 async fn create_terminal_thread_with_fix(
     core: State<'_, Arc<Core>>,
     project_id: u32,

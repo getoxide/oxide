@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { LockIcon, StarFillIcon, StarIcon, XIcon } from "@primer/octicons-react";
 import { commands, type CustomAgent, type ModelInfo, type PermissionMode } from "./bindings";
 import { CUSTOM_AGENT_LIMITS, customProviderId } from "./customAgents";
-import { LAUNCH_RECIPES, launchChoice, nextPermissionMode, permissionModesFor, type LaunchChoice } from "./launchPicker";
+import { LAUNCH_RECIPES, launchChoice, nextPermissionMode, permissionModeNote, permissionModesFor, type LaunchChoice } from "./launchPicker";
 import { ProviderMark } from "./ProviderMark";
 import { catalogCache, detectProviders, installedCache, loadCatalog } from "./modelCatalogCache";
 import { effortBlurb, effortLook } from "./effortStyle";
@@ -505,6 +505,9 @@ export function ModelEffortPicker({
                   </button>
                 ))}
               </div>
+            )}
+            {launch && permissionModeNote(launchProvider, launchMode) && (
+              <p className="permission-note">{permissionModeNote(launchProvider, launchMode)}</p>
             )}
           </div>
         </div>

@@ -103,6 +103,11 @@ pub enum StorageMsg {
         thread_id: u32,
         session_id: String,
     },
+    /// Stores the id only when the Thread has none: a Provider report never replaces it.
+    SetProviderSessionIdIfUnset {
+        thread_id: u32,
+        session_id: String,
+    },
     GetProviderSessionId {
         thread_id: u32,
         reply: mpsc::Sender<Option<String>>,
@@ -341,6 +346,13 @@ impl StorageHandle {
 
     pub fn set_provider_session_id(&self, thread_id: u32, session_id: String) {
         let _ = self.sender.send(StorageMsg::SetProviderSessionId {
+            thread_id,
+            session_id,
+        });
+    }
+
+    pub fn set_provider_session_id_if_unset(&self, thread_id: u32, session_id: String) {
+        let _ = self.sender.send(StorageMsg::SetProviderSessionIdIfUnset {
             thread_id,
             session_id,
         });
@@ -651,6 +663,15 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
             } => {
                 let _ = conn.execute(
                     "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",
+                    rusqlite::params![session_id, thread_id],
+                );
+            }
+            StorageMsg::SetProviderSessionIdIfUnset {
+                thread_id,
+                session_id,
+            } => {
+                let _ = conn.execute(
+                    "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2 AND provider_session_id IS NULL",
                     rusqlite::params![session_id, thread_id],
                 );
             }

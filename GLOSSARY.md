@@ -33,6 +33,10 @@ _Avoid_: Plugin, external Provider
 The terminal at a Thread's centre, running the Thread's Provider CLI in the Thread's checkout. Oxide's core owns it, so it keeps running while the user moves around the app and shows its screen again when the Thread is reopened. Stop ends the agent; Restart resumes the same Provider session. It is not a Project terminal tab, which is a plain shell.
 _Avoid_: Console, agent tab, shell
 
+**Reporter**:
+Oxide's own executable, run by a Provider's per-launch `notify` (Codex), that tells the running app the Provider session's id over an owner-only socket, then runs the user's own `notify` command unchanged. It is how Oxide learns a session id it cannot assign.
+_Avoid_: Hook, notifier, daemon
+
 **Thread status**:
 Where a Thread stands right now: working (the Provider reports a Turn running), needs input (the Provider reports it is waiting on an Approval or an answer), completed (the Provider reports the Turn finished, or is idle), running (the agent is alive but has reported nothing, so its state is unknown), stopped (the agent is not running), or error (the Turn failed, or the agent exited with a failure). Oxide never guesses a status the Provider did not report. A chat Thread can also be interrupted (the Turn was stopped by the user or by quitting Oxide).
 _Avoid_: State, phase

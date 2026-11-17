@@ -78,7 +78,8 @@ describe("starting from an issue as a terminal Thread", () => {
   it("needs the preview, a Provider with a launch recipe and an issue", () => {
     const on = { openThreadsAsTerminals: true };
     expect(startsAsTerminal(on, "claude", issue)).toBe(true);
-    expect(startsAsTerminal(on, "codex", issue)).toBe(false);
+    expect(startsAsTerminal(on, "codex", issue)).toBe(true);
+    expect(startsAsTerminal(on, "antigravity", issue)).toBe(false);
     expect(startsAsTerminal(on, "claude", undefined)).toBe(false);
     expect(startsAsTerminal({ openThreadsAsTerminals: false }, "claude", issue)).toBe(false);
   });
