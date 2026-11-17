@@ -1,24 +1,22 @@
+import { readJson, removeKey, storageKeys, writeJson } from "./storage";
 import { useCallback, useEffect, useState, type RefObject } from "react";
 
 export type PanelName = "sidebar" | "tools";
-const storageKey = (name: PanelName) => `oxide.layout.${name}`;
 
 function readSize(name: PanelName): number | null {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(storageKey(name)) ?? "null");
-    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-  } catch { return null; }
+  const value = readJson(storageKeys.panelSize(name));
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export function usePanelSize(name: PanelName) {
   const [preferred, setPreferred] = useState<number | null>(() => readSize(name));
   const commit = useCallback((value: number) => {
     setPreferred(value);
-    try { localStorage.setItem(storageKey(name), JSON.stringify(value)); } catch { /* Layout still works without storage. */ }
+    writeJson(storageKeys.panelSize(name), value);
   }, [name]);
   const reset = useCallback(() => {
     setPreferred(null);
-    try { localStorage.removeItem(storageKey(name)); } catch { /* Storage may be unavailable. */ }
+    removeKey(storageKeys.panelSize(name));
   }, [name]);
   const cancel = useCallback(() => setPreferred(readSize(name)), [name]);
   return { preferred, resize: setPreferred, commit, reset, cancel };

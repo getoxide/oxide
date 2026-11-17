@@ -3,6 +3,8 @@
 //! identifiers, Provider, Model, counts and the kind of work, never Transcript text (ADR-0010),
 //! and no foreign key to the Thread: it outlives the Thread. Nothing here is sent anywhere.
 
+use oxide_provider::diag;
+use oxide_provider::sync::LockExt as _;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -662,21 +664,24 @@ pub(crate) fn detect_reverts_and_follow_ups(
                     || lower_subj.contains(&format!(" #{pr_number}"))
                     || lower_subj.contains(&format!("\"#{pr_number}\"")))
             {
-                let _ = store.with_conn(|conn| {
-                    conn.execute(
-                        "INSERT OR IGNORE INTO review_reverts
+                diag::best_effort(
+                    "with_conn",
+                    store.with_conn(|conn| {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO review_reverts
                              (project_id, pull_request, commit_sha, commit_subject, committed_at)
                          VALUES (?1, ?2, ?3, ?4, ?5)",
-                        rusqlite::params![
-                            project_id,
-                            pr_number,
-                            commit.sha,
-                            commit.subject,
-                            commit.committed_at,
-                        ],
-                    )?;
-                    Ok(())
-                });
+                            rusqlite::params![
+                                project_id,
+                                pr_number,
+                                commit.sha,
+                                commit.subject,
+                                commit.committed_at,
+                            ],
+                        )?;
+                        Ok(())
+                    }),
+                );
             }
 
             // Candidate follow-up check:
@@ -710,7 +715,7 @@ pub(crate) fn detect_reverts_and_follow_ups(
 
             let co_modified_json =
                 serde_json::to_string(&co_modified).unwrap_or_else(|_| "[]".into());
-            let _ = store.with_conn(|conn| {
+            diag::best_effort("with_conn", store.with_conn(|conn| {
                 conn.execute(
                     "INSERT OR IGNORE INTO review_follow_ups
                          (project_id, pull_request, commit_sha, commit_subject, committed_at, co_modified_files, status)
@@ -725,7 +730,7 @@ pub(crate) fn detect_reverts_and_follow_ups(
                     ],
                 )?;
                 Ok(())
-            });
+            }));
         }
     }
 
@@ -738,7 +743,7 @@ impl Core {
     /// the Thread is gone.
     pub(crate) fn review_work_kind(&self, thread_id: u32) -> Option<ReviewWorkKind> {
         let (project_id, issue_labels) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let (project_id, labels) = db
                 .query_row(
                     "SELECT project_id, issue_labels FROM threads WHERE id = ?1",
@@ -773,6 +778,6 @@ impl Core {
     /// Records the round of a Thread that just sent Line comments or reviewer comments. Best
     /// effort: the ledger is a nicety that must not turn a successful send into an error.
     pub(crate) fn record_review_round(&self, thread_id: u32, kind: &ReviewWorkKind) {
-        let _ = self.ledger.record_round(thread_id, kind);
+        diag::best_effort("record_round", self.ledger.record_round(thread_id, kind));
     }
 }

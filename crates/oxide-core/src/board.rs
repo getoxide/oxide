@@ -1,6 +1,7 @@
 //! The Thread Board's feed. The Board stores nothing of its own: a card is a Thread row plus its
 //! pending Approvals, read fresh whenever a Thread changes and pushed to that Project's subscribers.
 
+use oxide_provider::sync::LockExt as _;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -59,10 +60,7 @@ impl BoardHub {
         project_id: u32,
     ) -> Result<(Vec<BoardCard>, crossbeam_channel::Receiver<BoardEvent>)> {
         let (tx, rx) = crossbeam_channel::unbounded();
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push((project_id, tx));
+        self.subscribers.lock_recover().push((project_id, tx));
         let cards = self.with_conn(|conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {} FROM threads WHERE project_id = ?1 ORDER BY updated_at DESC, id DESC",
@@ -81,12 +79,7 @@ impl BoardHub {
 
     /// Tells the Thread's Project's subscribers that the Thread changed.
     pub(crate) fn publish(&self, thread_id: u32) {
-        if self
-            .subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
-        {
+        if self.subscribers.lock_recover().is_empty() {
             return;
         }
         let Ok(card) = self.with_conn(|conn| {
@@ -103,25 +96,19 @@ impl BoardHub {
             return;
         };
         let project_id = card.thread.project_id;
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|(project, tx)| {
-                *project != project_id
-                    || tx
-                        .send(BoardEvent::ThreadChanged(Box::new(card.clone())))
-                        .is_ok()
-            });
+        self.subscribers.lock_recover().retain(|(project, tx)| {
+            *project != project_id
+                || tx
+                    .send(BoardEvent::ThreadChanged(Box::new(card.clone())))
+                    .is_ok()
+        });
     }
 
     /// Tells the Project's subscribers that the Thread is gone.
     pub(crate) fn publish_deleted(&self, project_id: u32, thread_id: u32) {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|(project, tx)| {
-                *project != project_id || tx.send(BoardEvent::ThreadDeleted(thread_id)).is_ok()
-            });
+        self.subscribers.lock_recover().retain(|(project, tx)| {
+            *project != project_id || tx.send(BoardEvent::ThreadDeleted(thread_id)).is_ok()
+        });
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {

@@ -5,6 +5,7 @@
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
 use crossbeam_channel::Receiver;
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{
     Core, ItemKind, PermissionMode, RECAP_MAX_CHARS, SequencedThreadEvent, ThreadEvent,
     ThreadStatus,
@@ -77,7 +78,7 @@ fn answering_fake(answer: &'static str) -> FakeProvider {
             },
         ];
         for event in events {
-            let _ = sender.send(event);
+            sender.tell(event);
         }
     });
     fake

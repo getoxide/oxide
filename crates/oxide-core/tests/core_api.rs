@@ -2,7 +2,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 use oxide_core::Core;
 use rusqlite::Connection;
@@ -280,7 +281,7 @@ mod settings {
         let (tx, rx) = std::sync::mpsc::channel();
         let tx = std::sync::Mutex::new(tx);
         core.subscribe_settings(move |s| {
-            let _ = tx.lock().unwrap().send(s.clone());
+            oxide_core::diag::SenderExt::tell(&*tx.lock().unwrap(), s.clone());
         });
         rx
     }

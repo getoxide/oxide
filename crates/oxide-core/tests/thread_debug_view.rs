@@ -4,6 +4,7 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, PermissionMode, ThreadEvent};
 use oxide_provider::{FakeProvider, ProviderEvent, TurnStatus};
 use tempfile::tempdir;
@@ -33,14 +34,14 @@ fn unknown_events_are_persisted_in_transcript() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::Unknown {
+            s.tell(ProviderEvent::Unknown {
                 raw: r#"{"type":"mystery","data":42}"#.into(),
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -88,18 +89,18 @@ fn regular_subscriber_receives_no_raw_payload() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ItemDelta {
+            s.tell(ProviderEvent::ItemDelta {
                 item_index: 0,
                 delta: "hello".into(),
             });
-            let _ = s.send(ProviderEvent::Unknown {
+            s.tell(ProviderEvent::Unknown {
                 raw: r#"{"secret":"payload"}"#.into(),
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

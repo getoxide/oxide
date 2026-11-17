@@ -2,8 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, FileEntry};
 use std::fs;
 use tempfile::tempdir;
@@ -123,7 +125,7 @@ fn write_create_and_list_reject_paths_escaping_the_checkout() {
 fn within_a_second<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = sender.send(work());
+        sender.tell(work());
     });
     receiver
         .recv_timeout(std::time::Duration::from_secs(1))

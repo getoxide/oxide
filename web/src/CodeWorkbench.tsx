@@ -1,3 +1,4 @@
+import { readJson, storageKeys, writeJson } from "./storage";
 import {
   useCallback,
   useEffect,
@@ -117,14 +118,7 @@ export function CodeWorkbench({
       void commands.setEditorDirty(contextKey, dirty).catch(() => {});
     }
     if (persistTabs) {
-      try {
-        localStorage.setItem(
-          `oxide:code-tabs:${contextKey}`,
-          JSON.stringify(docs.map((d) => d.path)),
-        );
-      } catch {
-        /* Editing works without UI persistence. */
-      }
+      writeJson(storageKeys.codeTabs(contextKey), docs.map((d) => d.path));
     }
   }, [contextKey]);
 
@@ -427,22 +421,17 @@ export function CodeWorkbench({
     const unregister = registerEditorSave(contextKey, () =>
       actions.current.saveAll(),
     );
-    try {
-      const restored: unknown = JSON.parse(
-        localStorage.getItem(`oxide:code-tabs:${contextKey}`) ?? "[]",
-      );
-      if (Array.isArray(restored))
-        void (async () => {
-          for (const path of restored.slice(0, 12))
-            if (typeof path === "string") await actions.current.openFile(path, undefined, false);
-          if (!requestedFile.current && !instance.getModel()) {
-            const last = [...ownedRecords.values()].at(-1);
-            if (last) select(last);
-          }
-        })();
-    } catch {
-      /* Ignore an old or unavailable tab list. */
-    }
+    // An old, missing or unavailable tab list restores nothing.
+    const restored = readJson(storageKeys.codeTabs(contextKey));
+    if (Array.isArray(restored))
+      void (async () => {
+        for (const path of restored.slice(0, 12))
+          if (typeof path === "string") await actions.current.openFile(path, undefined, false);
+        if (!requestedFile.current && !instance.getModel()) {
+          const last = [...ownedRecords.values()].at(-1);
+          if (last) select(last);
+        }
+      })();
     return () => {
       unregister();
       window.removeEventListener("oxide-appearance-changed",appearance);

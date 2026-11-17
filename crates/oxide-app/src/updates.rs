@@ -1,6 +1,7 @@
 //! Signed application updates. URLs and public keys stay native; the webview only
 //! checks the configured feed and installs the update returned by that check.
 use crate::{AppError, Core};
+use oxide_core::LockExt as _;
 use serde::Serialize;
 use specta::Type;
 use std::sync::{
@@ -68,7 +69,7 @@ impl Updates {
         Ok(Operation(&self.busy))
     }
     fn status(&self, app: &AppHandle) -> UpdateStatus {
-        let pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let pending = self.pending.lock_recover();
         UpdateStatus {
             current_version: app.package_info().version.to_string(),
             version: pending.update.as_ref().map(|u| u.version.clone()),
@@ -79,7 +80,7 @@ impl Updates {
         }
     }
     fn recover(&self) {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self.pending.lock_recover();
         pending.phase = if pending.update.is_some() {
             UpdatePhase::Available
         } else {
@@ -102,11 +103,7 @@ pub async fn check_app_update(
     updates: State<'_, Arc<Updates>>,
 ) -> Result<UpdateStatus, AppError> {
     let _operation = updates.begin()?;
-    updates
-        .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .phase = UpdatePhase::Checking;
+    updates.pending.lock_recover().phase = UpdatePhase::Checking;
     let handle = app.clone();
     let result = async {
         app.updater_builder().timeout(Duration::from_secs(30))
@@ -119,7 +116,7 @@ pub async fn check_app_update(
     }.await;
     match result {
         Ok(update) => {
-            let mut pending = updates.pending.lock().unwrap_or_else(|e| e.into_inner());
+            let mut pending = updates.pending.lock_recover();
             pending.phase = if update.is_some() {
                 UpdatePhase::Available
             } else {
@@ -161,15 +158,14 @@ pub async fn install_app_update(
     validate_install(core.dirty_editor_count(), core.active_thread_count())?;
     let mut update = updates
         .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .lock_recover()
         .update
         .clone()
         .ok_or_else(|| error("Check for updates before installing."))?;
     // Checking is short-lived; downloading a full app can take longer.
     update.timeout = Some(Duration::from_secs(600));
     {
-        let mut pending = updates.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = updates.pending.lock_recover();
         pending.phase = UpdatePhase::Downloading;
         pending.downloaded = 0;
         pending.total = None;
@@ -179,23 +175,22 @@ pub async fn install_app_update(
             .download(
                 |length, total| {
                     {
-                        let mut pending = updates.pending.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut pending = updates.pending.lock_recover();
                         pending.downloaded += length as u64;
                         pending.total = total;
                     }
-                    let _ = on_progress.send(updates.status(&app));
+                    oxide_core::diag::best_effort(
+                        "progress",
+                        on_progress.send(updates.status(&app)),
+                    );
                 },
                 || {},
             )
             .await
             .map_err(error)?;
         validate_install(core.dirty_editor_count(), core.active_thread_count())?;
-        updates
-            .pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .phase = UpdatePhase::Installing;
-        let _ = on_progress.send(updates.status(&app));
+        updates.pending.lock_recover().phase = UpdatePhase::Installing;
+        oxide_core::diag::best_effort("progress", on_progress.send(updates.status(&app)));
         // Verify the signature again, then invoke the platform installer.
         update.verify(&bytes).map_err(error)?;
         tauri::async_runtime::spawn_blocking(move || install_verified_update(&update, bytes))
@@ -295,7 +290,6 @@ mod macos_dmg {
     use std::fs;
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct ScopedDir(PathBuf);
@@ -325,7 +319,7 @@ mod macos_dmg {
 
     impl Drop for ScopedDir {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            oxide_core::diag::best_effort("remove_dir_all", fs::remove_dir_all(&self.0));
         }
     }
 
@@ -341,10 +335,13 @@ mod macos_dmg {
 
     impl Drop for MountedDmg {
         fn drop(&mut self) {
-            let _ = Command::new(helpers::HDIUTIL)
-                .args(["detach", "-force"])
-                .arg(&self.0)
-                .status();
+            oxide_core::diag::best_effort(
+                "hdiutil",
+                oxide_core::desktop_tools::resolved_command(helpers::HDIUTIL)
+                    .args(["detach", "-force"])
+                    .arg(&self.0)
+                    .status(),
+            );
         }
     }
 
@@ -382,7 +379,7 @@ mod macos_dmg {
     fn replace_bundle(target: &Path, staged: &Path, backup: &Path) -> std::io::Result<()> {
         fs::rename(target, backup)?;
         if let Err(err) = fs::rename(staged, target) {
-            let _ = fs::rename(backup, target);
+            oxide_core::diag::best_effort("rename", fs::rename(backup, target));
             return Err(err);
         }
         Ok(())
@@ -398,7 +395,7 @@ mod macos_dmg {
             "do shell script {} with administrator privileges",
             applescript_string(&script)
         );
-        let out = Command::new(helpers::OSASCRIPT)
+        let out = oxide_core::desktop_tools::resolved_command(helpers::OSASCRIPT)
             .args(["-e", &apple_script])
             .output()
             .map_err(|e| format!("Failed to request administrator privileges: {e}"))?;
@@ -424,7 +421,7 @@ mod macos_dmg {
         staged_app: &Path,
         backup_app: &Path,
     ) -> Result<(), InstallError> {
-        let copy = Command::new(helpers::DITTO)
+        let copy = oxide_core::desktop_tools::resolved_command(helpers::DITTO)
             .arg(source_app)
             .arg(staged_app)
             .output()
@@ -437,10 +434,13 @@ mod macos_dmg {
                 "Failed to copy updated application: {stderr}"
             )));
         }
-        let _ = Command::new(helpers::XATTR)
-            .args(["-dr", "com.apple.quarantine"])
-            .arg(staged_app)
-            .output();
+        oxide_core::diag::best_effort(
+            "xattr",
+            oxide_core::desktop_tools::resolved_command(helpers::XATTR)
+                .args(["-dr", "com.apple.quarantine"])
+                .arg(staged_app)
+                .output(),
+        );
         fs::set_permissions(staged_app, fs::Permissions::from_mode(0o755)).map_err(|e| {
             InstallError::Failed(format!("Failed to set application permissions: {e}"))
         })?;
@@ -469,7 +469,7 @@ mod macos_dmg {
             .map_err(|e| format!("Failed to write update disk image: {e}"))?;
 
         let mount_dir = ScopedDir::new_in(&sys_tmp, "oxide-update-mnt")?;
-        let attach = Command::new(helpers::HDIUTIL)
+        let attach = oxide_core::desktop_tools::resolved_command(helpers::HDIUTIL)
             .args([
                 "attach",
                 "-nobrowse",
@@ -499,13 +499,18 @@ mod macos_dmg {
             Err(InstallError::PermissionDenied) => {
                 // Copy from the mounted image inside the privileged script: the user-writable
                 // staged copy is never what gets installed.
-                let _ = fs::remove_dir_all(&staged_app);
+                oxide_core::diag::best_effort("remove_dir_all", fs::remove_dir_all(&staged_app));
                 run_privileged_install(&source_app, &target, &backup_app)?;
             }
             Err(InstallError::Failed(message)) => return Err(message),
         }
 
-        let _ = Command::new(helpers::TOUCH).arg(&target).status();
+        oxide_core::diag::best_effort(
+            "touch",
+            oxide_core::desktop_tools::resolved_command(helpers::TOUCH)
+                .arg(&target)
+                .status(),
+        );
         Ok(())
     }
 }
@@ -608,7 +613,7 @@ mod tests {
             &target.to_string_lossy(),
             &backup.to_string_lossy(),
         );
-        let ok = std::process::Command::new("/bin/sh")
+        let ok = oxide_core::desktop_tools::resolved_command("/bin/sh")
             .args(["-c", &script])
             .status()
             .unwrap()
@@ -660,7 +665,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = macos_dmg::new_scoped_dir_for_test(&std::env::temp_dir());
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
-        let _ = std::fs::remove_dir_all(&dir);
+        oxide_core::diag::best_effort("remove_dir_all", std::fs::remove_dir_all(&dir));
         assert_eq!(mode, 0o700);
     }
 }

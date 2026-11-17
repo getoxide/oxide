@@ -1,4 +1,4 @@
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { commands, type LanguageTool } from "./bindings";
 import type {
   Diagnostic,

@@ -2,12 +2,15 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 #![cfg(unix)]
 
 mod support;
 
+use oxide_core::diag;
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{
     Core, ItemKind, PermissionMode, ProjectServiceStatus, ThreadEvent, ThreadStatus, TurnStatus,
 };
@@ -61,17 +64,17 @@ fn an_agent_server_command_detaches_and_the_turn_completes_without_the_provider(
         let sender = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = sender.send(ProviderEvent::ItemStarted {
+            sender.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::ToolCall,
                 parent_item_index: None,
                 category: Some(ActivityCategory::Run),
             });
-            let _ = sender.send(ProviderEvent::CommandRequested {
+            sender.tell(ProviderEvent::CommandRequested {
                 item_index: 0,
                 command: "sleep 30".into(),
             });
@@ -146,17 +149,17 @@ fn a_non_background_turn_is_untouched() {
         let sender = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = sender.send(ProviderEvent::ItemStarted {
+            sender.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 parent_item_index: None,
                 category: None,
             });
-            let _ = sender.send(ProviderEvent::ItemCompleted {
+            sender.tell(ProviderEvent::ItemCompleted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 content: "All done.".into(),
@@ -164,7 +167,7 @@ fn a_non_background_turn_is_untouched() {
                 category: None,
                 command: None,
             });
-            let _ = sender.send(ProviderEvent::TurnCompleted {
+            sender.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -199,17 +202,17 @@ fn a_service_that_crashes_during_startup_fails_the_turn() {
         let sender = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = sender.send(ProviderEvent::ItemStarted {
+            sender.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::ToolCall,
                 parent_item_index: None,
                 category: Some(ActivityCategory::Run),
             });
-            let _ = sender.send(ProviderEvent::CommandRequested {
+            sender.tell(ProviderEvent::CommandRequested {
                 item_index: 0,
                 command: "echo boom >&2; exit 7".into(),
             });
@@ -258,17 +261,17 @@ fn an_agent_command_on_a_port_held_by_a_service_reuses_it_and_completes() {
         let sender = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = sender.send(ProviderEvent::ItemStarted {
+            sender.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::ToolCall,
                 parent_item_index: None,
                 category: Some(ActivityCategory::Run),
             });
-            let _ = sender.send(ProviderEvent::CommandRequested {
+            sender.tell(ProviderEvent::CommandRequested {
                 item_index: 0,
                 command: format!("PORT={port} sleep 30"),
             });
@@ -368,18 +371,18 @@ fn requesting_provider_with(
         let command = command.clone();
         let approval = approval.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = sender.send(ProviderEvent::ItemStarted {
+            sender.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::ToolCall,
                 parent_item_index: None,
                 category: Some(ActivityCategory::Run),
             });
             let send_approval = |summary: String| {
-                let _ = sender.send(ProviderEvent::ApprovalRequested {
+                sender.tell(ProviderEvent::ApprovalRequested {
                     id: "provider-1".into(),
                     kind: ApprovalKind::Command,
                     summary,
@@ -394,7 +397,7 @@ fn requesting_provider_with(
                 send_approval(summary);
                 std::thread::sleep(Duration::from_millis(100));
             }
-            let _ = sender.send(ProviderEvent::CommandRequested {
+            sender.tell(ProviderEvent::CommandRequested {
                 item_index: 0,
                 command: command.clone(),
             });
@@ -555,7 +558,7 @@ fn a_turn_ending_with_the_approval_pending_counts_as_denied() {
     let a = asked(PermissionMode::Ask, false);
     let (id, _) = next_approval(&a.rx);
 
-    let _ = a.sender.send(ProviderEvent::TurnCompleted {
+    a.sender.tell(ProviderEvent::TurnCompleted {
         turn_index: 0,
         status: TurnStatus::Interrupted,
     });
@@ -570,9 +573,11 @@ fn a_turn_ending_with_the_approval_pending_counts_as_denied() {
         Some(ApprovalDecision::Deny)
     );
     // A late answer must not start anything, nor reach the Provider.
-    let _ = a
-        .core
-        .respond_to_approval(a.thread_id, &id, ApprovalDecision::Allow);
+    diag::best_effort(
+        "respond_to_approval",
+        a.core
+            .respond_to_approval(a.thread_id, &id, ApprovalDecision::Allow),
+    );
     assert!(
         a.core
             .list_project_services(a.project_id)

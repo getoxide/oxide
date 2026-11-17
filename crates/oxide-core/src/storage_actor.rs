@@ -1,4 +1,7 @@
 use crossbeam_channel::{Receiver, Sender};
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
+use oxide_provider::sync::LockExt as _;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -150,8 +153,14 @@ impl StorageHandle {
                         return;
                     }
                 };
-                let _ = conn.pragma_update(None, "journal_mode", "WAL");
-                let _ = conn.pragma_update(None, "foreign_keys", "ON");
+                diag::best_effort(
+                    "pragma_update",
+                    conn.pragma_update(None, "journal_mode", "WAL"),
+                );
+                diag::best_effort(
+                    "pragma_update",
+                    conn.pragma_update(None, "foreign_keys", "ON"),
+                );
 
                 run_storage_actor(&conn, &rx);
             })
@@ -174,7 +183,7 @@ impl StorageHandle {
         segments: Vec<PromptSegment>,
     ) -> Result<TurnStarted> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::WriteTurnStarted {
+        self.sender.tell(StorageMsg::WriteTurnStarted {
             thread_id,
             turn_index,
             prompt,
@@ -193,7 +202,7 @@ impl StorageHandle {
         error: Option<TurnError>,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::UpdateTurnCompleted {
+        self.sender.tell(StorageMsg::UpdateTurnCompleted {
             turn_id,
             status,
             error,
@@ -204,7 +213,7 @@ impl StorageHandle {
 
     pub fn write_item_completed(&self, item: NewItem) -> Result<u32> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::WriteItemCompleted {
+        self.sender.tell(StorageMsg::WriteItemCompleted {
             item,
             reply: reply_tx,
         });
@@ -222,7 +231,7 @@ impl StorageHandle {
         options: Vec<String>,
     ) -> Result<u32> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::WriteApprovalRequested {
+        self.sender.tell(StorageMsg::WriteApprovalRequested {
             turn_id,
             approval_id,
             kind,
@@ -243,7 +252,7 @@ impl StorageHandle {
         decided_at: String,
     ) -> Result<String> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::UpdateApprovalDecision {
+        self.sender.tell(StorageMsg::UpdateApprovalDecision {
             turn_id,
             approval_id,
             decision,
@@ -262,7 +271,7 @@ impl StorageHandle {
         decided_at: String,
     ) -> Result<String> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::ResolvePendingApprovals {
+        self.sender.tell(StorageMsg::ResolvePendingApprovals {
             turn_id,
             decision,
             decided_at,
@@ -279,7 +288,7 @@ impl StorageHandle {
         permission_mode: PermissionMode,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::UpdateThreadPermissionMode {
+        self.sender.tell(StorageMsg::UpdateThreadPermissionMode {
             thread_id,
             permission_mode,
             reply: reply_tx,
@@ -294,7 +303,7 @@ impl StorageHandle {
         effort: Option<String>,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::UpdateThreadModelAndEffort {
+        self.sender.tell(StorageMsg::UpdateThreadModelAndEffort {
             thread_id,
             model,
             effort,
@@ -305,7 +314,7 @@ impl StorageHandle {
 
     pub fn update_thread_status(&self, thread_id: u32, status: ThreadStatus) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::UpdateThreadStatus {
+        self.sender.tell(StorageMsg::UpdateThreadStatus {
             thread_id,
             status,
             reply: reply_tx,
@@ -316,7 +325,7 @@ impl StorageHandle {
     /// The Thread with its last `tail` Turns.
     pub fn get_snapshot(&self, thread_id: u32, tail: u32) -> Result<ThreadSnapshot> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::GetSnapshot {
+        self.sender.tell(StorageMsg::GetSnapshot {
             thread_id,
             tail,
             reply: reply_tx,
@@ -328,7 +337,7 @@ impl StorageHandle {
 
     pub fn list_turns(&self, thread_id: u32, offset: u32, limit: u32) -> Result<TurnPage> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::ListTurns {
+        self.sender.tell(StorageMsg::ListTurns {
             thread_id,
             offset,
             limit,
@@ -340,7 +349,7 @@ impl StorageHandle {
     }
 
     pub fn set_provider_session_id(&self, thread_id: u32, session_id: String) {
-        let _ = self.sender.send(StorageMsg::SetProviderSessionId {
+        self.sender.tell(StorageMsg::SetProviderSessionId {
             thread_id,
             session_id,
         });
@@ -348,13 +357,13 @@ impl StorageHandle {
 
     /// Records that the Provider no longer has the Thread's session and puts the Thread in error.
     pub fn mark_session_lost(&self, thread_id: u32) {
-        let _ = self.sender.send(StorageMsg::MarkSessionLost { thread_id });
+        self.sender.tell(StorageMsg::MarkSessionLost { thread_id });
     }
 
     /// The Provider's own session id for the Thread, once the Provider has reported one.
     pub fn get_provider_session_id(&self, thread_id: u32) -> Option<String> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::GetProviderSessionId {
+        self.sender.tell(StorageMsg::GetProviderSessionId {
             thread_id,
             reply: reply_tx,
         });
@@ -363,7 +372,7 @@ impl StorageHandle {
 
     pub fn write_unknown_event(&self, turn_id: u32, raw: String) -> Result<u32> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::WriteUnknownEvent {
+        self.sender.tell(StorageMsg::WriteUnknownEvent {
             turn_id,
             raw,
             reply: reply_tx,
@@ -376,7 +385,7 @@ impl StorageHandle {
     /// Keeps what the agent is told on the Thread's next prompt.
     pub fn set_restore_notice(&self, thread_id: u32, notice: String) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::SetRestoreNotice {
+        self.sender.tell(StorageMsg::SetRestoreNotice {
             thread_id,
             notice,
             reply: reply_tx,
@@ -399,7 +408,7 @@ impl StorageHandle {
 
     fn notice(&self, thread_id: u32, take: bool) -> Option<String> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(StorageMsg::RestoreNotice {
+        self.sender.tell(StorageMsg::RestoreNotice {
             thread_id,
             take,
             reply: reply_tx,
@@ -410,12 +419,12 @@ impl StorageHandle {
     /// Stops the actor and waits until its database connection is closed, so SQLite has
     /// removed its `-wal` and `-shm` files when this returns. Later calls do nothing.
     pub fn shutdown(&self) {
-        let _ = self.sender.send(StorageMsg::Shutdown);
-        let thread = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.sender.tell(StorageMsg::Shutdown);
+        let thread = self.thread.lock_recover().take();
         if let Some(thread) = thread
             && thread.thread().id() != std::thread::current().id()
         {
-            let _ = thread.join();
+            diag::joined("join", thread.join());
         }
     }
 }
@@ -471,7 +480,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                         thread_title,
                     })
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::UpdateTurnCompleted {
                 turn_id,
@@ -496,7 +505,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(())
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::WriteItemCompleted { item, reply } => {
                 let res = (|| -> Result<u32> {
@@ -517,7 +526,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     let item_id = conn.last_insert_rowid() as u32;
                     Ok(item_id)
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::WriteApprovalRequested {
                 turn_id,
@@ -537,7 +546,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     let id = conn.last_insert_rowid() as u32;
                     Ok(id)
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::UpdateApprovalDecision {
                 turn_id,
@@ -560,7 +569,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(final_decided_at)
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::ResolvePendingApprovals {
                 turn_id,
@@ -582,7 +591,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(final_decided_at)
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::UpdateThreadPermissionMode {
                 thread_id,
@@ -596,7 +605,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(())
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::UpdateThreadModelAndEffort {
                 thread_id,
@@ -611,7 +620,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(())
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::UpdateThreadStatus {
                 thread_id,
@@ -626,7 +635,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(())
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::GetSnapshot {
                 thread_id,
@@ -634,7 +643,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                 reply,
             } => {
                 let res = query_snapshot(conn, thread_id, tail);
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::ListTurns {
                 thread_id,
@@ -643,22 +652,25 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                 reply,
             } => {
                 let res = query_turns(conn, thread_id, offset, limit);
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::SetProviderSessionId {
                 thread_id,
                 session_id,
             } => {
-                let _ = conn.execute(
-                    "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",
-                    rusqlite::params![session_id, thread_id],
+                diag::best_effort(
+                    "execute",
+                    conn.execute(
+                        "UPDATE threads SET provider_session_id = ?1 WHERE id = ?2",
+                        rusqlite::params![session_id, thread_id],
+                    ),
                 );
             }
             StorageMsg::MarkSessionLost { thread_id } => {
-                let _ = conn.execute(
+                diag::best_effort("execute", conn.execute(
                     "UPDATE threads SET session_lost = 1, status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
                     [thread_id],
-                );
+                ));
             }
             StorageMsg::GetProviderSessionId { thread_id, reply } => {
                 let session_id = conn
@@ -669,7 +681,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )
                     .ok()
                     .flatten();
-                let _ = reply.send(session_id);
+                reply.tell(session_id);
             }
             StorageMsg::WriteUnknownEvent {
                 turn_id,
@@ -683,7 +695,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(conn.last_insert_rowid() as u32)
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::SetRestoreNotice {
                 thread_id,
@@ -697,7 +709,7 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     )?;
                     Ok(())
                 })();
-                let _ = reply.send(res);
+                reply.tell(res);
             }
             StorageMsg::RestoreNotice {
                 thread_id,
@@ -713,12 +725,15 @@ fn run_storage_actor(conn: &Connection, rx: &Receiver<StorageMsg>) {
                     .ok()
                     .flatten();
                 if take && notice.is_some() {
-                    let _ = conn.execute(
-                        "UPDATE threads SET restore_notice = NULL WHERE id = ?1",
-                        [thread_id],
+                    diag::best_effort(
+                        "execute",
+                        conn.execute(
+                            "UPDATE threads SET restore_notice = NULL WHERE id = ?1",
+                            [thread_id],
+                        ),
                     );
                 }
-                let _ = reply.send(notice);
+                reply.tell(notice);
             }
             StorageMsg::Shutdown => break,
         }

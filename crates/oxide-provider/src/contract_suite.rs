@@ -1,4 +1,5 @@
 //! Shared contract assertions for Provider adapters; a failed expectation is a test failure.
+use crate::diag;
 use crate::{
     Attachment, AttachmentKind, CommandOutcome, ItemKind, PromptSegment, Provider, ProviderEvent,
     StartContext, TurnStatus,
@@ -167,7 +168,7 @@ pub fn verify_provider_contract<P: Provider, F: FnOnce() -> P>(factory: F) {
             _ => {}
         }
     }
-    let _ = std::fs::remove_dir_all(&folder);
+    diag::best_effort("remove_dir_all", std::fs::remove_dir_all(&folder));
     assert!(
         attachment_turn_seen,
         "a prompt with an Attachment must start a Turn that names it"

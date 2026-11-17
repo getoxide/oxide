@@ -3,6 +3,7 @@
 
 use crate::thread::ThreadStatus;
 use crate::{Core, DiffKind, DiffScope, Error, Result};
+use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -106,7 +107,7 @@ impl Core {
         if body.trim().is_empty() {
             return Err(Error::Editor("A comment can't be empty.".into()));
         }
-        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+        self.db.lock_recover().execute(
             "UPDATE line_comments SET body = ?1 WHERE id = ?2",
             rusqlite::params![body, id],
         )?;
@@ -115,8 +116,7 @@ impl Core {
 
     pub fn delete_line_comment(&self, id: u32) -> Result<()> {
         self.db
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .execute("DELETE FROM line_comments WHERE id = ?1", [id])?;
         Ok(())
     }
@@ -124,7 +124,7 @@ impl Core {
     /// A Thread's drafts, oldest first, each flagged when its line no longer holds the quoted code.
     pub fn list_line_comments(&self, thread_id: u32) -> Result<Vec<LineComment>> {
         let mut comments: Vec<LineComment> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let mut stmt = db.prepare(
                 "SELECT id, scope, path, side, line, code, body, provider FROM line_comments
                  WHERE thread_id = ?1 ORDER BY id",
@@ -218,7 +218,7 @@ impl Core {
             self.record_review_round(thread_id, &kind);
         }
         self.remember_line_comments(snapshot.thread.project_id, thread_id, &comments);
-        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+        self.db.lock_recover().execute(
             "DELETE FROM line_comments WHERE thread_id = ?1",
             [thread_id],
         )?;

@@ -1,3 +1,4 @@
+import { readJson, storageKeys, writeJson } from "./storage";
 import type { ModelInfo } from "./bindings";
 
 /**
@@ -5,15 +6,14 @@ import type { ModelInfo } from "./bindings";
  * Oxide only recognises an Effort in a Model id or name (`…-xhigh`, `(High)`) once a catalog has
  * said that level exists, so a new level in a Provider's catalog is picked up as it appears.
  */
-const STORAGE_KEY = "oxide:effort-vocabulary";
+const STORAGE_KEY = storageKeys.effortVocabulary;
 const known = new Set<string>();
 
 const normalise = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-try {
-  const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-  if (Array.isArray(saved)) for (const level of saved) if (typeof level === "string") known.add(level);
-} catch { /* A cold start just waits for the first catalog. */ }
+// A cold start (nothing stored) just waits for the first catalog.
+const saved = readJson(STORAGE_KEY);
+if (Array.isArray(saved)) for (const level of saved) if (typeof level === "string") known.add(level);
 
 /** Remembers every Effort the catalog declares. Idempotent and cheap, so it can run on each catalog. */
 export function learnEfforts(models: readonly ModelInfo[]): void {
@@ -25,7 +25,7 @@ export function learnEfforts(models: readonly ModelInfo[]): void {
     }
   }
   if (!grew) return;
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...known])); } catch { /* Memory only. */ }
+  writeJson(STORAGE_KEY, [...known]);
 }
 
 /** The declared Effort `text` spells (ignoring case and separators: "X-High" is "xhigh"), if any. */

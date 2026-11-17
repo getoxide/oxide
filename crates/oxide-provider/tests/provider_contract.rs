@@ -2,8 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::{
     ActivityCategory, CommandOutcome, CommandRecord, FakeProvider, ItemKind, PermissionMode,
     Provider, ProviderEvent, TurnStatus, contract_suite::verify_provider_contract,
@@ -112,10 +114,10 @@ fn fake_provider_passes_shared_contract_suite() {
             let s = sender.clone();
             let prompt = prompt.to_string();
             std::thread::spawn(move || {
-                let _ = s.send(ProviderEvent::SessionInfo {
+                s.tell(ProviderEvent::SessionInfo {
                     session_id: "fake-session-123".into(),
                 });
-                let _ = s.send(ProviderEvent::TurnStarted {
+                s.tell(ProviderEvent::TurnStarted {
                     turn_index: 0,
                     prompt: prompt.clone(),
                 });
@@ -139,13 +141,13 @@ fn fake_provider_passes_shared_contract_suite() {
                         commands.into_iter().enumerate()
                     {
                         let index = index as u32;
-                        let _ = s.send(ProviderEvent::ItemStarted {
+                        s.tell(ProviderEvent::ItemStarted {
                             parent_item_index: None,
                             category: Some(ActivityCategory::Run),
                             item_index: index,
                             kind: ItemKind::ToolCall,
                         });
-                        let _ = s.send(ProviderEvent::ItemCompleted {
+                        s.tell(ProviderEvent::ItemCompleted {
                             parent_item_index: None,
                             category: Some(ActivityCategory::Run),
                             item_index: index,
@@ -154,27 +156,27 @@ fn fake_provider_passes_shared_contract_suite() {
                             command: Some(CommandRecord::reported(line, outcome, exit_code)),
                         });
                     }
-                    let _ = s.send(ProviderEvent::TurnCompleted {
+                    s.tell(ProviderEvent::TurnCompleted {
                         turn_index: 0,
                         status: TurnStatus::Completed,
                     });
                     return;
                 }
-                let _ = s.send(ProviderEvent::ItemStarted {
+                s.tell(ProviderEvent::ItemStarted {
                     parent_item_index: None,
                     category: None,
                     item_index: 0,
                     kind: ItemKind::AgentMessage,
                 });
-                let _ = s.send(ProviderEvent::ItemDelta {
+                s.tell(ProviderEvent::ItemDelta {
                     item_index: 0,
                     delta: "Hello ".into(),
                 });
-                let _ = s.send(ProviderEvent::ItemDelta {
+                s.tell(ProviderEvent::ItemDelta {
                     item_index: 0,
                     delta: "world!".into(),
                 });
-                let _ = s.send(ProviderEvent::ItemCompleted {
+                s.tell(ProviderEvent::ItemCompleted {
                     parent_item_index: None,
                     category: None,
                     item_index: 0,
@@ -182,10 +184,10 @@ fn fake_provider_passes_shared_contract_suite() {
                     content: "Hello world!".into(),
                     command: None,
                 });
-                let _ = s.send(ProviderEvent::Unknown {
+                s.tell(ProviderEvent::Unknown {
                     raw: r#"{"type":"custom_unrecognized_event","data":123}"#.into(),
                 });
-                let _ = s.send(ProviderEvent::TurnCompleted {
+                s.tell(ProviderEvent::TurnCompleted {
                     turn_index: 0,
                     status: TurnStatus::Completed,
                 });
@@ -471,7 +473,7 @@ fn codex_drains_large_stderr_without_blocking() {
         provider.send_prompt("Hello").unwrap();
         let completed = wait_for_turn_completed(&rx, Duration::from_secs(5));
         provider.shutdown().unwrap();
-        let _ = done_tx.send(completed);
+        done_tx.tell(completed);
     });
 
     let completed = done_rx

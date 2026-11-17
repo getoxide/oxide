@@ -1,3 +1,4 @@
+import { readText, storageKeys, writeText } from "./storage";
 import { modelDigitShortcut, shortcutLabel } from "./shortcuts";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LockIcon, StarFillIcon, StarIcon, XIcon } from "@primer/octicons-react";
@@ -23,13 +24,11 @@ const PROVIDERS = [
   { id: "antigravity", name: "Antigravity" },
 ] as const;
 
-const TAB_KEY = "oxide:model-picker-tab";
+const TAB_KEY = storageKeys.modelPickerTab;
 
 function rememberedTab(tabs: string[], fallback: string): string {
-  try {
-    const saved = localStorage.getItem(TAB_KEY);
-    return saved && tabs.includes(saved) ? saved : fallback;
-  } catch { return fallback; }
+  const saved = readText(TAB_KEY);
+  return saved && tabs.includes(saved) ? saved : fallback;
 }
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -97,7 +96,7 @@ export function ModelEffortPicker({
   useEffect(() => dispatch({ type: "sync" }), [ctx, dispatch]);
 
   useEffect(() => {
-    try { localStorage.setItem(TAB_KEY, state.tab); } catch { /* The picker still works without storage. */ }
+    writeText(TAB_KEY, state.tab);
   }, [state.tab]);
 
   useEffect(() => {

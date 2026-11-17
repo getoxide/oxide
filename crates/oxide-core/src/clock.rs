@@ -1,3 +1,4 @@
+use oxide_provider::sync::LockExt as _;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -32,7 +33,7 @@ impl ManualClock {
     }
 
     pub fn advance(&self, by: Duration) {
-        *self.elapsed.lock().unwrap_or_else(|e| e.into_inner()) += by;
+        *self.elapsed.lock_recover() += by;
     }
 }
 
@@ -44,6 +45,6 @@ impl Default for ManualClock {
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        self.start + *self.elapsed.lock().unwrap_or_else(|e| e.into_inner())
+        self.start + *self.elapsed.lock_recover()
     }
 }

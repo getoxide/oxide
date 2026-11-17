@@ -2,6 +2,8 @@
 //! its own process group, shutdown escalates SIGTERM -> SIGKILL, and live groups are recorded on
 //! disk so a crashed Oxide's orphans can be killed on the next launch.
 
+use crate::diag;
+use crate::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,7 +29,7 @@ pub fn require_pipe<T>(
     name: &str,
 ) -> Result<T, crate::ProviderError> {
     pipe.ok_or_else(|| {
-        let _ = child.kill();
+        diag::best_effort("kill", child.kill());
         crate::ProviderError::StartFailed(format!("child {name} was not piped"))
     })
 }
@@ -59,7 +61,7 @@ pub fn drain_stderr(stderr: std::process::ChildStderr) -> std::thread::JoinHandl
             }
         }
         // Keep emptying the pipe so a chatty child never blocks on it, without keeping anything.
-        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+        diag::best_effort("copy", std::io::copy(&mut reader, &mut std::io::sink()));
         let joined = tail.into_iter().collect::<Vec<_>>().join("\n");
         (!joined.is_empty()).then_some(joined)
     })
@@ -141,7 +143,7 @@ pub fn signal_process(pid: i32, signal: i32) -> std::io::Result<()> {
 pub fn kill_group(pgid: i32) {
     #[cfg(unix)]
     {
-        let _ = signal_group(pgid, libc::SIGKILL);
+        diag::best_effort("signal_group", signal_group(pgid, libc::SIGKILL));
     }
     #[cfg(windows)]
     terminate_group(pgid, Duration::ZERO, || {});
@@ -179,7 +181,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
     if pgid <= 0 {
         return;
     }
-    let _ = signal_group(pgid, libc::SIGTERM);
+    diag::best_effort("signal_group", signal_group(pgid, libc::SIGTERM));
     let deadline = Instant::now() + grace;
     let mut killed = false;
     loop {
@@ -188,7 +190,7 @@ pub fn terminate_group(pgid: i32, grace: Duration, mut reap: impl FnMut()) {
             return;
         }
         if !killed && Instant::now() >= deadline {
-            let _ = signal_group(pgid, libc::SIGKILL);
+            diag::best_effort("signal_group", signal_group(pgid, libc::SIGKILL));
             killed = true;
         }
         // After SIGKILL the group dies at once; this bound only guards against uninterruptible
@@ -243,8 +245,8 @@ pub fn attach_running_to_job(_pid: u32) -> std::io::Result<()> {
 /// Attach a suspended std child to its kill-on-close job before resuming it.
 pub fn attach_child_to_job(child: &mut Child) -> std::io::Result<()> {
     if let Err(error) = attach_to_job(child.id()) {
-        let _ = child.kill();
-        let _ = child.wait();
+        diag::best_effort("kill", child.kill());
+        diag::best_effort("wait", child.wait());
         return Err(error);
     }
     Ok(())
@@ -324,12 +326,12 @@ impl ProcessRegistry {
     /// Records a live group. `pgid` is the leader's pid.
     pub fn register(&self, pgid: i32, executable: &str) {
         #[cfg(windows)]
-        let _ = attach_running_to_job(pgid as u32);
+        diag::best_effort("attach_running_to_job", attach_running_to_job(pgid as u32));
         #[cfg(windows)]
         let identity = windows_process::process_identity(pgid);
         #[cfg(not(windows))]
         let identity = None;
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock_recover();
         state.live.retain(|e| e.pgid != pgid);
         state.live.push(Entry {
             pgid,
@@ -340,7 +342,7 @@ impl ProcessRegistry {
     }
 
     pub fn unregister(&self, pgid: i32) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock_recover();
         state.live.retain(|e| e.pgid != pgid);
         self.persist(&state);
         #[cfg(windows)]
@@ -351,7 +353,7 @@ impl ProcessRegistry {
     /// recorded executable; a pid the OS has since reused for something else is left alone.
     /// Returns the killed group ids and forgets all stale entries.
     pub fn reap_stale(&self) -> Vec<i32> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock_recover();
         let stale = std::mem::take(&mut state.stale);
         let mut killed = Vec::new();
         for entry in stale {
@@ -370,7 +372,7 @@ impl ProcessRegistry {
         };
         let tmp = self.path.with_extension("json.tmp");
         if write_private(&tmp, &json).is_ok() {
-            let _ = std::fs::rename(&tmp, &self.path);
+            diag::best_effort("rename", std::fs::rename(&tmp, &self.path));
         }
     }
 }
@@ -397,7 +399,7 @@ fn leader_runs(pid: i32, executable: &str, _identity: Option<&ProcessIdentity>) 
     if pid <= 0 || unsafe { libc::getpgid(pid) } != pid {
         return false;
     }
-    let Ok(output) = Command::new(crate::command::os_tool("ps"))
+    let Ok(output) = crate::command::os_command("ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
     else {
@@ -470,11 +472,7 @@ mod windows_process {
                 "invalid process id",
             ));
         }
-        if jobs()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&pid)
-        {
+        if jobs().lock_recover().contains_key(&pid) {
             return Ok(());
         }
         // SAFETY: every Win32 call in this block gets a handle created here, is checked for
@@ -524,10 +522,7 @@ mod windows_process {
                 CloseHandle(job);
                 return Err(error);
             }
-            let old = jobs()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(pid, job as usize);
+            let old = jobs().lock_recover().insert(pid, job as usize);
             if let Some(old) = old {
                 CloseHandle(old as HANDLE);
             }
@@ -655,7 +650,7 @@ mod windows_process {
         if pid <= 0 {
             return false;
         }
-        let jobs = jobs().lock().unwrap_or_else(|e| e.into_inner());
+        let jobs = jobs().lock_recover();
         if let Some(&job) = jobs.get(&pid) {
             let job = job as HANDLE;
             // SAFETY: `job` is a live job handle owned by the registry (guarded by the lock held
@@ -689,11 +684,7 @@ mod windows_process {
         if pid <= 0 {
             return;
         }
-        let job = jobs()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&pid)
-            .copied();
+        let job = jobs().lock_recover().get(&pid).copied();
         if let Some(job) = job {
             let job = job as HANDLE;
             // SAFETY: `job` is a live job handle owned by the registry.
@@ -712,11 +703,7 @@ mod windows_process {
     }
 
     pub(super) fn close_job(pid: i32) {
-        if let Some(job) = jobs()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&pid)
-        {
+        if let Some(job) = jobs().lock_recover().remove(&pid) {
             // SAFETY: the handle was just removed from the registry, so this is its only close.
             unsafe { CloseHandle(job as HANDLE) };
         }
@@ -787,7 +774,8 @@ mod windows_process {
 #[cfg(all(test, windows))]
 #[allow(
     clippy::unwrap_used,
-    reason = "test module: clippy only recognises plain cfg(test)"
+    clippy::disallowed_methods,
+    reason = "test module: clippy only recognises plain cfg(test); tests start their own fixture processes"
 )]
 mod windows_tests {
     use super::*;
@@ -826,10 +814,10 @@ mod windows_tests {
         assert!(group_alive(pid));
 
         terminate_group(pid, Duration::ZERO, || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
 
-        let _ = child.wait();
+        diag::best_effort("wait", child.wait());
         assert!(!group_alive(pid));
     }
 
@@ -854,16 +842,17 @@ mod windows_tests {
         );
 
         terminate_group(pid, Duration::ZERO, || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
-        let _ = child.wait();
+        diag::best_effort("wait", child.wait());
     }
 }
 
 #[cfg(all(test, unix))]
 #[allow(
     clippy::unwrap_used,
-    reason = "test module: clippy only recognises plain cfg(test)"
+    clippy::disallowed_methods,
+    reason = "test module: clippy only recognises plain cfg(test); tests start their own fixture processes"
 )]
 mod tests {
     use super::*;
@@ -878,7 +867,7 @@ mod tests {
     fn wait_gone(pgid: i32, child: &mut Child) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
             if !group_alive(pgid) {
                 return true;
             }
@@ -924,7 +913,7 @@ mod tests {
         let pid = child.id() as i32;
         let started = Instant::now();
         terminate_group(pid, SHUTDOWN_GRACE, || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
         assert!(!group_alive(pid));
         assert!(started.elapsed() < SHUTDOWN_GRACE, "SIGTERM was enough");
@@ -942,7 +931,7 @@ mod tests {
 
         let started = Instant::now();
         terminate_group(pid, Duration::from_millis(500), || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
 
         assert!(!group_alive(pid), "leader and its sleep child must be gone");
@@ -990,20 +979,12 @@ mod tests {
         registry.unregister(4_000_001);
 
         let next = ProcessRegistry::open(&path);
-        assert_eq!(
-            next.state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .stale
-                .len(),
-            1
-        );
+        assert_eq!(next.state.lock_recover().stale.len(), 1);
         next.reap_stale();
         assert!(
             ProcessRegistry::open(&path)
                 .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .stale
                 .is_empty()
         );

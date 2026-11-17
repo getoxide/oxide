@@ -1,3 +1,13 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+# Each entry has one sanctioned replacement. The `reason` is the message an agent (or a person)
+# sees on failure, so it names that replacement. Only the module that implements the
+# replacement may `#![allow(clippy::disallowed_methods, reason = "...")]`.
+disallowed-methods = [
+  { path = "std::sync::Mutex::lock", reason = "Use `LockExt::lock_recover()` (oxide_provider::sync, re-exported by oxide_core). Poisoning recovery is mandatory (ADR-0016); never `if let Ok(g) = m.lock()`, it silently skips the work." },
+  { path = "std::sync::RwLock::read", reason = "Use `RwLockExt::read_recover()` (oxide_provider::sync). Poisoning recovery is mandatory (ADR-0016)." },
+  { path = "std::sync::RwLock::write", reason = "Use `RwLockExt::write_recover()` (oxide_provider::sync). Poisoning recovery is mandatory (ADR-0016)." },
+  { path = "std::process::Command::new", reason = "Do not spawn a process directly. Use `oxide_provider::command::os_command(\"name\")` for OS helpers (absolute path, hidden console on Windows). Git and gh go through `GitCommand` / the gh runner (ADR-0016). Only the builder modules may allow this lint, with a reason." },
+]
