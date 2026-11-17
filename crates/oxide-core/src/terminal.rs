@@ -40,6 +40,9 @@ pub struct TerminalSession {
 /// must not block.
 pub type OutputObserver = Box<dyn FnMut(&[u8]) -> Vec<u8> + Send>;
 
+/// Runs once when an Agent terminal's process ends, with whether it succeeded.
+pub type ExitHook = Box<dyn Fn(bool) + Send>;
+
 /// What an Agent terminal runs: a Provider CLI started from an argument array, never a shell.
 pub struct AgentCommand {
     pub program: PathBuf,
@@ -143,7 +146,7 @@ impl TerminalSession {
         #[cfg(unix)] shell_init: Option<PathBuf>,
         #[cfg(windows)] _shell_init: Option<PathBuf>,
         blocks: bool,
-        agent_hooks: Option<(OutputObserver, Box<dyn Fn(bool) + Send>)>,
+        agent_hooks: Option<(OutputObserver, ExitHook)>,
     ) -> Result<Self> {
         let (observer, on_exit) = match agent_hooks {
             Some((observer, on_exit)) => (Some(observer), Some(on_exit)),
