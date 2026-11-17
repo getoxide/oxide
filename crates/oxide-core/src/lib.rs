@@ -5,7 +5,7 @@ mod activity;
 mod agent_launch;
 mod agent_status;
 mod agent_terminal;
-pub use agent_terminal::{AgentAttachment, TerminalLaunch};
+pub use agent_terminal::{AgentAttachment, TerminalIssue, TerminalLaunch};
 pub mod attachments;
 pub mod blind_review;
 mod board;

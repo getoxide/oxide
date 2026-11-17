@@ -6,7 +6,7 @@
 
 use crate::agent_launch::{
     ClaudeLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV, claude_args,
-    new_session_id,
+    issue_prompt, new_session_id,
 };
 use crate::agent_status::{
     Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,
@@ -29,6 +29,17 @@ pub struct TerminalLaunch {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<PermissionMode>,
+}
+
+/// The GitHub issue a terminal Thread starts from. The title and body are external content: they
+/// reach the agent only quoted and marked as such.
+#[derive(Debug, Clone)]
+pub struct TerminalIssue {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub url: Option<String>,
+    pub labels: Vec<String>,
 }
 
 /// The running (or ended) agent of one terminal Thread.
@@ -160,6 +171,42 @@ impl Core {
         project_id: u32,
         choice: &TerminalLaunch,
     ) -> Result<ThreadSummary> {
+        self.start_agent_thread(project_id, choice, None, None)
+    }
+
+    /// Starts a terminal Thread for a GitHub issue: a worktree on `oxide/<number>-<slug>`, the
+    /// Setup command, then the agent launched with a prompt holding the issue's number, title and
+    /// body (the title and body quoted and marked as external content).
+    ///
+    /// Starts a process (the Provider CLI, from an argument array).
+    pub fn start_terminal_thread_from_issue(
+        &self,
+        project_id: u32,
+        issue: &TerminalIssue,
+        choice: &TerminalLaunch,
+    ) -> Result<ThreadSummary> {
+        let prompt = issue_prompt(issue.number, &issue.title, &issue.body);
+        self.start_agent_thread(project_id, choice, Some(issue), Some(prompt))
+    }
+
+    /// Starts a terminal Thread whose agent receives `prompt` as its first prompt.
+    pub(crate) fn start_terminal_thread_with_prompt(
+        &self,
+        project_id: u32,
+        choice: &TerminalLaunch,
+        prompt: String,
+    ) -> Result<ThreadSummary> {
+        self.start_agent_thread(project_id, choice, None, Some(prompt))
+    }
+
+    /// The shared start: the Thread, its checkout, then the agent with its first prompt if any.
+    fn start_agent_thread(
+        &self,
+        project_id: u32,
+        choice: &TerminalLaunch,
+        issue: Option<&TerminalIssue>,
+        prompt: Option<String>,
+    ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
         if provider != "claude" {
@@ -180,6 +227,7 @@ impl Core {
             model: model.as_deref(),
             effort: effort.as_deref(),
             permission_mode,
+            initial_prompt: prompt.as_deref(),
         })?;
         let session_id = new_session_id();
         let thread_id = {
@@ -188,11 +236,24 @@ impl Core {
                 "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, 'claude', ?2, ?3, ?4, ?5, 'running', 1)",
                 rusqlite::params![project_id, session_id, model, effort, permission_mode.as_str()],
             )?;
-            db.last_insert_rowid() as u32
+            let thread_id = db.last_insert_rowid() as u32;
+            if let Some(issue) = issue {
+                db.execute(
+                    "UPDATE threads SET issue_number = ?1, issue_title = ?2, issue_url = ?3, issue_labels = ?4 WHERE id = ?5",
+                    rusqlite::params![
+                        issue.number,
+                        issue.title,
+                        issue.url,
+                        serde_json::to_string(&issue.labels).unwrap_or_else(|_| "[]".into()),
+                        thread_id
+                    ],
+                )?;
+            }
+            thread_id
         };
         let started = self.ensure_worktree(thread_id).and_then(|ready| {
             if ready {
-                self.launch_agent(thread_id, Launch::Start)?;
+                self.launch_agent(thread_id, Launch::Start, prompt.as_deref())?;
             } else {
                 self.board.set_status(thread_id, ThreadStatus::Error);
             }
@@ -218,7 +279,7 @@ impl Core {
             self.board.set_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
         }
-        self.launch_agent(thread_id, Launch::Resume)?;
+        self.launch_agent(thread_id, Launch::Resume, None)?;
         self.thread_summary(thread_id)
     }
 
@@ -244,7 +305,7 @@ impl Core {
         };
         if !launched && stopped {
             if self.ensure_worktree(thread_id)? {
-                self.launch_agent(thread_id, Launch::Open)?;
+                self.launch_agent(thread_id, Launch::Open, None)?;
             } else {
                 self.board.set_status(thread_id, ThreadStatus::Error);
             }
@@ -281,7 +342,7 @@ impl Core {
             self.board.set_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
         }
-        self.launch_agent(thread_id, Launch::Fresh)?;
+        self.launch_agent(thread_id, Launch::Fresh, None)?;
         self.thread_summary(thread_id)
     }
 
@@ -415,8 +476,9 @@ impl Core {
         }
     }
 
-    /// Starts the agent process in the Thread's checkout and records it as running.
-    fn launch_agent(&self, thread_id: u32, launch: Launch) -> Result<()> {
+    /// Starts the agent process in the Thread's checkout and records it as running. `prompt` is
+    /// the first prompt of a new session; a resumed session is never given one.
+    fn launch_agent(&self, thread_id: u32, launch: Launch, prompt: Option<&str>) -> Result<()> {
         let resume = launch.resumes();
         if launch == Launch::Open
             && self
@@ -468,6 +530,7 @@ impl Core {
             model: model.as_deref(),
             effort: effort.as_deref(),
             permission_mode: mode.parse().unwrap_or(PermissionMode::AutoEdit),
+            initial_prompt: if resume { None } else { prompt },
         })?;
         let agent = AgentCommand {
             program: self.find_claude()?,

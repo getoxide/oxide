@@ -130,6 +130,12 @@ export const commands = {
 	 */
 	createTerminalThread: (projectId: number, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread", { projectId, provider, model, effort, permissionMode })),
 	/**
+	 *  Opens a terminal Thread for a GitHub issue: a worktree and branch named after it, the Setup
+	 *  command, then the agent launched with a prompt built from the issue (its title and body quoted
+	 *  as external content). Starts a process.
+	 */
+	createTerminalThreadFromIssue: (projectId: number, issue: TerminalIssue_Deserialize, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_from_issue", { projectId, issue, provider, model, effort, permissionMode })),
+	/**
 	 *  Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
 	 *  it prints. A newer attachment replaces the previous one.
 	 */
@@ -1515,6 +1521,27 @@ export type TerminalCompletion = {
 	replacementIndex: number,
 	replacementLength: number,
 	matches: TerminalMatch[],
+};
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue = TerminalIssue_Serialize | TerminalIssue_Deserialize;
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue_Deserialize = {
+	number: number,
+	title: string,
+	body: string,
+	url?: string | null,
+	labels?: string[],
+};
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue_Serialize = {
+	number: number,
+	title: string,
+	body: string,
+	url: string | null,
+	labels: string[],
 };
 
 export type TerminalMatch = {
