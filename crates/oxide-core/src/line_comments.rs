@@ -305,8 +305,7 @@ impl Core {
         prompt: &str,
         review_round: bool,
     ) -> Result<crate::ThreadSummary> {
-        let thread =
-            self.start_terminal_thread_with_prompt(project_id, choice, prompt.to_string())?;
+        let thread = self.start_terminal_thread_with_prompt(project_id, choice, prompt)?;
         if review_round && let Some(kind) = self.review_work_kind(thread.id) {
             self.record_review_round(thread.id, &kind);
         }

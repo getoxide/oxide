@@ -247,7 +247,7 @@ impl Core {
                 provider: Some(provider.to_string()),
                 ..Default::default()
             };
-            self.start_terminal_thread_with_prompt(project_id, &choice, prompt(&comments))
+            self.start_terminal_thread_with_prompt(project_id, &choice, &prompt(&comments))
         } else {
             self.accept_in_chat_thread(project_id, provider, &comments)
         };

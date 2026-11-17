@@ -238,7 +238,7 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           {fieldErrors("openThreadsAsTerminals")}
         </label>
         <p className="settings-hint">
-          A new Thread runs Claude Code's own terminal interface in the Thread's checkout instead of
+          A new Thread runs the Provider's own terminal interface (Claude Code or Codex) in the Thread's checkout instead of
           Oxide's chat, with the Model, Effort and Permission mode from Settings as launch options.
           Threads started from an Issue, a pull request or a review keep the chat for now.
         </p>

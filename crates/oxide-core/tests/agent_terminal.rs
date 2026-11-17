@@ -467,12 +467,12 @@ fn a_provider_without_an_agent_terminal_is_refused_before_anything_is_created() 
         .start_terminal_thread_with(
             f.project.id,
             &oxide_core::TerminalLaunch {
-                provider: Some("codex".into()),
+                provider: Some("antigravity".into()),
                 ..Default::default()
             },
         )
         .unwrap_err();
-    assert!(error.to_string().contains("codex"), "{error}");
+    assert!(error.to_string().contains("antigravity"), "{error}");
     assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
 }
 

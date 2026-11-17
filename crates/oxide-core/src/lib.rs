@@ -3,6 +3,7 @@
 
 mod activity;
 mod agent_launch;
+pub mod agent_reporter;
 mod agent_status;
 mod agent_terminal;
 pub use agent_terminal::{AgentAttachment, TerminalIssue, TerminalLaunch};
@@ -194,6 +195,10 @@ pub struct Core {
     /// The Agent terminal of each running or ended terminal Thread (ADR-0017).
     agents: agent_terminal::Agents,
     agent_search_path: Mutex<Option<Vec<PathBuf>>>,
+    /// The session reporter socket, listening once the first Codex Thread launches.
+    reporter: Mutex<Option<agent_reporter::ReporterServer>>,
+    /// The executable Codex runs as the reporter; Oxide itself unless a test replaces it.
+    reporter_executable: Mutex<Option<PathBuf>>,
     next_terminal_id: AtomicU32,
     /// The Project each open terminal belongs to, to mark it acted upon on its first command.
     terminal_projects: Mutex<HashMap<u32, u32>>,
@@ -281,6 +286,8 @@ impl Core {
             terminals: Mutex::new(HashMap::new()),
             agents: Arc::default(),
             agent_search_path: Mutex::new(None),
+            reporter: Mutex::new(None),
+            reporter_executable: Mutex::new(None),
             next_terminal_id: AtomicU32::new(1),
             terminal_projects: Mutex::new(HashMap::new()),
             acted_terminals: Mutex::new(std::collections::HashSet::new()),

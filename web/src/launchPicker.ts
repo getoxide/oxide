@@ -5,7 +5,7 @@ import { resolveFavourite } from "./modelPicker";
  * The Providers whose own CLI Oxide can start in an Agent terminal (ADR-0017). A Provider joins
  * the Model picker as a launch target by being added here once Core has its launch recipe.
  */
-export const LAUNCH_RECIPES: readonly string[] = ["claude"];
+export const LAUNCH_RECIPES: readonly string[] = ["claude", "codex"];
 
 /**
  * The Permission modes each Provider's CLI can honour at launch. Codex and Antigravity CLI have
@@ -20,6 +20,15 @@ const PERMISSION_MODES: Record<string, PermissionMode[]> = {
 /** The installed Providers that have a launch recipe, in recipe order. */
 export function launchableProviders(installed: ReadonlyMap<string, boolean>): string[] {
   return LAUNCH_RECIPES.filter((provider) => installed.get(provider) === true);
+}
+
+/**
+ * What a Permission mode means for a Provider when it is not what its name suggests. Codex's
+ * Auto-edit is a workspace-write sandbox, so commands inside the workspace run without asking.
+ */
+export function permissionModeNote(provider: string, mode: PermissionMode): string | null {
+  if (provider === "codex" && mode === "auto-edit") return "Commands inside the workspace run without asking. Edits outside it ask first.";
+  return null;
 }
 
 export function permissionModesFor(provider: string): PermissionMode[] {
