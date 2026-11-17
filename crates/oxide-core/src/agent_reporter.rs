@@ -1,5 +1,12 @@
 //! The reporter (ADR-0016, ADR-0017): how Oxide learns the session id of a Provider that cannot
-//! be given one, Codex today.
+//! be given one, Codex and Antigravity CLI (`agy`) today.
+//!
+//! `agy` runs a per-launch status line command (handed over with `--settings`, for that session
+//! only) on every state change, with a JSON object on its standard input that holds the
+//! conversation id. That command is the same executable started with [`REPORTER_FLAG`] and
+//! `status-line`: it reports the id, then runs the user's own status line command with the same
+//! input and prints what it prints, so the user's status line still shows. Oxide never writes
+//! `agy`'s configuration files.
 //!
 //! Codex runs a per-launch `notify` command after each Turn. That command is Oxide's own
 //! executable started with [`REPORTER_FLAG`]. It tells Oxide the session id over an owner-only
@@ -41,6 +48,8 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 enum Status {
     /// A Turn ended.
     TurnComplete,
+    /// The Provider named its current conversation (Antigravity CLI's status line).
+    Session,
 }
 
 /// The one message the socket accepts.
@@ -68,8 +77,9 @@ fn accept(bytes: &[u8], tokens: &Mutex<HashMap<String, u32>>) -> Option<(u32, St
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&report.token)?;
-    let Status::TurnComplete = report.status;
-    Some((thread, report.session_id))
+    match report.status {
+        Status::TurnComplete | Status::Session => Some((thread, report.session_id)),
+    }
 }
 
 /// The `notify` command of the user's own Codex configuration, for the reporter to chain.
@@ -127,6 +137,151 @@ pub(crate) fn notify_array(executable: &Path, user_command: &[String]) -> Vec<St
     array
 }
 
+/// The first reporter argument that makes it act as `agy`'s status line command.
+pub(crate) const STATUS_LINE_ARG: &str = "status-line";
+
+/// The most bytes of `agy`'s status line input the reporter reads, and of the user's own status
+/// line output it passes on.
+const MAX_STATUS_INPUT_BYTES: u64 = 1024 * 1024;
+const MAX_STATUS_OUTPUT_BYTES: u64 = 64 * 1024;
+
+/// Where `agy` keeps the user's settings, under the user's home.
+fn agy_settings_path(user_home: &Path) -> PathBuf {
+    user_home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("settings.json")
+}
+
+/// The `statusLine` object of the user's own `agy` settings, to carry over. Only reads the
+/// settings file; a missing, oversized or malformed file or a `statusLine` that is not an object
+/// with a `command` string means none.
+pub(crate) fn user_status_line(
+    user_home: &Path,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    use std::io::Read;
+    let file = std::fs::File::open(agy_settings_path(user_home)).ok()?;
+    let mut text = String::new();
+    file.take(MAX_CONFIG_BYTES).read_to_string(&mut text).ok()?;
+    let settings: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let line = settings.get("statusLine")?.as_object()?;
+    line.get("command")?
+        .as_str()
+        .filter(|c| !c.trim().is_empty())?;
+    Some(line.clone())
+}
+
+/// `value` as one word of a shell command line.
+fn shell_quote(value: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+/// The settings JSON `agy` is launched with: a `statusLine` command that is Oxide's reporter,
+/// chaining the user's own command. The user's other status line options are kept; without a
+/// status line of their own, `agy`'s default one stays under ours.
+pub(crate) fn status_line_settings(
+    executable: &Path,
+    user: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> String {
+    let user_command = user.and_then(|line| line.get("command")?.as_str());
+    let mut command = format!(
+        "{} {REPORTER_FLAG} {STATUS_LINE_ARG}",
+        shell_quote(&executable.to_string_lossy())
+    );
+    if let Some(user_command) = user_command {
+        command.push(' ');
+        command.push_str(&shell_quote(user_command));
+    }
+    let mut line = user.cloned().unwrap_or_default();
+    if user_command.is_none() {
+        line.insert("stack_with_default".into(), true.into());
+    }
+    line.insert("type".into(), "command".into());
+    line.insert("command".into(), command.into());
+    serde_json::json!({ "statusLine": line }).to_string()
+}
+
+/// What `agy`'s status line input says that the reporter uses.
+#[derive(Deserialize)]
+struct StatusLineInput {
+    conversation_id: Option<String>,
+}
+
+/// Runs as `agy`'s status line command: starts the user's own command (if any) with `input` on
+/// its standard input, reports the conversation id, writes the user's output to `out` and returns
+/// the user's exit code (0 when there is none). A failure to report is never fatal, and the user's
+/// command is never held up by it.
+pub fn run_status_line(
+    user_command: Option<&str>,
+    input: &[u8],
+    env: &dyn Fn(&str) -> Option<String>,
+    out: &mut dyn std::io::Write,
+) -> i32 {
+    use std::io::Read;
+    let mut child = user_command.and_then(|command| {
+        let mut shell = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C");
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c");
+            c
+        };
+        shell
+            .arg(command)
+            .env_remove(SOCKET_ENV)
+            .env_remove(TOKEN_ENV)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+    });
+    let writer = child
+        .as_mut()
+        .and_then(|c| c.stdin.take())
+        .map(|mut stdin| {
+            let input = input.to_vec();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(&input);
+            })
+        });
+
+    if input.len() as u64 <= MAX_STATUS_INPUT_BYTES
+        && let Ok(parsed) = serde_json::from_slice::<StatusLineInput>(input)
+        && let Some(conversation) = parsed.conversation_id.filter(|id| !id.is_empty())
+        && let (Some(socket), Some(token)) = (env(SOCKET_ENV), env(TOKEN_ENV))
+    {
+        let _ = send_report(Path::new(&socket), &token, &conversation, Status::Session);
+    }
+
+    let Some(mut child) = child else {
+        return 0;
+    };
+    let mut shown = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        let _ = stdout
+            .take(MAX_STATUS_OUTPUT_BYTES)
+            .read_to_end(&mut shown);
+    }
+    let _ = out.write_all(&shown);
+    let _ = out.flush();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    child
+        .wait()
+        .ok()
+        .and_then(|status| status.code())
+        .unwrap_or(0)
+}
+
 /// What Codex's `notify` payload says that the reporter uses.
 #[derive(Deserialize)]
 struct Payload {
@@ -143,6 +298,24 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
     let Some((count, rest)) = args.split_first() else {
         return 2;
     };
+    if count == STATUS_LINE_ARG {
+        if rest.len() > 1 {
+            return 2;
+        }
+        let mut input = Vec::new();
+        {
+            use std::io::Read;
+            let _ = std::io::stdin()
+                .take(MAX_STATUS_INPUT_BYTES + 1)
+                .read_to_end(&mut input);
+        }
+        return run_status_line(
+            rest.first().map(String::as_str),
+            &input,
+            env,
+            &mut std::io::stdout(),
+        );
+    }
     let Ok(count) = count.parse::<usize>() else {
         return 2;
     };
@@ -169,7 +342,12 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
         && let Some(session_id) = parsed.thread_id
         && let (Some(socket), Some(token)) = (env(SOCKET_ENV), env(TOKEN_ENV))
     {
-        let _ = send_report(Path::new(&socket), &token, &session_id);
+        let _ = send_report(
+            Path::new(&socket),
+            &token,
+            &session_id,
+            Status::TurnComplete,
+        );
     }
 
     child
@@ -179,7 +357,12 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
 }
 
 #[cfg(unix)]
-fn send_report(socket: &Path, token: &str, session_id: &str) -> std::io::Result<()> {
+fn send_report(
+    socket: &Path,
+    token: &str,
+    session_id: &str,
+    status: Status,
+) -> std::io::Result<()> {
     use std::io::{Read, Write};
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
@@ -188,7 +371,7 @@ fn send_report(socket: &Path, token: &str, session_id: &str) -> std::io::Result<
     let message = serde_json::to_vec(&Report {
         token: token.to_string(),
         session_id: session_id.to_string(),
-        status: Status::TurnComplete,
+        status,
     })
     .map_err(std::io::Error::other)?;
     let mut stream = UnixStream::connect(socket)?;
@@ -202,7 +385,7 @@ fn send_report(socket: &Path, token: &str, session_id: &str) -> std::io::Result<
 }
 
 #[cfg(not(unix))]
-fn send_report(_: &Path, _: &str, _: &str) -> std::io::Result<()> {
+fn send_report(_: &Path, _: &str, _: &str, _: Status) -> std::io::Result<()> {
     Err(std::io::Error::other("no local socket on this OS"))
 }
 
@@ -622,6 +805,140 @@ mod tests {
         assert_eq!(
             notify_array(Path::new("/opt/oxide"), &[]),
             ["/opt/oxide", REPORTER_FLAG, "0"]
+        );
+    }
+
+    fn status_input() -> Vec<u8> {
+        format!(r#"{{"conversation_id":"{ID}","agent_state":"working","cwd":"/x"}}"#).into_bytes()
+    }
+
+    #[test]
+    fn the_status_line_reports_the_conversation_id_and_prints_nothing_without_a_user_line() {
+        let f = fixture();
+        let token = f.server.register(4).unwrap();
+        let env = env_of(f.server.socket_path(), &token);
+        let mut out = Vec::new();
+        assert_eq!(run_status_line(None, &status_input(), &env, &mut out), 0);
+        assert!(out.is_empty());
+        assert_eq!(
+            f.reports
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap(),
+            (4, ID.to_string())
+        );
+    }
+
+    #[test]
+    fn the_status_line_ignores_an_empty_or_invalid_conversation_id() {
+        let f = fixture();
+        let token = f.server.register(4).unwrap();
+        let env = env_of(f.server.socket_path(), &token);
+        for input in [
+            r#"{"conversation_id":"","agent_state":"idle"}"#,
+            r#"{"conversation_id":"not-a-uuid"}"#,
+            r#"{"agent_state":"idle"}"#,
+            "{",
+        ] {
+            let mut out = Vec::new();
+            assert_eq!(run_status_line(None, input.as_bytes(), &env, &mut out), 0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(f.reports.try_recv().is_err());
+        let mut out = Vec::new();
+        assert_eq!(run_status_line(None, &status_input(), &|_| None, &mut out), 0);
+    }
+
+    #[test]
+    fn the_users_own_status_line_gets_the_same_input_and_its_output_and_code_pass_through() {
+        let f = fixture();
+        let token = f.server.register(4).unwrap();
+        let env = env_of(f.server.socket_path(), &token);
+        let mut out = Vec::new();
+        let code = run_status_line(
+            Some(
+                "cat; printf ' [%s|%s]' \"${OXIDE_REPORTER_TOKEN:-none}\" \"${OXIDE_REPORTER_SOCKET:-none}\"; exit 7",
+            ),
+            &status_input(),
+            &env,
+            &mut out,
+        );
+        assert_eq!(code, 7);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("{} [none|none]", String::from_utf8(status_input()).unwrap())
+        );
+        assert!(
+            f.reports
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_large_input_does_not_block_a_status_line_that_ignores_it() {
+        let f = fixture();
+        let token = f.server.register(4).unwrap();
+        let env = env_of(f.server.socket_path(), &token);
+        let mut input = status_input();
+        input.extend(std::iter::repeat_n(b' ', 600 * 1024));
+        let mut out = Vec::new();
+        assert_eq!(
+            run_status_line(Some("echo mine"), &input, &env, &mut out),
+            0
+        );
+        assert_eq!(out, b"mine\n");
+    }
+
+    #[test]
+    fn the_users_status_line_is_read_from_agys_settings_and_never_written() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(user_status_line(dir.path()).is_none());
+        let folder = dir.path().join(".gemini").join("antigravity-cli");
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("settings.json");
+        let text = r#"{"model":"x","statusLine":{"type":"command","command":"my-line --fast","padding":2}}"#;
+        std::fs::write(&file, text).unwrap();
+        let line = user_status_line(dir.path()).unwrap();
+        assert_eq!(line["command"], "my-line --fast");
+        assert_eq!(line["padding"], 2);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        for bad in [
+            r#"{"statusLine":"x"}"#,
+            r#"{"statusLine":{"type":"command"}}"#,
+            r#"{"statusLine":{"command":"  "}}"#,
+            r#"{"statusLine":{"command":3}}"#,
+            "{",
+        ] {
+            std::fs::write(&file, bad).unwrap();
+            assert!(user_status_line(dir.path()).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_launch_settings_name_the_reporter_and_quote_the_users_command() {
+        let none: serde_json::Value =
+            serde_json::from_str(&status_line_settings(Path::new("/opt/Oxide App/oxide"), None))
+                .unwrap();
+        let line = &none["statusLine"];
+        assert_eq!(line["type"], "command");
+        assert_eq!(line["stack_with_default"], true);
+        assert_eq!(
+            line["command"],
+            "'/opt/Oxide App/oxide' --oxide-reporter status-line"
+        );
+
+        let user = serde_json::json!({"type":"command","command":"it's mine","padding":1});
+        let with: serde_json::Value = serde_json::from_str(&status_line_settings(
+            Path::new("/opt/oxide"),
+            user.as_object(),
+        ))
+        .unwrap();
+        let line = &with["statusLine"];
+        assert_eq!(line["padding"], 1);
+        assert!(line.get("stack_with_default").is_none());
+        assert_eq!(
+            line["command"],
+            r#"'/opt/oxide' --oxide-reporter status-line 'it'\''s mine'"#
         );
     }
 }

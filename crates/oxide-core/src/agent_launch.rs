@@ -101,6 +101,14 @@ pub(crate) const MAX_INITIAL_PROMPT_BYTES: usize = 24 * 1024;
 /// after a `--` that ends option parsing, as the last argument. Every Provider recipe that takes
 /// its prompt as a positional argument ends its array with this (ADR-0016).
 pub(crate) fn append_initial_prompt(args: &mut Vec<String>, prompt: &str) -> Result<()> {
+    check_initial_prompt(prompt)?;
+    args.push("--".into());
+    args.push(prompt.to_string());
+    Ok(())
+}
+
+/// Refuses a first prompt a command line cannot carry.
+fn check_initial_prompt(prompt: &str) -> Result<()> {
     if prompt.is_empty() {
         return Err(Error::Provider("The first prompt is empty.".into()));
     }
@@ -112,8 +120,6 @@ pub(crate) fn append_initial_prompt(args: &mut Vec<String>, prompt: &str) -> Res
             "The first prompt holds a character a command line cannot carry.".into(),
         ));
     }
-    args.push("--".into());
-    args.push(prompt.to_string());
     Ok(())
 }
 
@@ -297,6 +303,70 @@ pub(crate) fn codex_args(launch: &CodexLaunch<'_>) -> Result<Vec<String>> {
         args.push(id.to_string());
     } else if let Some(prompt) = launch.initial_prompt {
         append_initial_prompt(&mut args, prompt)?;
+    }
+    Ok(args)
+}
+
+/// How an Agent terminal's Antigravity CLI (`agy`) starts.
+pub(crate) struct AgyLaunch<'a> {
+    /// The conversation to resume. `agy`'s id cannot be assigned, so a new one has none.
+    pub resume_conversation: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+    pub permission_mode: PermissionMode,
+    /// The per-launch settings JSON handed to `--settings` (the status line command).
+    pub settings: &'a str,
+    /// The first prompt (a new conversation only).
+    pub initial_prompt: Option<&'a str>,
+}
+
+/// The argument array that starts `agy` interactively. Model, Effort and Permission mode are
+/// launch flags only. Ask is not offered: `agy` has no flag that asks before every edit (its
+/// default mode is Auto), so Auto-edit is `--mode accept-edits` and Full access skips permissions.
+///
+/// The first prompt is the interactive prompt option, written as one `--prompt-interactive=<text>`
+/// argument so it can never be read as another option. Oxide only passes `--settings` for this
+/// session; it never writes `agy`'s configuration.
+pub(crate) fn agy_args(launch: &AgyLaunch<'_>) -> Result<Vec<String>> {
+    let mut args: Vec<String> = Vec::new();
+    if !launch.settings.is_empty() {
+        args.push("--settings".into());
+        args.push(launch.settings.to_string());
+    }
+    for (flag, value) in [("--model", launch.model), ("--effort", launch.effort)] {
+        if let Some(value) = value {
+            if !is_flag_value(value) {
+                return Err(Error::Provider(format!(
+                    "`{value}` is not a valid value for {flag}."
+                )));
+            }
+            args.push(flag.to_string());
+            args.push(value.to_string());
+        }
+    }
+    match launch.permission_mode {
+        PermissionMode::Ask => {
+            return Err(Error::Provider(
+                "Antigravity CLI has no Ask mode that asks before every edit.".into(),
+            ));
+        }
+        PermissionMode::AutoEdit => {
+            args.push("--mode".into());
+            args.push("accept-edits".into());
+        }
+        PermissionMode::FullAccess => args.push("--dangerously-skip-permissions".into()),
+    }
+    if let Some(id) = launch.resume_conversation {
+        if !is_uuid(id) {
+            return Err(Error::Provider(
+                "The Provider session id is not a UUID.".into(),
+            ));
+        }
+        args.push("--conversation".into());
+        args.push(id.to_string());
+    } else if let Some(prompt) = launch.initial_prompt {
+        check_initial_prompt(prompt)?;
+        args.push(format!("--prompt-interactive={prompt}"));
     }
     Ok(args)
 }
@@ -647,6 +717,114 @@ mod tests {
                     ..codex(PermissionMode::AutoEdit)
                 });
                 assert!(result.is_err(), "{bad:?} was accepted");
+            }
+        }
+    }
+
+    fn agy(mode: PermissionMode) -> AgyLaunch<'static> {
+        AgyLaunch {
+            resume_conversation: None,
+            model: Some("gemini-3-pro"),
+            effort: Some("high"),
+            permission_mode: mode,
+            settings: r#"{"statusLine":{}}"#,
+            initial_prompt: None,
+        }
+    }
+
+    #[test]
+    fn agy_auto_edit_is_accept_edits_mode_with_the_session_settings() {
+        assert_eq!(
+            agy_args(&agy(PermissionMode::AutoEdit)).unwrap(),
+            [
+                "--settings",
+                r#"{"statusLine":{}}"#,
+                "--model",
+                "gemini-3-pro",
+                "--effort",
+                "high",
+                "--mode",
+                "accept-edits"
+            ]
+        );
+    }
+
+    #[test]
+    fn agy_full_access_skips_permissions_and_ask_is_refused() {
+        let args = agy_args(&agy(PermissionMode::FullAccess)).unwrap();
+        assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(!args.contains(&"--mode".to_string()));
+        assert!(agy_args(&agy(PermissionMode::Ask)).is_err());
+    }
+
+    #[test]
+    fn agy_resumes_by_conversation_id_and_takes_no_prompt() {
+        let args = agy_args(&AgyLaunch {
+            resume_conversation: Some(ID),
+            initial_prompt: Some("ignored"),
+            ..agy(PermissionMode::AutoEdit)
+        })
+        .unwrap();
+        assert_eq!(args[args.len() - 2..], ["--conversation", ID]);
+        assert!(!args.iter().any(|a| a.contains("prompt-interactive")));
+        assert!(
+            agy_args(&AgyLaunch {
+                resume_conversation: Some("--continue"),
+                ..agy(PermissionMode::AutoEdit)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn agys_first_prompt_is_one_interactive_prompt_argument_never_positional() {
+        for prompt in [
+            "fix the bug",
+            "--dangerously-skip-permissions",
+            "-p",
+            "--",
+            "a\nb",
+        ] {
+            let args = agy_args(&AgyLaunch {
+                initial_prompt: Some(prompt),
+                ..agy(PermissionMode::AutoEdit)
+            })
+            .unwrap();
+            assert_eq!(
+                args.last().unwrap(),
+                &format!("--prompt-interactive={prompt}")
+            );
+            assert!(!args.contains(&"--".to_string()));
+            assert!(!args.iter().any(|a| a == prompt));
+        }
+        for bad in [
+            String::new(),
+            "a\0b".to_string(),
+            "x".repeat(MAX_INITIAL_PROMPT_BYTES + 1),
+        ] {
+            assert!(
+                agy_args(&AgyLaunch {
+                    initial_prompt: Some(&bad),
+                    ..agy(PermissionMode::AutoEdit)
+                })
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn agy_model_and_effort_that_could_act_as_options_are_refused() {
+        for bad in ["", "--print", "a b", "a\nb"] {
+            for (model, effort) in [(Some(bad), None), (None, Some(bad))] {
+                assert!(
+                    agy_args(&AgyLaunch {
+                        model,
+                        effort,
+                        ..agy(PermissionMode::AutoEdit)
+                    })
+                    .is_err(),
+                    "{bad:?} was accepted"
+                );
             }
         }
     }
