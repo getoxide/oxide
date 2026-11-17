@@ -20,9 +20,9 @@ const model = (id: string, supportedEfforts: string[] = ["low", "high"]): ModelI
 describe("launch recipes", () => {
   it("offers only Providers that have a terminal launch recipe and are installed", () => {
     const installed = new Map([["claude", true], ["codex", true], ["antigravity", true]]);
-    expect(launchableProviders(installed)).toEqual(["claude", "codex"]);
+    expect(launchableProviders(installed)).toEqual(["claude", "codex", "antigravity"]);
     expect(launchableProviders(new Map([["claude", false], ["codex", true]]))).toEqual(["codex"]);
-    expect(launchableProviders(new Map([["claude", false], ["antigravity", true]]))).toEqual([]);
+    expect(launchableProviders(new Map([["claude", false], ["antigravity", true]]))).toEqual(["antigravity"]);
     expect(launchableProviders(new Map())).toEqual([]);
   });
 
@@ -38,6 +38,11 @@ describe("launch recipes", () => {
     expect(permissionModeNote("codex", "auto-edit")).toMatch(/without asking/);
     expect(permissionModeNote("codex", "full-access")).toBeNull();
     expect(permissionModeNote("claude", "auto-edit")).toBeNull();
+  });
+
+  it("explains Antigravity's Auto-edit", () => {
+    expect(permissionModeNote("antigravity", "auto-edit")).toContain("tool permission");
+    expect(permissionModeNote("antigravity", "full-access")).toBeNull();
   });
 
   it("offers Ask for no other Provider that cannot honour it", () => {

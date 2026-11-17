@@ -20,7 +20,7 @@ const models = [
 beforeEach(() => {
   resetCatalogCache();
   root = createRoot(container);
-  // Everything is installed, so only the missing launch recipe can hide Antigravity.
+  // Everything is installed, so a Provider without a launch recipe would be hidden.
   mockIPC((name) => {
     if (name === "detect_provider") return { installed: true };
     if (name === "get_model_catalog") return models;
@@ -56,10 +56,10 @@ async function render(onLaunch: (choice: LaunchChoice) => void) {
 const press = (key: string) =>
   act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
 
-it("lists only the Providers that can launch, with the Settings defaults preselected", async () => {
+it("lists the Providers that can launch, with the Settings defaults preselected", async () => {
   await render(() => {});
   const tabs = [...container.querySelectorAll(".provider-tab")].map((tab) => tab.textContent);
-  expect(tabs).toEqual(["Favourites", "Claude", "Codex"]);
+  expect(tabs).toEqual(["Favourites", "Claude", "Codex", "Antigravity"]);
   expect(container.querySelector(".model-row.highlighted .model-name")?.textContent).toBe("Sonnet");
   expect(container.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe("Ask");
 });

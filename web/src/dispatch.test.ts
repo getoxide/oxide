@@ -79,7 +79,7 @@ describe("starting from an issue as a terminal Thread", () => {
     const on = { openThreadsAsTerminals: true };
     expect(startsAsTerminal(on, "claude", issue)).toBe(true);
     expect(startsAsTerminal(on, "codex", issue)).toBe(true);
-    expect(startsAsTerminal(on, "antigravity", issue)).toBe(false);
+    expect(startsAsTerminal(on, "antigravity", issue)).toBe(true);
     expect(startsAsTerminal(on, "claude", undefined)).toBe(false);
     expect(startsAsTerminal({ openThreadsAsTerminals: false }, "claude", issue)).toBe(false);
   });
