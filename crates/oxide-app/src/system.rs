@@ -288,7 +288,7 @@ pub fn set_dev_dock_icon(png: &[u8]) {
 }
 
 #[cfg(test)]
-mod tests {
+mod explorer_tests {
     use super::explorer_select_arg;
 
     #[test]
