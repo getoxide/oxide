@@ -135,10 +135,7 @@ fn run(f: &Fixture, thread_id: u32, line: &str, echo: &str) {
 
 /// A file of the Thread's checkout, which may be a worktree of its own.
 fn read(f: &Fixture, thread_id: u32, name: &str) -> Option<String> {
-    let checkout = f
-        .core
-        .checkout_path(f.project.id, Some(thread_id))
-        .unwrap();
+    let checkout = f.core.checkout_path(f.project.id, Some(thread_id)).unwrap();
     std::fs::read_to_string(Path::new(&checkout).join(name)).ok()
 }
 

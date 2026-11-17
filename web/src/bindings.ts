@@ -197,9 +197,11 @@ export const commands = {
 	/**  The Thread's Turns, oldest first, for the Turn picker. */
 	listTurnPicks: (threadId: number) => typedError<TurnPick[], AppError>(__TAURI_INVOKE("list_turn_picks", { threadId })),
 	/**  What restoring a Thread's files to before a Turn would change. */
-	restorePreview: (threadId: number, turnIndex: number) => typedError<RestorePreview, AppError>(__TAURI_INVOKE("restore_preview", { threadId, turnIndex })),
+	restorePreview: (threadId: number, turnIndex: number | null) => typedError<RestorePreview, AppError>(__TAURI_INVOKE("restore_preview", { threadId, turnIndex })),
 	/**  Puts a Thread's files back to how they were before a Turn. */
-	restoreTurn: (threadId: number, turnIndex: number) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("restore_turn", { threadId, turnIndex })),
+	restoreTurn: (threadId: number, turnIndex: number | null) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("restore_turn", { threadId, turnIndex })),
+	/**  Whether a Thread has a starting state Restore can go back to. */
+	startStateAvailable: (threadId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("start_state_available", { threadId })),
 	/**  Undoes a Thread's latest restore, putting the files back to its safety Checkpoint. */
 	undoRestore: (threadId: number) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("undo_restore", { threadId })),
 	/**  The restore of a Thread that can still be undone, if there is one. */
@@ -1764,6 +1766,8 @@ export type TurnPick = {
 	prompt: string,
 	/**  Without Checkpoints a Turn has no diff. */
 	checkpointed: boolean,
+	/**  When the Turn started. */
+	startedAt: string,
 };
 
 export type TurnSnapshot = TurnSnapshot_Serialize | TurnSnapshot_Deserialize;

@@ -126,7 +126,8 @@ pub(crate) fn marker(turn_index: u32, files: &[RestoreFile], undone: bool) -> St
 pub(crate) fn notice(turn_index: u32, files: &[RestoreFile], undone: bool) -> String {
     let mut notice = if turn_index == START_STATE {
         if undone {
-            "Oxide undid the restore to the Thread's starting state. These files changed on disk:\n".to_string()
+            "Oxide undid the restore to the Thread's starting state. These files changed on disk:\n"
+                .to_string()
         } else {
             "Oxide restored this Thread's files to how they were when it started. These files changed on disk:\n".to_string()
         }

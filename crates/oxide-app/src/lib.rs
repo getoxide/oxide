@@ -1867,6 +1867,8 @@ pub struct TurnPick {
     pub prompt: String,
     /// Without Checkpoints a Turn has no diff.
     pub checkpointed: bool,
+    /// When the Turn started.
+    pub started_at: String,
 }
 
 /// The Thread's Turns, oldest first, for the Turn picker.
@@ -1884,6 +1886,7 @@ async fn list_turn_picks(
                 turn_index: p.turn_index,
                 prompt: p.prompt,
                 checkpointed: p.checkpointed,
+                started_at: p.started_at,
             })
             .collect::<Vec<_>>())
     })
@@ -1950,10 +1953,11 @@ pub struct PendingRestore {
 async fn restore_preview(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
-    turn_index: u32,
+    turn_index: Option<u32>,
 ) -> Result<RestorePreview, AppError> {
-    git_blocking(&core, move |core| {
-        core.restore_preview(thread_id, turn_index)
+    git_blocking(&core, move |core| match turn_index {
+        Some(turn_index) => core.restore_preview(thread_id, turn_index),
+        None => core.restore_start_preview(thread_id),
     })
     .await
     .map(RestorePreview::from)
@@ -1965,11 +1969,24 @@ async fn restore_preview(
 async fn restore_turn(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
-    turn_index: u32,
+    turn_index: Option<u32>,
 ) -> Result<RestoreOutcome, AppError> {
-    git_blocking(&core, move |core| core.restore_turn(thread_id, turn_index))
-        .await
-        .map(RestoreOutcome::from)
+    git_blocking(&core, move |core| match turn_index {
+        Some(turn_index) => core.restore_turn(thread_id, turn_index),
+        None => core.restore_to_start(thread_id),
+    })
+    .await
+    .map(RestoreOutcome::from)
+}
+
+/// Whether a Thread has a starting state Restore can go back to.
+#[tauri::command]
+#[specta::specta]
+async fn start_state_available(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<bool, AppError> {
+    git_blocking(&core, move |core| Ok(core.start_state_available(thread_id))).await
 }
 
 /// Undoes a Thread's latest restore, putting the files back to its safety Checkpoint.
@@ -3640,6 +3657,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_turn_picks,
         restore_preview,
         restore_turn,
+        start_state_available,
         undo_restore,
         pending_restore,
         edit_line_comment,

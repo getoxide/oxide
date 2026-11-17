@@ -110,7 +110,10 @@ pub use oxide_provider::{
     CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
     SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
 };
-pub use restore::{PendingRestore, START_STATE as RESTORE_START_STATE, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
+pub use restore::{
+    PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview,
+    START_STATE as RESTORE_START_STATE,
+};
 pub use review_ledger::{
     FollowUpStatus, RECENT_ENTRIES, ReviewFollowUp, ReviewLedger, ReviewLedgerEntry, ReviewRevert,
     ReviewRoundGroup, ReviewSizeBand, ReviewWorkKind,
