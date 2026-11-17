@@ -2,6 +2,9 @@
 //! The App shell exposes [`Core`] to the webview; tests drive it headless.
 
 mod activity;
+mod agent_launch;
+mod agent_terminal;
+pub use agent_terminal::AgentAttachment;
 pub mod attachments;
 pub mod blind_review;
 mod board;
@@ -181,6 +184,9 @@ pub struct Core {
     clock: Mutex<Arc<dyn Clock>>,
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
+    /// The Agent terminal of each running or ended terminal Thread (ADR-0017).
+    agents: agent_terminal::Agents,
+    agent_search_path: Mutex<Option<Vec<PathBuf>>>,
     next_terminal_id: AtomicU32,
     /// The Project each open terminal belongs to, to mark it acted upon on its first command.
     terminal_projects: Mutex<HashMap<u32, u32>>,
@@ -258,6 +264,8 @@ impl Core {
             clock: Mutex::new(Arc::new(SystemClock)),
             processes,
             terminals: Mutex::new(HashMap::new()),
+            agents: Arc::default(),
+            agent_search_path: Mutex::new(None),
             next_terminal_id: AtomicU32::new(1),
             terminal_projects: Mutex::new(HashMap::new()),
             acted_terminals: Mutex::new(std::collections::HashSet::new()),
@@ -328,6 +336,7 @@ impl Core {
         for session in terminals {
             session.close();
         }
+        self.close_agents();
         self.project_services.shutdown();
     }
 
@@ -2571,7 +2580,8 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
          UPDATE turns SET status = 'interrupted', completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE status = 'running';
          UPDATE threads SET status = 'interrupted', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE status IN ('working', 'needs-input', 'needs_input');",
+             WHERE status IN ('working', 'needs-input', 'needs_input');
+         UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status = 'running';",
     )?;
     Ok(())
 }

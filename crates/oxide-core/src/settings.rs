@@ -233,6 +233,9 @@ pub struct Settings {
     /// Remove a Thread's worktree and local branch once its pull request is merged on GitHub.
     /// Off by default: it deletes a branch.
     pub delete_merged_branches: bool,
+    /// Preview (ADR-0017): new Threads open as an Agent terminal running the Provider's own CLI
+    /// instead of Oxide's chat. Off by default.
+    pub open_threads_as_terminals: bool,
     /// Which of the user's own `CLAUDE.md`, skills, plugins, hooks and MCP servers Claude Code
     /// may load. All off by default so a new Thread starts with a clean context window.
     pub claude_customizations: ClaudeCustomizations,
@@ -247,6 +250,7 @@ impl Default for Settings {
             providers: Providers::default(),
             confirm_quit: true,
             delete_merged_branches: false,
+            open_threads_as_terminals: false,
             claude_customizations: ClaudeCustomizations::default(),
             shortcuts: Shortcuts::default(),
         }
@@ -453,6 +457,13 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
             defaults.delete_merged_branches,
             &mut errors,
         ),
+        open_threads_as_terminals: field(
+            &mut root,
+            "",
+            "openThreadsAsTerminals",
+            defaults.open_threads_as_terminals,
+            &mut errors,
+        ),
         shortcuts: shortcuts(
             take_object(&mut root, "shortcuts", &mut errors),
             &mut errors,
@@ -592,5 +603,15 @@ mod settings_tests {
         let settings =
             parse(r#"{"dictation":{"language":"it","enabled":true,"device":"gpu"}}"#).unwrap();
         assert_eq!(settings.default_provider, Provider::Claude);
+    }
+
+    #[test]
+    fn terminal_threads_preview_is_off_by_default_and_read_from_the_file() {
+        assert!(!parse("{}").unwrap().open_threads_as_terminals);
+        assert!(
+            parse(r#"{"openThreadsAsTerminals":true}"#)
+                .unwrap()
+                .open_threads_as_terminals
+        );
     }
 }

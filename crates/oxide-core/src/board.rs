@@ -114,6 +114,21 @@ impl BoardHub {
             });
     }
 
+    /// Records an Agent terminal's status (the only state a terminal Thread's agent reports
+    /// until status signals land) and tells the Project's subscribers.
+    pub(crate) fn set_status(&self, thread_id: u32, status: thread::ThreadStatus) {
+        let written = self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE threads SET status = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
+                rusqlite::params![status.to_string(), thread_id],
+            )?;
+            Ok(())
+        });
+        if written.is_ok() {
+            self.publish(thread_id);
+        }
+    }
+
     /// Tells the Project's subscribers that the Thread is gone.
     pub(crate) fn publish_deleted(&self, project_id: u32, thread_id: u32) {
         self.subscribers

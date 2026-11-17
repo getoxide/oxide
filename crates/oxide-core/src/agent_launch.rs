@@ -1,0 +1,308 @@
+//! What an Agent terminal runs (ADR-0017): the Provider CLI's argument array and environment,
+//! the session id Oxide assigns, and the bounded buffer that replays the screen.
+//!
+//! Everything here is pure, so the launch contract is tested without starting a process.
+
+use crate::{Error, PermissionMode, Result};
+use std::collections::VecDeque;
+
+/// Variables that make Claude Code treat the agent as a nested session (excluded from `--resume`
+/// and history). Oxide may itself have been started from a Claude Code shell.
+pub(crate) const NESTED_SESSION_ENV: &[&str] = &["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION"];
+
+/// How much output an Agent terminal keeps to replay when its Thread is shown again.
+pub(crate) const REPLAY_CAPACITY: usize = 1024 * 1024;
+
+/// The most bytes one write into an Agent terminal may carry (a large paste).
+pub(crate) const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+/// Smallest and largest terminal size the webview may ask for.
+pub(crate) const MIN_DIMENSION: u16 = 2;
+pub(crate) const MAX_DIMENSION: u16 = 1000;
+
+/// A new random (version 4) UUID, which Claude Code accepts through `--session-id`.
+///
+/// Built from the standard library's randomly seeded hasher so Core needs no extra dependency;
+/// the id names a session, it is not a secret.
+pub(crate) fn new_session_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut bytes = [0_u8; 16];
+    for half in bytes.chunks_mut(8) {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+        hasher.write_u32(std::process::id());
+        half.copy_from_slice(&hasher.finish().to_le_bytes());
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// Whether `id` is a UUID in its canonical lowercase or uppercase hexadecimal form.
+pub(crate) fn is_uuid(id: &str) -> bool {
+    let groups: Vec<&str> = id.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// A Model or Effort value that is safe to hand over as one argument: it names something, never
+/// starts with `-` and holds no control characters or whitespace.
+fn is_flag_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('-')
+        && value.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'[' | b']' | b':' | b'/')
+        })
+}
+
+/// Claude Code's `--permission-mode` value for an Oxide Permission mode. Always passed, because
+/// the interactive default is `auto`.
+pub(crate) fn claude_permission_mode(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Ask => "default",
+        PermissionMode::AutoEdit => "acceptEdits",
+        PermissionMode::FullAccess => "bypassPermissions",
+    }
+}
+
+/// How an Agent terminal's Claude Code starts.
+pub(crate) struct ClaudeLaunch<'a> {
+    pub session_id: &'a str,
+    /// The session already exists: resume it instead of assigning the id.
+    pub resume: bool,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+    pub permission_mode: PermissionMode,
+}
+
+/// The argument array that starts Claude Code interactively. Model, Effort and Permission mode
+/// are launch flags only; changing them later happens in Claude Code's own UI.
+pub(crate) fn claude_args(launch: &ClaudeLaunch<'_>) -> Result<Vec<String>> {
+    if !is_uuid(launch.session_id) {
+        return Err(Error::Provider(
+            "The Provider session id is not a UUID.".into(),
+        ));
+    }
+    let mut args = vec![
+        if launch.resume {
+            "--resume"
+        } else {
+            "--session-id"
+        }
+        .to_string(),
+        launch.session_id.to_string(),
+    ];
+    for (flag, value) in [("--model", launch.model), ("--effort", launch.effort)] {
+        if let Some(value) = value {
+            if !is_flag_value(value) {
+                return Err(Error::Provider(format!(
+                    "`{value}` is not a valid value for {flag}."
+                )));
+            }
+            args.push(flag.to_string());
+            args.push(value.to_string());
+        }
+    }
+    args.push("--permission-mode".into());
+    args.push(claude_permission_mode(launch.permission_mode).into());
+    Ok(args)
+}
+
+/// The most recent output of an Agent terminal, bounded, so a Thread shown again can replay it.
+pub(crate) struct ReplayBuffer {
+    chunks: VecDeque<Vec<u8>>,
+    len: usize,
+    capacity: usize,
+}
+
+impl ReplayBuffer {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            len: 0,
+            capacity,
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        // A single chunk larger than the buffer keeps only its tail.
+        let chunk = &chunk[chunk.len().saturating_sub(self.capacity)..];
+        self.len += chunk.len();
+        self.chunks.push_back(chunk.to_vec());
+        while self.len > self.capacity {
+            let Some(front) = self.chunks.front_mut() else {
+                break;
+            };
+            let excess = self.len - self.capacity;
+            if excess >= front.len() {
+                self.len -= front.len();
+                self.chunks.pop_front();
+            } else {
+                front.drain(..excess);
+                self.len -= excess;
+            }
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.len);
+        for chunk in &self.chunks {
+            out.extend_from_slice(chunk);
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ID: &str = "123e4567-e89b-42d3-a456-426614174000";
+
+    fn launch(mode: PermissionMode) -> ClaudeLaunch<'static> {
+        ClaudeLaunch {
+            session_id: ID,
+            resume: false,
+            model: Some("opus"),
+            effort: Some("high"),
+            permission_mode: mode,
+        }
+    }
+
+    #[test]
+    fn a_new_session_assigns_the_id_and_passes_every_flag_explicitly() {
+        assert_eq!(
+            claude_args(&launch(PermissionMode::AutoEdit)).unwrap(),
+            [
+                "--session-id",
+                ID,
+                "--model",
+                "opus",
+                "--effort",
+                "high",
+                "--permission-mode",
+                "acceptEdits"
+            ]
+        );
+    }
+
+    #[test]
+    fn permission_modes_map_to_claude_modes_and_are_always_passed() {
+        for (mode, flag) in [
+            (PermissionMode::Ask, "default"),
+            (PermissionMode::AutoEdit, "acceptEdits"),
+            (PermissionMode::FullAccess, "bypassPermissions"),
+        ] {
+            let args = claude_args(&ClaudeLaunch {
+                model: None,
+                effort: None,
+                ..launch(mode)
+            })
+            .unwrap();
+            assert_eq!(args[args.len() - 2..], ["--permission-mode", flag]);
+        }
+    }
+
+    #[test]
+    fn a_restart_resumes_the_same_session() {
+        let args = claude_args(&ClaudeLaunch {
+            resume: true,
+            ..launch(PermissionMode::Ask)
+        })
+        .unwrap();
+        assert_eq!(args[..2], ["--resume", ID]);
+        assert!(!args.contains(&"--session-id".to_string()));
+    }
+
+    #[test]
+    fn a_session_id_that_is_not_a_uuid_is_refused() {
+        for bad in [
+            "",
+            "abc",
+            "--dangerously-skip-permissions",
+            "123e4567-e89b-42d3-a456-42661417400g",
+        ] {
+            let result = claude_args(&ClaudeLaunch {
+                session_id: bad,
+                ..launch(PermissionMode::Ask)
+            });
+            assert!(result.is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn model_and_effort_values_that_could_act_as_options_are_refused() {
+        for bad in ["", "--print", "-x", "a b", "a\nb", "a;b", "$(x)"] {
+            for (model, effort) in [(Some(bad), None), (None, Some(bad))] {
+                let result = claude_args(&ClaudeLaunch {
+                    model,
+                    effort,
+                    ..launch(PermissionMode::Ask)
+                });
+                assert!(result.is_err(), "{bad:?} was accepted");
+            }
+        }
+        let long = "a".repeat(129);
+        assert!(
+            claude_args(&ClaudeLaunch {
+                model: Some(&long),
+                ..launch(PermissionMode::Ask)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn model_ids_with_brackets_and_dots_are_accepted() {
+        let args = claude_args(&ClaudeLaunch {
+            model: Some("claude-opus-4.5[1m]"),
+            ..launch(PermissionMode::Ask)
+        })
+        .unwrap();
+        assert!(args.contains(&"claude-opus-4.5[1m]".to_string()));
+    }
+
+    #[test]
+    fn generated_session_ids_are_distinct_version_4_uuids() {
+        let a = new_session_id();
+        let b = new_session_id();
+        assert!(is_uuid(&a) && is_uuid(&b));
+        assert_ne!(a, b);
+        assert_eq!(&a[14..15], "4");
+        assert!(matches!(&a[19..20], "8" | "9" | "a" | "b"));
+    }
+
+    #[test]
+    fn the_nested_session_variables_are_dropped() {
+        assert!(NESTED_SESSION_ENV.contains(&"CLAUDECODE"));
+        assert!(NESTED_SESSION_ENV.contains(&"CLAUDE_CODE_CHILD_SESSION"));
+    }
+
+    #[test]
+    fn the_replay_buffer_keeps_the_most_recent_bytes_within_its_capacity() {
+        let mut buffer = ReplayBuffer::new(8);
+        buffer.push(b"abcd");
+        buffer.push(b"efgh");
+        assert_eq!(buffer.snapshot(), b"abcdefgh");
+        buffer.push(b"ij");
+        assert_eq!(buffer.snapshot(), b"cdefghij");
+        buffer.push(b"0123456789");
+        assert_eq!(buffer.snapshot(), b"23456789");
+    }
+}

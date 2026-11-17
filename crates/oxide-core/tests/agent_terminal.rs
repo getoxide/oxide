@@ -1,0 +1,428 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "integration tests: a failed unwrap or panic is a test failure"
+)]
+#![cfg(unix)]
+
+mod support;
+
+use crossbeam_channel::Receiver;
+use oxide_core::{Core, DeleteOutcome, ProjectSummary, ThreadStatus, ThreadSummary};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+use support::wait_until;
+use tempfile::TempDir;
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// A stand-in for Claude Code: reports how it was started, then echoes what it is typed.
+const FAKE_CLAUDE: &str = r#"#!/bin/sh
+echo "ARGS:$*"
+echo "CWD:$(pwd)"
+echo "SETUP:$(cat setup-marker 2>/dev/null)"
+echo "READY"
+while IFS= read -r line; do
+  if [ "$line" = "quit" ]; then exit 3; fi
+  echo "ECHO:$line"
+done
+"#;
+
+struct Fixture {
+    _tmp: TempDir,
+    core: Core,
+    project: ProjectSummary,
+    work: PathBuf,
+    home: PathBuf,
+}
+
+fn fixture() -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("oxide-home");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let claude = bin.join("claude");
+    std::fs::write(&claude, FAKE_CLAUDE).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let work = tmp.path().join("scan").join("my-project");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("a.txt"), "committed\n").unwrap();
+    git(&work, &["add", "a.txt"]);
+    git(&work, &["commit", "-qm", "first"]);
+    let core = Core::open(&home).unwrap();
+    core.set_real_time_ticker(false);
+    core.set_agent_search_path(Some(vec![
+        bin,
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/bin"),
+    ]));
+    let project = core.add_project(&work.to_string_lossy()).unwrap();
+    Fixture {
+        _tmp: tmp,
+        core,
+        project,
+        work,
+        home,
+    }
+}
+
+fn sql(home: &Path, statement: &str, params: impl rusqlite::Params) {
+    rusqlite::Connection::open(home.join("oxide.db"))
+        .unwrap()
+        .execute(statement, params)
+        .unwrap();
+}
+
+/// Reads from the feed until `needle` has appeared (and returns everything read so far).
+fn read_until(feed: &Receiver<Vec<u8>>, mut seen: Vec<u8>, needle: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !String::from_utf8_lossy(&seen).contains(needle) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match feed.recv_timeout(left) {
+            Ok(chunk) => seen.extend(chunk),
+            Err(_) => panic!(
+                "never saw {needle:?}; got {:?}",
+                String::from_utf8_lossy(&seen)
+            ),
+        }
+    }
+    String::from_utf8_lossy(&seen).into_owned()
+}
+
+fn screen(core: &Core, thread_id: u32, needle: &str) -> String {
+    let attachment = core.attach_agent_terminal(thread_id).unwrap();
+    read_until(&attachment.feed, attachment.replay, needle)
+}
+
+fn status(f: &Fixture, thread_id: u32) -> ThreadStatus {
+    f.core
+        .list_threads(f.project.id)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == thread_id)
+        .unwrap()
+        .status
+}
+
+fn wait_status(f: &Fixture, thread_id: u32, wanted: ThreadStatus) {
+    assert!(
+        wait_until(Duration::from_secs(10), || status(f, thread_id) == wanted),
+        "status stayed {:?}, wanted {wanted:?}",
+        status(f, thread_id)
+    );
+}
+
+fn started(f: &Fixture) -> ThreadSummary {
+    f.core.start_terminal_thread(f.project.id).unwrap()
+}
+
+fn real(path: &str) -> String {
+    dunce::canonicalize(path).unwrap().display().to_string()
+}
+
+#[test]
+fn a_new_terminal_thread_runs_claude_in_a_fresh_worktree_after_the_setup_command() {
+    let f = fixture();
+    sql(
+        &f.home,
+        "UPDATE projects SET setup_command = 'echo ready > setup-marker' WHERE id = ?1",
+        [f.project.id],
+    );
+
+    let thread = started(&f);
+
+    assert!(thread.terminal);
+    assert_eq!(thread.provider, "claude");
+    assert_eq!(thread.status, ThreadStatus::Running);
+    let worktree = thread.worktree_path.clone().unwrap();
+    let branches = git(&f.work, &["branch", "--list", "oxide/thread-*"]);
+    assert!(
+        branches.contains(&format!("oxide/thread-{}", thread.id)),
+        "{branches}"
+    );
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(out.contains(&format!("CWD:{}", real(&worktree))), "{out}");
+    assert!(
+        out.contains("SETUP:ready"),
+        "the agent started before Setup finished: {out}"
+    );
+}
+
+#[test]
+fn claude_gets_the_session_id_and_the_settings_defaults_as_launch_flags() {
+    let f = fixture();
+    let mut settings = f.core.settings().settings;
+    settings.providers.claude.model = Some("opus".into());
+    settings.providers.claude.effort = Some("high".into());
+    settings.providers.claude.permission_mode = oxide_core::PermissionMode::Ask;
+    f.core.save_settings(&settings).unwrap();
+
+    let thread = started(&f);
+
+    let session_id: String = rusqlite::Connection::open(f.home.join("oxide.db"))
+        .unwrap()
+        .query_row(
+            "SELECT provider_session_id FROM threads WHERE id = ?1",
+            [thread.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(
+        out.contains(&format!(
+            "ARGS:--session-id {session_id} --model opus --effort high --permission-mode default"
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_project_that_opted_out_of_worktrees_runs_the_agent_in_the_main_checkout() {
+    let f = fixture();
+    sql(
+        &f.home,
+        "UPDATE projects SET threads_in_main_checkout = 1 WHERE id = ?1",
+        [f.project.id],
+    );
+
+    let thread = started(&f);
+
+    assert_eq!(thread.worktree_path, None);
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(
+        out.contains(&format!("CWD:{}", real(&f.work.to_string_lossy()))),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_failing_setup_command_keeps_the_thread_in_error_and_starts_no_agent() {
+    let f = fixture();
+    sql(
+        &f.home,
+        "UPDATE projects SET setup_command = 'echo nope; exit 1' WHERE id = ?1",
+        [f.project.id],
+    );
+
+    let thread = started(&f);
+
+    assert_eq!(status(&f, thread.id), ThreadStatus::Error);
+    assert!(
+        thread.setup_output.unwrap_or_default().contains("nope") || {
+            let listed = f.core.list_threads(f.project.id).unwrap();
+            listed[0]
+                .setup_output
+                .clone()
+                .unwrap_or_default()
+                .contains("nope")
+        }
+    );
+    assert!(!f.core.agent_is_running(thread.id));
+}
+
+#[test]
+fn typed_input_reaches_the_agent() {
+    let f = fixture();
+    let thread = started(&f);
+    let attachment = f.core.attach_agent_terminal(thread.id).unwrap();
+    let seen = read_until(&attachment.feed, attachment.replay, "READY");
+
+    f.core.write_agent_terminal(thread.id, b"hello\n").unwrap();
+
+    let out = read_until(&attachment.feed, seen.into_bytes(), "ECHO:hello");
+    assert!(out.contains("ECHO:hello"));
+}
+
+#[test]
+fn the_screen_is_replayed_when_the_thread_is_shown_again() {
+    let f = fixture();
+    let thread = started(&f);
+    let first = f.core.attach_agent_terminal(thread.id).unwrap();
+    read_until(&first.feed, first.replay, "READY");
+    f.core
+        .write_agent_terminal(thread.id, b"while away\n")
+        .unwrap();
+    drop(first.feed);
+
+    // The view went away and comes back: everything printed meanwhile is there.
+    let out = screen(&f.core, thread.id, "ECHO:while away");
+    assert!(out.contains("READY"), "{out}");
+}
+
+#[test]
+fn stop_ends_the_agent_and_restart_resumes_the_same_session() {
+    let f = fixture();
+    let thread = started(&f);
+    let first = screen(&f.core, thread.id, "READY");
+    let session_arg = first
+        .lines()
+        .find(|l| l.starts_with("ARGS:"))
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    f.core.stop_agent(thread.id).unwrap();
+
+    wait_status(&f, thread.id, ThreadStatus::Stopped);
+    assert!(!f.core.agent_is_running(thread.id));
+    assert!(f.core.write_agent_terminal(thread.id, b"x").is_err());
+    f.core.restart_agent(thread.id).unwrap();
+    wait_status(&f, thread.id, ThreadStatus::Running);
+    let out = screen(&f.core, thread.id, "--resume");
+    assert!(out.contains(&format!("--resume {session_arg}")), "{out}");
+}
+
+#[test]
+fn restart_of_a_running_agent_is_refused() {
+    let f = fixture();
+    let thread = started(&f);
+    assert!(f.core.restart_agent(thread.id).is_err());
+}
+
+#[test]
+fn an_agent_that_exits_with_failure_is_an_error() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+
+    // `quit` makes the stand-in exit with status 3.
+    f.core.write_agent_terminal(thread.id, b"quit\n").unwrap();
+
+    wait_status(&f, thread.id, ThreadStatus::Error);
+}
+
+#[test]
+fn deleting_the_thread_stops_the_agent_and_removes_the_worktree_but_keeps_the_branch() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
+    assert!(worktree.exists());
+
+    let outcome = f.core.delete_thread(thread.id, false).unwrap();
+
+    assert_eq!(outcome, DeleteOutcome::Deleted);
+    assert!(!f.core.agent_is_running(thread.id));
+    assert!(!worktree.exists());
+    let branches = git(&f.work, &["branch", "--list", "oxide/thread-*"]);
+    assert!(
+        branches.contains(&format!("oxide/thread-{}", thread.id)),
+        "{branches}"
+    );
+}
+
+#[test]
+fn a_chat_thread_is_not_a_terminal_thread() {
+    let f = fixture();
+    let chat = f
+        .core
+        .create_thread(f.project.id, "fake", None, None, None)
+        .unwrap();
+    assert!(!chat.terminal);
+}
+
+#[test]
+fn every_terminal_command_refuses_an_unknown_thread_and_a_chat_thread() {
+    let f = fixture();
+    let chat = f
+        .core
+        .create_thread(f.project.id, "fake", None, None, None)
+        .unwrap();
+    for id in [chat.id, 9999, 0, u32::MAX] {
+        assert!(f.core.attach_agent_terminal(id).is_err(), "attach {id}");
+        assert!(f.core.write_agent_terminal(id, b"x").is_err(), "write {id}");
+        assert!(
+            f.core.resize_agent_terminal(id, 24, 80).is_err(),
+            "resize {id}"
+        );
+        assert!(f.core.stop_agent(id).is_err(), "stop {id}");
+        assert!(f.core.restart_agent(id).is_err(), "restart {id}");
+    }
+}
+
+#[test]
+fn starting_refuses_an_unknown_project_and_a_missing_claude() {
+    let f = fixture();
+    assert!(f.core.start_terminal_thread(9999).is_err());
+    assert!(f.core.start_terminal_thread(0).is_err());
+
+    f.core.set_agent_search_path(Some(vec![]));
+    let error = f.core.start_terminal_thread(f.project.id).unwrap_err();
+    assert!(error.to_string().contains("not installed"), "{error}");
+    // Nothing was created.
+    assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
+}
+
+#[test]
+fn input_and_sizes_are_bounded() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+
+    let huge = vec![b'a'; 1024 * 1024 + 1];
+    assert!(f.core.write_agent_terminal(thread.id, &huge).is_err());
+    for (rows, cols) in [
+        (0, 80),
+        (24, 0),
+        (1, 80),
+        (24, 1),
+        (1001, 80),
+        (24, 1001),
+        (u16::MAX, u16::MAX),
+    ] {
+        assert!(
+            f.core.resize_agent_terminal(thread.id, rows, cols).is_err(),
+            "{rows}x{cols}"
+        );
+    }
+    assert!(f.core.resize_agent_terminal(thread.id, 30, 100).is_ok());
+}
+
+#[test]
+fn a_thread_that_was_running_when_oxide_quit_reopens_as_stopped() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+    f.core.shutdown();
+    let Fixture {
+        core,
+        home,
+        project,
+        ..
+    } = f;
+    drop(core);
+
+    let core = Core::open(&home).unwrap();
+    let again = core
+        .list_threads(project.id)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == thread.id)
+        .unwrap();
+    assert_eq!(again.status, ThreadStatus::Stopped);
+    assert!(again.terminal);
+}

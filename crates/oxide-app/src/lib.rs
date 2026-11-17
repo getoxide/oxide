@@ -237,6 +237,7 @@ pub struct Settings {
     providers: Providers,
     confirm_quit: bool,
     delete_merged_branches: bool,
+    open_threads_as_terminals: bool,
     claude_customizations: ClaudeCustomizations,
     shortcuts: Shortcuts,
 }
@@ -464,6 +465,8 @@ pub enum ThreadStatus {
     Completed,
     Error,
     Interrupted,
+    Running,
+    Stopped,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -525,6 +528,7 @@ pub struct Thread {
     pub setup_output: Option<String>,
     pub issue_number: Option<u32>,
     pub blind_review: bool,
+    pub terminal: bool,
 }
 
 /// An Approval the Provider is still waiting on.
@@ -3630,6 +3634,7 @@ mod tests {
                 setup_output: None,
                 issue_number: None,
                 blind_review: false,
+                terminal: false,
             },
             turns: vec![oxide_core::TurnSnapshot {
                 id: 3,

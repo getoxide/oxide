@@ -339,6 +339,7 @@ impl Core {
         if let Some(actor) = actor {
             actor.shutdown();
         }
+        self.drop_agent(thread_id);
         if let Some(worktree) = worktree {
             self.remove_worktree(&root, &worktree)?;
         }
@@ -537,7 +538,7 @@ impl Core {
             .mutate(&root, || git::run(&root, &["worktree", "prune"]).map(drop))
     }
 
-    fn thread_summary(&self, thread_id: u32) -> Result<ThreadSummary> {
+    pub(crate) fn thread_summary(&self, thread_id: u32) -> Result<ThreadSummary> {
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         self.get_thread_by_id(&db, thread_id)
     }

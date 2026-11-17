@@ -380,6 +380,11 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE projects SET acted_upon = 1
     WHERE EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id);
 ",
+    // A Thread whose centre is an Agent terminal running the Provider's own CLI (ADR-0017).
+    // Its Provider session id is `provider_session_id`, assigned by Oxide at launch.
+    "
+    ALTER TABLE threads ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:

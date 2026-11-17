@@ -194,6 +194,7 @@ impl From<oxide_core::Settings> for Settings {
             providers: s.providers.into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
         }
@@ -207,6 +208,7 @@ impl From<&oxide_core::Settings> for Settings {
             providers: (&s.providers).into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: (&s.shortcuts).into(),
         }
@@ -220,6 +222,7 @@ impl From<Settings> for oxide_core::Settings {
             providers: s.providers.into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
         }
@@ -397,6 +400,8 @@ impl From<oxide_core::ThreadStatus> for ThreadStatus {
             oxide_core::ThreadStatus::Completed => Self::Completed,
             oxide_core::ThreadStatus::Error => Self::Error,
             oxide_core::ThreadStatus::Interrupted => Self::Interrupted,
+            oxide_core::ThreadStatus::Running => Self::Running,
+            oxide_core::ThreadStatus::Stopped => Self::Stopped,
         }
     }
 }
@@ -459,6 +464,7 @@ impl From<oxide_core::ThreadSummary> for Thread {
             setup_output: t.setup_output,
             issue_number: t.issue_number,
             blind_review: t.blind_review,
+            terminal: t.terminal,
         }
     }
 }
@@ -1619,6 +1625,7 @@ mod tests {
             },
             confirm_quit: false,
             delete_merged_branches: true,
+            open_threads_as_terminals: true,
             claude_customizations: oxide_core::ClaudeCustomizations {
                 claude_md: true,
                 skills: false,
@@ -1653,6 +1660,7 @@ mod tests {
             json!("full-access")
         );
         assert_eq!(json["settings"]["deleteMergedBranches"], json!(true));
+        assert_eq!(json["settings"]["openThreadsAsTerminals"], json!(true));
         assert_eq!(
             json["settings"]["claudeCustomizations"],
             json!({
