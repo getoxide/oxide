@@ -13,6 +13,7 @@ Some reports link into `references/`, which holds pinned upstream snapshots as G
 | T3 Code architecture | [t3-code-architecture.md](t3-code-architecture.md) | [#6](https://github.com/getoxide/oxide/issues/6) |
 | Tauri and Rust building blocks | [tauri-rust-building-blocks.md](tauri-rust-building-blocks.md) | [#7](https://github.com/getoxide/oxide/issues/7) |
 | Tauri frontend frameworks | [tauri-frontend-frameworks.md](tauri-frontend-frameworks.md) | [#8](https://github.com/getoxide/oxide/issues/8) |
+| Terminal Provider CLI contract | [terminal-provider-cli-contract.md](terminal-provider-cli-contract.md) | [#496](https://github.com/getoxide/oxide/issues/496) |
 
 ## Cross-cutting takeaways
 
