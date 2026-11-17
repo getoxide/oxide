@@ -426,3 +426,63 @@ fn a_thread_that_was_running_when_oxide_quit_reopens_as_stopped() {
     assert_eq!(again.status, ThreadStatus::Stopped);
     assert!(again.terminal);
 }
+
+#[test]
+fn a_chosen_model_effort_and_permission_mode_override_the_settings_defaults() {
+    let f = fixture();
+    let mut settings = f.core.settings().settings;
+    settings.providers.claude.model = Some("opus".into());
+    settings.providers.claude.permission_mode = oxide_core::PermissionMode::Ask;
+    f.core.save_settings(&settings).unwrap();
+
+    let thread = f
+        .core
+        .start_terminal_thread_with(
+            f.project.id,
+            &oxide_core::TerminalLaunch {
+                provider: Some("claude".into()),
+                model: Some("sonnet".into()),
+                effort: Some("low".into()),
+                permission_mode: Some(oxide_core::PermissionMode::FullAccess),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(thread.model.as_deref(), Some("sonnet"));
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(
+        out.contains("--model sonnet --effort low --permission-mode bypassPermissions"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_provider_without_an_agent_terminal_is_refused_before_anything_is_created() {
+    let f = fixture();
+    let error = f
+        .core
+        .start_terminal_thread_with(
+            f.project.id,
+            &oxide_core::TerminalLaunch {
+                provider: Some("codex".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("codex"), "{error}");
+    assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
+}
+
+#[test]
+fn a_model_that_is_not_a_plain_value_is_refused() {
+    let f = fixture();
+    let result = f.core.start_terminal_thread_with(
+        f.project.id,
+        &oxide_core::TerminalLaunch {
+            model: Some("--dangerously-skip-permissions".into()),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+    assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
+}

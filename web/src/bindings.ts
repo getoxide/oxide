@@ -128,7 +128,7 @@ export const commands = {
 	 *  Opens a terminal Thread: a worktree and Setup command (unless the Project keeps Threads in
 	 *  its main checkout), then Claude Code in an Agent terminal. Starts a process.
 	 */
-	createTerminalThread: (projectId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread", { projectId })),
+	createTerminalThread: (projectId: number, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread", { projectId, provider, model, effort, permissionMode })),
 	/**
 	 *  Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
 	 *  it prints. A newer attachment replaces the previous one.

@@ -922,10 +922,22 @@ fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), Ap
 async fn create_terminal_thread(
     core: State<'_, Arc<Core>>,
     project_id: u32,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
 ) -> Result<Thread, AppError> {
-    git_blocking(&core, move |core| core.start_terminal_thread(project_id))
-        .await
-        .map(Thread::from)
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_with(project_id, &choice)
+    })
+    .await
+    .map(Thread::from)
 }
 
 /// Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what

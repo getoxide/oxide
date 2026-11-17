@@ -16,6 +16,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// What the user chose for a new terminal Thread; `None` takes the Settings default.
+#[derive(Debug, Clone, Default)]
+pub struct TerminalLaunch {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<PermissionMode>,
+}
+
 /// The running (or ended) agent of one terminal Thread.
 pub(crate) struct AgentRun {
     id: u32,
@@ -79,9 +88,38 @@ impl Core {
     /// Project's Setup command in it first. When the Setup command fails the Thread is kept in
     /// `error` with its output and no agent is started.
     pub fn start_terminal_thread(&self, project_id: u32) -> Result<ThreadSummary> {
+        self.start_terminal_thread_with(project_id, &TerminalLaunch::default())
+    }
+
+    /// Like [`Core::start_terminal_thread`], with the Provider, Model, Effort and Permission mode
+    /// the user chose. What is left out comes from the Settings defaults. Only Providers with an
+    /// Agent terminal are accepted, and the values are checked before anything is created.
+    pub fn start_terminal_thread_with(
+        &self,
+        project_id: u32,
+        choice: &TerminalLaunch,
+    ) -> Result<ThreadSummary> {
         self.project(project_id)?;
+        let provider = choice.provider.as_deref().unwrap_or("claude");
+        if provider != "claude" {
+            return Err(Error::Provider(format!(
+                "{provider} has no Agent terminal yet."
+            )));
+        }
         self.find_claude()?;
-        let (model, effort, permission_mode) = self.default_settings_for_provider("claude");
+        let (default_model, default_effort, default_mode) =
+            self.default_settings_for_provider("claude");
+        let model = choice.model.clone().or(default_model);
+        let effort = choice.effort.clone().or(default_effort);
+        let permission_mode = choice.permission_mode.unwrap_or(default_mode);
+        // Refuse a value the CLI would take as a flag before a worktree exists.
+        claude_args(&ClaudeLaunch {
+            session_id: &new_session_id(),
+            resume: false,
+            model: model.as_deref(),
+            effort: effort.as_deref(),
+            permission_mode,
+        })?;
         let session_id = new_session_id();
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
