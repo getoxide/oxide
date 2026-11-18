@@ -522,3 +522,51 @@ fn the_codex_first_prompt_is_a_launch_argument_after_a_double_dash() {
     let args = line(&out, "ARGS:");
     assert!(args.contains(" -- "), "{args}");
 }
+
+#[test]
+fn the_settings_default_provider_starts_a_terminal_thread_when_none_is_chosen() {
+    let f = fixture();
+    let mut settings = f.core.settings().settings;
+    settings.default_provider = oxide_core::Provider::Codex;
+    f.core.save_settings(&settings).unwrap();
+    let thread = f.core.start_terminal_thread(f.project.id).unwrap();
+    assert_eq!(thread.provider, "codex");
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(out.contains("ARGS:"), "{out}");
+}
+
+#[test]
+fn accepting_a_rule_suggestion_with_codex_starts_a_codex_terminal_thread() {
+    let f = fixture();
+    let mut settings = f.core.settings().settings;
+    settings.open_threads_as_terminals = true;
+    f.core.save_settings(&settings).unwrap();
+    let db = rusqlite::Connection::open(f.home.join("oxide.db")).unwrap();
+    db.execute(
+        "INSERT INTO rule_suggestions (id, project_id) VALUES (1, ?1)",
+        [f.project.id],
+    )
+    .unwrap();
+    for (thread, body) in [
+        (1, "Please add a doc comment to every new function"),
+        (2, "Please add a doc comment to every new function."),
+        (3, "Add a doc comment to every new function please"),
+    ] {
+        db.execute(
+            "INSERT INTO rule_suggestion_comments (suggestion_id, thread_id, body) VALUES (1, ?1, ?2)",
+            rusqlite::params![thread, body],
+        )
+        .unwrap();
+    }
+    drop(db);
+
+    let thread = f
+        .core
+        .accept_rule_suggestion(f.project.id, 1, "codex")
+        .unwrap();
+
+    assert!(thread.terminal);
+    assert_eq!(thread.provider, "codex");
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(out.contains("AGENTS.md"), "{out}");
+}

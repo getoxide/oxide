@@ -44,6 +44,55 @@ pub struct TerminalIssue {
     pub labels: Vec<String>,
 }
 
+/// The longest issue title, label and URL, and the most labels, a Thread stores.
+const MAX_ISSUE_TITLE_CHARS: usize = 300;
+const MAX_ISSUE_LABELS: usize = 20;
+const MAX_ISSUE_LABEL_CHARS: usize = 64;
+const MAX_ISSUE_URL_BYTES: usize = 2048;
+const MAX_ISSUE_BODY_BYTES: usize = 64 * 1024;
+
+impl TerminalIssue {
+    /// The same issue held to what a Thread stores and an agent is told: the text comes from
+    /// GitHub (or the webview), so it is capped, and a URL is kept only when it is a short
+    /// `https` link.
+    pub(crate) fn bounded(&self) -> TerminalIssue {
+        let clean = |text: &str, max: usize| -> String {
+            text.chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .take(max)
+                .collect()
+        };
+        let mut body = self.body.replace('\0', "");
+        if body.len() > MAX_ISSUE_BODY_BYTES {
+            let mut end = MAX_ISSUE_BODY_BYTES;
+            while !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            body.truncate(end);
+        }
+        TerminalIssue {
+            number: self.number,
+            title: clean(&self.title, MAX_ISSUE_TITLE_CHARS),
+            body,
+            url: self
+                .url
+                .as_deref()
+                .filter(|url| {
+                    url.len() <= MAX_ISSUE_URL_BYTES
+                        && url.starts_with("https://")
+                        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+                })
+                .map(str::to_string),
+            labels: self
+                .labels
+                .iter()
+                .take(MAX_ISSUE_LABELS)
+                .map(|label| clean(label, MAX_ISSUE_LABEL_CHARS))
+                .collect(),
+        }
+    }
+}
+
 /// The running (or ended) agent of one terminal Thread.
 pub(crate) struct AgentRun {
     id: u32,
@@ -212,8 +261,9 @@ impl Core {
         issue: &TerminalIssue,
         choice: &TerminalLaunch,
     ) -> Result<ThreadSummary> {
+        let issue = issue.bounded();
         let prompt = issue_prompt(issue.number, &issue.title, &issue.body);
-        self.start_agent_thread(project_id, choice, Some(issue), Some(&prompt))
+        self.start_agent_thread(project_id, choice, Some(&issue), Some(&prompt))
     }
 
     /// Starts a terminal Thread whose agent receives `prompt` as its first prompt.
@@ -235,7 +285,12 @@ impl Core {
         prompt: Option<&str>,
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
-        let provider = choice.provider.as_deref().unwrap_or("claude");
+        let default_provider = match self.settings().settings.default_provider {
+            crate::settings::Provider::Claude => "claude",
+            crate::settings::Provider::Codex => "codex",
+            crate::settings::Provider::Antigravity => "antigravity",
+        };
+        let provider = choice.provider.as_deref().unwrap_or(default_provider);
         // A Custom agent takes no prompt as an argument (Oxide does not know how it takes one):
         // the caller pastes the prompt the user confirms, once the agent runs. It has no Model,
         // Effort, Permission mode or session either.
@@ -336,7 +391,8 @@ impl Core {
                     permission_mode.as_str()
                 ],
             )?;
-            let thread_id = db.last_insert_rowid() as u32;
+            let thread_id = u32::try_from(db.last_insert_rowid())
+                .map_err(|_| Error::Terminal("Thread id out of range.".into()))?;
             if let Some(issue) = issue {
                 db.execute(
                     "UPDATE threads SET issue_number = ?1, issue_title = ?2, issue_url = ?3, issue_labels = ?4 WHERE id = ?5",
@@ -519,6 +575,7 @@ impl Core {
     /// The prompt that starts work on an issue, for the user to read and confirm before it is
     /// delivered into a Custom agent (which takes no prompt at launch).
     pub fn issue_prompt_preview(&self, issue: &TerminalIssue) -> String {
+        let issue = issue.bounded();
         issue_prompt(issue.number, &issue.title, &issue.body)
     }
 
@@ -702,7 +759,10 @@ impl Core {
             )));
         }
         let agy = is_agy(&provider);
-        let permission_mode = mode.parse().unwrap_or(PermissionMode::AutoEdit);
+        // A stored mode that cannot be read is refused, never widened.
+        let permission_mode: PermissionMode = mode.parse().map_err(|_| {
+            Error::Provider("The Thread's Permission mode is not recognised.".into())
+        })?;
         // A session id to store: Claude Code's is assigned here, Codex's and agy's are reported
         // later, so a Thread that never reported one has none and starts over instead of resuming.
         let custom_agent = if custom_id(&provider).is_some() {

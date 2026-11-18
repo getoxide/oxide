@@ -110,6 +110,7 @@ export function App() {
   const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
   const [launchDefaults, setLaunchDefaults] = useState<{ model: string | null; effort: string | null; permissionMode: PermissionMode | null }>({ model: null, effort: null, permissionMode: null });
+  const [launchProvider, setLaunchProvider] = useState<"claude" | "codex" | "antigravity">("claude");
   const defaultLaunchMode = launchDefaults.permissionMode;
   const [showTools, setShowTools] = useState(false);
   const [fallbackTool, setFallbackTool] = useState<string>("Files");
@@ -651,7 +652,11 @@ export function App() {
         if (!active) return;
         setTerminalThreads(settings.openThreadsAsTerminals);
         setCustomAgents(settings.customAgents ?? []);
-        const defaults = settings.providers.claude;
+        // Every Provider has a launch recipe, so the default Provider is the one a new terminal
+        // Thread starts with; its own defaults preselect the picker.
+        const provider = (["claude", "codex", "antigravity"] as const).find((p) => p === settings.defaultProvider) ?? "claude";
+        setLaunchProvider(provider);
+        const defaults = settings.providers[provider];
         setLaunchDefaults({ model: defaults?.model ?? null, effort: defaults?.effort ?? null, permissionMode: defaults?.permissionMode ?? null });
       })
       .catch(() => {});
@@ -1504,7 +1509,7 @@ export function App() {
             onLaunch: (choice) => void startNewThread(choice),
           }}
           onClose={() => setLaunchPickerOpen(false)}
-          currentProvider="claude"
+          currentProvider={launchProvider}
           currentModel={launchDefaults.model}
           currentEffort={launchDefaults.effort}
           turnCount={0}

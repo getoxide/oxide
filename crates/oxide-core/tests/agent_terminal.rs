@@ -908,3 +908,56 @@ fn a_fix_can_start_a_new_thread_with_the_confirmed_prompt() {
     let args = out.lines().find(|l| l.starts_with("ARGS:")).unwrap();
     assert!(args.contains(" -- Fix the failing check"), "{args}");
 }
+
+#[test]
+fn an_issue_is_bounded_before_it_is_stored() {
+    let f = fixture();
+    let hostile = oxide_core::TerminalIssue {
+        number: 7,
+        title: "t".repeat(5_000),
+        body: "b".repeat(500_000),
+        url: Some("javascript:alert(1)".into()),
+        labels: (0..100).map(|i| format!("{i}{}", "l".repeat(500))).collect(),
+    };
+    let thread = f
+        .core
+        .start_terminal_thread_from_issue(f.project.id, &hostile, &Default::default())
+        .unwrap();
+    let (title, url, labels): (String, Option<String>, String) =
+        rusqlite::Connection::open(f.home.join("oxide.db"))
+            .unwrap()
+            .query_row(
+                "SELECT issue_title, issue_url, issue_labels FROM threads WHERE id = ?1",
+                [thread.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+    assert_eq!(title.chars().count(), 300);
+    assert_eq!(url, None);
+    let labels: Vec<String> = serde_json::from_str(&labels).unwrap();
+    assert_eq!(labels.len(), 20);
+    assert!(labels.iter().all(|l| l.chars().count() <= 64));
+
+    let long_https = format!("https://github.com/{}", "a".repeat(3_000));
+    for (candidate, kept) in [
+        ("https://github.com/o/r/issues/7", true),
+        ("http://github.com/o/r/issues/7", false),
+        (long_https.as_str(), false),
+    ] {
+        let mut issue = issue();
+        issue.url = Some(candidate.to_string());
+        let thread = f
+            .core
+            .start_terminal_thread_from_issue(f.project.id, &issue, &Default::default())
+            .unwrap();
+        let url: Option<String> = rusqlite::Connection::open(f.home.join("oxide.db"))
+            .unwrap()
+            .query_row(
+                "SELECT issue_url FROM threads WHERE id = ?1",
+                [thread.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(url.is_some(), kept, "{candidate}");
+    }
+}

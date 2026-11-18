@@ -241,7 +241,8 @@ impl Core {
         }
         // With terminal Threads on and a Provider that has an Agent terminal, the proposal is
         // the agent's first prompt, passed at launch.
-        let terminal = provider == "claude" && self.settings().settings.open_threads_as_terminals;
+        let terminal = matches!(provider, "claude" | "codex" | "antigravity" | "agy")
+            && self.settings().settings.open_threads_as_terminals;
         let started = if terminal {
             let choice = crate::TerminalLaunch {
                 provider: Some(provider.to_string()),
