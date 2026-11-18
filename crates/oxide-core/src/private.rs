@@ -113,11 +113,11 @@ fn set_mode(path: &Path, to: impl Fn(u32) -> u32) -> io::Result<()> {
     Ok(())
 }
 
-/// Creates (or truncates) `path` for writing; on Unix a new file is `0600`.
+/// Creates (or truncates) `path` for writing; a new file is `0600`.
+#[cfg(unix)]
 pub(crate) fn create_file(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
