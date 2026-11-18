@@ -22,6 +22,7 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
       draft: false,
       base: "main",
       head: "dependabot/npm/react-virtual",
+      crossRepository: false,
       author: "app/dependabot",
       createdAt: "2026-10-27T08:00:00Z",
     },
