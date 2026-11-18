@@ -557,11 +557,9 @@ fn port_available(port: u16) -> bool {
 
 fn launch(service: &Arc<Service>) -> Result<()> {
     let summary = service.summary();
-    let mut command = oxide_provider::command::resolved_command(shell());
-    #[cfg(unix)]
-    command.args(["-lc", &summary.command]);
-    #[cfg(windows)]
-    command.args(["/C", &summary.command]);
+    let (shell, flag) = shell();
+    let mut command = oxide_provider::command::resolved_command(&shell);
+    command.args([flag, &summary.command]);
     command
         .current_dir(&summary.checkout)
         .stdin(Stdio::null())
@@ -592,7 +590,7 @@ fn launch(service: &Arc<Service>) -> Result<()> {
     }
     service
         .registry
-        .register(pid as i32, &shell().to_string_lossy());
+        .register(pid as i32, &shell.to_string_lossy());
     {
         let mut state = service.state.lock_recover();
         state.summary.pid = pid;
@@ -618,20 +616,14 @@ fn launch(service: &Arc<Service>) -> Result<()> {
     Ok(())
 }
 
-/// The OS shell, by absolute path where the platform has a fixed one.
-#[cfg(unix)]
-fn shell() -> std::path::PathBuf {
-    oxide_provider::command::os_tool("sh")
-}
-
-#[cfg(windows)]
-fn shell() -> std::path::PathBuf {
-    oxide_provider::command::os_tool("cmd.exe")
-}
-
-#[cfg(not(any(unix, windows)))]
-fn shell() -> std::path::PathBuf {
-    "sh".into()
+/// The OS shell by absolute path where the platform has a fixed one, and the flag that makes it
+/// run one command line.
+fn shell() -> (std::path::PathBuf, &'static str) {
+    if cfg!(windows) {
+        (oxide_provider::command::os_tool("cmd.exe"), "/C")
+    } else {
+        (oxide_provider::command::os_tool("sh"), "-lc")
+    }
 }
 
 fn spawn_reader(

@@ -238,9 +238,6 @@ fn next_launch_leaves_a_reused_pid_alone() {
     let _core = Core::open(dir.path()).unwrap();
 
     assert!(group_alive(pgid), "an unrelated process must not be killed");
-    #[cfg(unix)]
-    oxide_provider::process::signal_group(pgid, libc::SIGKILL).unwrap();
-    #[cfg(not(unix))]
-    diag::best_effort("kill", bystander.kill());
+    oxide_provider::process::kill_group(pgid);
     assert!(wait_group_gone(&mut bystander));
 }

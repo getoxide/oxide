@@ -103,6 +103,8 @@ jobs:
           package-manager-cache: false
       # ADR-0016: Git and gh start only in the hardened builders.
       - run: node tools/checks/process-builders.mjs
+      # ADR-0018: OS-specific code lives in crates/oxide-platform.
+      - run: node tools/checks/platform-layer.mjs
 
   rust:
     name: rust (${{ matrix.label }})

@@ -94,10 +94,10 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 
 ### `rust-fmt`
 
-- **What:** `cargo fmt --all --check`, then `node tools/checks/process-builders.mjs`, which fails on a `Command::new` of `git` or `gh` outside the hardened builders (`git_command.rs`, `github.rs`; integration tests under `tests/` are exempt). See [ADR-0016](adr/0016-security-boundaries.md).
+- **What:** `cargo fmt --all --check`, then `node tools/checks/process-builders.mjs`, which fails on a `Command::new` of `git` or `gh` outside the hardened builders (`git_command.rs`, `github.rs`; integration tests under `tests/` are exempt). See [ADR-0016](adr/0016-security-boundaries.md). Then `node tools/checks/platform-layer.mjs`, which fails when OS-specific conditional compilation or an OS-only API appears outside `crates/oxide-platform` (and `tests/support/`), compared with the baseline in `tools/checks/platform-layer-baseline.json`, when the macOS, Linux and Windows implementations of the platform layer stop offering the same items, and when another crate depends on an OS binding crate. See [ADR-0018](adr/0018-platform-layer.md).
 - **Why:** both are mechanical and fail in seconds without waiting for a compile. The builder check keeps a repository's own configuration from running programs on Oxide's behalf.
 - **When / where:** `rust` lane, Linux.
-- **Local:** `cargo fmt --all --check` and `node tools/checks/process-builders.mjs` (both also in `fast`).
+- **Local:** `cargo fmt --all --check`, `node tools/checks/process-builders.mjs` and `node tools/checks/platform-layer.mjs` (all also in `fast`). To check the Windows build from macOS or Linux, run `node tools/check.mjs windows` (needs `cargo install --locked cargo-xwin` and LLVM's `llvm-lib`, `brew install llvm`; it leaves out `oxide-app`, whose build script needs `llvm-rc`). The CI Windows lane stays the authority.
 
 ### `rust (macos)`, `rust (windows)` and `rust (linux)`
 

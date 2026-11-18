@@ -10,6 +10,7 @@ name = "oxide_app_lib"
 
 [dependencies]
 oxide-core = { path = "../oxide-core" }
+oxide-platform = { path = "../oxide-platform" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 specta = { version = "=2.0.0-rc.26", features = ["derive"] }
@@ -19,19 +20,6 @@ tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-updater = "2.14.1"
 tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSProcessInfo", "NSString", "NSObject"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = [
-    "Win32_Foundation",
-    "Win32_System_Power",
-    "Win32_UI_Shell",
-] }
-
 
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }

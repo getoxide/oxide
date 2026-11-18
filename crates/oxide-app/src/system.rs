@@ -1,118 +1,40 @@
 //! The host shell integration of Core's activity: activity assertions, notifications,
-//! opening URLs and files, and the window badge.
+//! opening URLs and files, and the window badge. What needs an OS API is the platform layer's
+//! (`oxide_platform::system`); this is the Tauri side.
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use oxide_core::LockExt as _;
 use oxide_core::diag;
-#[cfg(target_os = "windows")]
-use oxide_core::diag::SenderExt as _;
 use oxide_core::{Notification, NotificationKind, System};
+use oxide_platform::system::{self as os, ActivityHold};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 pub struct HostSystem {
     app: AppHandle,
-    #[cfg(target_os = "macos")]
-    activity: std::sync::Mutex<Option<ActivityToken>>,
-    #[cfg(target_os = "windows")]
-    activity: std::sync::Mutex<Option<WindowsActivityToken>>,
+    activity: std::sync::Mutex<Option<ActivityHold>>,
 }
 
 impl HostSystem {
     pub fn new(app: AppHandle) -> Self {
         Self {
             app,
-            #[cfg(target_os = "macos")]
-            activity: std::sync::Mutex::new(None),
-            #[cfg(target_os = "windows")]
             activity: std::sync::Mutex::new(None),
         }
     }
-}
-
-/// The `explorer /select,` argument for `path`, quoted whole so a comma in a folder name cannot
-/// split it into several arguments.
-#[cfg(any(windows, test))]
-fn explorer_select_arg(path: &str) -> String {
-    format!("/select,\"{}\"", path.replace('/', "\\"))
 }
 
 impl System for HostSystem {
-    #[cfg(target_os = "macos")]
-    fn hold_activity(&self) {
-        use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
-        let mut held = self.activity.lock_recover();
-        if held.is_none() {
-            // User-initiated work keeps the app out of App Nap; idle system sleep stays allowed.
-            let token = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
-                NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-                &NSString::from_str("A Thread is working"),
-            );
-            *held = Some(ActivityToken(token));
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    fn release_activity(&self) {
-        use objc2_foundation::NSProcessInfo;
-        if let Some(token) = self.activity.lock_recover().take() {
-            // SAFETY: the token came from `beginActivityWithOptions:reason:`.
-            unsafe { NSProcessInfo::processInfo().endActivity(&token.0) };
-        }
-    }
-
-    #[cfg(target_os = "windows")]
     fn hold_activity(&self) {
         let mut held = self.activity.lock_recover();
         if held.is_none() {
-            let (tx, rx) = std::sync::mpsc::channel::<()>();
-            let thread = std::thread::Builder::new()
-                .name("oxide-activity-hold".into())
-                .spawn(move || {
-                    use windows_sys::Win32::System::Power::{
-                        ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
-                    };
-                    // SAFETY: `SetThreadExecutionState` takes flag constants only and affects just
-                    // this thread's execution state; it touches no memory of ours.
-                    unsafe {
-                        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
-                    }
-                    diag::best_effort("recv", rx.recv());
-                    // SAFETY: same as above; `ES_CONTINUOUS` alone clears the request made by this
-                    // thread.
-                    unsafe {
-                        SetThreadExecutionState(ES_CONTINUOUS);
-                    }
-                });
-            match thread {
-                Ok(handle) => {
-                    *held = Some(WindowsActivityToken {
-                        _stop: tx,
-                        _handle: Some(handle),
-                    });
-                }
-                Err(err) => {
-                    eprintln!("Failed to spawn thread for activity hold: {err}");
-                }
-            }
+            *held = os::hold_activity();
         }
     }
 
-    #[cfg(target_os = "windows")]
     fn release_activity(&self) {
-        if let Some(mut token) = self.activity.lock_recover().take() {
-            token._stop.tell(());
-            if let Some(handle) = token._handle.take() {
-                diag::joined("join", handle.join());
-            }
-        }
+        // Dropping the hold ends it.
+        drop(self.activity.lock_recover().take());
     }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    fn hold_activity(&self) {}
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    fn release_activity(&self) {}
 
     fn notify(&self, notification: Notification) {
         let body = match notification.kind {
@@ -133,88 +55,11 @@ impl System for HostSystem {
     fn open_url(&self, url: &str) {
         // Core passes only links it has checked: https GitHub pages, Project Service
         // loopback URLs and https links to other hosts the user confirmed.
-        #[cfg(target_os = "macos")]
-        diag::best_effort(
-            "open",
-            oxide_core::desktop_tools::os_command("open")
-                .arg(url)
-                .spawn(),
-        );
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::UI::Shell::ShellExecuteW;
-
-            let wide_url: Vec<u16> = std::ffi::OsStr::new(url)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-            let wide_op: Vec<u16> = std::ffi::OsStr::new("open")
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-            // SAFETY: ShellExecuteW is called with valid null-terminated UTF-16 strings.
-            let result = unsafe {
-                ShellExecuteW(
-                    std::ptr::null_mut(),
-                    wide_op.as_ptr(),
-                    wide_url.as_ptr(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    1, // SW_SHOWNORMAL
-                )
-            };
-            if (result as usize) <= 32 {
-                diag::best_effort(
-                    "rundll32",
-                    oxide_core::desktop_tools::os_command("rundll32")
-                        .args(["url.dll,FileProtocolHandler", url])
-                        .spawn(),
-                );
-            }
-        }
-
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        diag::best_effort(
-            "xdg-open",
-            oxide_core::desktop_tools::os_command("xdg-open")
-                .arg(url)
-                .spawn(),
-        );
+        os::open_url(url);
     }
 
-    #[cfg(target_os = "macos")]
     fn reveal_in_finder(&self, path: &std::path::Path) {
-        diag::best_effort(
-            "open",
-            oxide_core::desktop_tools::os_command("open")
-                .arg("-R")
-                .arg(path)
-                .spawn(),
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    fn reveal_in_finder(&self, path: &std::path::Path) {
-        use std::os::windows::process::CommandExt;
-        // `raw_arg`: the quoted path is one argument, so a comma in a folder name cannot split it.
-        diag::best_effort(
-            "explorer",
-            oxide_core::desktop_tools::os_command("explorer")
-                .raw_arg(explorer_select_arg(&path.to_string_lossy()))
-                .spawn(),
-        );
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    fn reveal_in_finder(&self, path: &std::path::Path) {
-        diag::best_effort(
-            "xdg-open",
-            oxide_core::desktop_tools::os_command("xdg-open")
-                .arg(path)
-                .spawn(),
-        );
+        os::reveal_in_file_manager(path);
     }
 
     fn set_badge(&self, count: u32) {
@@ -224,100 +69,5 @@ impl System for HostSystem {
                 window.set_badge_count((count > 0).then_some(i64::from(count))),
             );
         }
-    }
-}
-
-/// An `NSProcessInfo` activity token. The object is thread-safe; `endActivity:` may be
-/// called from any thread.
-#[cfg(target_os = "macos")]
-struct ActivityToken(
-    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>,
-);
-
-#[cfg(target_os = "macos")]
-// SAFETY: the wrapped activity object is documented as thread-safe, and the token is only ever
-// used to call `endActivity:`, which may run on any thread.
-unsafe impl Send for ActivityToken {}
-
-#[cfg(target_os = "windows")]
-struct WindowsActivityToken {
-    _stop: std::sync::mpsc::Sender<()>,
-    _handle: Option<std::thread::JoinHandle<()>>,
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for WindowsActivityToken {
-    fn drop(&mut self) {
-        self._stop.tell(());
-        if let Some(handle) = self._handle.take() {
-            diag::joined("join", handle.join());
-        }
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn activity_token_lifecycle_controls_execution_state() {
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
-        let handle = std::thread::spawn(move || {
-            use windows_sys::Win32::System::Power::{
-                ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
-            };
-            // SAFETY: `SetThreadExecutionState` takes flag constants only and affects just this
-            // thread's execution state; it touches no memory of ours.
-            let prev = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
-            assert_ne!(prev, 0, "SetThreadExecutionState must succeed");
-            diag::best_effort("recv", rx.recv());
-            // SAFETY: same as above; `ES_CONTINUOUS` alone clears this thread's request.
-            let restored = unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
-            assert_ne!(
-                restored, 0,
-                "SetThreadExecutionState must succeed on release"
-            );
-        });
-        let mut token = Some(WindowsActivityToken {
-            _stop: tx,
-            _handle: Some(handle),
-        });
-
-        assert!(token.is_some());
-        drop(token.take());
-        assert!(token.is_none());
-    }
-}
-
-/// Shows the "Oxide Dev" icon in the Dock. `tauri dev` runs a bare binary with no bundle, so
-/// macOS would otherwise show a generic icon and the dev build could not be told from a release.
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub fn set_dev_dock_icon(png: &[u8]) {
-    use objc2::AllocAnyThread;
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSImage};
-    use objc2_foundation::NSData;
-
-    let Some(main) = MainThreadMarker::new() else {
-        return;
-    };
-    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(png));
-    if let Some(image) = image {
-        // SAFETY: `main` proves we are on the main thread, which AppKit requires, and `image` is
-        // a valid NSImage that outlives the call.
-        unsafe { NSApplication::sharedApplication(main).setApplicationIconImage(Some(&image)) };
-    }
-}
-
-#[cfg(test)]
-mod explorer_tests {
-    use super::explorer_select_arg;
-
-    #[test]
-    fn explorer_receives_the_path_as_one_quoted_argument() {
-        assert_eq!(
-            explorer_select_arg("C:/Users/me/a, b/file.txt"),
-            "/select,\"C:\\Users\\me\\a, b\\file.txt\""
-        );
     }
 }

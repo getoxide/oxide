@@ -852,14 +852,12 @@ impl Provider for AgyProvider {
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
         let pgid = *self.group.lock_recover();
-        if let Some(_pgid) = pgid {
+        if let Some(pgid) = pgid {
             self.interrupted.store(true, Ordering::SeqCst);
-            #[cfg(unix)]
-            crate::diag::best_effort("signal_group", process::signal_group(_pgid, libc::SIGINT));
-            // Print mode has no input/control channel. End the whole contained process tree;
-            // the reader reports the interrupted Turn and preserves its conversation id.
-            #[cfg(windows)]
-            process::terminate_group(_pgid, Duration::ZERO, || {});
+            // Print mode has no input/control channel. The group is interrupted (the whole
+            // contained process tree ends on Windows); the reader reports the interrupted Turn
+            // and preserves its conversation id.
+            crate::diag::best_effort("interrupt_group", process::interrupt_group(pgid));
         }
         Ok(())
     }

@@ -19,7 +19,8 @@ One cross-platform command runs what the pull request lanes of CI run on your OS
 
 ```sh
 node tools/check.mjs        # everything the PR lanes run on this OS
-node tools/check.mjs fast   # rustfmt, ESLint and TypeScript, in seconds
+node tools/check.mjs fast   # rustfmt, the text checks, ESLint and TypeScript, in seconds
+node tools/check.mjs windows # macOS or Linux: cross-compile for Windows and run Clippy
 ```
 
 The full tier installs the web dependencies from the lockfile, then runs formatting, ESLint, TypeScript, Vitest, the production web build, the tooling tests, the Tauri alignment check, Clippy, the Rust tests, the committed-bindings check and this OS's app bundle. It prints what it can't run here and why (for example the macOS bundle on Windows, or cargo-deny, which CI installs). On Linux, install the WebKitGTK libraries listed in the README first, and lists every failed command at the end so you can rerun it directly.
@@ -27,6 +28,8 @@ The full tier installs the web dependencies from the lockfile, then runs formatt
 The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it once with `cargo install --locked cargo-nextest`.
 
 Every job, why it exists and its local command are in [docs/devops.md](docs/devops.md#ci-jobs).
+
+**OS-specific code.** Code that needs an API existing on one operating system only goes in `crates/oxide-platform`, one implementation per OS (`src/macos/`, `src/linux/`, `src/windows/`) behind the same functions; shared code calls them. A value that only differs per OS (a shell name, a flag) is written with the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. `node tools/checks/platform-layer.mjs` (in `fast`) fails otherwise, and when the implementations stop matching. The Windows implementation can't be compiled by a Mac compiler, so after changing `crates/oxide-platform/src/windows/` run `node tools/check.mjs windows` (it needs [cargo-xwin](https://github.com/rust-cross/cargo-xwin) and LLVM: `cargo install --locked cargo-xwin`, `brew install llvm`); the full check reminds you when you haven't. See [ADR-0018](docs/adr/0018-platform-layer.md).
 
 The security rules the checks enforce (no `unwrap` on outside data, documented `unsafe`, `git` and `gh` only through the hardened builders, no HTML sinks) are in [ADR-0016](docs/adr/0016-security-boundaries.md).
 

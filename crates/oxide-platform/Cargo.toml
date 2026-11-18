@@ -1,0 +1,43 @@
+[package]
+name = "oxide-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The platform layer (ADR-0018): the only crate with OS-specific code and the only one that
+# depends on OS binding crates.
+
+[dependencies]
+crossbeam-channel = { workspace = true }
+portable-pty = "0.9.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSProcessInfo", "NSString", "NSObject"] }
+
+[target.'cfg(windows)'.dependencies]
+base64 = { workspace = true }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Power",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -65,8 +65,11 @@ fn claude_token(user_home: &Path) -> Option<String> {
         .map(PathBuf::from)
         .unwrap_or_else(|| user_home.join(".claude"));
     let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok();
-    #[cfg(target_os = "macos")]
     let raw = raw.or_else(|| {
+        // Only macOS keeps these credentials in the Keychain.
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
         let out = oxide_provider::command::os_command("security")
             .args([
                 "find-generic-password",

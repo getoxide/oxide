@@ -293,19 +293,18 @@ fn provider_detection_honours_pathext_order_and_explicit_paths() {
 #[cfg(windows)]
 #[test]
 fn background_provider_commands_do_not_allocate_a_console() {
-    use std::os::windows::process::CommandExt;
-
     const CHILD_ENV: &str = "OXIDE_TEST_DETACHED_PROVIDER_PROBE";
     let Some(python) = std::env::var_os(CHILD_ENV) else {
         // Isolate detaching from the console so parallel tests keep their own stdio.
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "background_provider_commands_do_not_allocate_a_console",
                 "--nocapture",
             ])
-            .env(CHILD_ENV, support::python())
-            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+            .env(CHILD_ENV, support::python());
+        let output = oxide_provider::process::hide_console(&mut command)
             .output()
             .unwrap();
         assert!(

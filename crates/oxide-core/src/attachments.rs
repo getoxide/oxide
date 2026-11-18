@@ -461,14 +461,7 @@ enum CopyError {
 /// that grew after its size was checked cannot exceed the limit. The opened handle must still
 /// be a regular file, and opening never waits for a writer.
 fn copy_capped(source: &Path, target: &Path) -> std::result::Result<(), CopyError> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options.open(source).map_err(CopyError::Io)?;
+    let file = oxide_platform::fs::open_nonblocking(source).map_err(CopyError::Io)?;
     if !file.metadata().map_err(CopyError::Io)?.is_file() {
         return Err(CopyError::NotRegular);
     }

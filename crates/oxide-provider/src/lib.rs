@@ -7,11 +7,10 @@ pub mod claude;
 pub mod codex;
 pub mod command;
 pub mod contract_suite;
-pub mod diag;
+pub use oxide_platform::{diag, sync};
 pub mod oneshot;
 pub mod process;
 pub mod service_command;
-pub mod sync;
 pub mod time;
 
 pub use service_command::{

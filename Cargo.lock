@@ -2832,10 +2832,8 @@ dependencies = [
 name = "oxide-app"
 version = "0.0.4"
 dependencies = [
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
  "oxide-core",
+ "oxide-platform",
  "serde",
  "serde_json",
  "specta",
@@ -2847,7 +2845,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-specta",
  "tempfile",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2859,8 +2856,8 @@ dependencies = [
  "dunce",
  "flate2",
  "ignore",
- "libc",
  "notify",
+ "oxide-platform",
  "oxide-provider",
  "portable-pty",
  "rayon",
@@ -2869,7 +2866,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "sysinfo",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -2879,17 +2875,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-provider"
+name = "oxide-platform"
 version = "0.0.4"
 dependencies = [
  "base64 0.23.1",
  "crossbeam-channel",
  "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "oxide-provider"
+version = "0.0.4"
+dependencies = [
+ "base64 0.23.1",
+ "crossbeam-channel",
+ "oxide-platform",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
