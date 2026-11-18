@@ -399,9 +399,18 @@ pub const MIGRATIONS: &[&str] = &[
         error TEXT,
         worktree TEXT
     );
+    -- A row that already pointed at a missing Thread is dropped, not carried over: it would fail
+    -- the foreign-key check and with it the whole database open.
     INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope, created_at)
-        SELECT id, thread_id, review_thread_id, provider, scope, created_at
-        FROM blind_reviews_old;
+        SELECT id, thread_id,
+               CASE WHEN review_thread_id IN (SELECT id FROM threads) THEN review_thread_id END,
+               provider, scope, created_at
+        FROM blind_reviews_old
+        WHERE thread_id IS NULL OR thread_id IN (SELECT id FROM threads);
+    UPDATE line_comments SET finding_id = NULL
+        WHERE finding_id IN (SELECT id FROM blind_review_findings
+                             WHERE review_id NOT IN (SELECT id FROM blind_reviews));
+    DELETE FROM blind_review_findings WHERE review_id NOT IN (SELECT id FROM blind_reviews);
     DROP TABLE blind_reviews_old;
     CREATE INDEX blind_reviews_by_thread ON blind_reviews(thread_id, id);
 ",
@@ -586,6 +595,48 @@ mod tests {
             })
             .unwrap();
         assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn rebuilding_blind_reviews_drops_a_pre_existing_orphan_instead_of_failing_the_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        let step = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("DROP TABLE blind_reviews;"))
+            .unwrap();
+        let old = open(&path, &MIGRATIONS[..step]).unwrap();
+        old.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO projects (name, path) VALUES ('p', '/p');
+             INSERT INTO threads (id, project_id, provider, permission_mode, status)
+                 VALUES (1, 1, 'fake', 'ask', 'idle');
+             INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope)
+                 VALUES (1, 1, 1, 'claude', 'branch'), (2, 99, 98, 'codex', 'branch');
+             INSERT INTO blind_review_findings (id, review_id, body, anchored)
+                 VALUES (7, 1, 'kept', 0), (8, 2, 'orphan', 0);
+             INSERT INTO line_comments (thread_id, scope, path, side, line, code, body, finding_id)
+                 VALUES (1, 'branch', 'a.rs', 'new', 1, '', 'comment', 8);",
+        )
+        .unwrap();
+        drop(old);
+
+        let migrated = open(&path, MIGRATIONS).unwrap();
+
+        let reviews: Vec<u32> = migrated
+            .prepare("SELECT id FROM blind_reviews ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(reviews, [1]);
+        let findings: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM blind_review_findings", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(findings, 1);
     }
 
     /// Oxide writes the database from several connections at once. A transaction that
