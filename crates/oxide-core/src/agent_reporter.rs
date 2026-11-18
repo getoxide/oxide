@@ -266,9 +266,7 @@ pub fn run_status_line(
     };
     let mut shown = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        let _ = stdout
-            .take(MAX_STATUS_OUTPUT_BYTES)
-            .read_to_end(&mut shown);
+        let _ = stdout.take(MAX_STATUS_OUTPUT_BYTES).read_to_end(&mut shown);
     }
     let _ = out.write_all(&shown);
     let _ = out.flush();
@@ -845,7 +843,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(f.reports.try_recv().is_err());
         let mut out = Vec::new();
-        assert_eq!(run_status_line(None, &status_input(), &|_| None, &mut out), 0);
+        assert_eq!(
+            run_status_line(None, &status_input(), &|_| None, &mut out),
+            0
+        );
     }
 
     #[test]
@@ -916,9 +917,11 @@ mod tests {
 
     #[test]
     fn the_launch_settings_name_the_reporter_and_quote_the_users_command() {
-        let none: serde_json::Value =
-            serde_json::from_str(&status_line_settings(Path::new("/opt/Oxide App/oxide"), None))
-                .unwrap();
+        let none: serde_json::Value = serde_json::from_str(&status_line_settings(
+            Path::new("/opt/Oxide App/oxide"),
+            None,
+        ))
+        .unwrap();
         let line = &none["statusLine"];
         assert_eq!(line["type"], "command");
         assert_eq!(line["stack_with_default"], true);

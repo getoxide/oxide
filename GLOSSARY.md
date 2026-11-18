@@ -30,7 +30,7 @@ The terminal at a Thread's centre, running the Thread's Provider CLI in the Thre
 _Avoid_: Console, agent tab, shell
 
 **Reporter**:
-Oxide's own executable, run by a Provider's per-launch `notify` (Codex), that tells the running app the Provider session's id over an owner-only socket, then runs the user's own `notify` command unchanged. It is how Oxide learns a session id it cannot assign.
+Oxide's own executable, run by a Provider's per-launch `notify` (Codex) or status line command (Antigravity CLI), that tells the running app the Provider session's id over an owner-only socket, then runs the user's own command unchanged. It is how Oxide learns a session id it cannot assign.
 _Avoid_: Hook, notifier, daemon
 
 **Thread status**:

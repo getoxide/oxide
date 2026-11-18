@@ -5,8 +5,9 @@
 //! around the app, and a view that attaches later gets the recent output replayed.
 
 use crate::agent_launch::{
-    AgyLaunch, ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION, NESTED_SESSION_ENV,
-    agy_args, bracketed_paste, claude_args, codex_args, issue_prompt, new_session_id,
+    AgyLaunch, ClaudeLaunch, CodexLaunch, MAX_DIMENSION, MAX_INPUT_BYTES, MIN_DIMENSION,
+    NESTED_SESSION_ENV, agy_args, bracketed_paste, claude_args, codex_args, issue_prompt,
+    new_session_id,
 };
 use crate::agent_status::{
     Osc7501Event, Osc7501Parser, QUERY_REPLY, ReportedState, StatusGate, TurnChange, TurnEnd,

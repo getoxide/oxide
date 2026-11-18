@@ -198,15 +198,24 @@ fn status_line_of(screen: &str) -> StatusLine {
 
 /// Plays `agy` running its status line command: the reporter with the user's own command (the
 /// last word of the launch command, when it has one) and `agy`'s JSON on its input.
-fn run_status_line_of(status_line: &StatusLine, user: Option<&str>, session: &str) -> (i32, String) {
+fn run_status_line_of(
+    status_line: &StatusLine,
+    user: Option<&str>,
+    session: &str,
+) -> (i32, String) {
     let input = format!(r#"{{"conversation_id":"{session}","agent_state":"idle","cwd":"/x"}}"#);
     let (socket, token) = (status_line.socket.clone(), status_line.token.clone());
     let mut out = Vec::new();
-    let code = run_status_line(user, input.as_bytes(), &move |name| match name {
-        "OXIDE_REPORTER_SOCKET" => Some(socket.clone()),
-        "OXIDE_REPORTER_TOKEN" => Some(token.clone()),
-        _ => None,
-    }, &mut out);
+    let code = run_status_line(
+        user,
+        input.as_bytes(),
+        &move |name| match name {
+            "OXIDE_REPORTER_SOCKET" => Some(socket.clone()),
+            "OXIDE_REPORTER_TOKEN" => Some(token.clone()),
+            _ => None,
+        },
+        &mut out,
+    );
     (code, String::from_utf8(out).unwrap())
 }
 
@@ -409,7 +418,10 @@ fn after_a_relaunch_the_thread_resumes_the_same_conversation() {
 
     let out = screen(&f.core, thread.id, "READY");
     let args = line(&out, "ARGS:");
-    assert!(args.ends_with(&format!("--conversation {SESSION}")), "{args}");
+    assert!(
+        args.ends_with(&format!("--conversation {SESSION}")),
+        "{args}"
+    );
     assert!(args.contains("--mode accept-edits"), "{args}");
     assert!(!args.contains("prompt-interactive"), "{args}");
     assert_eq!(stored_session(&f.home, thread.id).as_deref(), Some(SESSION));
@@ -502,6 +514,9 @@ fn the_agy_first_prompt_is_the_interactive_prompt_option_not_a_positional_argume
         .unwrap();
     let out = screen(&f.core, thread.id, "READY");
     let args = line(&out, "ARGS:");
-    assert!(args.contains(" --prompt-interactive=Work on GitHub issue #9"), "{args}");
+    assert!(
+        args.contains(" --prompt-interactive=Work on GitHub issue #9"),
+        "{args}"
+    );
     assert!(!args.contains(" -- "), "{args}");
 }
