@@ -15,7 +15,7 @@ import {
 } from "@primer/octicons-react";
 import { getAppearance, saveAppearance, validateAppearance } from "./appearance";
 import { Skeleton } from "./Skeleton";
-import { listen } from "@tauri-apps/api/event";
+import { listenTo } from "./ipc";
 import { ProviderMark } from "./ProviderMark";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { ShortcutsSettings } from "./ShortcutsSettings";
@@ -118,10 +118,10 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
         }
       }).catch(() => { /* Offline Providers retain their saved defaults. */ });
     }
-    const unlisten = listen<SettingsState>("settings-changed", (e) => apply(e.payload));
+    const stop = listenTo<SettingsState>("settings-changed", apply);
     return () => {
       active = false;
-      void unlisten.then((f) => f());
+      stop();
     };
   }, []);
 

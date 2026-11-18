@@ -1,6 +1,7 @@
 //! Finds Git repositories under the scan roots. A parallel walk with a depth
 //! limit that never descends into a repository once found.
 
+use oxide_provider::sync::LockExt as _;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,11 +59,7 @@ pub fn find_repositories(roots: &[PathBuf]) -> Vec<PathBuf> {
 fn walk(dir: &Path, depth: usize, visited: &Mutex<HashSet<PathBuf>>) -> Vec<PathBuf> {
     // `dir` is canonical, so a symlink loop or a second route to the same
     // folder is seen once.
-    if !visited
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(dir.to_path_buf())
-    {
+    if !visited.lock_recover().insert(dir.to_path_buf()) {
         return vec![];
     }
     if dir.join(".git").is_dir() {

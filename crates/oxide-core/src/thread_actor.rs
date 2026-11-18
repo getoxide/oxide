@@ -1,4 +1,6 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::process::ProcessRegistry;
 use oxide_provider::{
     ActivityCategory, ApprovalDecision, ApprovalKind, CommandOutcome, CommandRecord, ItemKind,
@@ -76,14 +78,16 @@ impl ThreadActorHandle {
 
         if real_time_ticker {
             let ticker_sender = tx.clone();
-            std::thread::Builder::new()
-                .name(format!("ticker-{thread_id}"))
-                .spawn(move || {
-                    while ticker_sender.send(ThreadActorMsg::Tick).is_ok() {
-                        std::thread::sleep(std::time::Duration::from_millis(16));
-                    }
-                })
-                .ok();
+            diag::best_effort(
+                "spawn ticker thread",
+                std::thread::Builder::new()
+                    .name(format!("ticker-{thread_id}"))
+                    .spawn(move || {
+                        while ticker_sender.send(ThreadActorMsg::Tick).is_ok() {
+                            std::thread::sleep(std::time::Duration::from_millis(16));
+                        }
+                    }),
+            );
         }
 
         std::thread::Builder::new()
@@ -109,7 +113,7 @@ impl ThreadActorHandle {
 
     pub fn send_prompt(&self, segments: Vec<PromptSegment>) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(ThreadActorMsg::SendPrompt {
+        self.sender.tell(ThreadActorMsg::SendPrompt {
             segments,
             reply: reply_tx,
         });
@@ -118,9 +122,8 @@ impl ThreadActorHandle {
 
     pub fn interrupt(&self) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self
-            .sender
-            .send(ThreadActorMsg::Interrupt { reply: reply_tx });
+        self.sender
+            .tell(ThreadActorMsg::Interrupt { reply: reply_tx });
         reply_rx.recv().unwrap_or(Ok(()))
     }
 
@@ -130,7 +133,7 @@ impl ThreadActorHandle {
         decision: ApprovalDecision,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(ThreadActorMsg::RespondToApproval {
+        self.sender.tell(ThreadActorMsg::RespondToApproval {
             approval_id,
             decision,
             reply: reply_tx,
@@ -140,7 +143,7 @@ impl ThreadActorHandle {
 
     pub fn set_permission_mode(&self, mode: PermissionMode) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(ThreadActorMsg::SetPermissionMode {
+        self.sender.tell(ThreadActorMsg::SetPermissionMode {
             mode,
             reply: reply_tx,
         });
@@ -153,7 +156,7 @@ impl ThreadActorHandle {
         effort: Option<String>,
     ) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.sender.send(ThreadActorMsg::SetModelAndEffort {
+        self.sender.tell(ThreadActorMsg::SetModelAndEffort {
             model,
             effort,
             reply: reply_tx,
@@ -165,9 +168,8 @@ impl ThreadActorHandle {
 
     pub fn subscribe(&self) -> Result<(ThreadSnapshot, Receiver<SequencedThreadEvent>)> {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self
-            .sender
-            .send(ThreadActorMsg::Subscribe { reply: reply_tx });
+        self.sender
+            .tell(ThreadActorMsg::Subscribe { reply: reply_tx });
         reply_rx.recv().map_err(|_| Error::Io {
             path: PathBuf::from("subscribe"),
             source: std::io::Error::new(
@@ -178,11 +180,11 @@ impl ThreadActorHandle {
     }
 
     pub fn tick(&self) {
-        let _ = self.sender.send(ThreadActorMsg::Tick);
+        self.sender.tell(ThreadActorMsg::Tick);
     }
 
     pub fn rename(&self, title: String) {
-        let _ = self.sender.send(ThreadActorMsg::Rename { title });
+        self.sender.tell(ThreadActorMsg::Rename { title });
     }
 
     /// Shuts the Provider down (escalating to SIGKILL if it won't go) and stops the actor.
@@ -194,7 +196,7 @@ impl ThreadActorHandle {
             .send(ThreadActorMsg::Shutdown { reply: reply_tx })
             .is_ok()
         {
-            let _ = reply_rx.recv();
+            diag::best_effort("recv", reply_rx.recv());
         }
     }
 }
@@ -424,7 +426,10 @@ fn handle_provider_event(
                 id,
                 error_message: None,
             });
-            let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
+            diag::best_effort(
+                "update_thread_status",
+                storage.update_thread_status(state.thread_id, ThreadStatus::Working),
+            );
             state.broadcast(ThreadEvent::TurnStarted {
                 turn_index,
                 prompt,
@@ -479,15 +484,18 @@ fn handle_provider_event(
             }
             state.flush_pending_deltas();
             if let Some(turn_id) = state.current_turn_id() {
-                let _ = storage.write_item_completed(NewItem {
-                    turn_id,
-                    item_index,
-                    kind,
-                    content: content.clone(),
-                    parent_item_index,
-                    category,
-                    command: command.clone(),
-                });
+                diag::best_effort(
+                    "write_item_completed",
+                    storage.write_item_completed(NewItem {
+                        turn_id,
+                        item_index,
+                        kind,
+                        content: content.clone(),
+                        parent_item_index,
+                        category,
+                        command: command.clone(),
+                    }),
+                );
             }
             state.broadcast(ThreadEvent::ItemCompleted {
                 item_index,
@@ -527,15 +535,21 @@ fn handle_provider_event(
                 state.forwarded_command_approval = Some((id.clone(), summary.clone()));
             }
             if let Some(turn_id) = state.current_turn_id() {
-                let _ = storage.write_approval_requested(
-                    turn_id,
-                    id.clone(),
-                    kind,
-                    summary.clone(),
-                    options.clone(),
+                diag::best_effort(
+                    "write_approval_requested",
+                    storage.write_approval_requested(
+                        turn_id,
+                        id.clone(),
+                        kind,
+                        summary.clone(),
+                        options.clone(),
+                    ),
                 );
             }
-            let _ = storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput);
+            diag::best_effort(
+                "update_thread_status",
+                storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput),
+            );
             state.broadcast(ThreadEvent::ApprovalRequested {
                 id,
                 kind,
@@ -559,7 +573,10 @@ fn handle_provider_event(
             if let Some(turn) = state.current_turn.as_mut() {
                 turn.error_message = Some(message);
             } else {
-                let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Error);
+                diag::best_effort(
+                    "update_thread_status",
+                    storage.update_thread_status(state.thread_id, ThreadStatus::Error),
+                );
                 state.broadcast(ThreadEvent::Error { message });
                 state.broadcast_status(ThreadStatus::Error);
             }
@@ -575,7 +592,10 @@ fn handle_provider_event(
         }
         ProviderEvent::Unknown { raw: raw_str } => {
             if let Some(turn_id) = state.current_turn_id() {
-                let _ = storage.write_unknown_event(turn_id, raw_str);
+                diag::best_effort(
+                    "write_unknown_event",
+                    storage.write_unknown_event(turn_id, raw_str),
+                );
             }
             state.broadcast(ThreadEvent::Unknown);
         }
@@ -589,7 +609,10 @@ fn resolve_pending_approvals_if_any(state: &mut ActorState, storage: &StorageHan
     ) {
         state.pending_service = None;
         state.forwarded_command_approval = None;
-        let _ = storage.resolve_pending_approvals(turn_id, ApprovalDecision::Deny, String::new());
+        diag::best_effort(
+            "resolve_pending_approvals",
+            storage.resolve_pending_approvals(turn_id, ApprovalDecision::Deny, String::new()),
+        );
     }
 }
 
@@ -720,15 +743,21 @@ fn request_service_approval(
         provider_approval_id: None,
     });
     if let Some(turn_id) = state.current_turn_id() {
-        let _ = storage.write_approval_requested(
-            turn_id,
-            approval_id.clone(),
-            ApprovalKind::Command,
-            summary.clone(),
-            options.clone(),
+        diag::best_effort(
+            "write_approval_requested",
+            storage.write_approval_requested(
+                turn_id,
+                approval_id.clone(),
+                ApprovalKind::Command,
+                summary.clone(),
+                options.clone(),
+            ),
         );
     }
-    let _ = storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput);
+    diag::best_effort(
+        "update_thread_status",
+        storage.update_thread_status(state.thread_id, ThreadStatus::NeedsInput),
+    );
     state.broadcast(ThreadEvent::ApprovalRequested {
         id: approval_id,
         kind: ApprovalKind::Command,
@@ -750,7 +779,10 @@ fn answer_service_approval(
     if let Some(provider_id) = &pending.provider_approval_id {
         // Always Deny to the Provider: on Allow Oxide runs the command itself, and an Allow
         // here would let the Provider also run it in its own sandbox.
-        let _ = provider.respond_to_approval(provider_id, ApprovalDecision::Deny);
+        diag::best_effort(
+            "respond_to_approval",
+            provider.respond_to_approval(provider_id, ApprovalDecision::Deny),
+        );
     }
     let decided_at = state
         .current_turn_id()
@@ -767,7 +799,10 @@ fn answer_service_approval(
         .unwrap_or_default();
     state.pending_approval_id = None;
     state.forwarded_command_approval = None;
-    let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
+    diag::best_effort(
+        "update_thread_status",
+        storage.update_thread_status(state.thread_id, ThreadStatus::Working),
+    );
     state.broadcast(ThreadEvent::ApprovalResponded {
         id: pending.approval_id.clone(),
         decision,
@@ -793,15 +828,18 @@ fn answer_service_approval(
         // Nothing ran: the record names the command and claims no outcome.
         let record = CommandRecord::reported(&pending.command, CommandOutcome::Unknown, None);
         let content = format!("[Oxide] Denied: {}", pending.command);
-        let _ = storage.write_item_completed(NewItem {
-            turn_id,
-            item_index: pending.item_index,
-            kind: ItemKind::ToolCall,
-            content: content.clone(),
-            parent_item_index: None,
-            category: Some(ActivityCategory::Run),
-            command: Some(record.clone()),
-        });
+        diag::best_effort(
+            "write_item_completed",
+            storage.write_item_completed(NewItem {
+                turn_id,
+                item_index: pending.item_index,
+                kind: ItemKind::ToolCall,
+                content: content.clone(),
+                parent_item_index: None,
+                category: Some(ActivityCategory::Run),
+                command: Some(record.clone()),
+            }),
+        );
         state.broadcast(ThreadEvent::ItemCompleted {
             item_index: pending.item_index,
             kind: ItemKind::ToolCall,
@@ -811,7 +849,7 @@ fn answer_service_approval(
             command: Some(record),
         });
     }
-    let _ = provider.interrupt();
+    diag::best_effort("interrupt", provider.interrupt());
     finish_turn(state, storage, TurnStatus::Completed, None);
 }
 
@@ -847,15 +885,18 @@ fn start_detached_service(
                 // The Provider only asked for this command; Oxide ran (or refused) it as a
                 // service and the Provider never reported an outcome, so the record claims none.
                 let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
-                let _ = storage.write_item_completed(NewItem {
-                    turn_id,
-                    item_index,
-                    kind: ItemKind::ToolCall,
-                    content: notice.clone(),
-                    parent_item_index: None,
-                    category: Some(ActivityCategory::Run),
-                    command: Some(record.clone()),
-                });
+                diag::best_effort(
+                    "write_item_completed",
+                    storage.write_item_completed(NewItem {
+                        turn_id,
+                        item_index,
+                        kind: ItemKind::ToolCall,
+                        content: notice.clone(),
+                        parent_item_index: None,
+                        category: Some(ActivityCategory::Run),
+                        command: Some(record.clone()),
+                    }),
+                );
                 state.broadcast(ThreadEvent::ItemCompleted {
                     item_index,
                     kind: ItemKind::ToolCall,
@@ -866,7 +907,7 @@ fn start_detached_service(
                 });
             }
             // Stop the Provider's own copy of the command; the Project Service keeps running.
-            let _ = provider.interrupt();
+            diag::best_effort("interrupt", provider.interrupt());
             finish_turn(state, storage, TurnStatus::Completed, None);
         }
         Ok(ProjectServiceStartOutcome::Conflict(conflict)) => {
@@ -878,15 +919,18 @@ fn start_detached_service(
                 // The Provider only asked for this command; Oxide ran (or refused) it as a
                 // service and the Provider never reported an outcome, so the record claims none.
                 let record = CommandRecord::reported(&command, CommandOutcome::Unknown, None);
-                let _ = storage.write_item_completed(NewItem {
-                    turn_id,
-                    item_index,
-                    kind: ItemKind::ToolCall,
-                    content: notice.clone(),
-                    parent_item_index: None,
-                    category: Some(ActivityCategory::Run),
-                    command: Some(record.clone()),
-                });
+                diag::best_effort(
+                    "write_item_completed",
+                    storage.write_item_completed(NewItem {
+                        turn_id,
+                        item_index,
+                        kind: ItemKind::ToolCall,
+                        content: notice.clone(),
+                        parent_item_index: None,
+                        category: Some(ActivityCategory::Run),
+                        command: Some(record.clone()),
+                    }),
+                );
                 state.broadcast(ThreadEvent::ItemCompleted {
                     item_index,
                     kind: ItemKind::ToolCall,
@@ -897,7 +941,7 @@ fn start_detached_service(
                 });
             }
             // Stop the Provider's own copy too: it would only collide with the incumbent.
-            let _ = provider.interrupt();
+            diag::best_effort("interrupt", provider.interrupt());
             finish_turn(state, storage, TurnStatus::Completed, None);
         }
         Err(error) => {
@@ -905,7 +949,7 @@ fn start_detached_service(
             if let Some(turn) = state.current_turn.as_mut() {
                 turn.error_message = Some(error.to_string());
             }
-            let _ = provider.interrupt();
+            diag::best_effort("interrupt", provider.interrupt());
             finish_turn(state, storage, TurnStatus::Error, None);
         }
     }
@@ -979,7 +1023,10 @@ fn finish_turn(
         TurnStatus::Error => ThreadStatus::Error,
         TurnStatus::Running => ThreadStatus::Working,
     };
-    let _ = storage.update_thread_status(state.thread_id, final_thread_status);
+    diag::best_effort(
+        "update_thread_status",
+        storage.update_thread_status(state.thread_id, final_thread_status),
+    );
     state.broadcast(ThreadEvent::TurnCompleted {
         turn_index: turn.index,
         status,
@@ -1055,7 +1102,7 @@ fn run_thread_actor(
                         if has_attachments
                             && let Some(command) = oxide_run_command(trimmed)
                         {
-                            let _ = reply.send(Err(
+                            reply.tell(Err(
                                 crate::attachments::AttachmentError::WithOxideCommand {
                                     command: command.to_string(),
                                 }
@@ -1065,7 +1112,7 @@ fn run_thread_actor(
                         }
                         if trimmed == "/model" {
                             // Selector action - intercepted, never reaches provider
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
                         if let Some(arg) = trimmed.strip_prefix("/model ") {
@@ -1079,28 +1126,28 @@ fn run_thread_actor(
                                     && !state.capabilities.mid_thread_model_switch
                                     && Some(model_name.to_string()) != current_model
                                 {
-                                    let _ = reply.send(Err(Error::Provider(
+                                    reply.tell(Err(Error::Provider(
                                         "Provider does not support mid-thread model switch".into(),
                                     )));
                                     continue;
                                 }
 
                                 if state.provider_live && state.current_turn.is_none() {
-                                    let _ = provider.set_model(model_name);
+                                    diag::best_effort("set_model", provider.set_model(model_name));
                                 }
-                                let _ = storage.update_thread_model_and_effort(
+                                diag::best_effort("update_thread_model_and_effort", storage.update_thread_model_and_effort(
                                     state.thread_id,
                                     Some(model_name.to_string()),
                                     current_effort,
-                                );
+                                ));
                             }
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
 
                         if trimmed == "/effort" {
                             // Selector action - intercepted, never reaches provider
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
                         if let Some(arg) = trimmed.strip_prefix("/effort ") {
@@ -1110,22 +1157,22 @@ fn run_thread_actor(
                                 let current_model = current_snapshot.as_ref().ok().and_then(|s| s.thread.model.clone());
 
                                 if state.provider_live && state.current_turn.is_none() {
-                                    let _ = provider.set_effort(effort_val);
+                                    diag::best_effort("set_effort", provider.set_effort(effort_val));
                                 }
-                                let _ = storage.update_thread_model_and_effort(
+                                diag::best_effort("update_thread_model_and_effort", storage.update_thread_model_and_effort(
                                     state.thread_id,
                                     current_model,
                                     Some(effort_val.to_string()),
-                                );
+                                ));
                             }
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
 
                         if let Err(e) = ensure_provider_started(
                             &mut *provider, &mut state, storage, working_dir, &mut prx,
                         ) {
-                            let _ = reply.send(Err(e));
+                            reply.tell(Err(e));
                             continue;
                         }
                         state.idle_since = None;
@@ -1161,7 +1208,7 @@ fn run_thread_actor(
                             // The agent has the notice now; it does not need it again.
                             storage.take_restore_notice(state.thread_id);
                         }
-                        let _ = reply.send(p_res);
+                        reply.tell(p_res);
                     }
                     ThreadActorMsg::Interrupt { reply } => {
                         // Stop applies only to a running Turn; the Provider ends it with
@@ -1174,7 +1221,7 @@ fn run_thread_actor(
                         } else {
                             Ok(())
                         };
-                        let _ = reply.send(result);
+                        reply.tell(result);
                     }
                     ThreadActorMsg::RespondToApproval { approval_id, decision, reply } => {
                         // Oxide's own Approvals are answered here and never forwarded.
@@ -1182,12 +1229,12 @@ fn run_thread_actor(
                             if let Some(pending) = state.pending_service.take() {
                                 answer_service_approval(&mut state, storage, &mut *provider, &pending, decision);
                             }
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
                         if approval_id.starts_with(OXIDE_APPROVAL_PREFIX) {
                             // Already resolved (the Turn ended): nothing to answer.
-                            let _ = reply.send(Ok(()));
+                            reply.tell(Ok(()));
                             continue;
                         }
                         let p_res = provider.respond_to_approval(&approval_id, decision).map_err(|e| Error::Io {
@@ -1203,14 +1250,14 @@ fn run_thread_actor(
                         };
                         state.pending_approval_id = None;
                         state.forwarded_command_approval = None;
-                        let _ = storage.update_thread_status(state.thread_id, ThreadStatus::Working);
+                        diag::best_effort("update_thread_status", storage.update_thread_status(state.thread_id, ThreadStatus::Working));
                         state.broadcast(ThreadEvent::ApprovalResponded {
                             id: approval_id,
                             decision,
                             decided_at,
                         });
                         state.broadcast_status(ThreadStatus::Working);
-                        let _ = reply.send(p_res);
+                        reply.tell(p_res);
                     }
                     ThreadActorMsg::SetPermissionMode { mode, reply } => {
                         // Without a live Provider the stored mode applies when the next one starts.
@@ -1223,7 +1270,7 @@ fn run_thread_actor(
                             Ok(())
                         };
                         let s_res = storage.update_thread_permission_mode(state.thread_id, mode);
-                        let _ = reply.send(p_res.and(s_res));
+                        reply.tell(p_res.and(s_res));
                     }
                     ThreadActorMsg::SetModelAndEffort { model, effort, reply } => {
                         let current_snapshot = storage.get_snapshot(state.thread_id, 0);
@@ -1235,7 +1282,7 @@ fn run_thread_actor(
                             && model.is_some()
                             && model != current_model
                         {
-                            let _ = reply.send(Err(Error::Provider(
+                            reply.tell(Err(Error::Provider(
                                 "Provider does not support mid-thread model switch".into(),
                             )));
                             continue;
@@ -1263,7 +1310,7 @@ fn run_thread_actor(
                         let new_model = model.or(current_model);
                         let new_effort = effort.or(current_effort);
                         let s_res = storage.update_thread_model_and_effort(state.thread_id, new_model, new_effort);
-                        let _ = reply.send(p_res.and(s_res));
+                        reply.tell(p_res.and(s_res));
                     }
                     ThreadActorMsg::Subscribe { reply } => {
                         let (sub_tx, sub_rx) = crossbeam_channel::unbounded();
@@ -1283,7 +1330,7 @@ fn run_thread_actor(
                         };
                         snapshot.supported_permission_modes = provider.capabilities().supported_permission_modes;
                         state.subscribers.push(sub_tx);
-                        let _ = reply.send((snapshot, sub_rx));
+                        reply.tell((snapshot, sub_rx));
                     }
                     ThreadActorMsg::Tick => {
                         loop {
@@ -1304,7 +1351,7 @@ fn run_thread_actor(
                     }
                     ThreadActorMsg::Shutdown { reply } => {
                         stop_provider(&mut *provider, &mut state, &mut prx);
-                        let _ = reply.send(());
+                        reply.tell(());
                         break;
                     }
                 }
@@ -1333,7 +1380,7 @@ fn ensure_provider_started(
     }
     if state.provider_exited {
         // Reap what is left of the process that went away on its own.
-        let _ = provider.shutdown();
+        diag::best_effort("shutdown", provider.shutdown());
         state.provider_exited = false;
     }
     let (permission_mode, model, effort) = storage
@@ -1387,7 +1434,7 @@ fn stop_provider(
     prx: &mut Receiver<ProviderEvent>,
 ) {
     if state.provider_live || state.provider_exited {
-        let _ = provider.shutdown();
+        diag::best_effort("shutdown", provider.shutdown());
     }
     state.provider_live = false;
     state.provider_exited = false;

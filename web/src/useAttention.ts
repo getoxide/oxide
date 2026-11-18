@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { commands, type BoardEvent } from "./bindings";
 import { applyBoardEvent, mergeCard } from "./board";
 import type { CardsByProject } from "./attention";

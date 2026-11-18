@@ -14,6 +14,7 @@
 
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
+use oxide_provider::sync::LockExt as _;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -130,6 +131,10 @@ impl GitCommand {
             Mode::ReadOnly => (empty_hooks_dir()?, filter_overrides(&git, &self.cwd)),
             Mode::UserInitiated => (PathBuf::new(), Vec::new()),
         };
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "GitCommand: the one hardened Command::new for Git (ADR-0016)"
+        )]
         let mut command = Command::new(git);
         oxide_provider::process::hide_console(&mut command)
             .args(self.full_args_with(&hooks, &filters))
@@ -180,21 +185,24 @@ static HOME: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Records the Oxide home for [`empty_hooks_dir`].
 pub(crate) fn set_home(home: &Path) {
-    *HOME.lock().unwrap_or_else(|e| e.into_inner()) = Some(home.to_path_buf());
+    *HOME.lock_recover() = Some(home.to_path_buf());
 }
 
 /// An empty folder Oxide owns, used as `core.hooksPath` so that read-only
 /// invocations find no hooks. Under the Oxide home (`0700`) when one is open,
 /// otherwise a private temporary directory created once per process.
 fn empty_hooks_dir() -> Result<PathBuf> {
-    let home = HOME.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let home = HOME.lock_recover().clone();
     if let Some(home) = home {
         let dir = home.join("no-hooks");
         if std::fs::create_dir_all(&dir).is_ok() {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                oxide_provider::diag::best_effort(
+                    "set_permissions",
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)),
+                );
             }
             return Ok(dir);
         }
@@ -217,6 +225,10 @@ fn empty_hooks_dir() -> Result<PathBuf> {
 /// on the missing one. Only the repository's own file is read: the user's global filters
 /// (Git LFS) keep working. Failure to list them yields no overrides.
 fn filter_overrides(git: &Path, cwd: &Path) -> Vec<(String, String)> {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "GitCommand: the one hardened Command::new for Git (ADR-0016)"
+    )]
     let mut command = Command::new(git);
     let output = oxide_provider::process::hide_console(&mut command)
         .args([

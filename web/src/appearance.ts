@@ -1,3 +1,5 @@
+import { readJson, storageKeys, writeJson } from "./storage";
+
 export interface ThemeVariant {
   name: string;
   appearance: "dark" | "light";
@@ -170,7 +172,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   ),
   themeName: "Oxide Dark",
 };
-const KEY = "oxide:appearance:v1";
+const KEY = storageKeys.appearance;
 export const COLOR_TOKENS: Record<string, string> = {
   background: "--bg",
   "surface.background": "--bg2",
@@ -332,9 +334,7 @@ export function parseThemePack(raw: string): ThemePack {
 }
 function load(): Appearance {
   try {
-    const stored = JSON.parse(
-      localStorage.getItem(KEY) ?? "null",
-    ) as Appearance | null;
+    const stored = readJson(KEY) as Appearance | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
     validateAppearance(stored);
     for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[])
@@ -429,7 +429,7 @@ export function fontStyle(key: keyof Appearance["fonts"]) {
 }
 export function saveAppearance(value: Appearance) {
   validateAppearance(value);
-  localStorage.setItem(KEY, JSON.stringify(value));
+  writeJson(KEY, value);
   current = structuredClone(value);
   cachedTheme = parseThemePack(current.themeJson).themes.find(
     (theme) => theme.name === current.themeName,

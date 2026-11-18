@@ -1,6 +1,7 @@
 //! What the running Threads mean for the operating system: the App Nap activity assertion,
 //! notifications and the Dock badge. Core decides when; the shell supplies the [`System`].
 
+use oxide_provider::sync::LockExt as _;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -72,9 +73,9 @@ impl Activity {
     }
 
     pub(crate) fn set_system(&self, system: Arc<dyn System>) {
-        *self.system.lock().unwrap_or_else(|e| e.into_inner()) = system;
+        *self.system.lock_recover() = system;
         // Bring a late-installed system up to date.
-        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tracked = self.tracked.lock_recover();
         tracked.held = false;
         tracked.badge = 0;
         self.sync(&mut tracked);
@@ -86,7 +87,7 @@ impl Activity {
     }
 
     pub(crate) fn set_status(&self, thread_id: u32, status: ThreadStatus) {
-        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tracked = self.tracked.lock_recover();
         let previous = tracked.statuses.insert(thread_id, status);
         self.sync(&mut tracked);
         drop(tracked);
@@ -102,14 +103,14 @@ impl Activity {
     }
 
     pub(crate) fn forget(&self, thread_id: u32) {
-        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tracked = self.tracked.lock_recover();
         tracked.statuses.remove(&thread_id);
         self.sync(&mut tracked);
     }
 
     /// Threads with a Turn in flight: working or waiting on the user.
     pub(crate) fn active_count(&self) -> u32 {
-        let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        let tracked = self.tracked.lock_recover();
         count(&tracked, |s| {
             matches!(s, ThreadStatus::Working | ThreadStatus::NeedsInput)
         })
@@ -138,10 +139,7 @@ impl Activity {
     }
 
     pub(crate) fn system(&self) -> Arc<dyn System> {
-        self.system
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.system.lock_recover().clone()
     }
 }
 

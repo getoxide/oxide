@@ -4,6 +4,8 @@
 //! similarity, per Project, and reads nothing but what was kept for this purpose. The Review
 //! ledger still holds no comment text (ADR-0010).
 
+use oxide_provider::diag;
+use oxide_provider::sync::LockExt as _;
 use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -109,7 +111,10 @@ impl Core {
         thread_id: u32,
         comments: &[LineComment],
     ) {
-        let _ = self.remember_comment_bodies(project_id, thread_id, comments);
+        diag::best_effort(
+            "remember_comment_bodies",
+            self.remember_comment_bodies(project_id, thread_id, comments),
+        );
     }
 
     fn remember_comment_bodies(
@@ -118,7 +123,7 @@ impl Core {
         thread_id: u32,
         line_comments: &[LineComment],
     ) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let tx = write_transaction(&db)?;
 
         // Every suggestion's comments, oldest first; the first is the one new feedback must match.
@@ -174,7 +179,7 @@ impl Core {
     /// similar comments from at least [`MIN_RECURRING_THREADS`] Threads, with the comments they
     /// are based on.
     pub fn rule_suggestions(&self, project_id: u32) -> Result<Vec<RuleSuggestion>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut stmt = db.prepare(
             "SELECT s.id, c.thread_id, c.body FROM rule_suggestions s
              JOIN rule_suggestion_comments c ON c.suggestion_id = s.id
@@ -244,7 +249,7 @@ impl Core {
                 Ok(()) => Ok(thread),
                 // Leave no empty Thread behind a proposal that never went out.
                 Err(error) => {
-                    let _ = self.delete_thread(thread.id, true);
+                    diag::best_effort("delete_thread", self.delete_thread(thread.id, true));
                     Err(error)
                 }
             },
@@ -252,7 +257,10 @@ impl Core {
         };
         if started.is_err() {
             // The user may try again.
-            let _ = self.decide_rule_suggestion(project_id, id, SuggestionStatus::Open);
+            diag::best_effort(
+                "decide_rule_suggestion",
+                self.decide_rule_suggestion(project_id, id, SuggestionStatus::Open),
+            );
         }
         started
     }
@@ -264,7 +272,7 @@ impl Core {
         id: u32,
         status: SuggestionStatus,
     ) -> Result<bool> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let changed = db.execute(
             "UPDATE rule_suggestions
              SET status = ?1, decided_at = CASE WHEN ?1 = 'open' THEN NULL
@@ -279,7 +287,7 @@ impl Core {
     /// Forgets every comment kept to suggest rules, and the suggestions themselves. Called when
     /// the user clears the local review data.
     pub(crate) fn clear_rule_feedback(&self) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let tx = write_transaction(&db)?;
         tx.execute("DELETE FROM rule_suggestion_comments", [])?;
         tx.execute("DELETE FROM rule_suggestions", [])?;

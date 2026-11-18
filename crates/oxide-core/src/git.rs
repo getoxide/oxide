@@ -4,6 +4,8 @@
 
 use crate::git_command::GitCommand;
 use crate::{Error, Result};
+use oxide_provider::diag;
+use oxide_provider::sync::LockExt as _;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -64,12 +66,11 @@ impl GitState {
     pub fn mutate<T>(&self, cwd: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
         let lock = Arc::clone(
             self.locks
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .entry(cwd.to_path_buf())
                 .or_default(),
         );
-        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = lock.lock_recover();
         f()
     }
 
@@ -90,19 +91,14 @@ impl GitState {
             }
             run(cwd, &["fetch", "--prune"])?;
             self.last_fetch
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .insert(cwd.to_path_buf(), now);
             Ok(true)
         })
     }
 
     fn last(&self, cwd: &Path) -> Option<Instant> {
-        self.last_fetch
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(cwd)
-            .copied()
+        self.last_fetch.lock_recover().get(cwd).copied()
     }
 }
 
@@ -417,7 +413,7 @@ pub fn commit(cwd: &Path, paths: &[String], message: &str) -> Result<()> {
     if result.is_err() && !untracked.is_empty() {
         let mut undo = vec!["--literal-pathspecs", "reset", "--quiet", "--"];
         undo.extend(untracked.iter().map(String::as_str));
-        let _ = run(cwd, &undo);
+        diag::best_effort("run", run(cwd, &undo));
     }
     result.map(|_| ())
 }

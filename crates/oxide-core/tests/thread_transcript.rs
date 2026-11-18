@@ -4,6 +4,7 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{
     Core, ItemKind, PermissionMode, SequencedThreadEvent, ThreadEvent, ThreadStatus, TurnError,
     TurnStatus,
@@ -51,28 +52,28 @@ fn scenario_prompt_streams_events_and_persists_turn_and_items() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::SessionInfo {
+            s.tell(ProviderEvent::SessionInfo {
                 session_id: "fake-sess-1".into(),
             });
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ItemStarted {
+            s.tell(ProviderEvent::ItemStarted {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
             });
-            let _ = s.send(ProviderEvent::ItemDelta {
+            s.tell(ProviderEvent::ItemDelta {
                 item_index: 0,
                 delta: "Hello ".into(),
             });
-            let _ = s.send(ProviderEvent::ItemDelta {
+            s.tell(ProviderEvent::ItemDelta {
                 item_index: 0,
                 delta: "world!".into(),
             });
-            let _ = s.send(ProviderEvent::ItemCompleted {
+            s.tell(ProviderEvent::ItemCompleted {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
@@ -80,7 +81,7 @@ fn scenario_prompt_streams_events_and_persists_turn_and_items() {
                 content: "Hello world!".into(),
                 command: None,
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -155,17 +156,17 @@ fn resubscribing_after_simulated_gap_returns_consistent_snapshot() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ItemStarted {
+            s.tell(ProviderEvent::ItemStarted {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
             });
-            let _ = s.send(ProviderEvent::ItemCompleted {
+            s.tell(ProviderEvent::ItemCompleted {
                 parent_item_index: None,
                 category: None,
                 item_index: 0,
@@ -173,7 +174,7 @@ fn resubscribing_after_simulated_gap_returns_consistent_snapshot() {
                 content: "First answer".into(),
                 command: None,
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -370,7 +371,7 @@ fn fake_that_starts_turns() -> FakeProvider {
     let fake = FakeProvider::default();
     let sender = fake.sender();
     fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });
@@ -817,11 +818,11 @@ fn thread_with_answering_provider(core: &Core, dir: &std::path::Path) -> oxide_c
     fake.on_prompt(move |prompt| {
         // Every Turn reports index 0, as the default fake does: positions,
         // not Provider turn indexes, order the Transcript.
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });
-        let _ = sender.send(ProviderEvent::ItemCompleted {
+        sender.tell(ProviderEvent::ItemCompleted {
             item_index: 0,
             kind: ItemKind::AgentMessage,
             content: format!("answer to {prompt}"),
@@ -829,7 +830,7 @@ fn thread_with_answering_provider(core: &Core, dir: &std::path::Path) -> oxide_c
             category: None,
             command: None,
         });
-        let _ = sender.send(ProviderEvent::TurnCompleted {
+        sender.tell(ProviderEvent::TurnCompleted {
             turn_index: 0,
             status: TurnStatus::Completed,
         });
@@ -1033,7 +1034,7 @@ fn command_evidence_is_stored_and_broadcast_with_its_item() {
     fake.on_prompt(move |_prompt| {
         let s = sender.clone();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt: "run the checks".into(),
             });
@@ -1050,13 +1051,13 @@ fn command_evidence_is_stored_and_broadcast_with_its_item() {
             .enumerate()
             {
                 let index = index as u32;
-                let _ = s.send(ProviderEvent::ItemStarted {
+                s.tell(ProviderEvent::ItemStarted {
                     item_index: index,
                     kind: ItemKind::ToolCall,
                     parent_item_index: None,
                     category: Some(oxide_provider::ActivityCategory::Run),
                 });
-                let _ = s.send(ProviderEvent::ItemCompleted {
+                s.tell(ProviderEvent::ItemCompleted {
                     item_index: index,
                     kind: ItemKind::ToolCall,
                     content: command.line.clone().unwrap_or_default(),
@@ -1065,7 +1066,7 @@ fn command_evidence_is_stored_and_broadcast_with_its_item() {
                     command: Some(command),
                 });
             }
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

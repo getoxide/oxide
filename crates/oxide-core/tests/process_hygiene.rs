@@ -2,11 +2,13 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 #![cfg(unix)]
 
 use crossbeam_channel::Receiver;
+use oxide_core::diag;
 use oxide_core::{
     Core, ManualClock, PROVIDER_IDLE_TIMEOUT, PermissionMode, SequencedThreadEvent, ThreadEvent,
     ThreadStatus,
@@ -52,7 +54,7 @@ fn wait_group_gone(child: &mut std::process::Child) -> bool {
     let pgid = child.id() as i32;
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        let _ = child.try_wait();
+        diag::best_effort("try_wait", child.try_wait());
         if !group_alive(pgid) {
             return true;
         }
@@ -239,6 +241,6 @@ fn next_launch_leaves_a_reused_pid_alone() {
     #[cfg(unix)]
     oxide_provider::process::signal_group(pgid, libc::SIGKILL).unwrap();
     #[cfg(not(unix))]
-    let _ = bystander.kill();
+    diag::best_effort("kill", bystander.kill());
     assert!(wait_group_gone(&mut bystander));
 }

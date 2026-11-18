@@ -2,8 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_core::diag::SenderExt as _;
 use std::time::Duration;
 
 use oxide_core::thread::ThreadStatus;
@@ -88,11 +90,11 @@ fn pending_approvals_are_on_the_card_and_answering_clears_them() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ApprovalRequested {
+            s.tell(ProviderEvent::ApprovalRequested {
                 id: "appr-1".into(),
                 kind: ApprovalKind::Command,
                 summary: "Run `cargo test`".into(),
@@ -103,7 +105,7 @@ fn pending_approvals_are_on_the_card_and_answering_clears_them() {
     fake.on_approval(move |_, _| {
         let s = on_approval.clone();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -146,7 +148,7 @@ fn renaming_and_stopping_a_thread_reach_the_board() {
     let fake = FakeProvider::default();
     let sender = fake.sender();
     fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });

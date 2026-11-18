@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenTo } from "./ipc";
 import { ChevronDownIcon, ChevronRightIcon, SquareFillIcon, SyncIcon } from "@primer/octicons-react";
 import { commands, type ProjectService, type ProjectServiceConflict } from "./bindings";
 import { errorMessage } from "./errors";
@@ -134,18 +134,10 @@ export function ProjectServices({ projectId, onOpenService, onStopService, onSer
   }, [projectId, reload]);
 
   useEffect(() => {
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    void listen<number>(PROJECT_SERVICES_CHANGED, (event) => {
-      if (event.payload === projectId) setReload((value) => value + 1);
-    }).then((stop) => {
-      if (active) unlisten = stop;
-      else stop();
-    }).catch(() => { /* The fetch effect already reports a failure to reach the Core. */ });
-    return () => {
-      active = false;
-      unlisten?.();
-    };
+    // A failure to listen is dropped: the fetch effect already reports a failure to reach the Core.
+    return listenTo<number>(PROJECT_SERVICES_CHANGED, (changed) => {
+      if (changed === projectId) setReload((value) => value + 1);
+    });
   }, [projectId]);
 
   const begin = useCallback((kind: PendingKind, serviceId: number) => {

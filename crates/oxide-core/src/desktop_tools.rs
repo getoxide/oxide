@@ -3,7 +3,7 @@ use crate::{Error, Result};
 use oxide_provider::command::find_in;
 use serde::Serialize;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub fn resolve(program: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
@@ -33,7 +33,7 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
     )
 }
 
-pub use oxide_provider::command::os_tool;
+pub use oxide_provider::command::{os_command, os_tool, resolved_command};
 
 pub fn system_fonts() -> Result<Vec<String>> {
     #[cfg(windows)]
@@ -50,7 +50,7 @@ pub fn system_fonts() -> Result<Vec<String>> {
     let (program, args) = ("system_profiler", vec!["SPFontsDataType", "-json"]);
     #[cfg(not(any(windows, target_os = "macos")))]
     let (program, args) = ("fc-list", vec!["--format=%{family}\\n"]);
-    let output = oxide_provider::process::hide_console(Command::new(os_tool(program)).args(args))
+    let output = oxide_provider::process::hide_console(os_command(program).args(args))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| Error::Editor(format!("Could not list installed fonts: {e}")))?;
@@ -162,7 +162,7 @@ pub fn install_developer_tool(tool: &str) -> Result<()> {
             "{manager} is unavailable. Open the official installation guide, then check again."
         ))
     })?;
-    let output = oxide_provider::process::hide_console(Command::new(executable).args(args))
+    let output = oxide_provider::process::hide_console(resolved_command(executable).args(args))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| Error::Github(format!("Could not start installation: {e}")))?;

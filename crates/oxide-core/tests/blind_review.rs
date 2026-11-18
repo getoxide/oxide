@@ -2,9 +2,11 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 use oxide_core::blind_review::BlindReviewRequest;
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, Error, FindingDecision, PermissionMode, ThreadStatus};
 use oxide_provider::{FakeProvider, ItemKind, ProviderEvent, TurnStatus};
 use std::path::{Path, PathBuf};
@@ -99,11 +101,11 @@ fn reviewed(reply: &str) -> Reviewed {
     let seen = prompts.clone();
     fake.on_prompt(move |prompt| {
         seen.lock().unwrap().push(prompt.to_string());
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });
-        let _ = sender.send(ProviderEvent::TurnCompleted {
+        sender.tell(ProviderEvent::TurnCompleted {
             turn_index: 0,
             status: TurnStatus::Completed,
         });
@@ -142,17 +144,17 @@ fn reviewed(reply: &str) -> Reviewed {
     let sender = review_fake.sender();
     let reply = reply.to_string();
     review_fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });
-        let _ = sender.send(ProviderEvent::ItemStarted {
+        sender.tell(ProviderEvent::ItemStarted {
             item_index: 0,
             kind: ItemKind::AgentMessage,
             parent_item_index: None,
             category: None,
         });
-        let _ = sender.send(ProviderEvent::ItemCompleted {
+        sender.tell(ProviderEvent::ItemCompleted {
             item_index: 0,
             kind: ItemKind::AgentMessage,
             content: reply.clone(),
@@ -160,7 +162,7 @@ fn reviewed(reply: &str) -> Reviewed {
             category: None,
             command: None,
         });
-        let _ = sender.send(ProviderEvent::TurnCompleted {
+        sender.tell(ProviderEvent::TurnCompleted {
             turn_index: 0,
             status: TurnStatus::Completed,
         });
@@ -513,11 +515,11 @@ fn blind_review_prompt_contains_only_diff_issue_and_required_format_delimited() 
     let (seen_clone, sender_clone) = (seen.clone(), sender);
     fake.on_prompt(move |prompt| {
         seen_clone.lock().unwrap().push(prompt.to_string());
-        let _ = sender_clone.send(ProviderEvent::TurnStarted {
+        sender_clone.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });
-        let _ = sender_clone.send(ProviderEvent::TurnCompleted {
+        sender_clone.tell(ProviderEvent::TurnCompleted {
             turn_index: 0,
             status: TurnStatus::Completed,
         });

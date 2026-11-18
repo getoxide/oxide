@@ -69,9 +69,34 @@ pub fn provider_command(
     };
     #[cfg(windows)]
     let program = resolved.as_deref().unwrap_or_else(|| Path::new(program));
-    let mut command = std::process::Command::new(program);
+    let mut command = resolved_command(program);
     command.envs(extra_env);
     command
+}
+
+/// A `Command` for the OS helper `name` (`ps`, `open`, `sh`, `cmd`, ...), started by the absolute
+/// path [`os_tool`] gives it. This is how Oxide starts an OS helper: a bare name would be found
+/// through `PATH`, which Oxide widens with the login shell's directories. It sets no stdio or
+/// console flags; add [`crate::process::hide_console`] where a background call must not show a
+/// console on Windows.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "sanctioned constructor for OS helpers (ADR-0016)"
+)]
+pub fn os_command(name: &str) -> std::process::Command {
+    std::process::Command::new(os_tool(name))
+}
+
+/// A `Command` for an executable whose path Oxide already holds: a tool it installed itself, the
+/// user's login shell, a Provider shim resolved by [`provider_command`], a file inside an
+/// unpacked update. The caller owns the decision that the path is the right one; for an OS
+/// helper by name use [`os_command`], and for Git and gh the hardened builders (ADR-0016).
+#[allow(
+    clippy::disallowed_methods,
+    reason = "sanctioned constructor for an already resolved executable path (ADR-0016)"
+)]
+pub fn resolved_command(executable: impl AsRef<OsStr>) -> std::process::Command {
+    std::process::Command::new(executable)
 }
 
 /// Where operating-system helpers (`open`, `sh`, `cmd`, ...) live. Oxide widens its own `PATH`

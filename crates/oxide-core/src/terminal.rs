@@ -1,16 +1,17 @@
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::process::ProcessRegistry;
 #[cfg(unix)]
 use oxide_provider::process::{SHUTDOWN_GRACE, signal_group, signal_process, terminate_group};
+use oxide_provider::sync::LockExt as _;
 #[cfg(unix)]
 use portable_pty::MasterPty;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -116,7 +117,7 @@ impl TerminalSession {
             Err(error) => {
                 #[cfg(unix)]
                 if let Some(path) = &shell_init {
-                    let _ = std::fs::remove_file(path);
+                    diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
                 return Err(Error::Terminal(format!("start terminal shell: {error}")));
             }
@@ -124,18 +125,18 @@ impl TerminalSession {
         let pid = match require_pid(child.process_id()) {
             Ok(pid) => pid,
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                diag::best_effort("kill", child.kill());
+                diag::best_effort("wait", child.wait());
                 #[cfg(unix)]
                 if let Some(path) = &shell_init {
-                    let _ = std::fs::remove_file(path);
+                    diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
                 return Err(error);
             }
         };
         if let Err(error) = oxide_provider::process::attach_running_to_job(pid) {
-            let _ = child.kill();
-            let _ = child.wait();
+            diag::best_effort("kill", child.kill());
+            diag::best_effort("wait", child.wait());
             return Err(Error::Terminal(format!(
                 "contain terminal shell process: {error}"
             )));
@@ -170,19 +171,22 @@ impl TerminalSession {
                             write_terminal_input(&mut writer, master.as_ref(), &input, pid as i32);
                         #[cfg(windows)]
                         let result = write_terminal_input(&mut writer, &input, pid);
-                        let _ = reply.send(result);
+                        reply.tell(result);
                     }
                     SessionCommand::Resize(size, reply) => {
                         let result = master.resize(size).map_err(|error| error.to_string());
-                        let _ = reply.send(result);
+                        reply.tell(result);
                     }
                     SessionCommand::Close(reply) => {
                         #[cfg(unix)]
                         {
                             // Interactive shells ignore SIGTERM but hang up on SIGHUP.
-                            let _ = signal_group(process_group, libc::SIGHUP);
+                            diag::best_effort(
+                                "signal_group",
+                                signal_group(process_group, libc::SIGHUP),
+                            );
                             terminate_group(process_group, SHUTDOWN_GRACE, || {
-                                let _ = child.try_wait();
+                                diag::best_effort("try_wait", child.try_wait());
                             });
                             // Anything that moved to its own process group but stayed in the session.
                             kill_session_processes(process_group);
@@ -191,14 +195,14 @@ impl TerminalSession {
                         #[cfg(not(unix))]
                         {
                             let _ = (&registry, &shell);
-                            let _ = child.kill();
+                            diag::best_effort("kill", child.kill());
                         }
-                        let _ = child.wait();
+                        diag::best_effort("wait", child.wait());
                         #[cfg(unix)]
                         if let Some(path) = shell_init {
-                            let _ = std::fs::remove_file(path);
+                            diag::best_effort("remove_file", std::fs::remove_file(path));
                         }
-                        let _ = reply.send(());
+                        reply.tell(());
                         break;
                     }
                 }
@@ -217,10 +221,7 @@ impl TerminalSession {
 
     pub fn subscribe(&self) -> Receiver<Vec<u8>> {
         let (tx, rx) = bounded(VIEW_BUFFER);
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(tx);
+        self.subscribers.lock_recover().push(tx);
         rx
     }
 
@@ -257,7 +258,7 @@ impl TerminalSession {
     pub fn close(&self) {
         let (reply, result) = bounded(1);
         if self.commands.send(SessionCommand::Close(reply)).is_ok() {
-            let _ = result.recv();
+            diag::best_effort("recv", result.recv());
         }
     }
 }
@@ -348,7 +349,7 @@ fn write_terminal_input(
 
 #[cfg(unix)]
 fn interrupt_session_processes(session_id: i32) -> bool {
-    let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+    let Ok(output) = oxide_provider::command::os_command("ps")
         .args(["-A", "-o", "pid="])
         .output()
     else {
@@ -368,7 +369,7 @@ fn interrupt_session_processes(session_id: i32) -> bool {
 
 #[cfg(unix)]
 fn kill_session_processes(session_id: i32) {
-    if let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+    if let Ok(output) = oxide_provider::command::os_command("ps")
         .args(["-A", "-o", "pid="])
         .output()
     {
@@ -376,11 +377,11 @@ fn kill_session_processes(session_id: i32) {
             if let Ok(pid) = line.trim().parse::<i32>()
                 && session_of(pid) == Some(session_id)
             {
-                let _ = signal_process(pid, libc::SIGKILL);
+                diag::best_effort("signal_process", signal_process(pid, libc::SIGKILL));
             }
         }
     }
-    let _ = signal_group(session_id, libc::SIGKILL);
+    diag::best_effort("signal_group", signal_group(session_id, libc::SIGKILL));
 }
 
 /// The session id of `pid`, or `None` when it is gone or not a real process id.
@@ -493,7 +494,7 @@ const VIEW_BUFFER: usize = 1024;
 /// soon as its buffer is full. Such a view has already missed output it can never
 /// render, so it is dropped instead: its receiver ends and its reader stops.
 fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: &[u8]) {
-    let mut subscribers = subscribers.lock().unwrap_or_else(|e| e.into_inner());
+    let mut subscribers = subscribers.lock_recover();
     subscribers.retain(|sender| match sender.try_send(chunk.to_vec()) {
         Ok(()) => true,
         Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,

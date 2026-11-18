@@ -5,6 +5,7 @@
 //! keeps no registry of its own.
 
 use crate::error::{Error, Result};
+use oxide_provider::diag;
 use oxide_provider::{Attachment, AttachmentKind, PromptSegment};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -122,7 +123,7 @@ impl AttachmentStore {
         }
         let (id, folder, path) = self.new_slot(&name)?;
         if let Err(e) = copy_capped(source, &path) {
-            let _ = fs::remove_dir_all(&folder);
+            diag::best_effort("remove_dir_all", fs::remove_dir_all(&folder));
             return Err(match e {
                 CopyError::TooLarge(size) => AttachmentError::TooLarge {
                     size: human_size(size),
@@ -134,7 +135,7 @@ impl AttachmentStore {
             .into());
         }
         self.describe(&id).inspect_err(|_| {
-            let _ = fs::remove_dir_all(&folder);
+            diag::best_effort("remove_dir_all", fs::remove_dir_all(&folder));
         })
     }
 
@@ -157,7 +158,7 @@ impl AttachmentStore {
         }
         let (id, folder, path) = self.new_slot(&name)?;
         if let Err(e) = crate::private::write(&path, bytes) {
-            let _ = fs::remove_dir_all(&folder);
+            diag::best_effort("remove_dir_all", fs::remove_dir_all(&folder));
             return Err(AttachmentError::Unreadable {
                 name,
                 reason: reason_of(&e),
@@ -224,7 +225,7 @@ impl AttachmentStore {
     /// Deletes an Attachment's files. Does nothing for an id that isn't stored.
     pub fn remove(&self, id: &str) {
         if let Ok(folder) = self.folder_of(id) {
-            let _ = fs::remove_dir_all(folder);
+            diag::best_effort("remove_dir_all", fs::remove_dir_all(folder));
         }
     }
 
@@ -235,11 +236,11 @@ impl AttachmentStore {
         }
         match path.parent() {
             Some(folder) if folder != self.dir => {
-                let _ = fs::remove_dir_all(folder);
+                diag::best_effort("remove_dir_all", fs::remove_dir_all(folder));
             }
             // Attachments stored before ids had folders were bare files.
             _ => {
-                let _ = fs::remove_file(path);
+                diag::best_effort("remove_file", fs::remove_file(path));
             }
         }
     }
@@ -262,7 +263,7 @@ impl AttachmentStore {
                 .and_then(|modified| now.duration_since(modified).ok())
                 .is_some_and(|age| age > ABANDONED_AFTER);
             if old && !is_referenced(&id) {
-                let _ = fs::remove_dir_all(entry.path());
+                diag::best_effort("remove_dir_all", fs::remove_dir_all(entry.path()));
             }
         }
     }
@@ -602,7 +603,7 @@ mod tests {
         let (dir, store) = store();
         let fifo = dir.path().join("pipe");
         assert!(
-            std::process::Command::new("mkfifo")
+            oxide_provider::command::os_command("mkfifo")
                 .arg(&fifo)
                 .status()
                 .unwrap()

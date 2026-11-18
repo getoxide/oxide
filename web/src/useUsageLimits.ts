@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { commands, type UsageLimits, type UsageLimits_Deserialize } from "./bindings";
 
 /** When this run of Oxide started: figures reported before it are from an earlier session. */

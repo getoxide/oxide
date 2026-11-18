@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenTo } from "./ipc";
 import { commands, type SettingsState } from "./bindings";
 import { DEFAULT_SHORTCUTS, type Shortcuts } from "./shortcuts";
 
@@ -20,7 +20,7 @@ function start() {
   if (started) return;
   started = true;
   void Promise.resolve(commands.getSettings()).then(apply).catch(() => {});
-  void listen<SettingsState>("settings-changed", (event) => apply(event.payload)).catch(() => {});
+  listenTo<SettingsState>("settings-changed", apply);
 }
 
 function subscribe(notify: () => void) {

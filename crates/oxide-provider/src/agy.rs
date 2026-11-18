@@ -8,7 +8,9 @@
 use crate::bounded_lines::{
     BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
 };
+use crate::diag::SenderExt as _;
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
+use crate::sync::LockExt as _;
 use crate::time::{now_unix, parse_rfc3339};
 use crate::{
     ActivityCategory, ApprovalDecision, CommandOutcome, CommandRecord, Detection, ItemKind,
@@ -491,7 +493,7 @@ impl AgyProvider {
         process::attach_child_to_job(&mut child)?;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
+            tx.tell(child.wait_with_output());
         });
         match rx.recv_timeout(PROBE_TIMEOUT) {
             Ok(result) => {
@@ -539,7 +541,7 @@ impl AgyProvider {
 
     fn open_channel(&self) -> Receiver<ProviderEvent> {
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        *self.event_sender.lock_recover() = Some(tx);
         self.closed.store(false, Ordering::SeqCst);
         rx
     }
@@ -551,7 +553,7 @@ impl AgyProvider {
     ) -> Result<Receiver<ProviderEvent>, ProviderError> {
         ensure_honourable(context.permission_mode)
             .map_err(|e| ProviderError::StartFailed(e.to_string()))?;
-        *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Session {
+        *self.session.lock_recover() = Session {
             context: Some(context.clone()),
             conversation,
         };
@@ -559,13 +561,8 @@ impl AgyProvider {
     }
 
     fn send(&self, event: ProviderEvent) {
-        if let Some(sender) = self
-            .event_sender
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
-            let _ = sender.send(event);
+        if let Some(sender) = self.event_sender.lock_recover().as_ref() {
+            sender.tell(event);
         }
     }
 }
@@ -775,7 +772,7 @@ impl Provider for AgyProvider {
         let prompt = render_flat_prompt(segments);
         let prompt = prompt.as_str();
         let (context, conversation) = {
-            let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            let session = self.session.lock_recover();
             let context = session
                 .context
                 .clone()
@@ -835,7 +832,7 @@ impl Provider for AgyProvider {
         if let Some(registry) = &self.registry {
             registry.register(pgid, &self.command);
         }
-        *self.group.lock().unwrap_or_else(|e| e.into_inner()) = Some(pgid);
+        *self.group.lock_recover() = Some(pgid);
         self.interrupted.store(false, Ordering::SeqCst);
 
         let turn_index = self.turn_counter.fetch_add(1, Ordering::SeqCst);
@@ -844,12 +841,7 @@ impl Provider for AgyProvider {
             prompt: crate::render_prompt(segments),
         });
 
-        let Some(tx) = self
-            .event_sender
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        else {
+        let Some(tx) = self.event_sender.lock_recover().clone() else {
             return Err(ProviderError::CommandFailed("session is shut down".into()));
         };
         let stdout = process::require_pipe(child.stdout.take(), &mut child, "stdout")?;
@@ -876,11 +868,11 @@ impl Provider for AgyProvider {
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
-        let pgid = *self.group.lock().unwrap_or_else(|e| e.into_inner());
+        let pgid = *self.group.lock_recover();
         if let Some(_pgid) = pgid {
             self.interrupted.store(true, Ordering::SeqCst);
             #[cfg(unix)]
-            let _ = process::signal_group(_pgid, libc::SIGINT);
+            crate::diag::best_effort("signal_group", process::signal_group(_pgid, libc::SIGINT));
             // Print mode has no input/control channel. End the whole contained process tree;
             // the reader reports the interrupted Turn and preserves its conversation id.
             #[cfg(windows)]
@@ -900,7 +892,7 @@ impl Provider for AgyProvider {
     }
 
     fn set_model(&mut self, model: &str) -> Result<(), ProviderError> {
-        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = self.session.lock_recover();
         let context = session
             .context
             .as_mut()
@@ -910,7 +902,7 @@ impl Provider for AgyProvider {
     }
 
     fn set_effort(&mut self, effort: &str) -> Result<(), ProviderError> {
-        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = self.session.lock_recover();
         let context = session
             .context
             .as_mut()
@@ -975,7 +967,7 @@ impl Provider for AgyProvider {
 
     fn set_permission_mode(&mut self, mode: PermissionMode) -> Result<(), ProviderError> {
         ensure_honourable(mode)?;
-        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = self.session.lock_recover();
         let context = session
             .context
             .as_mut()
@@ -986,15 +978,12 @@ impl Provider for AgyProvider {
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
         self.closed.store(true, Ordering::SeqCst);
-        let pgid = self.group.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let pgid = self.group.lock_recover().take();
         if let Some(pgid) = pgid {
             // The Turn's reader thread owns the child and reaps it.
             process::terminate_group(pgid, SHUTDOWN_GRACE, || {});
         }
-        self.event_sender
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.event_sender.lock_recover().take();
         Ok(())
     }
 
@@ -1072,7 +1061,7 @@ impl TurnRun {
                 Err(error) => {
                     if is_line_too_long(&error) {
                         // Fail this session: the stream is unusable and must not keep growing.
-                        let _ = self.tx.send(ProviderEvent::Error {
+                        self.tx.tell(ProviderEvent::Error {
                             message: protocol_overflow_message(),
                             code: None,
                             retrying: false,
@@ -1087,7 +1076,7 @@ impl TurnRun {
                 continue;
             }
             let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-                let _ = self.tx.send(ProviderEvent::Unknown { raw: line });
+                self.tx.tell(ProviderEvent::Unknown { raw: line });
                 continue;
             };
             // A statusLine snapshot arrives as a bare payload (or, if agy ever streams it, under a
@@ -1099,25 +1088,22 @@ impl TurnRun {
                 );
             if is_statusline {
                 if let Some(event) = parse_statusline_quota(&value, now_unix()) {
-                    let _ = self.tx.send(event);
+                    self.tx.tell(event);
                 }
                 continue;
             }
             match value.get("event").and_then(Value::as_str) {
                 Some("init") => {
                     if let Some(id) = value.get("conversation_id").and_then(Value::as_str) {
-                        self.session
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .conversation = Some(id.to_string());
-                        let _ = self.tx.send(ProviderEvent::SessionInfo {
+                        self.session.lock_recover().conversation = Some(id.to_string());
+                        self.tx.tell(ProviderEvent::SessionInfo {
                             session_id: id.to_string(),
                         });
                     }
                 }
                 Some("step_update") => {
                     if !self.step_update(&value["step_update"], &mut steps, &mut next_item) {
-                        let _ = self.tx.send(ProviderEvent::Unknown { raw: line });
+                        self.tx.tell(ProviderEvent::Unknown { raw: line });
                     }
                 }
                 Some("result") => {
@@ -1126,7 +1112,7 @@ impl TurnRun {
                     self.result(&value["result"]);
                 }
                 _ => {
-                    let _ = self.tx.send(ProviderEvent::Unknown { raw: line });
+                    self.tx.tell(ProviderEvent::Unknown { raw: line });
                 }
             }
         }
@@ -1137,7 +1123,7 @@ impl TurnRun {
             && !self.closed.load(Ordering::SeqCst)
             && !self.interrupted.load(Ordering::SeqCst)
         {
-            let _ = self.tx.send(ProviderEvent::Error {
+            self.tx.tell(ProviderEvent::Error {
                 message: format!("Failed to send Antigravity CLI prompt: {error}"),
                 code: None,
                 retrying: false,
@@ -1149,7 +1135,7 @@ impl TurnRun {
         }
         process::release_job(pgid);
         {
-            let mut group = self.group.lock().unwrap_or_else(|e| e.into_inner());
+            let mut group = self.group.lock_recover();
             if *group == Some(pgid) {
                 *group = None;
             }
@@ -1160,12 +1146,12 @@ impl TurnRun {
         self.turn_running.store(false, Ordering::SeqCst);
         if self.interrupted.load(Ordering::SeqCst) {
             self.finish_open_items(&mut steps);
-            let _ = self.tx.send(ProviderEvent::TurnCompleted {
+            self.tx.tell(ProviderEvent::TurnCompleted {
                 turn_index: self.turn_index,
                 status: TurnStatus::Interrupted,
             });
         } else {
-            let _ = self.tx.send(ProviderEvent::Exited { code, stderr_tail });
+            self.tx.tell(ProviderEvent::Exited { code, stderr_tail });
         }
     }
 
@@ -1197,7 +1183,7 @@ impl TurnRun {
                         None,
                     );
                     item.content.push_str(delta);
-                    let _ = self.tx.send(ProviderEvent::ItemDelta {
+                    self.tx.tell(ProviderEvent::ItemDelta {
                         item_index: item.item_index,
                         delta: delta.to_string(),
                     });
@@ -1227,7 +1213,7 @@ impl TurnRun {
                     && is_background_command(&line)
                 {
                     item.service_requested = true;
-                    let _ = self.tx.send(ProviderEvent::CommandRequested {
+                    self.tx.tell(ProviderEvent::CommandRequested {
                         item_index: item.item_index,
                         command: line,
                     });
@@ -1256,7 +1242,7 @@ impl TurnRun {
         steps.entry(step_index).or_insert_with(|| {
             let item_index = *next_item;
             *next_item += 1;
-            let _ = self.tx.send(ProviderEvent::ItemStarted {
+            self.tx.tell(ProviderEvent::ItemStarted {
                 item_index,
                 kind,
                 parent_item_index: None,
@@ -1282,7 +1268,7 @@ impl TurnRun {
         command: Option<CommandRecord>,
     ) {
         if let Some(item) = steps.remove(&step_index) {
-            let _ = self.tx.send(ProviderEvent::ItemCompleted {
+            self.tx.tell(ProviderEvent::ItemCompleted {
                 item_index: item.item_index,
                 kind: item.kind,
                 content: content.unwrap_or(item.content),
@@ -1297,7 +1283,7 @@ impl TurnRun {
         let mut open: Vec<_> = steps.drain().collect();
         open.sort_by_key(|(_, item)| item.item_index);
         for (_, item) in open {
-            let _ = self.tx.send(ProviderEvent::ItemCompleted {
+            self.tx.tell(ProviderEvent::ItemCompleted {
                 item_index: item.item_index,
                 kind: item.kind,
                 content: item.content,
@@ -1368,14 +1354,14 @@ impl TurnRun {
                         result["status"].as_str().unwrap_or("unknown")
                     )
                 });
-            let _ = self.tx.send(ProviderEvent::Error {
+            self.tx.tell(ProviderEvent::Error {
                 message,
                 code: None,
                 retrying: false,
             });
         }
         self.turn_running.store(false, Ordering::SeqCst);
-        let _ = self.tx.send(ProviderEvent::TurnCompleted {
+        self.tx.tell(ProviderEvent::TurnCompleted {
             turn_index: self.turn_index,
             status,
         });

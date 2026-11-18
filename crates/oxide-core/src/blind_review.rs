@@ -9,6 +9,7 @@ use crate::line_comments::{CommentScope, CommentSide, LineComment};
 use crate::thread::{ThreadStatus, ThreadSummary};
 use crate::worktree::{free_name, slugify};
 use crate::{Core, Error, PermissionMode, Result};
+use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -211,7 +212,7 @@ impl Core {
         }
 
         let (root, project_name) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let (path, name): (String, String) = db.query_row(
                 "SELECT path, name FROM projects WHERE id = ?1",
                 [request.project_id],
@@ -360,7 +361,7 @@ impl Core {
         let issue_text = if let Some(explicit) = request.issue.filter(|s| !s.trim().is_empty()) {
             explicit
         } else if let Some(tid) = request.thread_id {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let issue_row: Option<(Option<u32>, Option<String>, Option<String>)> = db
                 .query_row(
                     "SELECT issue_number, issue_title, issue_url FROM threads WHERE id = ?1",
@@ -385,7 +386,7 @@ impl Core {
             self.create_detached_worktree(&root, &project_name, &commit_ish, "blind-review")?;
 
         let cur_provider = request.thread_id.and_then(|tid| {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row("SELECT provider FROM threads WHERE id = ?1", [tid], |r| {
                 r.get::<_, String>(0)
             })
@@ -406,7 +407,7 @@ impl Core {
         let effort = request.effort.or(def_effort);
 
         let thread_id = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "INSERT INTO threads (project_id, provider, model, effort, permission_mode, status, title, worktree_path, blind_review, blind_review_of)
                  VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6, ?7, 1, ?8)",
@@ -437,7 +438,7 @@ impl Core {
             thread_id
         };
 
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let thread_summary = self.get_thread_by_id(&db, thread_id)?;
         drop(db);
         self.board.publish(thread_id);
@@ -450,7 +451,7 @@ impl Core {
     pub fn start_blind_review(&self, request: BlindReviewRequest) -> Result<ThreadSummary> {
         let (thread, prompt) = self.create_blind_review_thread(request)?;
         self.send_prompt(thread.id, &prompt)?;
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         self.get_thread_by_id(&db, thread.id)
     }
 
@@ -459,7 +460,7 @@ impl Core {
     /// reply, including one that cannot be parsed, as plain text.
     pub fn list_blind_review_findings(&self, thread_id: u32) -> Result<Vec<BlindReviewFinding>> {
         self.record_blind_review_findings(thread_id)?;
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut stmt = db.prepare(
             "SELECT f.id, r.review_thread_id, r.provider, f.path, f.side, f.line, f.code, f.body,
                     f.anchored, f.decision
@@ -492,7 +493,7 @@ impl Core {
     /// no line to attach to. Keeping twice returns the same draft.
     pub fn keep_blind_review_finding(&self, id: u32) -> Result<Option<LineComment>> {
         let (reviewed, scope, provider, path, side, line, code, body, anchored) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT r.thread_id, r.scope, r.provider, f.path, f.side, f.line, f.code, f.body,
                         f.anchored
@@ -517,7 +518,7 @@ impl Core {
             )?
         };
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "UPDATE blind_review_findings SET decision = 'kept' WHERE id = ?1",
                 [id],
@@ -529,7 +530,7 @@ impl Core {
             return Ok(None);
         };
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let existing = db.query_row(
                 "SELECT id, scope, path, side, line, code, body, provider FROM line_comments
                  WHERE finding_id = ?1",
@@ -586,7 +587,7 @@ impl Core {
 
     /// Dismisses one finding: it never reaches the Thread, and a draft it already made is removed.
     pub fn dismiss_blind_review_finding(&self, id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE blind_review_findings SET decision = 'dismissed' WHERE id = ?1",
             [id],
@@ -597,7 +598,7 @@ impl Core {
 
     fn record_blind_review_findings(&self, thread_id: u32) -> Result<()> {
         let reviews: Vec<(u32, u32, String)> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let mut stmt = db.prepare(
                 "SELECT r.id, r.review_thread_id, r.scope FROM blind_reviews r
                  WHERE r.thread_id = ?1 OR r.review_thread_id = ?1 ORDER BY r.id",
@@ -607,7 +608,7 @@ impl Core {
         };
         for (review_id, review_thread_id, _scope) in reviews {
             let recorded: u32 = {
-                let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+                let db = self.db.lock_recover();
                 db.query_row(
                     "SELECT COUNT(*) FROM blind_review_findings WHERE review_id = ?1",
                     [review_id],
@@ -634,7 +635,7 @@ impl Core {
             };
             let diff_text = prompt_diff(&prompt).unwrap_or("");
             let findings = parse_findings(&closing.content, diff_text);
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let tx = crate::db::write_transaction(&db)?;
             // Two readers may have reached this point together; only one writes the findings.
             let recorded: u32 = tx.query_row(

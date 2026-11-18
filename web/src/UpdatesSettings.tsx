@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { CheckCircleIcon, DownloadIcon, SyncIcon } from "@primer/octicons-react";
 import { commands, type UpdateStatus } from "./bindings";
 

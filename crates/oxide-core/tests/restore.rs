@@ -2,9 +2,11 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{
     Core, PermissionMode, RestoreChange, SequencedThreadEvent, ThreadEvent, ThreadStatus,
 };
@@ -81,12 +83,12 @@ fn gated_fake(release: Receiver<Edit>) -> FakeProvider {
         let prompt = prompt.to_string();
         // Off the actor's thread, which must stay free to take the Checkpoints.
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
             release.recv().unwrap()();
-            let _ = sender.send(ProviderEvent::TurnCompleted {
+            sender.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
