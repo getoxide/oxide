@@ -14,8 +14,6 @@ export interface TerminalBlock {
   started: boolean;
   ended: boolean;
   truncated: boolean;
-  /** The command was detached into a Project Service instead of the PTY. */
-  service?: boolean;
 }
 interface Props {
   onPasteReady?: (paste: ((text: string) => void) | null) => void;
@@ -188,11 +186,6 @@ export function TerminalCommandBlock(props: Props) {
       <header>
         <code>{block.command}</code>
         <span className="grow" />
-        {block.service && (
-          <span className="terminal-service-badge" title="Runs as a Project Service">
-            service
-          </span>
-        )}
         <BlockStatus block={block} running={active} />
       </header>
       {block.truncated && (

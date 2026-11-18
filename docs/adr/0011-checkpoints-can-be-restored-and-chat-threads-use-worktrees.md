@@ -1,6 +1,6 @@
 # Checkpoints can be restored, and chat Threads work in a worktree by default
 
-> Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Restore lists Turns by time, without their prompt. Worktrees and Checkpoints stand.
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Oxide has no Checkpoints, Restore or worktrees any more. (Earlier note: Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Restore lists Turns by time, without their prompt. Worktrees and Checkpoints stand.)
 
 Two glossary rules are reversed on purpose, to serve the path to a confident merge (ADR-0010). This ADR explicitly supersedes the earlier glossary rules "nothing is ever restored from a Checkpoint" and "a Thread started from the chat works in the Project's main checkout".
 

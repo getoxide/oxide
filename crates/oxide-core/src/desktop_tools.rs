@@ -1,4 +1,4 @@
-//! Native font discovery and explicit Git/GitHub CLI setup. No webview shell access.
+//! Explicit Git/GitHub CLI setup. No webview shell access.
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
 use serde::Serialize;
@@ -34,77 +34,6 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
 }
 
 pub use oxide_provider::command::{os_command, os_tool, resolved_command};
-
-pub fn system_fonts() -> Result<Vec<String>> {
-    #[cfg(windows)]
-    let (program, args) = (
-        "powershell.exe",
-        vec![
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); Add-Type -AssemblyName System.Drawing; $collection = [System.Drawing.Text.InstalledFontCollection]::new(); try { @($collection.Families | ForEach-Object { $_.Name }) | ConvertTo-Json -Compress } finally { $collection.Dispose() }",
-        ],
-    );
-    #[cfg(target_os = "macos")]
-    let (program, args) = ("system_profiler", vec!["SPFontsDataType", "-json"]);
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let (program, args) = ("fc-list", vec!["--format=%{family}\\n"]);
-    let output = oxide_provider::process::hide_console(os_command(program).args(args))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| Error::Editor(format!("Could not list installed fonts: {e}")))?;
-    if !output.status.success() {
-        return Err(Error::Editor(
-            "Could not read system fonts. Try again after restarting Oxide.".into(),
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    #[cfg(windows)]
-    let mut fonts: Vec<String> =
-        serde_json::from_str(&text).map_err(|e| Error::Editor(e.to_string()))?;
-    #[cfg(target_os = "macos")]
-    let mut fonts = {
-        fn collect(value: &serde_json::Value, fonts: &mut Vec<String>) {
-            match value {
-                serde_json::Value::Object(map) => {
-                    if let Some(name) = map.get("family").and_then(|v| v.as_str()) {
-                        fonts.push(name.to_string());
-                    }
-                    for value in map.values() {
-                        collect(value, fonts);
-                    }
-                }
-                serde_json::Value::Array(values) => {
-                    for value in values {
-                        collect(value, fonts);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let value: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| Error::Editor(e.to_string()))?;
-        let mut fonts = Vec::new();
-        collect(&value, &mut fonts);
-        fonts
-    };
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let mut fonts: Vec<String> = text
-        .lines()
-        .flat_map(|l| l.split(','))
-        .map(|s| s.trim().to_owned())
-        .collect();
-    fonts.retain(|f| !f.is_empty() && !f.starts_with('@'));
-    fonts.sort_by_key(|f| f.to_lowercase());
-    fonts.dedup();
-    if fonts.is_empty() {
-        return Err(Error::Editor(
-            "The system returned no installed font families.".into(),
-        ));
-    }
-    Ok(fonts)
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

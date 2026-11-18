@@ -5,7 +5,6 @@ import { EditorFileTree } from "./EditorFileTree";
 
 interface FilesPanelProps {
   projectId: number;
-  threadId: number | null;
   /** Changes after checkout mutations (commits, checkouts, Turns), so the tree refetches. */
   revision: number;
   /** Opens the file in the Project's central Code workspace. */
@@ -14,11 +13,11 @@ interface FilesPanelProps {
 
 /** The tree belongs to one checkout, so a different one remounts it. */
 export function FilesPanel(props: FilesPanelProps) {
-  return <FilesExplorer key={`${props.projectId}:${props.threadId}`} {...props} />;
+  return <FilesExplorer key={props.projectId} {...props} />;
 }
 
 /** The Files Surface: a full-width navigator. A click selects; a double click opens Code. */
-function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanelProps) {
+function FilesExplorer({ projectId, revision, onOpenFile }: FilesPanelProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [collapseToken, setCollapseToken] = useState(0);
   const [query, setQuery] = useState("");
@@ -31,7 +30,7 @@ function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanel
     let active = true;
     const timer = setTimeout(() => {
       void commands
-        .findFiles(projectId, threadId, trimmed)
+        .findFiles(projectId, trimmed)
         .then((result) => {
           if (!active) return;
           setSearch(result.status === "ok"
@@ -48,7 +47,7 @@ function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanel
       active = false;
       clearTimeout(timer);
     };
-  }, [projectId, threadId, query]);
+  }, [projectId, query]);
 
   const trimmedQuery = query.trim();
   const currentSearch = trimmedQuery && search?.query === trimmedQuery ? search : null;
@@ -112,7 +111,6 @@ function FilesExplorer({ projectId, threadId, revision, onOpenFile }: FilesPanel
         <div className="files-tree">
           <EditorFileTree
             projectId={projectId}
-            threadId={threadId}
             selected={selected}
             onOpen={(path) => setSelected(path)}
             onKeep={onOpenFile}

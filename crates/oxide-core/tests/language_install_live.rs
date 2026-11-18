@@ -24,7 +24,7 @@ fn managed_python_typescript_and_rust_install_and_initialize() {
                 .unwrap()
                 .installed
         );
-        let (server, rx) = core.start_language_server(id, None, language).unwrap();
+        let (server, rx) = core.start_language_server(id, language).unwrap();
         let root = reqwest::Url::from_directory_path(&project)
             .unwrap()
             .to_string();
@@ -72,7 +72,7 @@ fn managed_clangd_download_connect_and_unsaved_diagnostics() {
             .unwrap()
             .starts_with(&temporary.path().join("home").to_string_lossy().into_owned())
     );
-    let (server, rx) = core.start_language_server(id, None, "cpp").unwrap();
+    let (server, rx) = core.start_language_server(id, "cpp").unwrap();
     let uri = reqwest::Url::from_file_path(&file).unwrap().to_string();
     let root = reqwest::Url::from_directory_path(&project)
         .unwrap()

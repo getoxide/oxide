@@ -1,38 +1,37 @@
 # Oxide
 
-Oxide is a desktop app for agentic coding. Developers open a local Project,
-work with installed coding Providers through Threads, and use Git and GitHub from
-the same window. Project and Thread terminology is defined in GLOSSARY.md.
+Oxide is a desktop terminal app that knows your GitHub Projects. Developers open a
+local Project, open as many clean terminals as they like in its folder, and run
+whatever they want in them, an agent CLI included, with the Project's GitHub Issues,
+pull requests and files at hand. Project and Terminal terminology is defined in
+GLOSSARY.md.
 
 ## Who it is for
 
-Oxide is for developers who can write code themselves and have AI write it with a
-clear purpose: they know what the agent is producing, review it, and stay
-personally responsible for what enters `main`. It optimizes the path from a
-finished agent Turn to a confident merge: seeing what changed, what was actually
-checked, what stayed unverified, and sending feedback or undoing work without
-leaving the app. It does not optimize for running the most agents at once. See
-ADR-0010.
+Oxide is for developers who live in the terminal and work on GitHub. It stays out of
+the way: a Terminal is a plain shell that Oxide does not interpret, so any CLI works
+as it does anywhere else. Oxide does not know about agents; if one is wanted, it is
+a command typed in a Terminal. See ADR-0018.
 
 ## Platform
 
 Desktop, built with Tauri. Windows is the user's current platform; existing native
 functionality also targets macOS and Linux. Files and child processes belong to
-Core, never to a webview filesystem or shell permission.
+Core, never to a webview filesystem or shell permission (ADR-0016).
 
 ## Workflows
 
-The Thread and its Transcript stay in the centre. A collapsible sidebar holds
-Projects and recent Threads. One right dock holds Files, Terminal,
-Pull request and Issues; each Surface can be maximized and restored.
-Work modes are removed. Files contains the editor, and Project terminal tabs
-retain their own checkout. Switching tools or their presentation keeps open files,
-unsaved changes and shell sessions.
+The sidebar lists the open Projects and, under each, its Terminals; a New terminal
+control on a Project opens a fresh shell in its folder. The centre of the window is
+one large Terminal: the one selected in the sidebar. The right dock holds Files,
+Issues and Pull request. Opening a file shows the Project's Code workspace in the
+centre, one click away from its Terminals. Switching Terminals, tools or Projects
+keeps scrollback, running processes, open files and unsaved changes. Settings opens
+on an empty page, and Oxide has no custom keyboard shortcuts.
 
-Python, C/C++, JavaScript/TypeScript and Rust are the first supported languages.
-Opening the first file of a language offers to download its support, as in Zed.
-Downloads happen only after Install is pressed. Advanced settings retain custom
-server executable paths, arguments and a Python interpreter path.
+Python, C/C++, JavaScript/TypeScript and Rust are the first supported languages for
+the editor. Opening the first file of a language offers to download its support, as
+in Zed. Downloads happen only after Install is pressed.
 
 ## Stack
 
@@ -44,7 +43,7 @@ Local language servers provide language intelligence without an extension system
 
 Oxide's identity is the Braces mark, always in Titanium, on warm Titanium neutral
 surfaces. GitHub blue is for actions, focus and links and never appears in the
-logo. Interface and chat use Inter; the editor and terminal use JetBrains Mono
+logo. The interface uses Inter; the editor and terminal use JetBrains Mono
 with ligatures off. Keep the Octicons vocabulary. `assets/brand/oxide/` is the
 source of truth.
 Keep working controls compact and the primary content prominent. Use restrained

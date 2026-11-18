@@ -161,13 +161,12 @@ Docs, research and UI-review screenshots match no lane, so a docs-only PR runs `
 | Layer | What it proves | Where |
 | --- | --- | --- |
 | Rust unit tests | Local logic per crate | `rust (macos)`, `rust (windows)`, `rust (linux)` |
-| `oxide-core` integration tests | Behaviour through the Core API (Threads, Turns, Checkpoints, git, GitHub through a fake `gh`, process hygiene, window lifecycle…) with fake Providers and temp repositories | both Rust jobs |
-| Provider contract and adapter tests | Each Provider adapter honours the Provider contract against fake CLIs and fixtures | both Rust jobs |
+| `oxide-core` integration tests | Behaviour through the Core API (Projects, terminals, files, git, GitHub through a fake `gh`, the upgrade migration…) with temp repositories | both Rust jobs |
 | Bindings and capabilities test | TypeScript bindings match the Tauri commands, and the webview has no filesystem, shell or process capability | both Rust jobs, plus the committed-bindings diff |
 | Web component tests (Vitest, jsdom) | Frontend behaviour against mocked IPC | `web` |
 | Tooling tests | Every pipeline decision | `automation` |
 | App bundles | `tauri build` succeeds with the real config, icons, resources and embedded frontend | every `bundle (...)` job |
-| Live Provider smoke tests and live language installs (`#[ignore]`) | The real Provider CLIs and language-support downloads still work | A Release Manager's machine, before publishing. Never in CI: they need logins and network |
+| Live language installs (`#[ignore]`) | The language-support downloads still work | A Release Manager's machine, before publishing. Never in CI: they need network |
 | UI review scripts | Visual review with screenshots | By hand during UI work. Not a gate |
 
 nextest runs each test in its own process with the settings in [`.config/nextest.toml`](../.config/nextest.toml): a hard per-test timeout of 5 minutes, one retry (a pass on retry is reported as flaky, not hidden), JUnit output, and a `process-heavy` test group capped at 2 threads for the suites that spawn child processes and PTYs (the Provider adapters, the terminal tests, `thread_checkout_git` and the whole `workbench` binary, whose shell-completion test drives a shell under a 5 s budget), which time out under full parallelism.
@@ -238,12 +237,10 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 
    If `verify` refuses, its message says what to fix. A pushed tag can't be moved or deleted (only the admin can); fix forward with the next version, or have the admin delete a mistaken tag.
 4. **Approve** the `release` deployment: Actions → Release → *Review deployments*. Either Release Manager may approve.
-5. **Smoke test.** When `publish` finishes there is a **draft** release. Download its builds and run the live Provider smoke tests on each platform you can (CI can't check the real Provider CLIs):
+5. **Smoke test.** When `publish` finishes there is a **draft** release. Download its builds, open a Project, open a terminal and check Files, Issues and Pull request on each platform you can. Run the live language-install tests where the network allows:
 
    ```sh
-   cargo test -p oxide-provider --test claude_live_smoke -- --ignored
-   cargo test -p oxide-provider --test codex_live_smoke -- --ignored
-   cargo test -p oxide-provider --test agy_live_smoke -- --ignored
+   cargo test -p oxide-core --test language_install_live -- --ignored
    ```
 
 6. **Publish.** Edit the notes, then click Publish. The release becomes immutable and, if stable, the updater feed goes live.

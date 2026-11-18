@@ -6,8 +6,7 @@
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 use oxide_core::{
-    Core, GithubAvailability, IssueCloseReason, IssueEdit, Notification, ProjectSummary,
-    PullRequestInput, System,
+    Core, GithubAvailability, IssueCloseReason, IssueEdit, ProjectSummary, PullRequestInput, System,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,40 +39,12 @@ fn commit_file(dir: &Path, name: &str, content: &str, message: &str) {
     git(dir, &["commit", "-qm", message]);
 }
 
-fn remove_worktree(root: &Path, worktree: &str) {
-    let mut last_error = String::new();
-    for attempt in 0..10 {
-        let out = Command::new("git")
-            .args(["worktree", "remove", "--force", worktree])
-            .current_dir(root)
-            .output()
-            .unwrap();
-        if out.status.success() {
-            return;
-        }
-        last_error = String::from_utf8_lossy(&out.stderr).into_owned();
-        if !Path::new(worktree).exists() {
-            return;
-        }
-        // Windows may briefly hold files after Git has closed the worktree.
-        if !last_error.contains("Permission denied") || attempt == 9 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    panic!("git worktree remove --force {worktree:?}: {last_error}");
-}
-
 #[derive(Default)]
 struct RecordingSystem {
     opened: Mutex<Vec<String>>,
 }
 
 impl System for RecordingSystem {
-    fn hold_activity(&self) {}
-    fn release_activity(&self) {}
-    fn notify(&self, _: Notification) {}
-    fn set_badge(&self, _: u32) {}
     fn open_url(&self, url: &str) {
         self.opened.lock().unwrap().push(url.to_string());
     }
@@ -178,7 +149,6 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&gh_dir).unwrap();
 
     let core = Core::open(root.join("home")).unwrap();
-    core.set_real_time_ticker(false);
     let project = core.add_project(&work.to_string_lossy()).unwrap();
     let system = Arc::new(RecordingSystem::default());
     core.set_system(system.clone());
@@ -223,9 +193,7 @@ fn input(title: &str, base: &str, draft: bool) -> PullRequestInput {
 #[test]
 fn pr_base_branches_come_from_github_and_request_all_pages() {
     let f = fixture();
-    f.core
-        .create_branch_in(f.project.id, None, "local-only")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "local-only"]);
     let mut state = ok_state();
     state["branches"] = serde_json::json!(["release/next", "main", "develop", "main"]);
     install_gh(&f, &state);
@@ -300,12 +268,8 @@ fn missing_gh_is_reported_with_install_guidance_and_git_still_works() {
     assert_eq!(state.availability, GithubAvailability::Missing);
     assert!(state.guidance.unwrap().contains("Install"));
     assert_eq!(
-        f.core
-            .git_status_in(f.project.id, None)
-            .unwrap()
-            .branch
-            .as_deref(),
-        Some("main")
+        git(&f.work, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "main"
     );
 }
 
@@ -316,16 +280,10 @@ fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
     let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::LoggedOut);
     assert!(state.guidance.unwrap().contains("gh auth login"));
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
     assert_eq!(
-        f.core
-            .git_status_in(f.project.id, None)
-            .unwrap()
-            .branch
-            .as_deref(),
-        Some("feature")
+        git(&f.work, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "feature"
     );
 }
 
@@ -338,10 +296,7 @@ fn gh_is_available_through_a_bat_shim() {
     let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Ready);
     assert_eq!(
-        f.core
-            .pull_request_draft_in(f.project.id, None)
-            .unwrap()
-            .base,
+        f.core.pull_request_draft(f.project.id).unwrap().base,
         "main"
     );
 }
@@ -383,14 +338,12 @@ fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
 fn reloading_the_surface_reuses_auth_status_and_default_branch() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
-    f.core.pull_request_draft_in(f.project.id, None).unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    f.core.pull_request_draft(f.project.id).unwrap();
     f.core.list_pull_requests(f.project.id, false, "").unwrap();
     let before = f.gh_calls().len();
 
-    f.core.pull_request_draft_in(f.project.id, None).unwrap();
+    f.core.pull_request_draft(f.project.id).unwrap();
     f.core.list_pull_requests(f.project.id, false, "").unwrap();
 
     let again: Vec<_> = f.gh_calls()[before..]
@@ -408,17 +361,15 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
 fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "add-things")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "add-things"]);
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    let one = f.core.pull_request_draft_in(f.project.id, None).unwrap();
+    let one = f.core.pull_request_draft(f.project.id).unwrap();
     assert_eq!(one.title, "Add b");
     assert_eq!(one.base, "main");
     assert_eq!(one.head, "add-things");
 
     commit_file(&f.work, "c.txt", "c\n", "Add c");
-    let two = f.core.pull_request_draft_in(f.project.id, None).unwrap();
+    let two = f.core.pull_request_draft(f.project.id).unwrap();
     assert_eq!(two.title, "Add things");
     assert_eq!(two.body, "- Add b\n- Add c");
 }
@@ -427,20 +378,17 @@ fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
 fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
     commit_file(&f.work, "b.txt", "b\n", "Add b");
     assert!(
-        f.core
-            .git_status_in(f.project.id, None)
-            .unwrap()
-            .unpublished
+        git(&f.remote, &["branch", "--list", "feature"])
+            .trim()
+            .is_empty()
     );
 
     let pr = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("My PR", "main", true))
+        .create_pull_request(f.project.id, &input("My PR", "main", true))
         .unwrap();
 
     assert_eq!(pr.number, 7);
@@ -450,12 +398,6 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
         !git(&f.remote, &["branch", "--list", "feature"])
             .trim()
             .is_empty()
-    );
-    assert!(
-        !f.core
-            .git_status_in(f.project.id, None)
-            .unwrap()
-            .unpublished
     );
     assert_eq!(
         f.create_calls(),
@@ -473,13 +415,11 @@ fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft()
 fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
 
     let err = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("Empty", "main", false))
+        .create_pull_request(f.project.id, &input("Empty", "main", false))
         .unwrap_err();
 
     assert!(
@@ -498,16 +438,14 @@ fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
 fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    f.core.push_in(f.project.id, None, false).unwrap();
+    git(&f.work, &["push", "-q", "-u", "origin", "feature"]);
     let before = git(&f.remote, &["rev-parse", "feature"]);
 
     let pr = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("Ready", "develop", false))
+        .create_pull_request(f.project.id, &input("Ready", "develop", false))
         .unwrap();
 
     assert!(!pr.draft);
@@ -521,24 +459,22 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
     let f = fixture();
     let err = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
+        .create_pull_request(f.project.id, &input("T", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("Install"), "{err}");
 
     install_gh(&f, &ok_state());
     let err = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
+        .create_pull_request(f.project.id, &input("T", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("main"), "{err}");
     assert!(f.create_calls().is_empty());
 
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
     let err = f
         .core
-        .create_pull_request_in(f.project.id, None, &input("  ", "main", false))
+        .create_pull_request(f.project.id, &input("  ", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("title"), "{err}");
 }
@@ -547,11 +483,7 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
 fn gh_is_only_called_when_asked_so_there_is_no_polling() {
     let f = fixture();
     install_gh(&f, &ok_state());
-    f.core
-        .create_branch_in(f.project.id, None, "feature")
-        .unwrap();
-    f.core.git_status_in(f.project.id, None).unwrap();
-    f.core.list_branches_in(f.project.id, None).unwrap();
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
     assert!(f.gh_calls().is_empty());
     f.core.list_pull_requests(f.project.id, false, "").unwrap();
     let after_one = f.gh_calls().len();
@@ -594,26 +526,6 @@ fn detailed_pr() -> serde_json::Value {
 
 fn numbers(prs: &[oxide_core::PullRequest]) -> Vec<u32> {
     prs.iter().map(|p| p.number).collect()
-}
-
-fn review_threads() -> serde_json::Value {
-    serde_json::json!([
-        {
-            "id": "RT_1", "isResolved": false, "isOutdated": false,
-            "path": "a.txt", "line": 1, "originalLine": 1, "diffSide": "RIGHT",
-            "comments": {"nodes": [
-                {"author": {"login": "reviewer"}, "body": "Why uno?", "createdAt": "2026-05-01T10:00:00Z", "diffHunk": "@@ -1 +1 @@\n-one\n+uno"},
-                {"author": {"login": "author"}, "body": "It means one.", "createdAt": "2026-05-01T10:05:00Z", "diffHunk": "@@ -1 +1 @@\n-one\n+uno"}
-            ]}
-        },
-        {
-            "id": "RT_2", "isResolved": true, "isOutdated": true,
-            "path": "gone.txt", "line": null, "originalLine": 3, "diffSide": "LEFT",
-            "comments": {"nodes": [
-                {"author": {"login": "other"}, "body": "Old line.", "createdAt": "2026-05-01T11:00:00Z", "diffHunk": "@@ -3 +0,0 @@\n-bye"}
-            ]}
-        }
-    ])
 }
 
 #[test]
@@ -701,65 +613,6 @@ fn detail_has_description_checks_comments_and_changed_files() {
         json_fields.split(',').any(|field| field == "changedFiles"),
         "expected changedFiles in gh pr view --json fields, got: {json_fields}"
     );
-}
-
-#[test]
-fn review_threads_carry_their_lines_authors_and_state() {
-    let f = fixture();
-    let mut state = state_with_prs(&[detailed_pr()]);
-    state["review_threads"] = review_threads();
-    install_gh(&f, &state);
-
-    let threads = f.core.pull_request_review_threads(f.project.id, 5).unwrap();
-
-    // `diffHunk` belongs to a comment, not the thread; asking for it on the thread fails every call.
-    let query = f
-        .gh_calls()
-        .into_iter()
-        .flatten()
-        .find(|argument| argument.contains("reviewThreads"))
-        .expect("review threads query");
-    assert!(
-        query.contains("comments(first:100){nodes{author{login} body createdAt diffHunk}"),
-        "{query}"
-    );
-    assert!(!query.contains("diffSide diffHunk"), "{query}");
-
-    assert_eq!(threads.len(), 2);
-    let open = &threads[0];
-    assert_eq!(open.id, "RT_1");
-    assert_eq!(open.path, "a.txt");
-    assert_eq!(open.line, Some(1));
-    assert_eq!(open.original_line, Some(1));
-    assert_eq!(open.side, Some(oxide_core::CommentSide::New));
-    assert!(!open.resolved);
-    assert!(!open.outdated);
-    assert_eq!(open.diff_hunk, "@@ -1 +1 @@\n-one\n+uno");
-    let authors: Vec<&str> = open.comments.iter().map(|c| c.author.as_str()).collect();
-    assert_eq!(authors, ["reviewer", "author"]);
-    assert_eq!(open.comments[0].body, "Why uno?");
-    assert_eq!(open.comments[0].created_at, "2026-05-01T10:00:00Z");
-
-    let stale = &threads[1];
-    assert_eq!(stale.line, None);
-    assert_eq!(stale.original_line, Some(3));
-    assert_eq!(stale.side, Some(oxide_core::CommentSide::Old));
-    assert!(stale.resolved && stale.outdated);
-    assert_eq!(stale.path, "gone.txt");
-}
-
-#[test]
-fn review_thread_errors_are_reported_as_github_errors() {
-    let f = fixture();
-    let mut state = state_with_prs(&[detailed_pr()]);
-    state["review_threads_error"] = "GraphQL: Resource not accessible".into();
-    install_gh(&f, &state);
-
-    let err = f
-        .core
-        .pull_request_review_threads(f.project.id, 5)
-        .unwrap_err();
-    assert!(err.to_string().contains("Resource not accessible"), "{err}");
 }
 
 #[test]
@@ -1077,54 +930,6 @@ fn a_link_to_a_foreign_host_opens_only_after_confirmation() {
     assert_eq!(f.system.opened.lock().unwrap().len(), 1);
 }
 
-/// Publishes `add-b` (with `file` holding `content`) and leaves `main` checked out.
-fn publish_pr_branch(f: &Fixture, file: &str, content: &str) {
-    git(&f.work, &["checkout", "-q", "-b", "add-b"]);
-    commit_file(&f.work, file, content, "Add b");
-    git(&f.work, &["push", "-q", "origin", "add-b"]);
-    git(&f.work, &["checkout", "-q", "main"]);
-    git(&f.work, &["branch", "-q", "-D", "add-b"]);
-}
-
-#[test]
-fn checkout_switches_the_main_checkout_to_the_pull_requests_branch() {
-    let f = fixture();
-    publish_pr_branch(&f, "b.txt", "b\n");
-    install_gh(&f, &state_with_prs(&[detailed_pr()]));
-
-    f.core
-        .checkout_pull_request_in(f.project.id, None, 5)
-        .unwrap();
-
-    let status = f.core.git_status_in(f.project.id, None).unwrap();
-    assert_eq!(status.branch.as_deref(), Some("add-b"));
-    assert!(f.work.join("b.txt").exists());
-}
-
-#[test]
-fn checkout_shows_gits_refusal() {
-    let f = fixture();
-    publish_pr_branch(&f, "a.txt", "changed upstream\n");
-    install_gh(&f, &state_with_prs(&[detailed_pr()]));
-
-    // An uncommitted edit to the same file: Git refuses to overwrite it.
-    std::fs::write(f.work.join("a.txt"), "local edit\n").unwrap();
-    let err = f
-        .core
-        .checkout_pull_request_in(f.project.id, None, 5)
-        .unwrap_err();
-
-    assert!(err.to_string().contains("a.txt"), "{err}");
-    assert_eq!(
-        f.core
-            .git_status_in(f.project.id, None)
-            .unwrap()
-            .branch
-            .as_deref(),
-        Some("main")
-    );
-}
-
 #[test]
 fn list_and_search_issues_against_fake_gh() {
     let f = fixture();
@@ -1419,99 +1224,6 @@ fn issue_templates_are_read_from_github_and_a_missing_directory_means_none() {
 }
 
 #[test]
-fn a_pull_request_from_an_issue_threads_branch_closes_the_issue() {
-    let f = fixture();
-    install_gh(&f, &ok_state());
-    let thread = f
-        .core
-        .dispatch_thread(oxide_core::DispatchRequest {
-            project_id: f.project.id,
-            prompt: "Do it".into(),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            permission_mode: None,
-            base_branch: Some("main".into()),
-            issue_number: Some(51),
-            issue_title: Some("Do it".into()),
-            issue_url: Some("https://github.com/example/oxide/issues/51".into()),
-            issue_labels: Vec::new(),
-        })
-        .unwrap();
-    let branch = thread.branch.clone().unwrap();
-    // Move the branch into the main checkout, where pull requests are created from.
-    // Dispatch starts the actor asynchronously. Stop it before removing its cwd,
-    // otherwise checkpoint Git processes can still hold the worktree on Windows.
-    f.core.shutdown();
-    remove_worktree(&f.work, &thread.worktree_path.unwrap());
-    git(&f.work, &["checkout", "-q", &branch]);
-    commit_file(&f.work, "b.txt", "b\n", "Add b");
-
-    let draft = f.core.pull_request_draft_in(f.project.id, None).unwrap();
-    assert!(draft.body.contains("Closes #51"), "{}", draft.body);
-
-    let pr = f
-        .core
-        .create_pull_request_in(f.project.id, None, &input("T", "main", false))
-        .unwrap();
-    assert_eq!(
-        f.core
-            .pull_request_detail(f.project.id, pr.number)
-            .unwrap()
-            .body,
-        "Body\n\nCloses #51"
-    );
-}
-
-#[test]
-fn closes_is_not_repeated_when_the_body_already_has_it() {
-    let f = fixture();
-    install_gh(&f, &ok_state());
-    let thread = f
-        .core
-        .dispatch_thread(oxide_core::DispatchRequest {
-            project_id: f.project.id,
-            prompt: "Do it".into(),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            permission_mode: None,
-            base_branch: Some("main".into()),
-            issue_number: Some(51),
-            issue_title: None,
-            issue_url: None,
-            issue_labels: Vec::new(),
-        })
-        .unwrap();
-    f.core.shutdown();
-    git(
-        &f.work,
-        &[
-            "worktree",
-            "remove",
-            "--force",
-            &thread.worktree_path.unwrap(),
-        ],
-    );
-    git(&f.work, &["checkout", "-q", &thread.branch.unwrap()]);
-    commit_file(&f.work, "b.txt", "b\n", "Add b");
-
-    let mut with = input("T", "main", false);
-    with.body = "Fixes it.\n\ncloses #51".into();
-    let pr = f
-        .core
-        .create_pull_request_in(f.project.id, None, &with)
-        .unwrap();
-    assert_eq!(
-        f.core
-            .pull_request_detail(f.project.id, pr.number)
-            .unwrap()
-            .body,
-        "Fixes it.\n\ncloses #51"
-    );
-}
-
-#[test]
 fn checks_know_whether_branch_protection_requires_them() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
@@ -1532,191 +1244,4 @@ fn checks_know_whether_branch_protection_requires_them() {
             ("ci/legacy", false)
         ]
     );
-}
-
-#[test]
-fn checkout_in_a_thread_switches_only_that_threads_worktree() {
-    let f = fixture();
-    publish_pr_branch(&f, "b.txt", "b\n");
-    install_gh(&f, &state_with_prs(&[detailed_pr()]));
-    let thread = f
-        .core
-        .dispatch_thread(oxide_core::DispatchRequest {
-            project_id: f.project.id,
-            prompt: "work".into(),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            permission_mode: None,
-            base_branch: Some("main".into()),
-            issue_number: None,
-            issue_title: None,
-            issue_url: None,
-            issue_labels: Vec::new(),
-        })
-        .unwrap();
-    let worktree = PathBuf::from(thread.worktree_path.clone().unwrap());
-
-    f.core
-        .checkout_pull_request_in(f.project.id, Some(thread.id), 5)
-        .unwrap();
-
-    assert_eq!(
-        git(&worktree, &["branch", "--show-current"]).trim(),
-        "add-b"
-    );
-    assert!(worktree.join("b.txt").exists());
-    assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "main");
-    assert!(!f.work.join("b.txt").exists());
-
-    // An unknown Thread is an error rather than the main checkout.
-    let err = f
-        .core
-        .checkout_pull_request_in(f.project.id, Some(thread.id + 100), 5)
-        .unwrap_err();
-    assert!(!err.to_string().is_empty());
-    assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "main");
-}
-
-/// A dispatched Thread whose Turn has settled, with its pull request recorded in the fake `gh`
-/// as merged at `merged_oid` (its branch tip when `None`).
-fn merged_thread(f: &Fixture, merged_oid: Option<&str>) -> oxide_core::ThreadSummary {
-    install_gh(f, &ok_state());
-    let thread = f
-        .core
-        .dispatch_thread(oxide_core::DispatchRequest {
-            project_id: f.project.id,
-            prompt: "Do it".into(),
-            provider: "fake".into(),
-            model: None,
-            effort: None,
-            permission_mode: None,
-            base_branch: Some("main".into()),
-            issue_number: None,
-            issue_title: None,
-            issue_url: None,
-            issue_labels: Vec::new(),
-        })
-        .unwrap();
-    for _ in 0..3000 {
-        let status = f.core.get_thread_snapshot(thread.id).unwrap().thread.status;
-        if status != oxide_core::ThreadStatus::Working {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let branch = thread.branch.clone().unwrap();
-    let tip = git(
-        Path::new(&thread.worktree_path.clone().unwrap()),
-        &["rev-parse", "HEAD"],
-    );
-    f.set_gh(&serde_json::json!({
-        "auth": "ok", "default_branch": "main", "next_number": 8,
-        "prs": {"7": {
-            "number": 7, "title": "T", "url": "https://example.test/pull/7", "state": "MERGED",
-            "isDraft": false, "baseRefName": "main", "headRefName": branch,
-            "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": merged_oid.unwrap_or(tip.trim()),
-            "author": {"login": "me"}, "createdAt": "2026-01-01T00:00:00Z",
-        }},
-    }));
-    thread
-}
-
-fn enable_cleanup(f: &Fixture) {
-    let mut settings = f.core.settings().settings;
-    settings.delete_merged_branches = true;
-    f.core.save_settings(&settings).unwrap();
-}
-
-fn branch_exists(repo: &Path, branch: &str) -> bool {
-    !git(repo, &["branch", "--list", branch]).trim().is_empty()
-}
-
-#[test]
-fn merged_thread_loses_its_worktree_and_branch_when_the_setting_is_on() {
-    let f = fixture();
-    let thread = merged_thread(&f, None);
-    let (branch, worktree) = (
-        thread.branch.clone().unwrap(),
-        thread.worktree_path.unwrap(),
-    );
-    enable_cleanup(&f);
-
-    assert!(f.core.clean_up_merged_thread(thread.id).unwrap());
-
-    assert!(!Path::new(&worktree).exists());
-    assert!(!branch_exists(&f.work, &branch));
-    let after = f.core.get_thread_snapshot(thread.id).unwrap().thread;
-    assert_eq!((after.branch, after.worktree_path), (None, None));
-}
-
-#[test]
-fn merged_thread_is_left_alone_when_the_setting_is_off() {
-    let f = fixture();
-    let thread = merged_thread(&f, None);
-    let (branch, worktree) = (
-        thread.branch.clone().unwrap(),
-        thread.worktree_path.unwrap(),
-    );
-
-    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
-
-    assert!(Path::new(&worktree).exists());
-    assert!(branch_exists(&f.work, &branch));
-}
-
-#[test]
-fn cleanup_keeps_uncommitted_changes_and_commits_that_were_not_merged() {
-    let f = fixture();
-    let thread = merged_thread(&f, None);
-    let (branch, worktree) = (
-        thread.branch.clone().unwrap(),
-        thread.worktree_path.unwrap(),
-    );
-    enable_cleanup(&f);
-
-    std::fs::write(Path::new(&worktree).join("wip.txt"), "wip\n").unwrap();
-    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
-    assert!(Path::new(&worktree).exists() && branch_exists(&f.work, &branch));
-
-    std::fs::remove_file(Path::new(&worktree).join("wip.txt")).unwrap();
-
-    // Committed after the merge: GitHub never saw this commit.
-    commit_file(
-        Path::new(&worktree),
-        "late.txt",
-        "late\n",
-        "After the merge",
-    );
-    assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
-    assert!(Path::new(&worktree).exists() && branch_exists(&f.work, &branch));
-}
-
-#[test]
-fn a_failed_checks_log_is_read_bounded_and_only_for_actions_runs() {
-    let f = fixture();
-    let mut state = ok_state();
-    let long = format!("{}\nthe real error\n", "noise line\n".repeat(2_000));
-    state["run_logs"] = serde_json::json!({ "1234": long });
-    install_gh(&f, &state);
-
-    let log = f
-        .core
-        .failed_check_log(
-            f.project.id,
-            "https://github.com/fake/repo/actions/runs/1234/job/99",
-        )
-        .unwrap();
-    assert!(log.len() <= 4096, "{}", log.len());
-    assert!(log.ends_with("the real error\n"), "{log}");
-
-    for bad in [
-        "http://github.com/fake/repo/actions/runs/1234",
-        "https://example.com/fake/repo/actions/runs/1234",
-        "https://github.com/fake/repo/actions/runs/12x4",
-        "https://github.com/fake/repo/pull/5",
-        "--help",
-    ] {
-        assert!(f.core.failed_check_log(f.project.id, bad).is_err(), "{bad}");
-    }
 }

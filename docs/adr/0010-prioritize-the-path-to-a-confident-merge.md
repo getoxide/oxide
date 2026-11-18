@@ -1,6 +1,6 @@
 # Features are prioritized by the path to a confident merge
 
-> Partly superseded by [ADR-0014](0014-remove-the-diff-surface-and-the-verification-dossier.md): the Diff Surface and the Verification Dossier it describes no longer exist. The prioritisation rule below still stands.
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Oxide no longer drives agents, so it no longer optimizes the path from an agent Turn to a merge. (Earlier note: Partly superseded by [ADR-0014](0014-remove-the-diff-surface-and-the-verification-dossier.md): the Diff Surface and the Verification Dossier it describes no longer exist. The prioritisation rule below still stands.)
 
 Oxide is for developers who can write code themselves and have AI write it with a clear purpose: they know what the agent is producing, review it, and stay personally responsible for what enters `main`. A feature is prioritized by whether it shortens the path from a finished agent Turn to a confident merge. Generating a change is cheap; deciding whether it can be trusted is not, and that decision is where Oxide aims to save time. Running more agents in parallel is not the goal: other tools already sell that, and "GitHub integration" or "no VS Code" are no longer reasons to choose Oxide.
 

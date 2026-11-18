@@ -15,7 +15,6 @@ tar = "0.4"
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 crossbeam-channel = { workspace = true }
 ignore = "0.4.33"
-notify = "8"
 oxide-provider = { path = "../oxide-provider" }
 portable-pty = "0.9.0"
 rayon = "1.12.0"
@@ -24,7 +23,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tempfile = { workspace = true }
-toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 url = "2"
 
 [target.'cfg(unix)'.dependencies]

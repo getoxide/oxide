@@ -1,148 +1,58 @@
 //! Oxide Core: all application logic, with no dependency on Tauri.
 //! The App shell exposes [`Core`] to the webview; tests drive it headless.
 
-mod activity;
-mod agent_launch;
-pub mod agent_reporter;
-mod agent_status;
-mod agent_terminal;
-pub use agent_terminal::{AgentAttachment, TerminalIssue, TerminalLaunch};
-pub mod attachments;
-pub mod blind_review;
-mod board;
-mod checkpoint;
 mod clock;
-mod continuation;
-pub mod custom_agents;
 mod db;
 pub mod desktop_tools;
-mod detection_cache;
 mod discovery;
 mod error;
 mod files;
 mod git;
 mod git_command;
-mod git_diff;
 mod github;
 mod language_install;
 mod language_pins;
 mod language_server;
-mod line_comments;
 mod private;
-mod project_services;
 mod project_setup;
 mod redact;
-mod restore;
-mod review_ledger;
-mod rule_suggestions;
-mod settings;
-pub mod slash_catalog;
-mod storage_actor;
+mod system;
 mod terminal;
 mod terminal_completion;
-pub use terminal_completion::{TerminalCompletion, TerminalMatch};
-pub mod thread;
-pub use oxide_provider::claude::ClaudeCustomizations;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_provider::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
 pub use oxide_provider::sync::{LockExt, RwLockExt};
-mod thread_actor;
-mod usage;
-mod usage_poll;
-mod worktree;
+pub use terminal_completion::{TerminalCompletion, TerminalMatch};
 
-pub use activity::{Notification, NotificationKind, System};
-pub use blind_review::{
-    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, BlindReviewRun,
-    BlindReviewStatus, FindingDecision, OneShotRunner, PreparedBlindReview,
-};
-pub use board::{BoardCard, BoardEvent, PendingApproval};
-pub use continuation::{ContinuedThread, RECAP_MAX_CHARS};
+pub use clock::{Clock, ManualClock, SystemClock};
+pub use db::MIGRATIONS;
+pub use error::{Error, Result};
 pub use files::{FileContent, FileEntry};
-
-/// One Turn as the Restore dialog lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnPick {
-    pub turn_index: u32,
-    pub prompt: String,
-    /// Whether the Turn has Checkpoints; without them it has no diff.
-    pub checkpointed: bool,
-    /// When the Turn started; Oxide records no prompt for a terminal Thread, so this names it.
-    pub started_at: String,
-}
-pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
-pub use git_diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus};
+pub use git::FETCH_INTERVAL;
 pub use github::{
     CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueComment, IssueDetail,
     IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
     PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
     PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewThread, PullRequestReviewer, ReviewDecision, ReviewState, ReviewThreadComment,
+    PullRequestReviewer, ReviewDecision, ReviewState,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use line_comments::{CommentScope, CommentSide, LineComment};
-use oxide_provider::Provider as ProviderTrait;
-use oxide_provider::process::ProcessRegistry;
-pub use project_services::{
-    EARLY_FAILURE_GRACE, LOG_CAPACITY, ProjectService, ProjectServiceConflict, ProjectServiceEvent,
-    ProjectServiceEventKind, ProjectServiceLogLine, ProjectServiceStartOutcome,
-    ProjectServiceStatus, ProjectServiceStream, checked_local_url, detect_port, port_from_command,
-};
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use storage_actor::{NewItem, StorageHandle};
+pub use system::System;
 pub use terminal::TerminalSummary;
-use terminal::{TerminalSession, next_id};
-use thread_actor::ThreadActorHandle;
-pub use worktree::{DeleteOutcome, DispatchRequest};
 
+use oxide_provider::process::ProcessRegistry;
 use rusqlite::Connection;
 use serde::Serialize;
-
-pub use attachments::{
-    AttachmentError, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_PROMPT, PromptInput,
-};
-pub use clock::{Clock, ManualClock, PROVIDER_IDLE_TIMEOUT, SystemClock};
-pub use db::MIGRATIONS;
-pub use error::{Error, Result};
-pub use oxide_provider::{
-    ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
-    CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
-    SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
-};
-pub use restore::{
-    PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview,
-    START_STATE as RESTORE_START_STATE,
-};
-pub use review_ledger::{
-    FollowUpStatus, RECENT_ENTRIES, ReviewFollowUp, ReviewLedger, ReviewLedgerEntry, ReviewRevert,
-    ReviewRoundGroup, ReviewSizeBand, ReviewWorkKind,
-};
-pub use rule_suggestions::RuleSuggestion;
-use settings::SettingsStore;
-pub use settings::{
-    FieldError, PermissionMode, Provider, ProviderSettings, Providers, Settings, SettingsState,
-    Shortcuts,
-};
-pub use thread::{
-    ApprovalSnapshot, ItemSnapshot, SequencedThreadEvent, ThreadCapabilities, ThreadEvent,
-    ThreadSnapshot, ThreadStatus, ThreadSummary, TurnError, TurnPage, TurnSnapshot,
-    UnknownEventSnapshot,
-};
-pub use usage::{UsageLimitWindow, UsageLimits, UsagePoolLimits};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex};
+use system::NoSystem;
+use terminal::{TerminalSession, next_id};
 
 const DB_FILE: &str = "oxide.db";
 const PROCESSES_FILE: &str = "processes.json";
-
-/// How many of a Thread's most recent Turns it opens on; older Turns are paged
-/// in with [`Core::list_turns`].
-pub const SNAPSHOT_TURNS: u32 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectSummary {
@@ -174,57 +84,24 @@ fn build_project_summary((id, name, path, hidden, open): ProjectRow) -> ProjectS
     }
 }
 
-/// The Project and Thread Oxide reopens on launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Selection {
-    pub project_id: u32,
-    pub thread_id: Option<u32>,
-}
-
-/// How long quitting waits for interrupted Turns to wind down before killing their processes.
-const QUIT_INTERRUPT_GRACE: Duration = Duration::from_secs(2);
-
 pub struct Core {
     home: PathBuf,
     user_home: PathBuf,
     db: Mutex<Connection>,
-    settings: Arc<SettingsStore>,
-    _settings_watcher: notify::RecommendedWatcher,
-    storage: StorageHandle,
-    thread_actors: Mutex<HashMap<u32, ThreadActorHandle>>,
-    fake_providers: Mutex<HashMap<u32, Box<dyn ProviderTrait>>>,
-    real_time_ticker: AtomicBool,
-    clock: Mutex<Arc<dyn Clock>>,
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
-    /// The Agent terminal of each running or ended terminal Thread (ADR-0017).
-    agents: agent_terminal::Agents,
-    agent_search_path: Mutex<Option<Vec<PathBuf>>>,
-    /// The session reporter socket, listening once the first Codex Thread launches.
-    reporter: Mutex<Option<agent_reporter::ReporterServer>>,
-    /// The executable Codex runs as the reporter; Oxide itself unless a test replaces it.
-    reporter_executable: Mutex<Option<PathBuf>>,
     next_terminal_id: AtomicU32,
-    /// The Project each open terminal belongs to, to mark it acted upon on its first command.
+    /// The Project each open terminal belongs to, to mark it acted upon on its first command
+    /// and to end it with the Project.
     terminal_projects: Mutex<HashMap<u32, u32>>,
     /// Terminals whose Project has already been marked acted upon, so a keystroke does not
     /// write the database again.
-    acted_terminals: Mutex<std::collections::HashSet<u32>>,
-    project_services: Arc<project_services::ProjectServices>,
+    acted_terminals: Mutex<HashSet<u32>>,
     language_servers: language_server::LanguageServers,
-    dirty_editors: Mutex<std::collections::HashSet<String>>,
+    dirty_editors: Mutex<HashSet<String>>,
     git: git::GitState,
     gh: Arc<github::Gh>,
-    activity: Arc<activity::Activity>,
-    board: Arc<board::BoardHub>,
-    ledger: Arc<review_ledger::LedgerStore>,
-    usage: Arc<usage::UsageHub>,
-    usage_poller: Mutex<Option<usage_poll::PollerHandle>>,
-    model_catalogs: Mutex<HashMap<String, Vec<ModelInfo>>>,
-    slash_catalogs: Mutex<HashMap<String, Vec<SlashCommandInfo>>>,
-    detections: detection_cache::DetectionCache,
-    /// How a one-shot Provider run (Blind review) is launched; replaceable in tests.
-    one_shot_runner: Mutex<OneShotRunner>,
+    system: Mutex<Arc<dyn System>>,
 }
 
 impl Core {
@@ -252,103 +129,39 @@ impl Core {
         })?;
         git_command::set_home(&home);
         let db = db::open(&home.join(DB_FILE), migrations)?;
-        let (settings, _settings_watcher) = SettingsStore::open(&home)?;
-        // A crashed run leaves its Provider and shell groups behind; its Threads were mid-flight.
+        // A crashed run leaves its shell groups behind.
         let processes = Arc::new(ProcessRegistry::open(home.join(PROCESSES_FILE)));
         processes.reap_stale();
-        mark_unfinished_work_interrupted(&db)?;
         // The pieces above created their own files (database sidecars, the process list):
         // make sure none of them is looser than the rest of the home.
         private::prepare_home(&home).map_err(|source| Error::Io {
             path: home.clone(),
             source,
         })?;
-        let storage = StorageHandle::new(home.join(DB_FILE))?;
-        let board = Arc::new(board::BoardHub::new(home.join(DB_FILE)));
-        let usage = Arc::new(usage::UsageHub::new(home.join(DB_FILE)));
-        let ledger = Arc::new(review_ledger::LedgerStore::new(home.join(DB_FILE)));
-        let one_shot_runner: OneShotRunner = {
-            let processes = Arc::clone(&processes);
-            Arc::new(move |request| {
-                oxide_provider::oneshot::run_one_shot(request, Some(&processes))
-            })
-        };
-        let core = Self {
-            home: home.clone(),
+        Ok(Self {
+            home,
             user_home: std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_default(),
             db: Mutex::new(db),
-            settings,
-            _settings_watcher,
-            storage,
-            thread_actors: Mutex::new(HashMap::new()),
-            fake_providers: Mutex::new(HashMap::new()),
-            real_time_ticker: AtomicBool::new(true),
-            clock: Mutex::new(Arc::new(SystemClock)),
             processes,
             terminals: Mutex::new(HashMap::new()),
-            agents: Arc::default(),
-            agent_search_path: Mutex::new(None),
-            reporter: Mutex::new(None),
-            reporter_executable: Mutex::new(None),
             next_terminal_id: AtomicU32::new(1),
             terminal_projects: Mutex::new(HashMap::new()),
-            acted_terminals: Mutex::new(std::collections::HashSet::new()),
-            project_services: Arc::new(project_services::ProjectServices::new()),
+            acted_terminals: Mutex::new(HashSet::new()),
             language_servers: language_server::LanguageServers::default(),
-            dirty_editors: Mutex::new(std::collections::HashSet::new()),
+            dirty_editors: Mutex::new(HashSet::new()),
             git: git::GitState::default(),
             gh: Arc::new(github::Gh::default()),
-            activity: Arc::new(activity::Activity::new(Arc::clone(&board))),
-            board,
-            ledger,
-            usage,
-            usage_poller: Mutex::new(None),
-            model_catalogs: Mutex::new(HashMap::new()),
-            detections: detection_cache::DetectionCache::default(),
-            one_shot_runner: Mutex::new(one_shot_runner),
-            slash_catalogs: Mutex::new(
-                fs::read(home.join("cache/slash-commands/catalogs.json"))
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                    .unwrap_or_default(),
-            ),
-        };
-        core.remove_abandoned_attachments();
-        core.recover_interrupted_blind_reviews();
-        Ok(core)
+            system: Mutex::new(Arc::new(NoSystem)),
+        })
     }
 
-    pub fn set_real_time_ticker(&self, enabled: bool) {
-        self.real_time_ticker.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Replaces the clock idle reaping reads. Call before the first Thread is used.
-    pub fn set_clock(&self, clock: Arc<dyn Clock>) {
-        *self.clock.lock_recover() = clock;
-    }
-
-    /// Shuts every Provider and terminal down, escalating SIGTERM to SIGKILL, and returns once
+    /// Ends every shell and language server, escalating SIGTERM to SIGKILL, and returns once
     /// their processes are gone. Safe to call more than once; also runs when Core is dropped.
     pub fn shutdown(&self) {
-        if let Some(mut poller) = self.usage_poller.lock_recover().take() {
-            poller.stop();
-        }
         self.language_servers.shutdown();
-        let actors: Vec<_> = self
-            .thread_actors
-            .lock_recover()
-            .drain()
-            .map(|(_, actor)| actor)
-            .collect();
-        // Shut them down side by side: each may wait out the 2 s grace.
-        std::thread::scope(|scope| {
-            for actor in &actors {
-                scope.spawn(|| actor.shutdown());
-            }
-        });
         let terminals: Vec<_> = self
             .terminals
             .lock_recover()
@@ -358,75 +171,39 @@ impl Core {
         for session in terminals {
             session.close();
         }
-        self.close_agents();
-        self.project_services.shutdown();
+        self.terminal_projects.lock_recover().clear();
     }
 
-    /// Installs the operating-system side of Core's activity: the App Nap assertion
-    /// (held while any Turn is working), notifications and the Dock badge.
+    /// Installs the operating-system side of Core: opening links and revealing folders.
     pub fn set_system(&self, system: Arc<dyn System>) {
-        self.activity.set_system(system);
+        *self.system.lock_recover() = system;
     }
 
-    /// Tells Core whether the window is visible and focused. Notifications fire only when it is not.
-    pub fn set_window_active(&self, active: bool) {
-        self.activity.set_window_active(active);
+    fn system(&self) -> Arc<dyn System> {
+        Arc::clone(&self.system.lock_recover())
     }
 
-    /// How many Threads quitting would interrupt, when Oxide should ask first: some are
-    /// working or need input and the quit-confirmation Setting is on.
-    pub fn quit_confirmation(&self) -> Option<u32> {
-        let active = self.activity.active_count();
-        (active > 0 && self.settings().settings.confirm_quit).then_some(active)
-    }
-
-    /// Working Threads and pending approvals, independent of quit preferences.
-    pub fn active_thread_count(&self) -> u32 {
-        self.activity.active_count()
-    }
-
-    /// Turns the quit-confirmation Setting off ("don't ask again").
-    pub fn disable_quit_confirmation(&self) -> Result<()> {
-        let mut settings = self.settings().settings;
-        settings.confirm_quit = false;
-        self.save_settings(&settings)
-    }
-
-    /// Interrupts every running Turn, then stops every Provider and shell. Returns once their
-    /// processes are gone.
+    /// Ends every shell, then returns.
     pub fn quit(&self) {
-        let actors: Vec<_> = self
-            .thread_actors
-            .lock_recover()
-            .values()
-            .cloned()
-            .collect();
-        for actor in &actors {
-            diag::best_effort("interrupt", actor.interrupt());
-        }
-        // The Providers report the interruption asynchronously; give them a moment to.
-        let deadline = std::time::Instant::now() + QUIT_INTERRUPT_GRACE;
-        while self.activity.active_count() > 0 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
         self.shutdown();
     }
 
-    /// Remembers the Project and Thread the user is looking at, to reopen on next launch.
+    /// Remembers the Project the user is looking at, to reopen on next launch.
     /// Opening a Project this way also lists it in the sidebar.
-    pub fn remember_selection(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
+    pub fn remember_selection(&self, project_id: u32) -> Result<()> {
         self.set_project_open(project_id, true)?;
         let db = self.db.lock_recover();
         db.execute(
             "INSERT INTO app_state (key, value) VALUES ('selection', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [serde_json::to_string(&(project_id, thread_id)).unwrap_or_default()],
+            [serde_json::to_string(&(project_id, None::<u32>)).unwrap_or_default()],
         )?;
         Ok(())
     }
 
-    /// The Project and Thread last remembered, if they still exist.
-    pub fn last_selection(&self) -> Result<Option<Selection>> {
+    /// The Project last remembered, if it still exists. The stored value may carry a Thread id
+    /// from an older Oxide; it is ignored.
+    pub fn last_selection(&self) -> Result<Option<u32>> {
         let db = self.db.lock_recover();
         let stored: Option<String> = db
             .query_row(
@@ -435,7 +212,7 @@ impl Core {
                 |r| r.get(0),
             )
             .ok();
-        let Some((project_id, thread_id)) =
+        let Some((project_id, _)) =
             stored.and_then(|v| serde_json::from_str::<(u32, Option<u32>)>(&v).ok())
         else {
             return Ok(None);
@@ -445,43 +222,140 @@ impl Core {
             [project_id],
             |r| r.get(0),
         )?;
-        if !project_exists {
-            return Ok(None);
-        }
-        let thread_id = match thread_id {
-            Some(id) => db
-                .query_row(
-                    "SELECT EXISTS (SELECT 1 FROM threads WHERE id = ?1 AND project_id = ?2)",
-                    [id, project_id],
-                    |r| r.get::<_, bool>(0),
-                )?
-                .then_some(id),
-            None => None,
-        };
-        Ok(Some(Selection {
-            project_id,
-            thread_id,
-        }))
+        Ok(project_exists.then_some(project_id))
     }
 
     pub fn home(&self) -> &Path {
         &self.home
     }
 
-    /// The Settings in effect, plus any validation errors in `settings.json`.
-    pub fn settings(&self) -> SettingsState {
-        self.settings.get()
+    /// Shows the Project's folder in Finder.
+    pub fn reveal_in_finder(&self, project_id: u32) -> Result<()> {
+        let path = self.checkout_path(project_id)?;
+        self.system().reveal_in_finder(Path::new(&path));
+        Ok(())
     }
 
-    /// Writes `settings.json` (pretty-printed) and applies it.
-    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
-        self.settings.save(settings)
+    /// Lists the Project in the sidebar, or takes it out and ends its terminals; it stays known
+    /// either way, so the Project palette still finds it. Opening keeps the time it was first
+    /// opened.
+    pub fn set_project_open(&self, id: u32, open: bool) -> Result<()> {
+        {
+            let db = self.db.lock_recover();
+            if open {
+                db.execute(
+                    "UPDATE projects SET hidden = 0,
+                         opened_at = COALESCE(opened_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                     WHERE id = ?1",
+                    [id],
+                )?;
+            } else {
+                db.execute("UPDATE projects SET opened_at = NULL WHERE id = ?1", [id])?;
+            }
+        }
+        if !open {
+            self.close_project_terminals(id);
+        }
+        Ok(())
     }
 
-    /// Calls `f` whenever the Settings state changes, whether through
-    /// [`Core::save_settings`] or an edit of the file on disk.
-    pub fn subscribe_settings(&self, f: impl Fn(&SettingsState) + Send + Sync + 'static) {
-        self.settings.subscribe(Box::new(f));
+    fn close_project_terminals(&self, project_id: u32) {
+        let ids: Vec<u32> = self
+            .terminal_projects
+            .lock_recover()
+            .iter()
+            .filter(|(_, project)| **project == project_id)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            diag::best_effort("close project terminal", self.close_terminal(id));
+        }
+    }
+
+    /// Starts a shell with Command blocks in the Project's folder. Core owns the PTY process
+    /// until it is explicitly closed, its Project closes or Core shuts down.
+    pub fn start_block_terminal(&self, project_id: u32) -> Result<TerminalSummary> {
+        let cwd = self.checkout_path(project_id)?;
+        let id = next_id(&self.next_terminal_id);
+        let session = Arc::new(TerminalSession::start(
+            id,
+            &self.home,
+            Path::new(&cwd),
+            Arc::clone(&self.processes),
+            true,
+        )?);
+        let summary = session.summary.clone();
+        self.terminals.lock_recover().insert(id, session);
+        self.terminal_projects.lock_recover().insert(id, project_id);
+        Ok(summary)
+    }
+
+    /// Runs a command that changes the Project's files, serialized per checkout.
+    pub fn checkout_path(&self, project_id: u32) -> Result<String> {
+        let db = self.db.lock_recover();
+        Ok(db.query_row(
+            "SELECT path FROM projects WHERE id = ?1",
+            [project_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Every folder of an open Project.
+    fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
+        let db = self.db.lock_recover();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
+        for path in projects.query_map([], |r| r.get::<_, String>(0))? {
+            paths.push(PathBuf::from(path?));
+        }
+        Ok(paths)
+    }
+
+    /// Title, body and base prefilled for a new pull request of the Project's current branch.
+    pub fn pull_request_draft(&self, project_id: u32) -> Result<PullRequestDraft> {
+        let cwd = self.main_checkout(project_id)?;
+        github::pull_request_draft(&self.gh, &cwd)
+    }
+
+    /// Pushes the current branch of the Project's folder if needed, then opens a pull request
+    /// for it.
+    pub fn create_pull_request(
+        &self,
+        project_id: u32,
+        input: &PullRequestInput,
+    ) -> Result<PullRequest> {
+        let cwd = self.main_checkout(project_id)?;
+        self.git
+            .mutate(&cwd, || github::create_pull_request(&self.gh, &cwd, input))
+    }
+
+    pub fn close_terminal(&self, terminal_id: u32) -> Result<()> {
+        let session = self
+            .terminals
+            .lock_recover()
+            .remove(&terminal_id)
+            .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
+        self.terminal_projects.lock_recover().remove(&terminal_id);
+        self.acted_terminals.lock_recover().remove(&terminal_id);
+        session.close();
+        Ok(())
+    }
+
+    /// Merges a pull request with one of the methods its repository allows,
+    /// optionally deleting the branch. With `auto`, GitHub merges it later,
+    /// once the checks pass.
+    pub fn merge_pull_request(
+        &self,
+        project_id: u32,
+        number: u32,
+        method: MergeMethod,
+        delete_branch: bool,
+        auto: bool,
+    ) -> Result<()> {
+        let cwd = self.main_checkout(project_id)?;
+        self.git.mutate(&cwd, || {
+            github::merge_pull_request(&self.gh, &cwd, number, method, delete_branch, auto)
+        })
     }
 
     /// All Projects known to Oxide, hidden and missing ones included, most
@@ -619,23 +493,6 @@ impl Core {
         )?)
     }
 
-    fn mark_thread_project_acted_upon(&self, thread_id: u32) -> Result<()> {
-        let db = self.db.lock_recover();
-        db.execute(
-            "UPDATE projects SET acted_upon = 1
-             WHERE id = (SELECT project_id FROM threads WHERE id = ?1)",
-            [thread_id],
-        )?;
-        Ok(())
-    }
-
-    /// Shows the Project's checkout, or the Thread's, in Finder.
-    pub fn reveal_in_finder(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
-        let path = self.checkout_path(project_id, thread_id)?;
-        self.activity.system().reveal_in_finder(Path::new(&path));
-        Ok(())
-    }
-
     fn project(&self, id: u32) -> Result<ProjectSummary> {
         let row = {
             let db = self.db.lock_recover();
@@ -648,848 +505,26 @@ impl Core {
         Ok(build_project_summary(row))
     }
 
-    /// Lists the Project in the sidebar, or takes it out; it stays known either way, so
-    /// the Project palette still finds it. Opening keeps the time it was first opened.
-    pub fn set_project_open(&self, id: u32, open: bool) -> Result<()> {
-        let db = self.db.lock_recover();
-        if open {
-            db.execute(
-                "UPDATE projects SET hidden = 0,
-                     opened_at = COALESCE(opened_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                 WHERE id = ?1",
-                [id],
-            )?;
-        } else {
-            db.execute("UPDATE projects SET opened_at = NULL WHERE id = ?1", [id])?;
-            drop(db);
-            self.project_services.stop_project(id);
-        }
-        Ok(())
-    }
-
-    /// Whether chat Threads of this Project stay in the main checkout instead of
-    /// each getting its own worktree on its first prompt. Defaults to false.
-    pub(crate) fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
-        let db = self.db.lock_recover();
-        Ok(db.query_row(
-            "SELECT threads_in_main_checkout FROM projects WHERE id = ?1",
-            [project_id],
-            |r| Ok(r.get::<_, i64>(0)? != 0),
-        )?)
-    }
-
-    pub fn default_settings_for_provider(
-        &self,
-        provider: &str,
-    ) -> (Option<String>, Option<String>, PermissionMode) {
-        let settings = self.settings().settings;
-        match provider {
-            "claude" => (
-                settings.providers.claude.model,
-                settings.providers.claude.effort,
-                settings.providers.claude.permission_mode,
-            ),
-            "codex" => (
-                settings.providers.codex.model,
-                settings.providers.codex.effort,
-                settings.providers.codex.permission_mode,
-            ),
-            "agy" | "antigravity" => (
-                settings.providers.antigravity.model,
-                settings.providers.antigravity.effort,
-                settings.providers.antigravity.permission_mode,
-            ),
-            _ => (None, None, PermissionMode::AutoEdit),
-        }
-    }
-
-    pub fn default_permission_mode_for(&self, provider: &str) -> PermissionMode {
-        self.default_settings_for_provider(provider).2
-    }
-
-    pub fn create_thread(
-        &self,
-        project_id: u32,
-        provider: &str,
-        model: Option<String>,
-        effort: Option<String>,
-        permission_mode: impl Into<Option<PermissionMode>>,
-    ) -> Result<ThreadSummary> {
-        let (def_model, def_effort, def_perm) = self.default_settings_for_provider(provider);
-        let model = model.or(def_model);
-        let effort = effort.or(def_effort);
-        let permission_mode = permission_mode.into().unwrap_or(def_perm);
-        self.insert_thread(
-            project_id,
-            provider,
-            model.as_deref(),
-            effort.as_deref(),
-            permission_mode,
-            None,
-        )
-    }
-
-    /// Starts a new Thread that continues one whose Provider session is gone: same Project,
-    /// Provider, Model, Effort and permission mode, linked both ways, with a recap of the old
-    /// Transcript for the composer to prefill.
-    pub fn continue_thread(&self, thread_id: u32) -> Result<ContinuedThread> {
-        let old = self.storage.get_snapshot(thread_id, u32::MAX)?;
-        let t = &old.thread;
-        if !t.session_lost {
-            return Err(Error::Provider(
-                "only a Thread whose Provider session is gone can be continued".to_string(),
-            ));
-        }
-        if t.continued_in.is_some() {
-            return Err(Error::Provider(
-                "this Thread has already been continued".to_string(),
-            ));
-        }
-        let thread = self.insert_thread(
-            t.project_id,
-            &t.provider,
-            t.model.as_deref(),
-            t.effort.as_deref(),
-            t.permission_mode,
-            Some(thread_id),
-        )?;
-        Ok(ContinuedThread {
-            thread,
-            recap: continuation::build_recap(&old.turns),
-        })
-    }
-
-    fn insert_thread(
-        &self,
-        project_id: u32,
-        provider: &str,
-        model: Option<&str>,
-        effort: Option<&str>,
-        permission_mode: PermissionMode,
-        continued_from: Option<u32>,
-    ) -> Result<ThreadSummary> {
-        let db = self.db.lock_recover();
-        db.execute(
-            "INSERT INTO threads (project_id, provider, model, effort, permission_mode, status, continued_from) VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6)",
-            rusqlite::params![project_id, provider, model, effort, permission_mode.as_str(), continued_from],
-        )?;
-        let id = db.last_insert_rowid() as u32;
-        let thread = self.get_thread_by_id(&db, id)?;
-        drop(db);
-        self.board.publish(id);
-        Ok(thread)
-    }
-
-    pub fn set_thread_provider(&self, thread_id: u32, provider: &str) -> Result<ThreadSummary> {
-        let db = self.db.lock_recover();
-        let (turn_count, status_str): (u32, String) = db.query_row(
-            "SELECT (SELECT COUNT(*) FROM turns WHERE thread_id = ?1), status FROM threads WHERE id = ?1",
-            [thread_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        if turn_count > 0 || status_str == "working" {
-            return Err(Error::Provider(
-                "cannot switch provider after the first turn has started".into(),
-            ));
-        }
-
-        let (def_model, def_effort, def_perm) = self.default_settings_for_provider(provider);
-
-        db.execute(
-            "UPDATE threads SET provider = ?1, model = ?2, effort = ?3, permission_mode = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?5",
-            rusqlite::params![provider, def_model, def_effort, def_perm.as_str(), thread_id],
-        )?;
-        self.thread_actors.lock_recover().remove(&thread_id);
-        let thread = self.get_thread_by_id(&db, thread_id)?;
-        drop(db);
-        self.board.publish(thread_id);
-        Ok(thread)
-    }
-
-    fn collect_thread_attachments(db: &Connection, thread_id: u32) -> Result<Vec<PathBuf>> {
-        let mut stmt =
-            db.prepare("SELECT segments, attachments FROM turns WHERE thread_id = ?1")?;
-        let attachments = stmt
-            .query_map([thread_id], |r| {
-                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
-            })?
-            .filter_map(|row| row.ok())
-            .flat_map(|(segments, legacy)| attachments::stored_paths(segments.as_deref(), &legacy))
-            .collect();
-        Ok(attachments)
-    }
-
-    fn clear_thread_history_tx(tx: &rusqlite::Transaction<'_>, thread_id: u32) -> Result<()> {
-        for table in ["approvals", "unknown_events", "items"] {
-            tx.execute(
-                &format!(
-                    "DELETE FROM {table} WHERE turn_id IN (SELECT id FROM turns WHERE thread_id = ?1)"
-                ),
-                [thread_id],
-            )?;
-        }
-        tx.execute(
-            "DELETE FROM line_comments WHERE thread_id = ?1",
-            [thread_id],
-        )?;
-        tx.execute("DELETE FROM restores WHERE thread_id = ?1", [thread_id])?;
-        tx.execute("DELETE FROM turns WHERE thread_id = ?1", [thread_id])?;
-        Ok(())
-    }
-
-    /// Clears a Thread's Transcript and resets its Provider session in-place so the next prompt
-    /// starts a fresh conversation inside the same Thread.
-    pub fn clear_thread(&self, thread_id: u32) -> Result<ThreadSummary> {
-        let (_project_id, root, _branch, _worktree) = self.thread_checkouts(thread_id)?;
-        let actor = self.thread_actors.lock_recover().remove(&thread_id);
-        if let Some(actor) = actor {
-            actor.shutdown();
-        }
-        diag::best_effort("get_snapshot", self.storage.get_snapshot(thread_id, 0));
-
-        let (summary, attachments) = {
-            let db = self.db.lock_recover();
-            let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = db::write_transaction(&db)?;
-            Self::clear_thread_history_tx(&tx, thread_id)?;
-            tx.execute(
-                "UPDATE threads
-                 SET provider_session_id = NULL,
-                     session_lost = 0,
-                     title = NULL,
-                     status = 'completed',
-                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                 WHERE id = ?1",
-                [thread_id],
-            )?;
-            tx.commit()?;
-            (self.get_thread_by_id(&db, thread_id)?, attachments)
-        };
-
-        checkpoint::forget(&root, thread_id);
-        let store = self.attachment_store();
-        for path in &attachments {
-            store.remove_stored(path);
-        }
-        self.board.publish(thread_id);
-        Ok(summary)
-    }
-
-    /// Removes a Thread's Transcript, Approvals, attachments and Checkpoints, and the Thread
-    /// itself. The Thread's actor must already be stopped. Threads that continued it or were
-    /// continued by it simply lose the link.
-    pub(crate) fn remove_thread_records(
-        &self,
-        thread_id: u32,
-        checkpoint_root: &Path,
-    ) -> Result<()> {
-        // The storage actor may still hold writes for this Thread: let them land first.
-        diag::best_effort("get_snapshot", self.storage.get_snapshot(thread_id, 0));
-
-        let (project_id, attachments) = {
-            let db = self.db.lock_recover();
-            let project_id: u32 = db.query_row(
-                "SELECT project_id FROM threads WHERE id = ?1",
-                [thread_id],
-                |r| r.get(0),
-            )?;
-            let attachments = Self::collect_thread_attachments(&db, thread_id)?;
-            let tx = db::write_transaction(&db)?;
-            Self::clear_thread_history_tx(&tx, thread_id)?;
-            // A Blind review's findings die with the review or with the change it reviewed.
-            tx.execute(
-                "DELETE FROM blind_review_findings WHERE review_id IN
-                 (SELECT id FROM blind_reviews WHERE thread_id = ?1 OR review_thread_id = ?1)",
-                [thread_id],
-            )?;
-            tx.execute(
-                "DELETE FROM blind_reviews WHERE thread_id = ?1 OR review_thread_id = ?1",
-                [thread_id],
-            )?;
-            // A review Thread whose change was deleted loses the link, not its own history.
-            tx.execute(
-                "UPDATE threads SET blind_review_of = NULL WHERE blind_review_of = ?1",
-                [thread_id],
-            )?;
-            tx.execute(
-                "UPDATE threads SET continued_from = NULL WHERE continued_from = ?1",
-                [thread_id],
-            )?;
-            tx.execute("DELETE FROM threads WHERE id = ?1", [thread_id])?;
-            tx.commit()?;
-            (project_id, attachments)
-        };
-
-        checkpoint::forget(checkpoint_root, thread_id);
-        let store = self.attachment_store();
-        for path in &attachments {
-            store.remove_stored(path);
-        }
-        self.board.publish_deleted(project_id, thread_id);
-        Ok(())
-    }
-
-    pub fn set_thread_permission_mode(&self, thread_id: u32, mode: PermissionMode) -> Result<()> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.set_permission_mode(mode)
-    }
-
-    pub fn respond_to_approval(
-        &self,
-        thread_id: u32,
-        approval_id: &str,
-        decision: ApprovalDecision,
-    ) -> Result<()> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.respond_to_approval(approval_id.to_string(), decision)
-    }
-
-    pub fn detect_provider(&self, provider: &str) -> Detection {
-        self.detections
-            .get_or_detect(provider, || self.detect_provider_uncached(provider))
-    }
-
-    fn detect_provider_uncached(&self, provider: &str) -> Detection {
-        let det = match provider {
-            "claude" => oxide_provider::claude::ClaudeCodeProvider::new()
-                .detect()
-                .unwrap_or(Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                }),
-            "codex" => oxide_provider::codex::CodexProvider::new()
-                .detect()
-                .unwrap_or(Detection {
-                    available: false,
-                    installed: false,
-                    version: None,
-                    authenticated: false,
-                    warning: None,
-                }),
-            "agy" | "antigravity" => {
-                let (det, models) = oxide_provider::agy::AgyProvider::new()
-                    .detect_with_models()
-                    .unwrap_or((
-                        Detection {
-                            available: false,
-                            installed: false,
-                            version: None,
-                            authenticated: false,
-                            warning: None,
-                        },
-                        None,
-                    ));
-                if let Some(models) = models.filter(|m| !m.is_empty()) {
-                    self.model_catalogs
-                        .lock_recover()
-                        .insert(provider.to_string(), models);
-                }
-                det
-            }
-            "fake" => Detection {
-                available: true,
-                installed: true,
-                version: Some("0.1.0-fake".into()),
-                authenticated: true,
-                warning: None,
-            },
-            _ => Detection {
-                available: false,
-                installed: false,
-                version: None,
-                authenticated: false,
-                warning: Some(format!("Unknown provider '{provider}'")),
-            },
-        };
-        if det.available || det.installed {
-            diag::best_effort("get_model_catalog", self.get_model_catalog(provider, false));
-        }
-        det
-    }
-
-    pub fn get_provider_capabilities(&self, provider: &str) -> ProviderCapabilities {
-        match provider {
-            "claude" => {
-                let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
-                claude.set_user_customizations(self.settings().settings.claude_customizations);
-                claude.capabilities()
-            }
-            "codex" => oxide_provider::codex::CodexProvider::new().capabilities(),
-            "agy" | "antigravity" => oxide_provider::agy::AgyProvider::new().capabilities(),
-            _ => ProviderCapabilities {
-                supported_permission_modes: vec![
-                    PermissionMode::Ask,
-                    PermissionMode::AutoEdit,
-                    PermissionMode::FullAccess,
-                ],
-                interactive_approvals: true,
-                supports_reasoning: true,
-                native_attachment_kinds: Vec::new(),
-                mid_thread_model_switch: true,
-                reports_usage_limits: false,
-            },
-        }
-    }
-
-    pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
-        if !refresh {
-            let cache = self.model_catalogs.lock_recover();
-            if let Some(models) = cache.get(provider) {
-                return Ok(models.clone());
-            }
-        }
-
-        let models = match provider {
-            "claude" => {
-                let p = oxide_provider::claude::ClaudeCodeProvider::new();
-                ProviderTrait::models(&p).unwrap_or_default()
-            }
-            "codex" => {
-                let p = oxide_provider::codex::CodexProvider::new();
-                ProviderTrait::models(&p).unwrap_or_default()
-            }
-            "agy" | "antigravity" => {
-                let p = oxide_provider::agy::AgyProvider::new();
-                ProviderTrait::models(&p).unwrap_or_default()
-            }
-            _ => {
-                let fake = oxide_provider::FakeProvider::default();
-                ProviderTrait::models(&fake).unwrap_or_default()
-            }
-        };
-
-        // An empty catalog means the Provider could not be asked; keep it out of the cache so the
-        // next call tries again.
-        if !models.is_empty() {
-            self.model_catalogs
-                .lock_recover()
-                .insert(provider.to_string(), models.clone());
-        }
-        Ok(models)
-    }
-
-    pub fn get_favourite_models(&self) -> Result<Vec<String>> {
-        let db = self.db.lock_recover();
-        let res: std::result::Result<String, rusqlite::Error> = db.query_row(
-            "SELECT value FROM app_state WHERE key = 'favourite_models'",
-            [],
-            |r| r.get(0),
-        );
-        match res {
-            Ok(json_str) => Ok(serde_json::from_str(&json_str).unwrap_or_default()),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(vec![]),
-            Err(e) => Err(Error::from(e)),
-        }
-    }
-
-    pub fn set_favourite_models(&self, favourites: &[String]) -> Result<()> {
-        let db = self.db.lock_recover();
-        let json_str =
-            serde_json::to_string(favourites).map_err(|e| Error::Provider(e.to_string()))?;
-        db.execute(
-            "INSERT INTO app_state (key, value) VALUES ('favourite_models', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            rusqlite::params![json_str],
-        )?;
-        Ok(())
-    }
-
-    pub fn set_thread_model_and_effort(
-        &self,
-        thread_id: u32,
-        model: Option<String>,
-        effort: Option<String>,
-    ) -> Result<()> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.set_model_and_effort(model, effort)
-    }
-
-    pub fn list_threads(&self, project_id: u32) -> Result<Vec<ThreadSummary>> {
-        let db = self.db.lock_recover();
-        let mut stmt = db.prepare(&format!(
-            "SELECT {} FROM threads WHERE project_id = ?1 ORDER BY id DESC",
-            thread::THREAD_COLUMNS
-        ))?;
-        let rows = stmt.query_map([project_id], thread::parse_thread_summary)?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
-    }
-
-    fn get_thread_by_id(&self, db: &Connection, id: u32) -> Result<ThreadSummary> {
-        db.query_row(
-            &format!(
-                "SELECT {} FROM threads WHERE id = ?1",
-                thread::THREAD_COLUMNS
-            ),
-            [id],
-            thread::parse_thread_summary,
-        )
-        .map_err(Into::into)
-    }
-
-    pub fn rename_thread(&self, thread_id: u32, title: &str) -> Result<()> {
-        let db = self.db.lock_recover();
-        db.execute(
-            "UPDATE threads SET title = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
-            rusqlite::params![title, thread_id],
-        )?;
-        drop(db);
-        if let Some(actor) = self.thread_actors.lock_recover().get(&thread_id) {
-            actor.rename(title.to_string());
-        }
-        self.board.publish(thread_id);
-        Ok(())
-    }
-
-    pub fn register_fake_provider(&self, thread_id: u32, provider: impl ProviderTrait) {
-        self.fake_providers
-            .lock_recover()
-            .insert(thread_id, Box::new(provider));
-    }
-
-    pub fn get_or_create_thread_actor(&self, thread_id: u32) -> Result<ThreadActorHandle> {
-        let mut actors = self.thread_actors.lock_recover();
-        if let Some(actor) = actors.get(&thread_id) {
-            return Ok(actor.clone());
-        }
-
-        let snapshot = self.storage.get_snapshot(thread_id, 0)?;
-        let (project_id, project_path) = {
-            let db = self.db.lock_recover();
-            let row: (u32, String) = db.query_row(
-                "SELECT p.id, COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
-                [thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            (row.0, PathBuf::from(row.1))
-        };
-
-        let provider: Box<dyn ProviderTrait> =
-            if let Some(p) = self.fake_providers.lock_recover().remove(&thread_id) {
-                p
-            } else if snapshot.thread.provider == "claude" {
-                if !self.detect_provider("claude").installed {
-                    return Err(Error::Provider("Claude Code is not installed".to_string()));
-                }
-                let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
-                claude.set_registry(Arc::clone(&self.processes));
-                claude.set_user_customizations(self.settings().settings.claude_customizations);
-                Box::new(claude)
-            } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-                if !self.detect_provider(&snapshot.thread.provider).installed {
-                    return Err(Error::Provider(
-                        "Antigravity CLI is not installed".to_string(),
-                    ));
-                }
-                let mut agy = oxide_provider::agy::AgyProvider::new();
-                agy.set_registry(Arc::clone(&self.processes));
-                Box::new(agy)
-            } else if snapshot.thread.provider == "codex" {
-                if !self.detect_provider("codex").installed {
-                    return Err(Error::Provider("Codex is not installed".to_string()));
-                }
-                Box::new(oxide_provider::codex::CodexProvider::new())
-            } else {
-                Box::new(oxide_provider::FakeProvider::scripted())
-            };
-
-        let mut provider = provider;
-        provider.allow_attachments_dir(&self.attachments_dir());
-        let real_time = self.real_time_ticker.load(Ordering::Relaxed);
-        let actor = ThreadActorHandle::new(
-            thread_id,
-            project_path,
-            provider,
-            self.storage.clone(),
-            real_time,
-            self.clock.lock_recover().clone(),
-            usage::ActorServices {
-                activity: Arc::clone(&self.activity),
-                usage: Arc::clone(&self.usage),
-                provider: snapshot.thread.provider,
-                project_id,
-                project_services: Arc::clone(&self.project_services),
-                processes: Arc::clone(&self.processes),
-            },
-        )?;
-
-        actors.insert(thread_id, actor.clone());
-        Ok(actor)
-    }
-
-    pub fn send_prompt(&self, thread_id: u32, prompt: &str) -> Result<()> {
-        self.send_prompt_segments(
-            thread_id,
-            &[PromptInput::Text {
-                text: prompt.to_string(),
-            }],
-        )
-    }
-
-    /// Sends a prompt made of text and stored Attachments, in the order given. Fails before the
-    /// Turn starts if an Attachment is missing, there are too many, or the Provider can't take
-    /// them.
-    pub fn send_prompt_segments(&self, thread_id: u32, input: &[PromptInput]) -> Result<()> {
-        let segments = self.attachment_store().resolve(input)?;
-        self.mark_thread_project_acted_upon(thread_id)?;
-        // Giving a chat Thread its own worktree (and running the Setup command) happens on its
-        // first prompt; a failed Setup means no Turn is started.
-        let start_turn = self.ensure_worktree(thread_id)?;
-        if !start_turn {
-            return Ok(());
-        }
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.send_prompt(segments)
-    }
-
-    /// The catalog for a Project before a Thread exists.
-    pub fn list_slash_commands(
-        &self,
-        provider: &str,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<Vec<SlashCommandInfo>> {
-        self.thread_slash_commands(provider, project_id, thread_id, true)
-    }
-
-    /// Ask the Provider in the same directory used for the Thread's Turns.
-    pub fn thread_slash_commands(
-        &self,
-        provider: &str,
-        project_id: u32,
-        thread_id: Option<u32>,
-        refresh: bool,
-    ) -> Result<Vec<SlashCommandInfo>> {
-        let working_dir = PathBuf::from(self.checkout_path(project_id, thread_id)?);
-        let customizations = self.settings().settings.claude_customizations;
-
-        let key = serde_json::to_string(&(provider, format!("{customizations:?}"), &working_dir))
-            .map_err(|e| Error::Provider(e.to_string()))?;
-        let cached = self.slash_catalogs.lock_recover().get(&key).cloned();
-        if !refresh {
-            return Ok(cached
-                .map(|catalog| {
-                    slash_catalog::merge(
-                        catalog
-                            .into_iter()
-                            .filter(|c| c.route != SlashRoute::Oxide)
-                            .collect(),
-                    )
-                })
-                .unwrap_or_else(|| slash_catalog::merge(Vec::new())));
-        }
-
-        let reported = match provider {
-            "claude" => {
-                let mut p = oxide_provider::claude::ClaudeCodeProvider::new();
-                p.set_user_customizations(customizations);
-                ProviderTrait::slash_commands(&p, &working_dir)
-            }
-            "codex" => ProviderTrait::slash_commands(
-                &oxide_provider::codex::CodexProvider::new(),
-                &working_dir,
-            ),
-            "agy" | "antigravity" => ProviderTrait::slash_commands(
-                &oxide_provider::agy::AgyProvider::new(),
-                &working_dir,
-            ),
-            _ => Ok(Vec::new()),
-        };
-
-        match reported {
-            Ok(commands) => {
-                let catalog = slash_catalog::merge(commands);
-                let bytes = {
-                    let mut catalogs = self.slash_catalogs.lock_recover();
-                    catalogs.insert(key, catalog.clone());
-                    serde_json::to_vec(&*catalogs).map_err(|e| Error::Provider(e.to_string()))?
-                };
-                let folder = self.home.join("cache/slash-commands");
-                fs::create_dir_all(&folder).map_err(|source| Error::Io {
-                    path: folder.clone(),
-                    source,
-                })?;
-                let path = folder.join("catalogs.json");
-                private::write(&path, bytes).map_err(|source| Error::Io { path, source })?;
-                Ok(catalog)
-            }
-            Err(error) => Err(Error::Provider(format!(
-                "Could not refresh Slash commands: {error}"
-            ))),
-        }
-    }
-
-    fn attachments_dir(&self) -> PathBuf {
-        self.home.join("attachments")
-    }
-
-    /// Copies the file at `path` into Attachment storage (drag & drop, file dialog).
-    pub fn attach_path(&self, path: &Path) -> Result<Attachment> {
-        self.attachment_store().attach_path(path)
-    }
-
-    /// Stores pasted bytes as an Attachment, named `name` or, if none, after what they are.
-    pub fn attach_bytes(&self, name: Option<&str>, bytes: &[u8]) -> Result<Attachment> {
-        self.attachment_store().attach_bytes(name, bytes)
-    }
-
-    /// Forgets an Attachment the user removed from a prompt before sending it.
-    pub fn discard_attachment(&self, id: &str) {
-        self.attachment_store().remove(id);
-    }
-
-    fn attachment_store(&self) -> attachments::AttachmentStore {
-        attachments::AttachmentStore::new(self.attachments_dir())
-    }
-
-    /// Removes stored Attachments a day old or more that no Turn refers to.
-    fn remove_abandoned_attachments(&self) {
-        let referenced: std::collections::HashSet<String> = {
-            let db = self.db.lock_recover();
-            let Ok(mut stmt) = db.prepare("SELECT segments, attachments FROM turns") else {
-                return;
-            };
-            let Ok(rows) = stmt.query_map([], |r| {
-                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
-            }) else {
-                return;
-            };
-            rows.filter_map(|row| row.ok())
-                .flat_map(|(segments, legacy)| {
-                    attachments::stored_paths(segments.as_deref(), &legacy)
-                })
-                .filter_map(|path| attachments::id_of_path(&self.attachments_dir(), &path))
-                .collect()
-        };
-        self.attachment_store()
-            .remove_abandoned(|id| referenced.contains(id));
-    }
-    pub fn interrupt_thread(&self, thread_id: u32) -> Result<()> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.interrupt()
-    }
-
-    /// The Project's Thread Board: a card per Thread, newest activity first, and the changes
-    /// that follow. Derived from Thread rows; the Board stores nothing of its own.
-    pub fn subscribe_board(
-        &self,
-        project_id: u32,
-    ) -> Result<(Vec<BoardCard>, crossbeam_channel::Receiver<BoardEvent>)> {
-        self.board.subscribe(project_id)
-    }
-
-    /// The last Usage limits Oxide saw for a Provider, shared by all its Threads.
-    pub fn usage_limits(&self, provider: &str) -> Option<UsageLimits> {
-        self.usage.get(provider)
-    }
-
-    /// Starts polling provider usage limits in the background (Claude, Codex, Antigravity).
-    /// Safe to call multiple times (only one poller is spawned).
-    pub fn start_usage_poller(&self) {
-        let mut poller = self.usage_poller.lock_recover();
-        if poller.is_some() {
-            return;
-        }
-        *poller = Some(usage_poll::spawn(
-            Arc::clone(&self.usage),
-            self.user_home.clone(),
-        ));
-    }
-
-    /// The current Usage limits of a Provider and the updates that follow.
-    pub fn subscribe_usage_limits(
-        &self,
-        provider: &str,
-    ) -> (
-        Option<UsageLimits>,
-        crossbeam_channel::Receiver<UsageLimits>,
-    ) {
-        self.usage.subscribe(provider)
-    }
-
-    pub fn subscribe_thread(
-        &self,
-        thread_id: u32,
-    ) -> Result<(
-        ThreadSnapshot,
-        crossbeam_channel::Receiver<SequencedThreadEvent>,
-    )> {
-        let actor = self.get_or_create_thread_actor(thread_id)?;
-        actor.subscribe()
-    }
-
-    /// Starts a shell PTY in the Project's checkout. A terminal actor owns the
-    /// PTY process until it is explicitly closed or Core shuts down.
-    pub fn start_terminal(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<TerminalSummary> {
-        self.start_terminal_mode(project_id, thread_id, false)
-    }
-
-    pub fn start_block_terminal(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<TerminalSummary> {
-        self.start_terminal_mode(project_id, thread_id, true)
-    }
-
-    fn start_terminal_mode(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        blocks: bool,
-    ) -> Result<TerminalSummary> {
-        let cwd = self.checkout_path(project_id, thread_id)?;
-        let id = next_id(&self.next_terminal_id);
-        let session = Arc::new(TerminalSession::start(
-            id,
-            &self.home,
-            Path::new(&cwd),
-            Arc::clone(&self.processes),
-            blocks,
-        )?);
-        let summary = session.summary.clone();
-        self.terminals.lock_recover().insert(id, session);
-        self.terminal_projects.lock_recover().insert(id, project_id);
-        Ok(summary)
-    }
-
-    /// The children of one directory of a Thread's checkout (`""` is the
+    /// The children of one directory of the Project's folder (`""` is the
     /// root), without `.git` or gitignored entries.
-    pub fn list_dir(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        path: &str,
-    ) -> Result<Vec<FileEntry>> {
-        files::list_dir(Path::new(&self.checkout_path(project_id, thread_id)?), path)
+    pub fn list_dir(&self, project_id: u32, path: &str) -> Result<Vec<FileEntry>> {
+        files::list_dir(Path::new(&self.checkout_path(project_id)?), path)
     }
 
-    /// A file of a Thread's checkout, read by Core so the webview never
+    /// A file of the Project's folder, read by Core so the webview never
     /// touches the filesystem. Capped at 1 MiB.
-    pub fn read_file(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        path: &str,
-    ) -> Result<FileContent> {
-        files::read_file(Path::new(&self.checkout_path(project_id, thread_id)?), path)
+    pub fn read_file(&self, project_id: u32, path: &str) -> Result<FileContent> {
+        files::read_file(Path::new(&self.checkout_path(project_id)?), path)
     }
 
     pub fn write_file(
         &self,
         project_id: u32,
-        thread_id: Option<u32>,
         path: &str,
         expected: &str,
         content: &str,
     ) -> Result<()> {
-        let root = PathBuf::from(self.checkout_path(project_id, thread_id)?);
+        let root = PathBuf::from(self.checkout_path(project_id)?);
         self.git
             .mutate(&root, || files::write_file(&root, path, expected, content))
     }
@@ -1507,20 +542,17 @@ impl Core {
             .install(&self.home, language, progress)
     }
 
-    pub fn create_file(&self, project_id: u32, thread_id: Option<u32>, path: &str) -> Result<()> {
-        files::create_file(Path::new(&self.checkout_path(project_id, thread_id)?), path)
+    pub fn create_file(&self, project_id: u32, path: &str) -> Result<()> {
+        files::create_file(Path::new(&self.checkout_path(project_id)?), path)
     }
-    pub fn find_files(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        query: &str,
-    ) -> Result<Vec<String>> {
+
+    pub fn find_files(&self, project_id: u32, query: &str) -> Result<Vec<String>> {
         Ok(files::find_files(
-            Path::new(&self.checkout_path(project_id, thread_id)?),
+            Path::new(&self.checkout_path(project_id)?),
             query,
         ))
     }
+
     pub fn set_editor_dirty(&self, id: String, dirty: bool) {
         let mut editors = self.dirty_editors.lock_recover();
         if dirty {
@@ -1529,391 +561,27 @@ impl Core {
             editors.remove(&id);
         }
     }
+
     pub fn dirty_editor_count(&self) -> u32 {
         self.dirty_editors.lock_recover().len() as u32
-    }
-
-    pub fn configure_language_server(
-        &self,
-        language: &str,
-        config: LanguageServerConfig,
-    ) -> Result<()> {
-        self.language_servers
-            .configure(&self.home, language, config)
     }
 
     pub fn start_language_server(
         &self,
         project_id: u32,
-        thread_id: Option<u32>,
         language: &str,
     ) -> Result<(LanguageServerSummary, crossbeam_channel::Receiver<String>)> {
-        let root = PathBuf::from(self.checkout_path(project_id, thread_id)?);
+        let root = PathBuf::from(self.checkout_path(project_id)?);
         self.language_servers
             .start(&self.home, &root, language, Arc::clone(&self.processes))
     }
+
     pub fn language_server_message(&self, id: u32, message: &str) -> Result<()> {
         self.language_servers.send(id, message)
     }
+
     pub fn stop_language_server(&self, id: u32) {
         self.language_servers.stop(id);
-    }
-
-    /// Branch, ahead/behind and uncommitted-change counts of the checkout a Thread works in
-    /// (`None`: the Project's main one).
-    pub fn git_status_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitStatus> {
-        let target = self.git_target(project_id, thread_id)?;
-        let mut status = git::status(&target.root)?;
-        status.picker_disabled_reason = self.checkout_blocked_reason(&target)?;
-        Ok(status)
-    }
-
-    /// The changes in the checkout of a Thread (`None`: the Project's main one) in one scope,
-    /// straight from Git.
-    pub fn diff_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        scope: DiffScope,
-    ) -> Result<Diff> {
-        git_diff::diff(&self.git_target(project_id, thread_id)?.root, scope)
-    }
-
-    /// What the Thread's latest Turn changed: the diff between its two Checkpoints; empty before the first.
-    pub(crate) fn latest_turn_diff(&self, thread_id: u32) -> Result<Diff> {
-        let snapshot = self.storage.get_snapshot(thread_id, 0)?;
-        let Some(latest) = snapshot.turn_count.checked_sub(1) else {
-            return Ok(Diff {
-                base: None,
-                files: Vec::new(),
-            });
-        };
-        let cwd = PathBuf::from(self.checkout_path(snapshot.thread.project_id, Some(thread_id))?);
-        let files = match checkpoint::turn_revs(&cwd, thread_id, latest)? {
-            Some((start, end)) => git_diff::diff_against(&cwd, &[&start, &end])?,
-            None => Vec::new(),
-        };
-        Ok(Diff { base: None, files })
-    }
-
-    /// Every Turn of the Thread by position and prompt, for the Restore dialog.
-    pub fn turn_picks(&self, thread_id: u32) -> Result<Vec<TurnPick>> {
-        let project_id = self.storage.get_snapshot(thread_id, 0)?.thread.project_id;
-        let cwd = PathBuf::from(self.checkout_path(project_id, Some(thread_id))?);
-        let page = self.storage.list_turns(thread_id, 0, u32::MAX)?;
-        Ok(page
-            .turns
-            .into_iter()
-            .map(|turn| TurnPick {
-                turn_index: turn.turn_index,
-                checkpointed: checkpoint::has_start(&cwd, thread_id, turn.turn_index),
-                started_at: turn.started_at,
-                prompt: turn.prompt,
-            })
-            .collect())
-    }
-
-    /// What restoring the Thread's files to how they were before `turn_index` would change.
-    pub fn restore_preview(&self, thread_id: u32, turn_index: u32) -> Result<RestorePreview> {
-        self.preview_to(thread_id, Some(turn_index))
-    }
-
-    /// What restoring the Thread's files to its starting state would change.
-    pub fn restore_start_preview(&self, thread_id: u32) -> Result<RestorePreview> {
-        self.preview_to(thread_id, None)
-    }
-
-    /// Whether the Thread has a starting state to go back to.
-    pub fn start_state_available(&self, thread_id: u32) -> bool {
-        self.thread_target(thread_id)
-            .is_ok_and(|target| checkpoint::has_thread_start(&target.root, thread_id))
-    }
-
-    /// Puts the Thread's files back to how they were when it started.
-    pub fn restore_to_start(&self, thread_id: u32) -> Result<RestoreOutcome> {
-        self.restore_to(thread_id, None)
-    }
-
-    fn preview_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestorePreview> {
-        let target = self.thread_target(thread_id)?;
-        self.restore_refused(thread_id, &target)?;
-        let source = self.restore_source(&target.root, thread_id, turn_index)?;
-        let turn_index = turn_index.unwrap_or(restore::START_STATE);
-        let files = restore::plan(&target.root, &source)?;
-        Ok(RestorePreview { turn_index, files })
-    }
-
-    /// Puts the Thread's files back to how they were before `turn_index`. A Checkpoint of
-    /// the files is taken first, so the restore can be undone.
-    pub fn restore_turn(&self, thread_id: u32, turn_index: u32) -> Result<RestoreOutcome> {
-        self.restore_to(thread_id, Some(turn_index))
-    }
-
-    fn restore_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestoreOutcome> {
-        let target = self.thread_target(thread_id)?;
-        self.restore_refused(thread_id, &target)?;
-        let source = self.restore_source(&target.root, thread_id, turn_index)?;
-        let turn_index = turn_index.unwrap_or(restore::START_STATE);
-        // The files are written under the checkout's lock, like every other change to
-        // it: the plan, the safety Checkpoint and the restore happen together.
-        let (safety, files) = self.git.mutate(&target.root, || {
-            let files = restore::plan(&target.root, &source)?;
-            // The safety Checkpoint comes first: it is what the undo returns to.
-            let safety = restore::take_safety(&target.root, thread_id)?;
-            restore::apply(&target.root, &source, &files)?;
-            Ok((safety, files))
-        })?;
-        // The restore is kept only once it happened: one that failed is not undoable.
-        self.record_restore(thread_id, turn_index, &safety, &files)?;
-        self.note_restore(thread_id, turn_index, &files, false)?;
-        Ok(RestoreOutcome {
-            turn_index,
-            files,
-            undone: false,
-        })
-    }
-
-    /// The restore that can still be undone, if any.
-    pub fn pending_restore(&self, thread_id: u32) -> Result<Option<PendingRestore>> {
-        Ok(self
-            .latest_restore(thread_id)?
-            .map(|record| PendingRestore {
-                turn_index: record.turn_index,
-                files: record.files,
-            }))
-    }
-
-    /// Undoes the Thread's latest restore, putting the files it changed back to the
-    /// Checkpoint the restore took. Work done after the restore stays.
-    pub fn undo_restore(&self, thread_id: u32) -> Result<RestoreOutcome> {
-        let target = self.thread_target(thread_id)?;
-        self.restore_refused(thread_id, &target)?;
-        let Some(record) = self.latest_restore(thread_id)? else {
-            return Err(Error::Git("There is no restore to undo.".into()));
-        };
-        let source = checkpoint::tree_of(&target.root, &record.safety_ref)?;
-        let files = self.git.mutate(&target.root, || {
-            restore::undo(&target.root, &source, &record.files)
-        })?;
-        self.mark_restore_undone(thread_id)?;
-        self.note_restore(thread_id, record.turn_index, &files, true)?;
-        Ok(RestoreOutcome {
-            turn_index: record.turn_index,
-            files,
-            undone: true,
-        })
-    }
-
-    /// Tells a chat Thread about a restore: a marker in its Transcript and a notice for the
-    /// agent's next prompt. A terminal Thread has neither, since Oxide sees none of its prompts.
-    fn note_restore(
-        &self,
-        thread_id: u32,
-        turn_index: u32,
-        files: &[RestoreFile],
-        undone: bool,
-    ) -> Result<()> {
-        if self.is_terminal_thread(thread_id) {
-            return Ok(());
-        }
-        self.record_restore_in_transcript(thread_id, turn_index, files, undone)?;
-        self.storage
-            .set_restore_notice(thread_id, restore::notice(turn_index, files, undone))?;
-        Ok(())
-    }
-
-    /// The tree a restore goes back to: a Turn's start Checkpoint, or the Thread's starting state.
-    fn restore_source(
-        &self,
-        cwd: &Path,
-        thread_id: u32,
-        turn_index: Option<u32>,
-    ) -> Result<String> {
-        match turn_index {
-            Some(turn_index) => self.turn_checkpoint_tree(cwd, thread_id, turn_index),
-            None if checkpoint::has_thread_start(cwd, thread_id) => {
-                checkpoint::thread_start_tree(cwd, thread_id)
-            }
-            None => Err(Error::Git(
-                "This Thread has no starting state to restore to.".into(),
-            )),
-        }
-    }
-
-    /// Writes the mark of a restore into the Transcript, at the end of the Thread's last
-    /// Turn: a restore happens between Turns, not inside the one it restores to.
-    fn record_restore_in_transcript(
-        &self,
-        thread_id: u32,
-        restored_to: u32,
-        files: &[RestoreFile],
-        undone: bool,
-    ) -> Result<()> {
-        let (turn_id, item_index) = {
-            let db = self.db.lock_recover();
-            let turn_id: u32 = db.query_row(
-                "SELECT id FROM turns WHERE thread_id = ?1 ORDER BY turn_index DESC LIMIT 1",
-                [thread_id],
-                |r| r.get(0),
-            )?;
-            let item_index: i64 = db.query_row(
-                "SELECT COALESCE(MAX(item_index), -1) + 1 FROM items WHERE turn_id = ?1",
-                [turn_id],
-                |r| r.get(0),
-            )?;
-            (turn_id, item_index.max(0) as u32)
-        };
-        self.storage.write_item_completed(NewItem {
-            turn_id,
-            item_index,
-            kind: ItemKind::RestoreMarker,
-            content: restore::marker(restored_to, files, undone),
-            parent_item_index: None,
-            category: None,
-            command: None,
-        })?;
-        Ok(())
-    }
-
-    /// Why a restore is refused, if it is. The files are not ours to put back while a
-    /// Turn is running: neither the Thread's own, nor one of another Thread in the same
-    /// checkout.
-    fn restore_refused(&self, thread_id: u32, target: &GitTarget) -> Result<()> {
-        // Taken before the database lock: launching an agent holds this one, then the database.
-        let live_agents = self.live_agent_ids();
-        let db = self.db.lock_recover();
-        let status: String = db.query_row(
-            "SELECT status FROM threads WHERE id = ?1",
-            [thread_id],
-            |r| r.get(0),
-        )?;
-        let running: u32 = db.query_row(
-            "SELECT COUNT(*) FROM turns WHERE thread_id = ?1 AND status = 'running'",
-            [thread_id],
-            |r| r.get(0),
-        )?;
-        // A live agent that reports nothing may be mid-turn: its status stays `running`.
-        let unreported = status == "running" && live_agents.contains(&thread_id);
-        if running > 0 || unreported || matches!(status.as_str(), "working" | "needs-input") {
-            return Err(Error::Git(
-                "A Turn is running in this Thread. Wait for it to finish or stop it.".into(),
-            ));
-        }
-        let others = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
-        if others.iter().any(|(id, status)| {
-            *id != thread_id
-                && (is_busy(status) || (status == "running" && live_agents.contains(id)))
-        }) {
-            return Err(Error::Git(
-                "Another Thread is working in this checkout. Wait for its Turn to finish or stop it."
-                    .into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Keeps a restore, so it can be undone.
-    fn record_restore(
-        &self,
-        thread_id: u32,
-        turn_index: u32,
-        safety_ref: &str,
-        files: &[RestoreFile],
-    ) -> Result<()> {
-        let db = self.db.lock_recover();
-        let files = serde_json::to_string(files).unwrap_or_else(|_| "[]".into());
-        db.execute(
-            "INSERT INTO restores (thread_id, turn_index, safety_ref, files) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![thread_id, turn_index, safety_ref, files],
-        )?;
-        Ok(())
-    }
-
-    /// The Thread's latest restore that has not been undone yet.
-    fn latest_restore(&self, thread_id: u32) -> Result<Option<restore::RestoreRecord>> {
-        let db = self.db.lock_recover();
-        let row = rusqlite::OptionalExtension::optional(db.query_row(
-            "SELECT turn_index, safety_ref, files FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1",
-            [thread_id],
-            |r| {
-                Ok((
-                    r.get::<_, u32>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            },
-        ))?;
-        let Some((turn_index, safety_ref, files)) = row else {
-            return Ok(None);
-        };
-        Ok(Some(restore::RestoreRecord {
-            turn_index,
-            safety_ref,
-            files: serde_json::from_str(&files).unwrap_or_default(),
-        }))
-    }
-
-    /// Marks the Thread's latest restore as undone.
-    fn mark_restore_undone(&self, thread_id: u32) -> Result<()> {
-        let db = self.db.lock_recover();
-        db.execute(
-            "UPDATE restores SET undone_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = (SELECT id FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1)",
-            [thread_id],
-        )?;
-        Ok(())
-    }
-
-    /// The checkout a Thread's files live in: its worktree, or the Project's main one.
-    fn thread_target(&self, thread_id: u32) -> Result<GitTarget> {
-        let project_id = {
-            let db = self.db.lock_recover();
-            db.query_row(
-                "SELECT project_id FROM threads WHERE id = ?1",
-                [thread_id],
-                |r| r.get(0),
-            )?
-        };
-        self.git_target(project_id, Some(thread_id))
-    }
-
-    /// The tree of a Turn's start Checkpoint: what the files were before the Turn.
-    fn turn_checkpoint_tree(&self, cwd: &Path, thread_id: u32, turn_index: u32) -> Result<String> {
-        if !checkpoint::has_start(cwd, thread_id, turn_index) {
-            return Err(Error::Git(
-                "This Turn has no Checkpoint to restore to.".into(),
-            ));
-        }
-        checkpoint::start_tree(cwd, thread_id, turn_index)
-    }
-
-    /// Local and remote branches as seen from a Thread's checkout (`None`: the Project's main one).
-    pub fn list_branches_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<Vec<GitBranch>> {
-        git::list_branches(&self.git_target(project_id, thread_id)?.root)
-    }
-
-    /// Checks out a branch (`feature`, or `origin/feature` to track a remote one) in a Thread's
-    /// checkout (`None`: the main one). Git's own refusal, e.g. for uncommitted changes, is the error.
-    pub fn checkout_branch_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        name: &str,
-    ) -> Result<()> {
-        self.switch_branch(project_id, thread_id, |cwd| git::checkout(cwd, name))
-    }
-
-    /// Creates a branch from HEAD and checks it out in a Thread's checkout (`None`: the main one).
-    pub fn create_branch_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        name: &str,
-    ) -> Result<()> {
-        self.switch_branch(project_id, thread_id, |cwd| git::create_branch(cwd, name))
     }
 
     /// `git fetch`, skipped when the last one was under [`FETCH_INTERVAL`] ago.
@@ -1930,49 +598,7 @@ impl Core {
             return Ok(false);
         }
         let checkout = self.main_checkout(project_id)?;
-        let fetched = self.git.fetch(&checkout, now)?;
-        if fetched {
-            diag::best_effort(
-                "detect reverts and follow-ups",
-                review_ledger::detect_reverts_and_follow_ups(&checkout, project_id, &self.ledger),
-            );
-        }
-        Ok(fetched)
-    }
-
-    /// `git pull --ff-only` in a Thread's checkout (`None`: the main one); a diverged branch
-    /// fails with Git's message.
-    pub fn pull_in(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
-        self.mark_project_acted_upon(project_id)?;
-        // Pulling rewrites files like a checkout does, so it takes the same guard.
-        self.switch_branch(project_id, thread_id, git::pull)
-    }
-
-    /// Commits exactly the given files of a Thread's checkout (`None`: the main one) with
-    /// `message`, leaving other staged state alone.
-    pub fn commit_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        paths: &[String],
-        message: &str,
-    ) -> Result<()> {
-        let cwd = self.git_target(project_id, thread_id)?.root;
-        self.git.mutate(&cwd, || git::commit(&cwd, paths, message))
-    }
-
-    /// Pushes the current branch from a Thread's checkout (`None`: the main one); upstream is set
-    /// on the first push, never forced. Pushing `main`/`master` needs `allow_protected`.
-    pub fn push_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        allow_protected: bool,
-    ) -> Result<()> {
-        self.mark_project_acted_upon(project_id)?;
-        let cwd = self.git_target(project_id, thread_id)?.root;
-        self.git.mutate(&cwd, || git::push(&cwd, allow_protected))?;
-        Ok(())
+        self.git.fetch(&checkout, now)
     }
 
     /// Replaces the directories `gh` is looked up in (default: the process PATH
@@ -1984,40 +610,6 @@ impl Core {
     /// Branches on GitHub that can be selected as a pull request's base.
     pub fn pull_request_base_branches(&self, project_id: u32) -> Result<Vec<String>> {
         github::pull_request_base_branches(&self.gh, &self.main_checkout(project_id)?)
-    }
-
-    /// Title, body and base prefilled for a new pull request of a Thread's checkout branch (`None`:
-    /// the main one).
-    pub fn pull_request_draft_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-    ) -> Result<PullRequestDraft> {
-        let cwd = self.git_target(project_id, thread_id)?.root;
-        let mut draft = github::pull_request_draft(&self.gh, &cwd)?;
-        if let Some(n) = self.issue_of_branch(project_id, &draft.head)? {
-            draft.body = worktree::closing_issue(&draft.body, n);
-        }
-        Ok(draft)
-    }
-
-    /// Pushes the current branch of a Thread's checkout (`None`: the main one) if needed, then
-    /// opens a pull request for it.
-    pub fn create_pull_request_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        input: &PullRequestInput,
-    ) -> Result<PullRequest> {
-        let cwd = self.git_target(project_id, thread_id)?.root;
-        let mut input = input.clone();
-        if let Some(branch) = git::status(&cwd)?.branch
-            && let Some(n) = self.issue_of_branch(project_id, &branch)?
-        {
-            input.body = worktree::closing_issue(&input.body, n);
-        }
-        self.git
-            .mutate(&cwd, || github::create_pull_request(&self.gh, &cwd, &input))
     }
 
     /// Availability of GitHub CLI for issues, and guidance if missing/logged out.
@@ -2119,13 +711,13 @@ impl Core {
 
     /// Opens a GitHub link, such as a check's run, in the system browser.
     pub fn open_link(&self, url: &str) -> Result<()> {
-        self.activity.open_url(github::checked_url(url)?);
+        self.system().open_url(github::checked_url(url)?);
         Ok(())
     }
 
     /// Opens a link on a host outside the allowlist, after the user confirmed the host.
     pub fn open_confirmed_link(&self, url: &str) -> Result<()> {
-        self.activity.open_url(github::confirmed_url(url)?);
+        self.system().open_url(github::confirmed_url(url)?);
         Ok(())
     }
 
@@ -2144,15 +736,6 @@ impl Core {
     /// methods and changed files.
     pub fn pull_request_detail(&self, project_id: u32, number: u32) -> Result<PullRequestDetail> {
         github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number)
-    }
-
-    /// A pull request's inline review threads, anchored to the lines of its diff.
-    pub fn pull_request_review_threads(
-        &self,
-        project_id: u32,
-        number: u32,
-    ) -> Result<Vec<PullRequestReviewThread>> {
-        github::review_threads(&self.gh, &self.main_checkout(project_id)?, number)
     }
 
     /// Adds a conversation comment to a pull request.
@@ -2185,222 +768,13 @@ impl Core {
         github::edit_pull_request(&self.gh, &self.main_checkout(project_id)?, number, edit)
     }
 
-    /// Merges a pull request with one of the methods its repository allows,
-    /// optionally deleting the branch. With `auto`, GitHub merges it later,
-    /// once the checks pass.
-    pub fn merge_pull_request(
-        &self,
-        project_id: u32,
-        number: u32,
-        method: MergeMethod,
-        delete_branch: bool,
-        auto: bool,
-    ) -> Result<()> {
-        let cwd = self.main_checkout(project_id)?;
-        self.git.mutate(&cwd, || {
-            // Deleting the branch may move the checkout off it, which a
-            // working Thread must not see.
-            if delete_branch
-                && !auto
-                && let Some(reason) =
-                    self.checkout_blocked_reason(&self.git_target(project_id, None)?)?
-            {
-                return Err(Error::Git(reason));
-            }
-            github::merge_pull_request(&self.gh, &cwd, number, method, delete_branch, auto)
-        })?;
-        // The merge is done; the ledger is a nicety that must not turn it into an error.
-        if !auto {
-            self.record_merge_of(project_id, &cwd, number);
-        }
-        Ok(())
-    }
-
-    /// Files a pull request Oxide just merged under the Thread whose branch it came from.
-    fn record_merge_of(&self, project_id: u32, cwd: &Path, number: u32) {
-        let Ok(Some((head, Some(merged_at)))) = github::merged_head(&self.gh, cwd, number) else {
-            return;
-        };
-        if let Ok(Some(thread_id)) = self.ledger.thread_of_branch(project_id, &head) {
-            diag::best_effort(
-                "record_merge",
-                self.ledger.record_merge(thread_id, number, &merged_at),
-            );
-        }
-    }
-
-    /// How long a Project's finished work waited for its merge, from the Review ledger.
-    pub fn review_ledger(&self, project_id: u32) -> Result<ReviewLedger> {
-        self.ledger.ledger(project_id)
-    }
-
-    /// Removes every entry of the Review ledger, and the comments kept to suggest rules.
-    pub fn clear_review_ledger(&self) -> Result<()> {
-        self.ledger.clear()?;
-        self.clear_rule_feedback()
-    }
-
-    /// Confirms a candidate follow-up fix in the Review ledger.
-    pub fn confirm_follow_up(
-        &self,
-        project_id: u32,
-        pull_request: u32,
-        commit_sha: &str,
-    ) -> Result<()> {
-        self.ledger.set_follow_up_status(
-            project_id,
-            pull_request,
-            commit_sha,
-            FollowUpStatus::Confirmed,
-        )
-    }
-
-    /// Dismisses a candidate follow-up fix in the Review ledger.
-    pub fn dismiss_follow_up(
-        &self,
-        project_id: u32,
-        pull_request: u32,
-        commit_sha: &str,
-    ) -> Result<()> {
-        self.ledger.set_follow_up_status(
-            project_id,
-            pull_request,
-            commit_sha,
-            FollowUpStatus::Dismissed,
-        )
-    }
-
-    /// The end of the log of a failed GitHub Actions check, to put in a Fix prompt. Reads from
-    /// GitHub through `gh`; the text is external content.
-    pub fn failed_check_log(&self, project_id: u32, check_url: &str) -> Result<String> {
-        github::failed_check_log_tail(&self.gh, &self.main_checkout(project_id)?, check_url)
-    }
-
     /// Closes a pull request on GitHub without merging it.
     pub fn close_pull_request(&self, project_id: u32, number: u32) -> Result<()> {
         github::close_pull_request(&self.gh, &self.main_checkout(project_id)?, number)
     }
 
-    /// Checks a pull request's branch out in a Thread's checkout (`None`: the main one), under the
-    /// branch picker's rules: Git's refusal is the error, and it is refused while a Thread is
-    /// working. A Thread of another Project or a deleted worktree is an error, never the main
-    /// checkout.
-    pub fn checkout_pull_request_in(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        number: u32,
-    ) -> Result<()> {
-        self.switch_branch(project_id, thread_id, |cwd| {
-            github::checkout_pull_request(&self.gh, cwd, number)
-        })
-    }
-
-    /// Runs a command that changes the main checkout's files, serialized per
-    /// checkout and refused while a Thread is working in it.
-    fn switch_branch(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        f: impl FnOnce(&Path) -> Result<()>,
-    ) -> Result<()> {
-        let target = self.git_target(project_id, thread_id)?;
-        self.git.mutate(&target.root, || {
-            if let Some(reason) = self.checkout_blocked_reason(&target)? {
-                return Err(Error::Git(reason));
-            }
-            f(&target.root)
-        })
-    }
-
-    /// Threads started from the chat work in the main checkout, so switching branches under a
-    /// running Turn would change its files. Board Threads have worktrees of their own, so only
-    /// a Turn in that same worktree blocks them.
-    fn checkout_blocked_reason(&self, target: &GitTarget) -> Result<Option<String>> {
-        let db = self.db.lock_recover();
-        let threads = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
-        Ok(threads
-            .iter()
-            .any(|(_, status)| status == "working")
-            .then(|| {
-                "A Thread is working in this checkout. Wait for its Turn to finish or stop it."
-                    .into()
-            }))
-    }
-
-    /// Resolves the checkout a Git operation acts on. `None` is the Project's main checkout;
-    /// a Thread resolves to its own worktree if it has one. A Thread of another Project, an
-    /// unknown Thread or a worktree that no longer exists is an explicit error: there is
-    /// never a fallback to the main checkout.
-    fn git_target(&self, project_id: u32, thread_id: Option<u32>) -> Result<GitTarget> {
-        let Some(thread_id) = thread_id else {
-            return Ok(GitTarget {
-                project_id,
-                root: self.main_checkout(project_id)?,
-                worktree: None,
-            });
-        };
-        let row: Option<(Option<u32>, Option<String>, String)> = {
-            let db = self.db.lock_recover();
-            rusqlite::OptionalExtension::optional(db.query_row(
-                "SELECT t.id, t.worktree_path, p.path
-                 FROM projects p
-                 LEFT JOIN threads t ON t.id = ?2 AND t.project_id = p.id
-                 WHERE p.id = ?1",
-                rusqlite::params![project_id, thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            ))?
-        };
-        let Some((Some(_), worktree, project_path)) = row else {
-            return Err(Error::Git(format!(
-                "Thread {thread_id} does not belong to Project {project_id}."
-            )));
-        };
-        let root = PathBuf::from(worktree.as_deref().unwrap_or(&project_path));
-        if !root.is_dir() {
-            return Err(Error::Git(format!(
-                "The checkout of Thread {thread_id} is missing: {}",
-                root.display()
-            )));
-        }
-        Ok(GitTarget {
-            project_id,
-            root,
-            worktree,
-        })
-    }
-
     fn main_checkout(&self, project_id: u32) -> Result<PathBuf> {
-        Ok(PathBuf::from(self.checkout_path(project_id, None)?))
-    }
-
-    /// Every checkout of an open Project: its folder and the worktrees of its Threads.
-    fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
-        let db = self.db.lock_recover();
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
-        for path in projects.query_map([], |r| r.get::<_, String>(0))? {
-            paths.push(PathBuf::from(path?));
-        }
-        let mut worktrees = db.prepare(
-            "SELECT t.worktree_path FROM threads t JOIN projects p ON p.id = t.project_id WHERE p.opened_at IS NOT NULL AND t.worktree_path IS NOT NULL",
-        )?;
-        for path in worktrees.query_map([], |r| r.get::<_, String>(0))? {
-            paths.push(PathBuf::from(path?));
-        }
-        Ok(paths)
-    }
-
-    pub fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
-        let db = self.db.lock_recover();
-        Ok(match thread_id {
-            Some(thread_id) => db.query_row(
-                "SELECT COALESCE(t.worktree_path, p.path) FROM projects p JOIN threads t ON t.project_id = p.id WHERE p.id = ?1 AND t.id = ?2",
-                rusqlite::params![project_id, thread_id],
-                |r| r.get(0),
-            )?,
-            None => db.query_row("SELECT path FROM projects WHERE id = ?1", [project_id], |r| r.get(0))?,
-        })
+        Ok(PathBuf::from(self.checkout_path(project_id)?))
     }
 
     pub fn subscribe_terminal(
@@ -2446,6 +820,7 @@ impl Core {
             None => Ok(()),
         }
     }
+
     pub fn complete_terminal(
         &self,
         terminal_id: u32,
@@ -2463,120 +838,12 @@ impl Core {
         self.terminal(terminal_id)?.resize(rows, cols)
     }
 
-    pub fn close_terminal(&self, terminal_id: u32) -> Result<()> {
-        let session = self
-            .terminals
-            .lock_recover()
-            .remove(&terminal_id)
-            .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
-        self.terminal_projects.lock_recover().remove(&terminal_id);
-        self.acted_terminals.lock_recover().remove(&terminal_id);
-        session.close();
-        Ok(())
-    }
-
-    /// Starts `command` as a Project Service in the Project's checkout, or in the Thread's
-    /// worktree when one is given. The child runs in its own process group and is registered
-    /// with the process registry, so stopping it (or closing the Project, or quitting Oxide)
-    /// terminates its whole process tree.
-    pub fn start_project_service(
-        &self,
-        project_id: u32,
-        thread_id: Option<u32>,
-        command: &str,
-    ) -> Result<ProjectServiceStartOutcome> {
-        let checkout = self.checkout_path(project_id, thread_id)?;
-        self.project_services.start(
-            project_id,
-            thread_id,
-            command,
-            &checkout,
-            Arc::clone(&self.processes),
-        )
-    }
-
-    /// The running Project Services of a Project, oldest first.
-    pub fn list_project_services(&self, project_id: u32) -> Result<Vec<ProjectService>> {
-        Ok(self.project_services.list(project_id))
-    }
-
-    /// One Project Service, including one that has stopped or failed.
-    pub fn project_service(&self, id: u32) -> Result<Option<ProjectService>> {
-        Ok(self.project_services.service(id))
-    }
-
-    /// The buffered output of a Project Service followed by every new line. A subscriber that
-    /// falls too far behind is dropped rather than blocking the child.
-    pub fn subscribe_project_service_logs(
-        &self,
-        id: u32,
-    ) -> Result<(
-        Vec<ProjectServiceLogLine>,
-        crossbeam_channel::Receiver<ProjectServiceLogLine>,
-    )> {
-        self.project_services.subscribe_logs(id)
-    }
-
-    /// Every Project Service change, for the UI to refetch.
-    pub fn subscribe_project_services(&self) -> crossbeam_channel::Receiver<ProjectServiceEvent> {
-        self.project_services.subscribe_events()
-    }
-
-    /// Sends SIGTERM to the service's process group and SIGKILL after
-    /// [`oxide_provider::process::SHUTDOWN_GRACE`]. Safe to call twice.
-    pub fn stop_project_service(&self, id: u32) -> Result<()> {
-        self.project_services.stop(id);
-        Ok(())
-    }
-
-    /// Stops a Project Service and starts the same command in the same checkout again, reusing
-    /// its id so the log tab keeps its identity.
-    pub fn restart_project_service(&self, id: u32) -> Result<ProjectServiceStartOutcome> {
-        self.project_services.restart(id)
-    }
-
-    /// Empties a Project Service's log buffer; new output keeps streaming.
-    pub fn clear_project_service_logs(&self, id: u32) -> Result<()> {
-        self.project_services.clear_logs(id)
-    }
-
-    /// Opens a localhost URL detected in a Project Service's log in the system browser. Only
-    /// loopback `http` addresses are accepted; see [`checked_local_url`].
-    pub fn open_local_url(&self, url: &str) -> Result<()> {
-        self.activity.open_url(checked_local_url(url)?);
-        Ok(())
-    }
-
     fn terminal(&self, id: u32) -> Result<Arc<TerminalSession>> {
         self.terminals
             .lock_recover()
             .get(&id)
             .cloned()
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {id}")))
-    }
-
-    pub fn tick_thread(&self, thread_id: u32) {
-        if let Some(actor) = self.thread_actors.lock_recover().get(&thread_id) {
-            actor.tick();
-        }
-    }
-
-    /// The whole Thread, every Turn included.
-    pub fn get_thread_snapshot(&self, thread_id: u32) -> Result<ThreadSnapshot> {
-        let mut snapshot = self.storage.get_snapshot(thread_id, u32::MAX)?;
-        for turn in &mut snapshot.turns {
-            turn.unknown_events.clear();
-        }
-        Ok(snapshot)
-    }
-
-    /// Up to `limit` Turns of a Thread starting at position `offset`.
-    pub fn list_turns(&self, thread_id: u32, offset: u32, limit: u32) -> Result<TurnPage> {
-        let mut page = self.storage.list_turns(thread_id, offset, limit)?;
-        for turn in &mut page.turns {
-            turn.unknown_events.clear();
-        }
-        Ok(page)
     }
 
     fn expand_home(&self, root: &str) -> PathBuf {
@@ -2591,83 +858,5 @@ impl Core {
 impl Drop for Core {
     fn drop(&mut self) {
         self.shutdown();
-        // Last: the actors above may still be writing their final records.
-        self.storage.shutdown();
     }
-}
-
-/// Threads that were working or waiting for input when Oxide last went away show as
-/// interrupted, along with their running Turn and unanswered Approvals. Nothing restarts.
-fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
-    let has_threads: bool = db.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads')",
-        [],
-        |r| r.get(0),
-    )?;
-    if !has_threads {
-        return Ok(());
-    }
-    // An Agent terminal ends with the app, whatever it last reported (a view of a ended agent
-    // must not offer to stop it). Its error stays. (Databases opened with only some migrations,
-    // as the migration tests do, have no such column yet.)
-    let has_terminal: bool = db.query_row(
-        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('threads') WHERE name = 'terminal')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_terminal {
-        db.execute(
-            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status NOT IN ('stopped', 'error')",
-            [],
-        )?;
-    }
-    db.execute_batch(
-        "UPDATE approvals SET decision = 'deny', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE decision IS NULL
-               AND turn_id IN (SELECT id FROM turns WHERE status = 'running');
-         UPDATE turns SET status = 'interrupted', completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE status = 'running';
-         UPDATE threads SET status = 'interrupted', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE status IN ('working', 'needs-input', 'needs_input');",
-    )?;
-    Ok(())
-}
-
-/// The checkout a Git operation resolved to.
-struct GitTarget {
-    /// The Project the checkout belongs to.
-    project_id: u32,
-    root: PathBuf,
-    /// The Thread's worktree path, or `None` for the Project's main checkout.
-    worktree: Option<String>,
-}
-
-/// The Threads of the Project that work in the given checkout, with their status: the
-/// Threads with that worktree, or the Threads without one when the checkout is the
-/// Project's main one.
-fn threads_in_checkout(
-    db: &Connection,
-    project_id: u32,
-    worktree: Option<&str>,
-) -> Result<Vec<(u32, String)>> {
-    let read = |r: &rusqlite::Row<'_>| Ok((r.get(0)?, r.get(1)?));
-    let mut stmt = match worktree {
-        None => db.prepare(
-            "SELECT id, status FROM threads WHERE project_id = ?1 AND worktree_path IS NULL",
-        )?,
-        Some(_) => db.prepare(
-            "SELECT id, status FROM threads WHERE project_id = ?1 AND worktree_path = ?2",
-        )?,
-    };
-    let rows = match worktree {
-        None => stmt.query_map([project_id], read)?,
-        Some(path) => stmt.query_map(rusqlite::params![project_id, path], read)?,
-    };
-    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-}
-
-/// Whether a Thread of that status is busy: a Turn runs in its checkout, or waits there
-/// for the user.
-fn is_busy(status: &str) -> bool {
-    matches!(status, "working" | "needs-input")
 }

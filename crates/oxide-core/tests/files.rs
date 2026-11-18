@@ -34,7 +34,7 @@ fn names(entries: &[FileEntry]) -> Vec<&str> {
 #[test]
 fn lists_checkout_hiding_ignored_files_and_dot_git() {
     let (_dir, core, project) = setup();
-    let entries = core.list_dir(project, None, "").unwrap();
+    let entries = core.list_dir(project, "").unwrap();
     // Directories first, then files, each sorted.
     assert_eq!(names(&entries), vec!["src", ".gitignore", "README.md"]);
     assert!(entries[0].is_dir);
@@ -44,7 +44,7 @@ fn lists_checkout_hiding_ignored_files_and_dot_git() {
 #[test]
 fn lists_nested_directory() {
     let (_dir, core, project) = setup();
-    let entries = core.list_dir(project, None, "src").unwrap();
+    let entries = core.list_dir(project, "src").unwrap();
     assert_eq!(names(&entries), vec!["main.rs"]);
     assert_eq!(entries[0].path, "src/main.rs");
 }
@@ -52,7 +52,7 @@ fn lists_nested_directory() {
 #[test]
 fn reads_file_content() {
     let (_dir, core, project) = setup();
-    let file = core.read_file(project, None, "src/main.rs").unwrap();
+    let file = core.read_file(project, "src/main.rs").unwrap();
     assert_eq!(file.content, "fn main() {}\n");
     assert!(!file.truncated && !file.binary);
 }
@@ -63,11 +63,11 @@ fn truncates_large_files_and_flags_binary() {
     let root = dir.path().join("proj");
     fs::write(root.join("big.txt"), "a".repeat(2_000_000)).unwrap();
     fs::write(root.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
-    let big = core.read_file(project, None, "big.txt").unwrap();
+    let big = core.read_file(project, "big.txt").unwrap();
     assert!(big.truncated);
     assert_eq!(big.size, 2_000_000);
     assert!(big.content.len() <= 1_048_576);
-    let bin = core.read_file(project, None, "blob.bin").unwrap();
+    let bin = core.read_file(project, "blob.bin").unwrap();
     assert!(bin.binary);
     assert!(bin.content.is_empty());
 }
@@ -76,14 +76,14 @@ fn truncates_large_files_and_flags_binary() {
 fn rejects_paths_escaping_the_checkout() {
     let (dir, core, project) = setup();
     fs::write(dir.path().join("secret.txt"), "s").unwrap();
-    assert!(core.read_file(project, None, "../secret.txt").is_err());
-    assert!(core.list_dir(project, None, "..").is_err());
-    assert!(core.read_file(project, None, "/etc/passwd").is_err());
+    assert!(core.read_file(project, "../secret.txt").is_err());
+    assert!(core.list_dir(project, "..").is_err());
+    assert!(core.read_file(project, "/etc/passwd").is_err());
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(dir.path().join("secret.txt"), dir.path().join("proj/link"))
             .unwrap();
-        assert!(core.read_file(project, None, "link").is_err());
+        assert!(core.read_file(project, "link").is_err());
     }
 }
 
@@ -91,19 +91,10 @@ fn rejects_paths_escaping_the_checkout() {
 fn write_create_and_list_reject_paths_escaping_the_checkout() {
     let (dir, core, project) = setup();
     fs::write(dir.path().join("secret.txt"), "s").unwrap();
-    assert!(
-        core.write_file(project, None, "../secret.txt", "s", "x")
-            .is_err()
-    );
-    assert!(
-        core.write_file(project, None, "/etc/passwd", "", "x")
-            .is_err()
-    );
-    assert!(core.create_file(project, None, "../new.txt").is_err());
-    assert!(
-        core.create_file(project, None, "/tmp/oxide-new.txt")
-            .is_err()
-    );
+    assert!(core.write_file(project, "../secret.txt", "s", "x").is_err());
+    assert!(core.write_file(project, "/etc/passwd", "", "x").is_err());
+    assert!(core.create_file(project, "../new.txt").is_err());
+    assert!(core.create_file(project, "/tmp/oxide-new.txt").is_err());
     assert_eq!(
         fs::read_to_string(dir.path().join("secret.txt")).unwrap(),
         "s"
@@ -111,10 +102,10 @@ fn write_create_and_list_reject_paths_escaping_the_checkout() {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(dir.path(), dir.path().join("proj/out")).unwrap();
-        assert!(core.list_dir(project, None, "out").is_err());
-        assert!(core.create_file(project, None, "out/new.txt").is_err());
+        assert!(core.list_dir(project, "out").is_err());
+        assert!(core.create_file(project, "out/new.txt").is_err());
         assert!(
-            core.write_file(project, None, "out/secret.txt", "s", "x")
+            core.write_file(project, "out/secret.txt", "s", "x")
                 .is_err()
         );
         assert!(!dir.path().join("new.txt").exists());
@@ -147,7 +138,7 @@ fn reading_or_writing_a_fifo_in_the_checkout_is_an_error_instead_of_blocking() {
     );
     let core = std::sync::Arc::new(core);
     let reader = std::sync::Arc::clone(&core);
-    assert!(within_a_second(move || reader.read_file(project, None, "pipe")).is_err());
+    assert!(within_a_second(move || reader.read_file(project, "pipe")).is_err());
     let writer = std::sync::Arc::clone(&core);
-    assert!(within_a_second(move || writer.write_file(project, None, "pipe", "", "x")).is_err());
+    assert!(within_a_second(move || writer.write_file(project, "pipe", "", "x")).is_err());
 }

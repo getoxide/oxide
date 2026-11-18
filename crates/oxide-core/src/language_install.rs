@@ -1,6 +1,7 @@
 //! User-local language support, downloaded only after an explicit Install action.
 use crate::language_pins as pins;
-use crate::{Error, LanguageServerConfig, Result};
+use crate::language_server::LanguageServerConfig;
+use crate::{Error, Result};
 use oxide_provider::diag;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};

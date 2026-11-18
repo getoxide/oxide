@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useState } from "react";
+import { act } from "react";
 import type { Channel } from "@tauri-apps/api/core";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -55,7 +55,7 @@ async function openShell() {
     if (name === "run_terminal_block") tokens.push((args as { token: string }).token);
     return null;
   });
-  await act(async () => root.render(<TerminalWorkbench projectId={1} threadId={null} rootPath="/test" contextKey="1" visible queuedCommand={null} onCommandConsumed={() => {}} />));
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
   const send = async (text: string) => {
     await act(async () => channel.onmessage([...new TextEncoder().encode(text)]));
     await settle();
@@ -76,35 +76,6 @@ async function openShell() {
     output: (text: string) => send(text),
     end: (exitCode: number, cwd = "/test") => send(`\x1b]633;Oxide;${token()};end;${exitCode};${cwd}\x07`),
     close: () => send("\x1b]633;Oxide;closed\x07"),
-  };
-}
-
-/** A shell whose `start_project_service` result the caller controls. */
-async function openServiceShell(
-  service: () => unknown,
-  onServiceConflict?: (conflict: unknown) => void,
-) {
-  const calls: { name: string; args: unknown }[] = [];
-  mockIPC((name, args) => {
-    calls.push({ name, args });
-    if (name === "start_block_terminal") return { id: 1 };
-    if (name === "start_project_service") return service();
-    return null;
-  });
-  await act(async () => root.render(<TerminalWorkbench projectId={1} threadId={null} rootPath="/test" contextKey="1" visible queuedCommand={null} onCommandConsumed={() => {}} onServiceConflict={onServiceConflict} />));
-  return {
-    calls,
-    names: () => calls.map((call) => call.name),
-    serviceCall: () => calls.find((call) => call.name === "start_project_service"),
-    async submit(value: string) {
-      const input = container.querySelector("textarea")!;
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await act(async () => container.querySelector("form")!.requestSubmit());
-      await settle();
-    },
   };
 }
 
@@ -131,7 +102,7 @@ it.each(["clear", "CLS", "Clear-Host"])("%s clears completed blocks without repl
     }
     return null;
   });
-  await act(async () => root.render(<TerminalWorkbench projectId={1} threadId={null} rootPath="/test" contextKey="1" visible queuedCommand={null} onCommandConsumed={() => {}} />));
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
   const submit = async (value: string) => {
     const input = container.querySelector("textarea")!;
     await act(async () => {
@@ -233,135 +204,6 @@ it("renders only the command and its status: no cwd, Copy, Reuse or Collapse", a
   }
 });
 
-it("detaches a recognised server into a Project Service and frees the prompt", async () => {
-  const shell = await openServiceShell(() => ({
-    outcome: "started",
-    payload: {
-      id: 9,
-      projectId: 1,
-      threadId: null,
-      command: "npm run dev",
-      checkout: "/test",
-      status: "running",
-      pid: 4242,
-      port: 5173,
-      url: "http://localhost:5173",
-      startedAt: "2026-01-01T00:00:00Z",
-      exitCode: null,
-    },
-  }));
-
-  await shell.submit("npm run dev");
-
-  expect(shell.serviceCall()?.args).toEqual({ projectId: 1, threadId: null, command: "npm run dev" });
-  expect(shell.names()).not.toContain("run_terminal_block");
-  expect(shell.names()).not.toContain("resize_terminal");
-  expect(shell.names()).not.toContain("write_terminal");
-  expect(writes.join("")).toContain("Starting Project Service");
-  expect(writes.join("")).toContain("[Oxide] Started Project Service 'npm run dev' on http://localhost:5173 (PID 4242)");
-  const [block] = blocks();
-  expect(block.querySelector(".terminal-service-badge")?.textContent).toBe("service");
-  expect(block.classList.contains("running")).toBe(false);
-  expect(block.querySelector('[role="img"][aria-label="Running"]')).toBeNull();
-  expect(container.querySelector("textarea")).not.toBeNull();
-  expect(JSON.parse(localStorage.getItem("oxide:terminal-history:1")!)).toEqual([
-    expect.objectContaining({ command: "npm run dev", exitCode: 0 }),
-  ]);
-});
-
-it("keeps an early service failure inline in its command block", async () => {
-  const shell = await openServiceShell(() =>
-    Promise.reject({
-      message:
-        "Project Service `npm run dev` exited with code 2 during its 1.5s startup check.\nError: missing module",
-    }),
-  );
-
-  await shell.submit("npm run dev");
-
-  const output = writes.join("");
-  expect(output).toContain("exited with code 2");
-  expect(output).toContain("Error: missing module");
-  const [block] = blocks();
-  expect(block.classList.contains("running")).toBe(false);
-  expect(block.textContent).not.toContain("exit 2");
-  expect(container.querySelector("textarea")).not.toBeNull();
-  expect(shell.names()).not.toContain("run_terminal_block");
-  expect(shell.names()).not.toContain("list_project_services");
-  expect(JSON.parse(localStorage.getItem("oxide:terminal-history:1")!)).toEqual([
-    expect.objectContaining({ command: "npm run dev", exitCode: null }),
-  ]);
-});
-
-it("shows a port conflict inline and reports it without starting a second process", async () => {
-  const conflicts: unknown[] = [];
-  const shell = await openServiceShell(
-    () => ({
-      outcome: "conflict",
-      payload: {
-        port: 5173,
-        existing: {
-          id: 9,
-          projectId: 1,
-          threadId: null,
-          command: "npm run dev",
-          checkout: "/test",
-          status: "running",
-          pid: 4242,
-          port: 5173,
-          url: "http://localhost:5173",
-          startedAt: "2026-01-01T00:00:00Z",
-          exitCode: null,
-        },
-        message: "Port 5173 is already used by Project Service 'npm run dev' (PID 4242)",
-      },
-    }),
-    (conflict) => conflicts.push(conflict),
-  );
-
-  await shell.submit("npm run dev");
-
-  const output = writes.join("");
-  expect(output).toContain(
-    "Port 5173 is already used by Project Service 'npm run dev' (PID 4242)",
-  );
-  // The conflicting command never reaches the PTY, and Core is asked exactly once (and refused).
-  expect(shell.names()).not.toContain("run_terminal_block");
-  expect(shell.names().filter((name) => name === "start_project_service")).toHaveLength(1);
-  expect(conflicts).toHaveLength(1);
-  expect(conflicts[0]).toMatchObject({ port: 5173, existing: { id: 9 } });
-  const [block] = blocks();
-  expect(block.classList.contains("running")).toBe(false);
-  expect(container.querySelector("textarea")).not.toBeNull();
-});
-
-it("detaches a trailing ampersand command without passing the ampersand to the service", async () => {
-  const shell = await openServiceShell(() => ({
-    outcome: "started",
-    payload: {
-      id: 10,
-      projectId: 1,
-      threadId: null,
-      command: "sleep 300",
-      checkout: "/test",
-      status: "running",
-      pid: 999,
-      port: null,
-      url: null,
-      startedAt: "2026-01-01T00:00:00Z",
-      exitCode: null,
-    },
-  }));
-
-  await shell.submit("sleep 300 &");
-
-  expect(shell.serviceCall()?.args).toEqual({ projectId: 1, threadId: null, command: "sleep 300" });
-  expect(shell.names()).not.toContain("run_terminal_block");
-  const output = writes.join("");
-  expect(output).toContain("[Oxide] Started Project Service 'sleep 300' (PID 999)");
-  expect(output).not.toContain("http://");
-});
-
 it("keeps an ordinary command in the shell", async () => {
   const shell = await openShell();
   await shell.submit("echo hi");
@@ -369,63 +211,16 @@ it("keeps an ordinary command in the shell", async () => {
   await shell.end(0);
 
   expect(shell.calls).toContain("run_terminal_block");
-  expect(shell.calls).not.toContain("start_project_service");
 });
 
-it("detaches a queued setup command through the same interception", async () => {
-  const calls: { name: string; args: unknown }[] = [];
-  const consumed = vi.fn();
-  mockIPC((name, args) => {
-    calls.push({ name, args });
-    if (name === "start_block_terminal") return { id: 1 };
-    if (name === "start_project_service")
-      return {
-        outcome: "started",
-        payload: {
-          id: 11,
-          projectId: 1,
-          threadId: 2,
-          command: "pnpm dev",
-          checkout: "/test",
-          status: "running",
-          pid: 321,
-          port: 3000,
-          url: "http://localhost:3000",
-          startedAt: "2026-01-01T00:00:00Z",
-          exitCode: null,
-        },
-      };
-    return null;
-  });
+it("runs a server or an agent CLI in the shell like any other command, with no Oxide handling", async () => {
+  for (const command of ["npm run dev", "claude", "python -m http.server 8000 &"]) {
+    const shell = await openShell();
+    await shell.submit(command);
+    await shell.start();
 
-  function Queued() {
-    const [queued, setQueued] = useState<{ id: number; command: string } | null>({
-      id: 1,
-      command: "pnpm dev",
-    });
-    return (
-      <TerminalWorkbench
-        projectId={1}
-        threadId={2}
-        rootPath="/test"
-        contextKey="1:2"
-        visible
-        queuedCommand={queued}
-        onCommandConsumed={() => {
-          consumed();
-          setQueued(null);
-        }}
-      />
-    );
+    expect(shell.calls).toContain("run_terminal_block");
+    expect(shell.calls.filter((name) => name !== "start_block_terminal" && name !== "run_terminal_block" && name !== "resize_terminal" && name !== "write_terminal")).toEqual([]);
+    await act(async () => root.render(null));
   }
-
-  await act(async () => root.render(<Queued />));
-  await settle();
-
-  expect(calls.find((call) => call.name === "start_project_service")?.args).toEqual({
-    projectId: 1,
-    threadId: 2,
-    command: "pnpm dev",
-  });
-  expect(consumed).toHaveBeenCalled();
 });

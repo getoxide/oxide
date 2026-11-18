@@ -1,6 +1,6 @@
 # Permission mode mapping per Provider
 
-> Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): the Permission mode is a launch flag of the Provider's CLI, and changing it in a running session happens in the Provider's own UI. Codex and Antigravity CLI do not offer Ask.
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Oxide has no Providers or Permission modes any more. (Earlier note: Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): the Permission mode is a launch flag of the Provider's CLI, and changing it in a running session happens in the Provider's own UI. Codex and Antigravity CLI do not offer Ask.)
 
 Oxide defines three Permission modes—Ask, Auto-edit, and Full access—configured per Thread and changeable between Turns. In accordance with ADR-0001, each Provider adapter offers only the modes it can honour, declaring its supported modes and whether interactive Approvals are supported via capability flags:
 

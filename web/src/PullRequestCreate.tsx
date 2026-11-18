@@ -7,19 +7,15 @@ import {
   SyncIcon,
 } from "@primer/octicons-react";
 import { commands, type PullRequest } from "./bindings";
-import { createPrBlockedReason } from "./gitAction";
 import { describeCreatePrError } from "./createPullRequestError";
 import { MarkdownEditor } from "./MarkdownEditor";
 
 export function PullRequestCreate({
   projectId,
-  threadId,
   onCancel,
   onCreated,
 }: {
   projectId: number;
-  /** The Thread whose checkout the pull request is opened from. */
-  threadId: number | null;
   onCancel: () => void;
   onCreated: (pr: PullRequest) => void;
 }) {
@@ -31,28 +27,21 @@ export function PullRequestCreate({
   const [draft, setDraft] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [blocked, setBlocked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
     void (async () => {
       try {
-        const git = await commands.gitStatus(projectId, threadId);
-        if (!active) return;
-        if (git.status === "error") throw new Error(git.error.message);
-        setHead(git.data.branch ?? "detached HEAD");
-        const reason = createPrBlockedReason(git.data);
-        setBlocked(reason);
-        if (reason) return;
         const [defaults, bases] = await Promise.all([
-          commands.pullRequestDraft(projectId, threadId),
+          commands.pullRequestDraft(projectId),
           commands.pullRequestBaseBranches(projectId),
         ]);
         if (!active) return;
         if (defaults.status === "error")
           throw new Error(defaults.error.message);
         if (bases.status === "error") throw new Error(bases.error.message);
+        setHead(defaults.data.head);
         setTitle(defaults.data.title);
         setBody(defaults.data.body);
         setBase(defaults.data.base);
@@ -67,12 +56,11 @@ export function PullRequestCreate({
     return () => {
       active = false;
     };
-  }, [projectId, threadId, retry]);
+  }, [projectId, retry]);
   async function submit() {
     if (
       busy ||
       loading ||
-      blocked ||
       !title.trim() ||
       !base ||
       base === head
@@ -81,7 +69,7 @@ export function PullRequestCreate({
     setBusy(true);
     setError(null);
     try {
-      const result = await commands.createPullRequest(projectId, threadId, {
+      const result = await commands.createPullRequest(projectId, {
         title: title.trim(),
         body,
         base,
@@ -119,8 +107,6 @@ export function PullRequestCreate({
       </header>
       {loading ? (
         <p role="status">Preparing your branch…</p>
-      ) : blocked ? (
-        <p role="status">{blocked}</p>
       ) : (
         <>
           <div className="pr-compose-branches">

@@ -68,10 +68,8 @@ export function InstallLanguageButton({
 /** A small, dismissible first-use invitation, following the language of the current file. */
 export function LanguageSupportNotice({
   language,
-  onConfigure,
 }: {
   language: string;
-  onConfigure: () => void;
 }) {
   const [tool, setTool] = useState<LanguageTool | null>(null);
   const [dismissed, setDismissed] = useState(
@@ -113,9 +111,6 @@ export function LanguageSupportNotice({
         tool={tool}
         onInstalled={() => setTool({ ...tool, installed: true })}
       />
-      <button className="btn sm" onClick={onConfigure}>
-        Configure
-      </button>
       <button
         className="icon-btn sm"
         aria-label="Set up language support later"

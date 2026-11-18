@@ -73,7 +73,7 @@ Text, status and syntax colours reach at least 4.5:1 on the background, surface 
 | --- | --- |
 | `palette/oxide-tokens.json` | Source of truth: every colour and the typography. |
 | `palette/oxide-tokens.css` | The same colours as `--ox-*` custom properties, with `data-theme` for light. |
-| `palette/oxide-titanium-theme.json` | Theme pack for Settings → Appearance, in the format of [docs/themes.md](../../../docs/themes.md). |
+| `palette/oxide-titanium-theme.json` | The palette as a Zed-style JSON theme pack. Oxide has no Appearance settings page for now (ADR-0018). |
 | `palette/oxide-palette.png` | Visual reference of the whole palette. |
 
 ## Typography

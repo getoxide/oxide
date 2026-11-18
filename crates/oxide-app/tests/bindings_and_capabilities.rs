@@ -9,13 +9,22 @@ fn bindings_are_up_to_date() {
     // Regenerates the file; CI fails on `git diff --exit-code` if it was stale.
     oxide_app_lib::export_bindings().unwrap();
     let ts = std::fs::read_to_string(oxide_app_lib::BINDINGS_PATH).unwrap();
-    assert!(ts.contains("listProjects") && ts.contains("saveSettings"));
-    assert!(
-        ts.contains("createThread")
-            && ts.contains("subscribeThread")
-            && ts.contains("sendPrompt")
-            && ts.contains("listTurns")
-    );
+    assert!(ts.contains("listProjects") && ts.contains("startBlockTerminal"));
+    // Oxide no longer knows about agents or Threads (ADR-0018): none of it may be exported.
+    for gone in [
+        "createThread",
+        "subscribeThread",
+        "sendPrompt",
+        "listTurns",
+        "saveSettings",
+        "getSettings",
+        "startProjectService",
+        "startBlindReview",
+        "restoreTurn",
+        "checkForAppUpdate",
+    ] {
+        assert!(!ts.contains(gone), "`{gone}` is still exported");
+    }
     assert!(
         !ts.contains("start_terminal") && !ts.contains("startTerminal"),
         "legacy non-block start_terminal command must not be exported"

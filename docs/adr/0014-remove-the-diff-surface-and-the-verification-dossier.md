@@ -1,6 +1,6 @@
 # Remove the Diff Surface and the Verification Dossier
 
-Oxide no longer has a Diff Surface, a Verification Dossier or the attention bell. The right dock holds four Surfaces: Files, Terminal, Pull request and Issues.
+Oxide no longer has a Diff Surface, a Verification Dossier or the attention bell. The right dock holds four Surfaces: Files, Terminal, Pull request and Issues. (ADR-0018 later removed the Terminal Surface, leaving three.)
 
 ## Background and problem
 

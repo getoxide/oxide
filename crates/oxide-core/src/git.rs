@@ -4,10 +4,9 @@
 
 use crate::git_command::GitCommand;
 use crate::{Error, Result};
-use oxide_provider::diag;
 use oxide_provider::sync::LockExt as _;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -44,15 +43,6 @@ pub struct GitStatus {
 
 /// Branches that Oxide never pushes to without being told to.
 const PROTECTED_BRANCHES: [&str; 2] = ["main", "master"];
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitBranch {
-    /// `feature` for a local branch, `origin/feature` for a remote one.
-    pub name: String,
-    pub remote: bool,
-    pub current: bool,
-}
 
 /// Per-checkout locks for mutating Git commands, and the throttle for
 /// background fetches.
@@ -105,11 +95,6 @@ impl GitState {
 /// A read-only Git invocation: hooks off, hardening on.
 pub(crate) fn run(cwd: &Path, args: &[&str]) -> Result<String> {
     run_with_env(cwd, args, &[])
-}
-
-/// A Git invocation the user asked for: hooks and helpers run as in a terminal.
-pub(crate) fn run_user_initiated(cwd: &Path, args: &[&str]) -> Result<String> {
-    GitCommand::user_initiated(cwd).args(args).run()
 }
 
 pub(crate) fn run_with_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String> {
@@ -282,140 +267,6 @@ fn count_lines(path: &Path) -> u32 {
         Ok(Some(newlines + u32::from(unterminated)))
     };
     read().ok().flatten().unwrap_or(0)
-}
-
-pub fn list_branches(cwd: &Path) -> Result<Vec<GitBranch>> {
-    let current = run(cwd, &["branch", "--show-current"])?.trim().to_string();
-    let refs = run(
-        cwd,
-        &[
-            "for-each-ref",
-            "--format=%(refname)",
-            "--sort=refname",
-            "refs/heads",
-            "refs/remotes",
-        ],
-    )?;
-    let mut locals = Vec::new();
-    let mut remotes = Vec::new();
-    for name in refs.lines() {
-        if let Some(local) = name.strip_prefix("refs/heads/") {
-            locals.push(local.to_string());
-        } else if let Some(remote) = name.strip_prefix("refs/remotes/")
-            && !remote.ends_with("/HEAD")
-        {
-            remotes.push(remote.to_string());
-        }
-    }
-    let local_set: HashSet<_> = locals.iter().cloned().collect();
-    let mut branches: Vec<_> = locals
-        .into_iter()
-        .map(|name| GitBranch {
-            current: name == current,
-            name,
-            remote: false,
-        })
-        .collect();
-    // A remote branch that already has a local counterpart adds nothing.
-    branches.extend(
-        remotes
-            .into_iter()
-            .filter(|r| {
-                r.split_once('/')
-                    .is_none_or(|(_, branch)| !local_set.contains(branch))
-            })
-            .map(|name| GitBranch {
-                name,
-                remote: true,
-                current: false,
-            }),
-    );
-    Ok(branches)
-}
-
-fn checked_name(cwd: &Path, name: &str) -> Result<()> {
-    if name.starts_with('-') || !succeeds(cwd, &["check-ref-format", "--branch", name]) {
-        return Err(Error::Git(format!("`{name}` is not a valid branch name")));
-    }
-    Ok(())
-}
-
-/// Checks out a local branch, or a remote one as a new tracking branch.
-pub fn checkout(cwd: &Path, name: &str) -> Result<()> {
-    checked_name(cwd, name)?;
-    let local = format!("refs/heads/{name}");
-    let remote = format!("refs/remotes/{name}");
-    if succeeds(cwd, &["show-ref", "--verify", "--quiet", &local]) {
-        run_user(cwd, &["checkout", name, "--"])?;
-    } else if succeeds(cwd, &["show-ref", "--verify", "--quiet", &remote]) {
-        run_user(cwd, &["checkout", "--track", name, "--"])?;
-    } else {
-        return Err(Error::Git(format!("no branch named `{name}`")));
-    }
-    Ok(())
-}
-
-/// Creates a branch from HEAD and checks it out.
-pub fn create_branch(cwd: &Path, name: &str) -> Result<()> {
-    checked_name(cwd, name)?;
-    run_user(cwd, &["checkout", "-b", name, "--"])?;
-    Ok(())
-}
-
-/// Fast-forward only: never creates a merge or rebases.
-pub fn pull(cwd: &Path) -> Result<()> {
-    run_user(cwd, &["pull", "--ff-only"])?;
-    Ok(())
-}
-
-/// Commits exactly `paths` (modified, deleted, renamed or untracked), leaving
-/// everything else the user has staged, or not, as it was. A rename needs both
-/// its old and new path.
-pub fn commit(cwd: &Path, paths: &[String], message: &str) -> Result<()> {
-    if paths.is_empty() {
-        return Err(Error::Git("Select at least one file to commit.".into()));
-    }
-    if message.trim().is_empty() {
-        return Err(Error::Git("Write a commit message.".into()));
-    }
-    // Pathspecs are file names, never patterns; `--` keeps them from being options.
-    let mut listing = vec![
-        "--literal-pathspecs",
-        "ls-files",
-        "-z",
-        "--others",
-        "--exclude-standard",
-        "--",
-    ];
-    listing.extend(paths.iter().map(String::as_str));
-    let untracked: Vec<String> = run(cwd, &listing)?
-        .split('\0')
-        .filter(|p| !p.is_empty())
-        .map(str::to_string)
-        .collect();
-    // `--only` commits tracked paths; a new file must be known to the index first.
-    if !untracked.is_empty() {
-        let mut add = vec!["--literal-pathspecs", "add", "--intent-to-add", "--"];
-        add.extend(untracked.iter().map(String::as_str));
-        run(cwd, &add)?;
-    }
-    let mut commit = vec![
-        "--literal-pathspecs",
-        "commit",
-        "--quiet",
-        "--only",
-        "-m",
-        message,
-        "--",
-    ];
-    commit.extend(paths.iter().map(String::as_str));
-    let result = run_user(cwd, &commit);
-    if result.is_err() && !untracked.is_empty() {
-        let mut undo = vec!["--literal-pathspecs", "reset", "--quiet", "--"];
-        undo.extend(untracked.iter().map(String::as_str));
-        diag::best_effort("run", run(cwd, &undo));
-    }
-    result.map(|_| ())
 }
 
 /// Pushes the current branch, setting its upstream the first time. There is

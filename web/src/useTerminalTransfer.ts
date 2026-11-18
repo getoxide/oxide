@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { attachFile } from "./ipc";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 /** Literal paths, never executable shell fragments. PowerShell and POSIX differ on apostrophes. */
@@ -7,63 +6,17 @@ export function terminalPaths(paths: string[], windows = /Windows/i.test(navigat
   return paths.map((path) => `'${path.replaceAll("'", windows ? "''" : "'\\''")}'`).join(" ") + " ";
 }
 
-/** Native Windows file drops bypass DOM drop events in Tauri. Paste images become local files. */
+/** Native file drops bypass DOM drop events in Tauri: the dropped paths are typed into the terminal. */
 export function useTerminalTransfer(host: RefObject<HTMLElement | null>, visible: boolean, insert: (text: string) => void) {
   const latest = useRef(insert);
   useLayoutEffect(() => { latest.current = insert; });
   const [dragging, setDragging] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!visible || !host.current) return;
     const element = host.current;
     let active = true;
-    void Promise.resolve().then(() => { if (active) { setDragging(false); setBusy(false); } });
+    void Promise.resolve().then(() => { if (active) setDragging(false); });
     let unlisten: (() => void) | undefined;
-    let queue = Promise.resolve();
-    const files = (files: File[]) => {
-      // Queue separate pastes so a slower image cannot reorder the user's input.
-      queue = queue.then(async () => {
-        if (!active) return;
-        setBusy(true);
-        setError(null);
-        try {
-          const paths: string[] = [];
-          for (const file of files) {
-            if (file.size > 25 * 1024 * 1024) throw new Error("Files can be up to 25 MB.");
-            paths.push((await attachFile(file)).path);
-          }
-          if (active) latest.current(terminalPaths(paths));
-        } catch (cause) {
-          if (active) setError(typeof cause === "object" && cause && "message" in cause ? String(cause.message) : String(cause));
-        } finally { if (active) setBusy(false); }
-      });
-    };
-    const paste = (event: ClipboardEvent) => {
-      const pasted = Array.from(event.clipboardData?.files ?? []);
-      if (!pasted.length) return; // Ordinary text stays with xterm/the shell's bracketed paste.
-      event.preventDefault();
-      event.stopPropagation();
-      files(pasted);
-    };
-    const drop = (event: DragEvent) => {
-      if (!event.dataTransfer?.files.length) return;
-      event.preventDefault();
-      setDragging(false);
-      files(Array.from(event.dataTransfer.files));
-    };
-    const dragover = (event: DragEvent) => {
-      if (!event.dataTransfer?.types.includes("Files")) return;
-      event.preventDefault();
-      setDragging(true);
-    };
-    const dragleave = (event: DragEvent) => {
-      if (!(event.relatedTarget instanceof Node) || !element.contains(event.relatedTarget)) setDragging(false);
-    };
-    element.addEventListener("paste", paste, true);
-    element.addEventListener("drop", drop);
-    element.addEventListener("dragover", dragover);
-    element.addEventListener("dragleave", dragleave);
     const over = (position: { x: number; y: number }) => {
       const rect = element.getBoundingClientRect();
       const x = position.x / window.devicePixelRatio, y = position.y / window.devicePixelRatio;
@@ -78,15 +31,11 @@ export function useTerminalTransfer(host: RefObject<HTMLElement | null>, visible
           if (over(payload.position) && payload.paths.length) latest.current(terminalPaths(payload.paths));
         } else setDragging(over(payload.position));
       }).then((stop) => { if (active) unlisten = stop; else stop(); }).catch(() => {});
-    } catch { /* Browser previews use DOM drops. */ }
+    } catch { /* Browser previews have no native drops. */ }
     return () => {
       active = false;
       unlisten?.();
-      element.removeEventListener("paste", paste, true);
-      element.removeEventListener("drop", drop);
-      element.removeEventListener("dragover", dragover);
-      element.removeEventListener("dragleave", dragleave);
     };
   }, [host, visible]);
-  return { dragging: visible && dragging, busy, error };
+  return { dragging: visible && dragging };
 }

@@ -1,27 +1,18 @@
 import { PullRequestBrowser } from "./PullRequestBrowser";
 import { REFRESH_INTERVAL_MS, useAutoRefresh } from "./useAutoRefresh";
-import type { Thread } from "./bindings";
 
 export { REFRESH_INTERVAL_MS };
 
-interface PullRequestPanelProps {
+export interface PullRequestPanelProps {
   projectId: number;
-  /** The selected Thread: a new pull request is opened from its checkout. */
-  threadId: number | null;
-  /** The Project's Threads, so a fix can go to the one that owns the branch. */
-  threads?: Thread[];
-  createRequest?: number;
-  onCreateHandled?: () => void;
-  /** Changes after the user's own Git changes (commit, push, pull, checkout), which refresh the panel. */
+  /** Changes after the user's own changes (a merge, a new pull request), which refresh the panel. */
   refreshKey: number;
-  /** Called after a pull request was created, merged or checked out, so other Git views reload. */
+  /** Called after a pull request was created or merged, so other views reload. */
   onChanged: () => void;
-  /** Sends the repair request to the Thread that owns the branch, or a new Thread with Settings defaults. */
-  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean, headBranch?: string | null) => Promise<void>;
 }
 
 /** The repository's open pull requests on GitHub, through `gh`. It loads when opened, after the
- *  user's own Git changes, when the window regains focus, and periodically while visible.
+ *  user's own changes, when the window regains focus, and periodically while visible.
  *  State belongs to one Project, so a different one remounts it. */
 export function PullRequestPanel(props: PullRequestPanelProps) {
   return <PullRequestViews key={props.projectId} {...props} />;

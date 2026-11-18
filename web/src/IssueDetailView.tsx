@@ -5,7 +5,6 @@ import {
   CommentIcon,
   MarkGithubIcon,
   PencilIcon,
-  PlayIcon,
 } from "@primer/octicons-react";
 import { useRef, useState } from "react";
 import { QUERY_STALE_MS, useQuery } from "./queryCache";
@@ -19,7 +18,6 @@ import {
 } from "./bindings";
 import { openExternalLink } from "./externalLink";
 import { Avatar } from "./Avatar";
-import { DispatchDialog } from "./DispatchDialog";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -28,9 +26,7 @@ import { Markdown } from "./PullRequestMarkdown";
 import { Working } from "./PullRequestMerge";
 import { Field, LabelChip, Picker, useCandidates } from "./PullRequestPeople";
 import { relativeTime } from "./relativeTime";
-import { shortcutLabel } from "./shortcuts";
-import type { Thread } from "./bindings";
-import type { DispatchIssue } from "./dispatch";
+import { shortcutLabel } from "./platform";
 
 interface IssueDetailViewProps {
   projectId: number;
@@ -40,7 +36,6 @@ interface IssueDetailViewProps {
   onBack: () => void;
   /** Called after the issue changed on GitHub, so the list reloads. */
   onChanged: () => void;
-  onDispatched?: (thread: Thread) => void;
 }
 
 type Loaded =
@@ -70,8 +65,8 @@ const REASONS: { reason: IssueCloseReason; title: string; help: string }[] = [
 const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const;
 
 /** One issue, with what the web page lets you do: read and edit it, assign and label it,
- *  discuss it, close it with a reason or reopen it, and start a Thread from it. */
-export function IssueDetailView({ projectId, number, refreshKey, onBack, onChanged, onDispatched }: IssueDetailViewProps) {
+ *  discuss it, close it with a reason or reopen it. */
+export function IssueDetailView({ projectId, number, refreshKey, onBack, onChanged }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
   const query = useQuery(`p${projectId}:issues:detail:${number}`, () => commands.issueDetail(projectId, number), refreshKey + reload, { staleMs: QUERY_STALE_MS });
@@ -82,7 +77,6 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
   const [reason, setReason] = useState<IssueCloseReason>("completed");
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [bodyDraft, setBodyDraft] = useState<string | null>(null);
-  const [starting, setStarting] = useState<DispatchIssue | null>(null);
   const [reasonOpen, setReasonOpen] = useState(false);
   const reasonTrigger = useRef<HTMLButtonElement>(null);
   const { candidates, load } = useCandidates(projectId);
@@ -172,22 +166,9 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
     if (await change("close", () => commands.closeIssue(projectId, number, reason, comment))) setComment("");
   }
 
-  const startable = onDispatched && open;
-
   return (
     <div className="pr-review">
       <RefreshNotice query={query} />
-      {starting && onDispatched && (
-        <DispatchDialog
-          projectId={projectId}
-          issue={starting}
-          onClose={() => setStarting(null)}
-          onDispatched={(thread) => {
-            setStarting(null);
-            onDispatched(thread);
-          }}
-        />
-      )}
       {nav}
       <div className="pr-scroll">
         <header className="pr-hero">
@@ -245,19 +226,6 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
             </span>
           </div>
         </header>
-
-        {startable && (
-          <div className="pr-actions">
-            <button
-              className="primary"
-              onClick={() =>
-                setStarting({ number: detail.number, title: detail.title, body: detail.body, url: detail.url, labels: detail.labels.map((label) => label.name) })
-              }
-            >
-              <PlayIcon size={14} /> Start thread from issue
-            </button>
-          </div>
-        )}
 
         <section className="pr-section" aria-label="Description">
           <article className="pr-entry">

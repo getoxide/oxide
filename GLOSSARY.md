@@ -1,6 +1,6 @@
 # Oxide
 
-A desktop app for agentic coding: you open a Project and drive coding agents from a chat, switching between the agent CLIs already installed on your machine, with Git and GitHub at hand.
+A desktop terminal app that knows your GitHub Projects: you open a Project, open as many clean terminals as you like in its folder and run whatever you want in them, with the Project's GitHub Issues, pull requests and files at hand. Oxide does not know about agents; an agent CLI is just a command typed in a terminal. See ADR-0018.
 
 ## Language
 
@@ -11,181 +11,34 @@ A folder on the user's machine holding a Git repository, usually linked to a Git
 _Avoid_: Workspace, repo (when meaning the Oxide concept)
 
 **Open Project**:
-A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its Threads. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project takes it out of the sidebar and keeps it known.
+A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its terminals. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project ends its terminals, takes it out of the sidebar and keeps it known.
 _Avoid_: Pinned, recent, favourite Project
 
 **Project palette**:
-The overlay opened with ⌘⇧N. It searches Projects (clicking a result or pressing Enter starts a new Thread in the pick, with Settings defaults) and registers new ones: an existing folder, a new folder with `git init`, a clone from a Git URL, or a clone of one of the user's GitHub repositories found through `gh`.
+The overlay opened from the sidebar's Open a Project button. It searches Projects (clicking a result or pressing Enter opens the pick) and registers new ones: an existing folder, a new folder with `git init`, a clone from a Git URL, or a clone of one of the user's GitHub repositories found through `gh`. Project discovery does not depend on Settings: scan roots are built-in folders.
 _Avoid_: Project switcher, quick open
 
-## Threads
+## Terminals
 
-**Thread**:
-One conversation with a single Provider inside a Project, with its own Model, Effort and context (Model and Effort can change between Turns); it maps one-to-one to the Provider's own session. `/clear` and ⌘N start a new Thread in the same Project; the old one stays in the sidebar until the user deletes it. A finished Thread is deleted, not archived: deleting removes its Transcript, Approvals, Attachments and Checkpoints for good, and its worktree with them (its branch stays). The Settings option "Delete merged branches and worktrees" (off by default) removes a Thread's worktree and local branch once its pull request is merged on GitHub, and keeps the Thread; it skips anything with uncommitted changes or unmerged commits. The Provider's own session files are left to the Provider. A new chat Thread works in a worktree of its own by default. See ADR-0005 and ADR-0011.
-A Thread's centre is its Agent terminal; chat Threads keep their Transcript until the chat is removed.
-_Avoid_: Agent, session, chat, Archived Thread
+**Terminal**:
+A shell session in a Project's folder, shown in the centre of the window and listed under its Project in the sidebar. A Project holds as many as the user opens. Core owns each shell, never the webview, so switching to another Terminal and back shows the same scrollback and a still-running process keeps running. A Terminal can be renamed and closed from the sidebar. It is a plain shell that Oxide does not interpret: whatever the user runs in it, an agent CLI included, runs with no Oxide launch flags, prompts, statuses or permissions. Terminals end when the user closes them, when their Project closes or when Oxide quits; Oxide does not restore them after a restart. See ADR-0018.
+_Avoid_: Thread, session, console, tab, Agent terminal
 
-**Terminal Thread**:
-A Thread whose centre is an Agent terminal: the Provider's own CLI runs in the Thread's checkout and Oxide renders no conversation. It has a worktree, a status from the Provider's own reports, Turns recorded by start and end only, and Checkpoints, like any other Thread. A prompt reaches its agent as a launch argument, or pasted (never submitted) after the user confirms its exact text. See ADR-0017.
-_Avoid_: Chat Thread, terminal session
-
-**Custom agent**:
-An agent CLI the user added in Settings with a name and the command that launches it. Its Threads get a worktree, Issues, Fix and review like any other, but Oxide knows nothing about its status, Turns, Models or sessions unless it reports them.
-_Avoid_: Plugin, external Provider
-
-**Agent terminal**:
-The terminal at a Thread's centre, running the Thread's Provider CLI in the Thread's checkout. Oxide's core owns it, so it keeps running while the user moves around the app and shows its screen again when the Thread is reopened. Stop ends the agent; Restart resumes the same Provider session. It is not a Project terminal tab, which is a plain shell.
-_Avoid_: Console, agent tab, shell
-
-**Reporter**:
-Oxide's own executable, run by a Provider's per-launch `notify` (Codex) or status line command (Antigravity CLI), that tells the running app the Provider session's id over an owner-only socket, then runs the user's own command unchanged. It is how Oxide learns a session id it cannot assign.
-_Avoid_: Hook, notifier, daemon
-
-**Thread status**:
-Where a Thread stands right now: working (the Provider reports a Turn running), needs input (the Provider reports it is waiting on an Approval or an answer), completed (the Provider reports the Turn finished, or is idle), running (the agent is alive but has reported nothing, so its state is unknown), stopped (the agent is not running), or error (the Turn failed, or the agent exited with a failure). Oxide never guesses a status the Provider did not report. A chat Thread can also be interrupted (the Turn was stopped by the user or by quitting Oxide).
-_Avoid_: State, phase
-
-**Continue in new Thread**:
-What a Thread offers instead of its composer when resuming its Provider session fails because the session is gone. It creates a new Thread with the same Provider, Model, Effort and permission mode, whose first prompt is prefilled with a recap (user prompts and final agent messages, no tool output, cut to a fixed length). The two Threads link to each other.
-
-**Turn**:
-One user prompt in a Thread and everything the Provider does in response, as the Provider reports it: from its working report until it reports done, idle or error.
-_Avoid_: Run, exchange, round
-
-**Attachment**:
-A file the user puts inside a prompt, at a position in its text, stored under the Oxide home until its Thread is deleted. Shown the same way for every Provider (image preview or extension icon, and file name); how it reaches the agent is up to the Provider adapter: natively where the Provider takes that kind (Claude Code: images, PDFs, text; Codex: images), otherwise as a file path at the same spot in the prompt, always preceded by a `[Attachment: name]` marker. A prompt is a sequence of segments, text or Attachment, and the Transcript records them that way. Up to 10 per prompt, 25 MB each.
-_Avoid_: Upload, file input, image (when meaning any Attachment)
-
-**Item**:
-One unit of a Turn's output: an agent message, reasoning, a tool call, a file change, a subagent, the output of a Slash command, or the mark of a Restore. Slash command output and the mark of a Restore are their own kinds, never an agent message, and stay out of the Continue in new Thread recap.
-_Avoid_: Step, block, event (when meaning the unit)
-
-**Activity**:
-The compressed, expandable record of what the Provider did in one Turn: a one-line summary of macro actions with counts ("Explored 4 files · Edited 2 files"), expanding into Phases and then Items. A view of the Turn's Items, not a new kind of Item; the agent's messages stay outside it. While the Turn runs it carries a live status line; a Turn with no tool-like Items has no Activity. A command the Provider reports as failed is marked even while the Activity is collapsed.
-_Avoid_: Timeline, log, steps
-
-**Command record**:
-What a Provider reported about one command it ran during a Turn: the command line, whether it succeeded, failed or is unknown, and the exit code when reported. Stored on the command's Item and never inferred from the command's output; a Provider that reports nothing leaves the outcome unknown. See **Activity**.
-_Avoid_: Command (alone), command evidence, exit status
-
-**Phase**:
-A run of consecutive Items of the same macro kind within an Activity: reasoning, explore, edit, run, delegate or other. A tool call's kind is assigned by its Provider adapter when it emits the Item (unmapped tools are other); Items stored without one fall back on their Item kind. The same kind returning later starts a new Phase.
-_Avoid_: Stage, group
-
-**Slash command**:
-An instruction typed in the composer as `/name` with optional arguments, run by Oxide (`/clear`, `/model`) or by the Thread's Provider instead of being sent as a prompt; a Provider's skills and custom commands are Slash commands too. Each Provider offers its own set, and one it can't run inside Oxide is not offered. A `/word` that names no Slash command is an ordinary prompt. See ADR-0006.
-_Avoid_: Command (alone), action, macro
-
-**Transcript**:
-Oxide's own record of a Thread's Turns and Items, the only thing a Thread is shown from. It outlives the Provider's session: when that session is gone the Thread stays readable, and can only be continued in a new Thread.
-_Avoid_: History, log, session (when meaning the record)
-
-**Checkpoint**:
-A snapshot of a Thread's files taken when a Turn starts and when it ends, so the Thread's files can be restored to how they were before a Turn. Restoring takes a Checkpoint first, so it can be undone, and does not rewind the Provider's session. See ADR-0011.
-_Avoid_: Snapshot, save point
-
-**Setup command**:
-An optional per-Project shell command run in every new worktree before its Thread's first Turn, to prepare what Git doesn't carry over (env files, dependencies).
-_Avoid_: Init script, bootstrap
-
-**Board Thread**:
-A Thread dispatched from an Issue, or any Thread that works in a git worktree of its own (there is no Thread Board any more). It works in a git worktree of its own at `~/.oxide/worktrees/<project>/<slug>`, on a new `oxide/<slug>` branch cut from the chosen base branch's local commits (uncommitted changes stay behind), and shows a branch icon in the sidebar. A new Thread started from the chat does the same by default, creating its worktree with its first prompt; a Project can opt out, and then its chat Threads work in the main checkout, as do chat Threads that existed before the default. See ADR-0011.
-_Avoid_: Background agent, background task
-
-## Review
-
-**Confident merge**:
-A merge where the person responsible has seen what the agent changed, what was actually checked and what stayed unverified.
-_Avoid_: Safe merge, trusted merge
-
-**Line comment**:
-A draft on one line of a Diff, with the quoted code, written by the user or by a reviewing Provider. It stays a draft until sent, and is then delivered to a Thread as part of one prompt, or to GitHub as part of a review.
-_Avoid_: Inline comment, annotation, note
-
-**Review thread**:
-A GitHub discussion on the lines of a pull request's diff: the opening comment, its replies, and the path, line and side they refer to, which GitHub marks resolved or outdated. Used to pick what the **Fix** action sends back to the agent. Its own term, not a Thread: a Thread is Oxide's conversation with a Provider.
-_Avoid_: Inline comment, comment thread, conversation
-
-**Verification command**:
-A command that counts as a check (tests, type checks, lint, build), recognized from built-in patterns plus the Project's own additions. Its state for a change is fresh, stale, failed, never run or unknown.
-_Avoid_: Test command, check script
-
-**Blind review**:
-A review of a change by a one-shot run of a Provider that receives only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
-_Avoid_: Second opinion, AI review, auto-review
-
-**Review ledger**:
-Local figures about completed work that outlive Threads: identifiers, Provider, Model, timestamps and counts, never Transcript text. It is never sent anywhere and the user can clear it. See ADR-0010.
-_Avoid_: History, analytics, telemetry
-
-**Review round**:
-One send of Line comments, or of selected reviewer comments, to a Thread. The Review ledger counts review rounds by Provider, Model and kind of work (languages touched, diff size band and the issue's labels when present), with the sample size of each group, so small groups are not read as strongly. It stores no comment text.
-_Avoid_: Review pass, iteration, cycle
-
-**Rule suggestion**:
-A proposal to turn feedback the user keeps giving into a rule for the Project's agent instructions. Oxide groups the Line comments sent in the Project by normalized word similarity and suggests one once a group holds at least three similar comments from at least two Threads, showing the comments it is based on; a dismissed suggestion never comes back. The comments kept for this live apart from the Review ledger, and clearing the ledger clears them too. Accepting starts a normal Thread that proposes the edit in `AGENTS.md`, which the user reviews like any other change.
-_Avoid_: Rule, recommendation, tip
-
-**Reviewer comment**:
-One comment of a Review thread, written by a GitHub reviewer rather than by the user. It reaches a Thread only when the user selects its thread and asks for a fix, quoted and marked as external content. It is not a Line comment.
-_Avoid_: Review comment, review note
-
-## Providers
-
-**Provider**:
-An agent CLI installed on the user's machine that Oxide runs in an Agent terminal: Claude Code, Codex, Antigravity CLI (`agy`), or a Custom agent.
-_Avoid_: Agent, backend, harness
-
-**Model**:
-A specific LLM a Provider offers, chosen per conversation (e.g. Opus 5.5).
-
-**Model picker**:
-The overlay where a new Thread's Provider, Model, Effort and Permission mode are chosen before it launches, opened with ⌘⇧M, with the Settings defaults preselected. Providers are tabs along the top, Models on the left, the Effort slider on the right. Enter launches the Thread and Esc closes. A running Thread's Model is changed in the Provider's own UI.
-
-**Favourite Model**:
-A Model the user starred in the Model picker (see **Model picker**). Starred with the star on a Model row; ⌘1..9 outside the picker starts a new Thread with the nth Favourite, in Provider order.
-
-**Effort**:
-The reasoning-depth setting a Provider exposes for a Model (e.g. low, high).
-_Avoid_: Thinking level, reasoning mode
-
-**Permission mode**:
-How much a Thread's Provider may do without asking: Ask (every file edit and command asks), Auto-edit (file edits inside the Thread's folder go through, everything else asks) or Full access (nothing asks). Chosen per Thread, changeable between Turns; a mode a Provider can't honour is not offered for it.
-_Avoid_: Sandbox, approval policy, trust level
-
-**Approval**:
-A request, during a Turn, for the user to allow or deny one action (a command, a file change, a tool call). Raised by the Provider, or by Oxide when it would act on the Provider's behalf. A pending Approval puts the Thread in needs input and waits until answered or the Turn ends.
-_Avoid_: Permission prompt, confirmation
-
-**Usage limit**:
-A cap the Provider's account puts on how much the user can run over a rolling window, reported by the Provider as a share used and a reset time. Oxide shows two: the 5-hour limit and the weekly limit (all Models); per-Model weekly caps and paid overage are not shown. It belongs to the Provider account, not to a Thread, so every Thread of a Provider shows the same figures. A Provider that reports none (Antigravity) shows none.
-_Avoid_: Quota, rate limit (a rate limit is the Provider refusing a request; a Usage limit is the budget behind it), plan usage
+**Command block**:
+One command entered in a Terminal, grouped with its output and exit status. It belongs to a persistent shell session, so its working directory and shell variables carry into the next Command block.
+_Avoid_: Turn, Thread, agent message
 
 ## Layout
 
-**Command block**:
-One command entered in a Project terminal tab, grouped with its output and exit status. It belongs to a persistent shell session, so its working directory and shell variables carry into the next Command block.
-_Avoid_: Turn, Thread, agent message
-
-**Project terminal tab**:
-One shell session in a Project's terminal tab strip. It keeps the checkout it was opened in, is flagged when that differs from the selected Thread's checkout, and survives Thread selection and Surface changes. Deleting a Board Thread closes only the tabs of its worktree.
-
-**Project Service**:
-A long-running background process (such as a local web server or watcher) started from a Project terminal tab or by an agent Turn. It belongs to the Project, shows in the sidebar with its port and status, streams output into the Terminal Surface, and terminates when stopped or when the Project closes.
-_Avoid_: Background job, daemon, subshell, orphan process
-
 **Surface**:
-One of the four tools in the right dock: Files, Terminal, Pull request or Issues. Files is a navigator, not an editor: it browses the selected checkout and opens files in the **Code workspace**, which lives in the centre beside the Thread. A Surface can be maximized and restored while keeping its content and working state. The Pull request and Issues lists belong to the Project's repository; only branch actions (opening a pull request, checking one out) act on the selected Thread's checkout and name it. Reviewing a remote pull request records its identity for the Diff Surface and never changes a checkout.
+One of the three tools in the right dock: Files, Issues or Pull request. Files is a navigator, not an editor: it browses the Project's folder and opens files in the **Code workspace**. Issues and Pull request are plain GitHub tools: they list, show and create issues, and list, show, create, review and merge pull requests, through `gh`, with no action that sends anything to an agent.
 _Avoid_: Tab, pane, widget
 
 **Code workspace**:
-The Project's editor in the centre, one Thread/Code switch away from the conversation. It owns the file tabs, Monaco and the language servers; the Files Surface opens files into it on a double click or Enter/Space, and a Diff can open one too. Each Project keeps its own Code workspace, so moving between Threads keeps the open buffers, and a Board Thread's editor works in its worktree. See **Surface**.
+The Project's editor, shown in the centre in place of its Terminals while a file is open, with a Back to terminals button. It owns the file tabs, Monaco and the language servers; the Files Surface opens files into it. Each Project keeps its own Code workspace, so moving between Projects keeps the open buffers and unsaved changes. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
 _Avoid_: Editor pane, code tab, work mode
 
-**Attention Center**:
-The header's tray of Threads waiting on the user across every open Project, grouped by Project: a pending **Approval**, a Thread needing input, a failed Turn or an interrupted one, each with a reason badge. The bell counts them, opens the tray, and jumps to the most urgent: the earliest pending Approval (by Thread activity, then lowest id), else a Thread needing input, else an error or interrupted one, in sidebar order. Opening the tray instead jumps to one Thread and focuses its response; a failed jump offers Retry.
-_Avoid_: Notification center, inbox, alerts
+## Settings
 
-**Base branch**:
-The branch the Branch scope compares against: the remote's default branch, else `main`, `master` or `dev` (remote copy first).
-_Avoid_: Target branch, parent branch
+**Settings**:
+A tab that opens on an empty page. Every old option is gone and new ones are added deliberately, each with its own spec. Oxide has no custom keyboard shortcuts; the operating system's own keys and the terminal's own keys keep working.
