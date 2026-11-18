@@ -435,6 +435,7 @@ fn base_name(token: &str) -> &str {
 #[cfg(windows)]
 mod windows_process {
     use super::ProcessIdentity;
+    use crate::sync::LockExt as _;
     use std::collections::HashMap;
     use std::collections::HashSet;
     use std::io;

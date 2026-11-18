@@ -16,7 +16,7 @@ impl FakeCli {
 pub fn python() -> &'static std::path::Path {
     static PYTHON: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     PYTHON.get_or_init(|| {
-        let output = std::process::Command::new("python")
+        let output = oxide_provider::command::os_command("python")
             .args(["-c", "import sys; print(sys.executable)"])
             .output()
             .expect("Python is required for Provider fixtures");

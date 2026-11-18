@@ -4,9 +4,11 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+#[cfg(unix)]
 use oxide_provider::Provider;
 #[cfg(unix)]
 use oxide_provider::codex::CodexProvider;
+#[cfg(unix)]
 use oxide_provider::diag;
 #[cfg(unix)]
 use oxide_provider::diag::SenderExt as _;

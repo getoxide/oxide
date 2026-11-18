@@ -1,6 +1,7 @@
 //! The host shell integration of Core's activity: activity assertions, notifications,
 //! opening URLs and files, and the window badge.
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use oxide_core::LockExt as _;
 use oxide_core::diag;
 use oxide_core::{Notification, NotificationKind, System};

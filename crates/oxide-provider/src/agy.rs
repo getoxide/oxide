@@ -8,7 +8,6 @@
 use crate::bounded_lines::{
     BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
 };
-use crate::diag;
 use crate::diag::SenderExt as _;
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
 use crate::sync::LockExt as _;
@@ -873,7 +872,7 @@ impl Provider for AgyProvider {
         if let Some(_pgid) = pgid {
             self.interrupted.store(true, Ordering::SeqCst);
             #[cfg(unix)]
-            diag::best_effort("signal_group", process::signal_group(_pgid, libc::SIGINT));
+            crate::diag::best_effort("signal_group", process::signal_group(_pgid, libc::SIGINT));
             // Print mode has no input/control channel. End the whole contained process tree;
             // the reader reports the interrupted Turn and preserves its conversation id.
             #[cfg(windows)]
