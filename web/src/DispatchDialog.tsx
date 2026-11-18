@@ -1,5 +1,6 @@
 import { Skeleton } from "./Skeleton";
 import { useEffect, useState } from "react";
+import { CUSTOM_AGENT_LIMITS, customAgentName, customProviderId, isCustomProvider } from "./customAgents";
 import {
   commands,
   type PermissionMode,
@@ -49,6 +50,8 @@ export function DispatchDialog({
   const [branches, setBranches] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A Custom agent's Thread was created; its first prompt waits for the user to ask for it. */
+  const [pasting, setPasting] = useState<{ thread: Thread; prompt: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -83,6 +86,27 @@ export function DispatchDialog({
     if (!form || busy) return;
     setBusy(true);
     setError(null);
+    if (settings && issue && isCustomProvider(form.provider)) {
+      // Oxide does not know how a Custom agent takes a prompt: start it bare, then show the
+      // prompt for the user to confirm and paste (never submitted).
+      const created = await commands.createTerminalThreadFromIssue(
+        projectId,
+        terminalIssue(issue),
+        form.provider,
+        null,
+        null,
+        null,
+      );
+      if (created.status === "error") {
+        setBusy(false);
+        setError(created.error.message);
+        return;
+      }
+      const prompt = await commands.terminalIssuePrompt(terminalIssue(issue));
+      setBusy(false);
+      setPasting({ thread: created.data, prompt });
+      return;
+    }
     const res =
       settings && startsAsTerminal(settings, form.provider, issue)
         ? await commands.createTerminalThreadFromIssue(
@@ -99,6 +123,16 @@ export function DispatchDialog({
     setBusy(false);
     if (res.status === "ok") onDispatched(res.data);
     else setError(res.error.message);
+  };
+
+  const paste = async () => {
+    if (!pasting || busy) return;
+    setBusy(true);
+    setError(null);
+    const sent = await commands.deliverAgentPrompt(pasting.thread.id, pasting.prompt);
+    setBusy(false);
+    if (sent.status === "error") setError(sent.error.message);
+    else onDispatched(pasting.thread);
   };
 
   const asTerminal =
@@ -123,11 +157,35 @@ export function DispatchDialog({
         <h2>
           {issue ? `Start a Thread from #${issue.number}` : "Dispatch a task"}
         </h2>
-        {form === null || settings === null ? (
+        {pasting ? (
+          <>
+            <p className="hint">
+              {customAgentName(pasting.thread.provider, settings?.customAgents ?? [])} is running in
+              its Thread. Oxide does not know how it takes a prompt, so this one is pasted into its
+              terminal only when you ask, and never submitted: press Enter there yourself. The issue
+              text is quoted and marked as external content.
+            </p>
+            <textarea readOnly rows={10} aria-label="Prompt to paste" value={pasting.prompt} />
+            {error && <p role="alert" className="error">{error}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn" disabled={busy} onClick={() => onDispatched(pasting.thread)}>
+                Skip
+              </button>
+              <button type="button" className="btn primary" disabled={busy} onClick={() => void paste()}>
+                Paste into the terminal
+              </button>
+            </div>
+          </>
+        ) : form === null || settings === null ? (
           <Skeleton kind="form" label="Loading task settings…" />
         ) : (
           <>
-            {asTerminal ? (
+            {asTerminal && isCustomProvider(form.provider) ? (
+              <p className="hint">
+                The agent starts with no prompt. You confirm the issue&apos;s prompt next, and it is
+                pasted only if you ask.
+              </p>
+            ) : asTerminal ? (
               <p className="hint">
                 The agent starts with the issue&apos;s number, title and body as
                 its first prompt; the title and body are quoted and marked as
@@ -165,8 +223,18 @@ export function DispatchDialog({
                     {p.name}
                   </option>
                 ))}
+                {issue &&
+                  (settings.customAgents ?? []).map((agent) => (
+                    <option key={agent.id} value={customProviderId(agent)}>
+                      {agent.name} (custom)
+                    </option>
+                  ))}
               </select>
             </label>
+            {isCustomProvider(form.provider) ? (
+              <p className="hint">{CUSTOM_AGENT_LIMITS}</p>
+            ) : (
+              <>
             <label>
               Model
               <input
@@ -201,6 +269,8 @@ export function DispatchDialog({
                 ))}
               </select>
             </label>
+              </>
+            )}
             {!asTerminal && (
               <label>
                 Base branch

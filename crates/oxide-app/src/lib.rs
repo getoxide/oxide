@@ -240,6 +240,16 @@ pub struct Settings {
     open_threads_as_terminals: bool,
     claude_customizations: ClaudeCustomizations,
     shortcuts: Shortcuts,
+    custom_agents: Vec<CustomAgent>,
+}
+
+/// An agent CLI the user added in Settings; its command runs through the user's shell.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomAgent {
+    id: String,
+    name: String,
+    command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -990,6 +1000,15 @@ async fn create_terminal_thread_from_issue(
     })
     .await
     .map(Thread::from)
+}
+
+/// The prompt a terminal Thread from an issue would start with, for the user to read and confirm
+/// before it is pasted into a Custom agent. Starts nothing.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn terminal_issue_prompt(core: State<'_, Arc<Core>>, issue: TerminalIssue) -> String {
+    core.issue_prompt_preview(&issue.into())
 }
 
 /// Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
@@ -3623,6 +3642,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         start_block_terminal,
         create_terminal_thread,
         create_terminal_thread_from_issue,
+        terminal_issue_prompt,
         attach_agent_terminal,
         write_agent_terminal,
         resize_agent_terminal,

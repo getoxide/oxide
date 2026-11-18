@@ -89,3 +89,12 @@ describe("starting from an issue as a terminal Thread", () => {
     expect(terminalIssue(issue).labels).toEqual([]);
   });
 });
+
+describe("a Custom agent from an issue", () => {
+  it("always starts as a terminal Thread, even with the preview off", () => {
+    const issue = { number: 1, title: "t", body: "b", url: "u" };
+    expect(startsAsTerminal({ openThreadsAsTerminals: false }, "custom:mine", issue)).toBe(true);
+    expect(startsAsTerminal({ openThreadsAsTerminals: false }, "claude", issue)).toBe(false);
+    expect(startsAsTerminal({ openThreadsAsTerminals: false }, "custom:mine", undefined)).toBe(false);
+  });
+});

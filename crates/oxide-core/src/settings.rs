@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 
 use oxide_provider::claude::ClaudeCustomizations;
 
+use crate::custom_agents::{CustomAgent, list_problem};
 use crate::{Error, Result};
 
 pub const SETTINGS_FILE: &str = "settings.json";
@@ -241,6 +242,8 @@ pub struct Settings {
     pub claude_customizations: ClaudeCustomizations,
     /// Keyboard shortcuts, all rebindable in Settings.
     pub shortcuts: Shortcuts,
+    /// Agent CLIs the user added: a name and the command that launches each (ADR-0017).
+    pub custom_agents: Vec<CustomAgent>,
 }
 
 impl Default for Settings {
@@ -253,6 +256,7 @@ impl Default for Settings {
             open_threads_as_terminals: false,
             claude_customizations: ClaudeCustomizations::default(),
             shortcuts: Shortcuts::default(),
+            custom_agents: vec![],
         }
     }
 }
@@ -343,6 +347,12 @@ impl SettingsStore {
     }
 
     pub(crate) fn save(&self, settings: &Settings) -> Result<()> {
+        if let Some((index, key, message)) = list_problem(&settings.custom_agents) {
+            return Err(Error::Provider(format!(
+                "Custom agent {} {key}: {message}.",
+                index + 1
+            )));
+        }
         write_file(&self.path, settings)?;
         self.reload()
     }
@@ -468,6 +478,7 @@ fn parse(text: &str) -> std::result::Result<Settings, Vec<FieldError>> {
             take_object(&mut root, "shortcuts", &mut errors),
             &mut errors,
         ),
+        custom_agents: custom_agents(&mut root, &mut errors),
         claude_customizations: {
             // Older files held one on/off switch for every category.
             if let Some(Value::Bool(all)) = root.get("claudeCustomizations") {
@@ -540,6 +551,22 @@ fn provider(
     };
     unknown_keys(&obj, at, errors);
     p
+}
+
+/// The `customAgents` list: a list that is not valid as a whole is reported per field and the
+/// agents are left out, so a bad command never reaches a shell.
+fn custom_agents(root: &mut Map<String, Value>, errors: &mut Vec<FieldError>) -> Vec<CustomAgent> {
+    let agents: Vec<CustomAgent> = field(root, "", "customAgents", vec![], errors);
+    match list_problem(&agents) {
+        None => agents,
+        Some((index, key, message)) => {
+            errors.push(FieldError {
+                path: format!("customAgents.{index}.{key}"),
+                message,
+            });
+            vec![]
+        }
+    }
 }
 
 fn join(at: &str, key: &str) -> String {

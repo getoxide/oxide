@@ -29,7 +29,8 @@ const PROVIDER_NAMES: Record<string, string> = {
   antigravity: "Antigravity",
 };
 
-export const providerName = (provider: string) => PROVIDER_NAMES[provider] ?? provider;
+export const providerName = (provider: string) =>
+  PROVIDER_NAMES[provider] ?? (provider.startsWith("custom:") ? "Custom agent" : provider);
 
 /** The Effort level a Model id or name ends with, lowercased, if any. */
 export function effortSuffix(name: string): string | null {

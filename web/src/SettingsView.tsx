@@ -17,6 +17,7 @@ import { getAppearance, saveAppearance, validateAppearance } from "./appearance"
 import { Skeleton } from "./Skeleton";
 import { listen } from "@tauri-apps/api/event";
 import { ProviderMark } from "./ProviderMark";
+import { CustomAgentsSettings } from "./CustomAgentsSettings";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import {
@@ -371,6 +372,11 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           </section>
         );
       })}
+      <CustomAgentsSettings
+        agents={draft.customAgents}
+        onChange={(customAgents) => set({ customAgents })}
+        fieldErrors={fieldErrors}
+      />
     </section>
   );
 

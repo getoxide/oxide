@@ -1,7 +1,8 @@
 import { modelDigitShortcut, shortcutLabel } from "./shortcuts";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LockIcon, StarFillIcon, StarIcon, XIcon } from "@primer/octicons-react";
-import { commands, type ModelInfo, type PermissionMode } from "./bindings";
+import { commands, type CustomAgent, type ModelInfo, type PermissionMode } from "./bindings";
+import { CUSTOM_AGENT_LIMITS, customProviderId } from "./customAgents";
 import { LAUNCH_RECIPES, launchChoice, nextPermissionMode, permissionModeNote, permissionModesFor, type LaunchChoice } from "./launchPicker";
 import { ProviderMark } from "./ProviderMark";
 import { catalogCache, detectProviders, installedCache, loadCatalog } from "./modelCatalogCache";
@@ -44,6 +45,8 @@ const PERMISSION_LABELS: Record<PermissionMode, string> = {
 /** Starting a new Thread: the picker preselects the Settings defaults and Enter launches. */
 export interface LaunchMode {
   defaultPermissionMode: PermissionMode | null;
+  /** Custom agents from Settings, offered as launch targets next to the Providers. */
+  customAgents?: CustomAgent[];
   onLaunch: (choice: LaunchChoice) => void;
 }
 
@@ -394,6 +397,28 @@ export function ModelEffortPicker({
                 </>
               )}
             </div>
+            {launch && (launch.customAgents ?? []).length > 0 && (
+              <div className="custom-agent-launch" role="group" aria-label="Custom agents">
+                <div className="models-group-title">Custom agents</div>
+                {(launch.customAgents ?? []).map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className="model-row"
+                    title={CUSTOM_AGENT_LIMITS}
+                    onClick={() => {
+                      launch.onLaunch(launchChoice(customProviderId(agent), null, null, "auto-edit"));
+                      onClose();
+                    }}
+                  >
+                    <div className="model-details">
+                      <span className="model-name">{agent.name}</span>
+                      <div className="model-desc">No status or Turns unless it reports them</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div

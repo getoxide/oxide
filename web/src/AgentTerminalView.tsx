@@ -3,7 +3,8 @@ import { Channel } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SquareFillIcon, SyncIcon } from "@primer/octicons-react";
-import { commands, type Thread } from "./bindings";
+import { commands, type CustomAgent, type Thread } from "./bindings";
+import { CUSTOM_AGENT_LIMITS, customAgentFor, customAgentName, isCustomProvider } from "./customAgents";
 import { terminalAppearance } from "./appearance";
 import { readableModel } from "./headerLines";
 import { takeFrameBatch } from "./terminalOutput";
@@ -13,6 +14,8 @@ import { useTerminalTransfer } from "./useTerminalTransfer";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
+  /** The Custom agents configured now; a Thread whose agent is not among them cannot be relaunched. */
+  customAgents?: CustomAgent[];
   thread: Thread;
   /** Whether the Thread is showing; a hidden terminal keeps its place and its process. */
   visible: boolean;
@@ -41,7 +44,7 @@ const MODE_LABEL = { ask: "Ask", "auto-edit": "Auto-edit", "full-access": "Full 
  * shows it; closing the view (switching Thread, Surface or Code) never ends the agent, and
  * showing it again replays the screen.
  */
-export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdated, onThreadTitleChange }: Props) {
+export function AgentTerminalView({ customAgents = [], thread, visible, gitControls, onThreadUpdated, onThreadTitleChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLElement>(null);
   const terminal = useRef<Terminal | null>(null);
@@ -194,10 +197,14 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
     else setError("Could not rename the Thread.");
   };
 
-  const detail = [
-    thread.model ? readableModel(thread.model, null) : null,
-    MODE_LABEL[thread.permissionMode],
-  ].filter(Boolean).join(" · ");
+  const custom = isCustomProvider(thread.provider);
+  const removed = custom && customAgentFor(thread.provider, customAgents) === undefined;
+  const detail = custom
+    ? customAgentName(thread.provider, customAgents)
+    : [
+        thread.model ? readableModel(thread.model, null) : null,
+        MODE_LABEL[thread.permissionMode],
+      ].filter(Boolean).join(" · ");
   const failedSetup = thread.status === "error" && thread.setupOutput != null && !running;
 
   return (
@@ -224,12 +231,19 @@ export function AgentTerminalView({ thread, visible, gitControls, onThreadUpdate
           <button type="button" className="btn sm" disabled={busy} onClick={() => void stop()}>
             <SquareFillIcon size={12} /> Stop
           </button>
+        ) : removed ? (
+          <span className="hint">This agent was removed from Settings, so it cannot be relaunched.</span>
         ) : (
           <button type="button" className="btn sm" disabled={busy} onClick={() => void restart()}>
-            <SyncIcon size={12} /> Restart
+            <SyncIcon size={12} /> {custom ? "Run again" : "Restart"}
           </button>
         )}
       </div>
+      {custom && (
+        <p className="hint" role="note" aria-label="Custom agent">
+          Custom agent. {CUSTOM_AGENT_LIMITS}
+        </p>
+      )}
       {thread.setupOutput != null && (
         <details className="setup-output" open={failedSetup}>
           <summary>Setup command{failedSetup ? " failed" : ""}</summary>

@@ -14,6 +14,7 @@ use crate::agent_status::{
     TurnTracker, thread_status,
 };
 use crate::checkpoint::{self, Phase};
+use crate::custom_agents::{CustomAgent, PROVIDER_PREFIX, custom_id, shell_invocation};
 use crate::terminal::{AgentCommand, TerminalSession, next_id};
 use crate::{Core, Error, PermissionMode, Result, ThreadStatus, ThreadSummary};
 use crossbeam_channel::Receiver;
@@ -235,6 +236,19 @@ impl Core {
     ) -> Result<ThreadSummary> {
         self.project(project_id)?;
         let provider = choice.provider.as_deref().unwrap_or("claude");
+        // A Custom agent takes no prompt as an argument (Oxide does not know how it takes one):
+        // the caller pastes the prompt the user confirms, once the agent runs. It has no Model,
+        // Effort, Permission mode or session either.
+        if custom_id(provider).is_some() {
+            self.custom_agent_for(provider)?;
+            return self.insert_and_launch(
+                project_id,
+                provider,
+                (None, None, PermissionMode::AutoEdit, None),
+                issue,
+                None,
+            );
+        }
         if provider != "claude" && provider != "codex" && !is_agy(provider) {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
@@ -285,6 +299,30 @@ impl Core {
         }
         // Claude Code takes the id Oxide assigns; Codex's and agy's are reported by their reporter.
         let session_id = (!codex && !agy).then(new_session_id);
+        self.insert_and_launch(
+            project_id,
+            provider,
+            (model, effort, permission_mode, session_id),
+            issue,
+            prompt,
+        )
+    }
+
+    /// Records the Thread, creates its checkout and launches its agent; nothing is left behind
+    /// when that fails.
+    fn insert_and_launch(
+        &self,
+        project_id: u32,
+        provider: &str,
+        (model, effort, permission_mode, session_id): (
+            Option<String>,
+            Option<String>,
+            PermissionMode,
+            Option<String>,
+        ),
+        issue: Option<&TerminalIssue>,
+        prompt: Option<&str>,
+    ) -> Result<ThreadSummary> {
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
@@ -337,6 +375,8 @@ impl Core {
         if self.agent_is_running(thread_id) {
             return Err(Error::Terminal("The agent is already running.".into()));
         }
+        // A removed Custom agent cannot be launched again.
+        self.refuse_removed_custom_agent(thread_id)?;
         if !self.ensure_worktree(thread_id)? {
             self.board.set_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
@@ -365,7 +405,12 @@ impl Core {
                 |r| r.get(0),
             )?
         };
-        if !launched && stopped {
+        // A Custom agent has no session to resume: opening its Thread leaves it stopped, and
+        // Restart starts its command again.
+        let custom = self
+            .thread_provider(thread_id)?
+            .starts_with(PROVIDER_PREFIX);
+        if !launched && stopped && !custom {
             if self.ensure_worktree(thread_id)? {
                 self.launch_agent(thread_id, Launch::Open, None)?;
             } else {
@@ -469,6 +514,45 @@ impl Core {
             ));
         }
         run.session.write(&bracketed_paste(prompt)?)
+    }
+
+    /// The prompt that starts work on an issue, for the user to read and confirm before it is
+    /// delivered into a Custom agent (which takes no prompt at launch).
+    pub fn issue_prompt_preview(&self, issue: &TerminalIssue) -> String {
+        issue_prompt(issue.number, &issue.title, &issue.body)
+    }
+
+    /// The Custom agent a `custom:<id>` provider names, as configured now.
+    fn custom_agent_for(&self, provider: &str) -> Result<CustomAgent> {
+        let id = custom_id(provider).unwrap_or_default();
+        self.settings()
+            .settings
+            .custom_agents
+            .into_iter()
+            .find(|agent| agent.id == id)
+            .ok_or_else(|| {
+                Error::Provider(
+                    "That Custom agent was removed from Settings. Add it again to launch it."
+                        .into(),
+                )
+            })
+    }
+
+    fn thread_provider(&self, thread_id: u32) -> Result<String> {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(db.query_row(
+            "SELECT provider FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn refuse_removed_custom_agent(&self, thread_id: u32) -> Result<()> {
+        let provider = self.thread_provider(thread_id)?;
+        if custom_id(&provider).is_some() {
+            self.custom_agent_for(&provider)?;
+        }
+        Ok(())
     }
 
     /// Whether the Thread is a terminal Thread (its agent runs in an Agent terminal).
@@ -608,7 +692,11 @@ impl Core {
                 },
             )?
         };
-        if provider != "claude" && provider != "codex" && !is_agy(&provider) {
+        if custom_id(&provider).is_none()
+            && provider != "claude"
+            && provider != "codex"
+            && !is_agy(&provider)
+        {
             return Err(Error::Provider(format!(
                 "{provider} has no Agent terminal yet."
             )));
@@ -617,7 +705,17 @@ impl Core {
         let permission_mode = mode.parse().unwrap_or(PermissionMode::AutoEdit);
         // A session id to store: Claude Code's is assigned here, Codex's and agy's are reported
         // later, so a Thread that never reported one has none and starts over instead of resuming.
-        let (session_id, resume, args, env) = if agy {
+        let custom_agent = if custom_id(&provider).is_some() {
+            Some(self.custom_agent_for(&provider)?)
+        } else {
+            None
+        };
+        let (session_id, resume, args, env) = if let Some(custom) = &custom_agent {
+            // The user's own command, through their shell (ADR-0016): no session, no prompt
+            // argument.
+            let (_, args) = shell_invocation(&custom.command);
+            (None, false, args, Vec::new())
+        } else if agy {
             let session_id = if launch == Launch::Fresh {
                 None
             } else {
@@ -677,11 +775,20 @@ impl Core {
             })?;
             (Some(session_id), resume, args, Vec::new())
         };
-        let agent = AgentCommand {
-            program: self.find_provider(&provider)?,
-            args,
-            env_remove: NESTED_SESSION_ENV,
-            env,
+        let agent = if let Some(custom) = &custom_agent {
+            AgentCommand {
+                program: shell_invocation(&custom.command).0,
+                args,
+                env_remove: &[],
+                env,
+            }
+        } else {
+            AgentCommand {
+                program: self.find_provider(&provider)?,
+                args,
+                env_remove: NESTED_SESSION_ENV,
+                env,
+            }
         };
         let id = next_id(&self.next_terminal_id);
         let stopped = Arc::new(AtomicBool::new(false));

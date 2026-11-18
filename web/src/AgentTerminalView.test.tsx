@@ -189,3 +189,40 @@ it("offers no fresh session while the session exists", async () => {
   await settle();
   expect(container.textContent).not.toContain("fresh session");
 });
+
+const customThread = (patch: Partial<Thread> = {}) => thread({ provider: "custom:mine", model: null, ...patch });
+const mine = { id: "mine", name: "My agent", command: "my-agent" };
+
+it("labels a Custom agent's Thread as having no status or Turn signals and shows its name", async () => {
+  const view = mount(customThread());
+  await act(async () => root.render(
+    <AgentTerminalView customAgents={[mine]} thread={customThread()} visible onThreadUpdated={() => {}} />,
+  ));
+  await settle();
+  const note = container.querySelector('p[role="note"]')!;
+  expect(note.textContent).toContain("no status or Turns unless it emits OSC 7501");
+  expect(note.textContent).toContain("no Permission mode, Model list or resume");
+  expect(container.textContent).toContain("My agent");
+  expect(container.querySelector(".agent-terminal-status")?.textContent).toBe("Running");
+  expect(view.names()).toContain("attach_agent_terminal");
+});
+
+it("offers no relaunch for a Thread whose Custom agent was removed, and still shows the terminal", async () => {
+  const view = mount(customThread({ status: "stopped" }));
+  await act(async () => root.render(
+    <AgentTerminalView customAgents={[]} thread={customThread({ status: "stopped" })} visible onThreadUpdated={() => {}} />,
+  ));
+  await settle();
+  expect(container.textContent).toContain("removed from Settings");
+  expect([...container.querySelectorAll("button")].some((b) => /Restart|Run again/.test(b.textContent ?? ""))).toBe(false);
+  expect(view.names()).toContain("attach_agent_terminal");
+});
+
+it("offers to run a stopped Custom agent again while it is configured", async () => {
+  mount(customThread({ status: "stopped" }));
+  await act(async () => root.render(
+    <AgentTerminalView customAgents={[mine]} thread={customThread({ status: "stopped" })} visible onThreadUpdated={() => {}} />,
+  ));
+  await settle();
+  expect(container.textContent).toContain("Run again");
+});

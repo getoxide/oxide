@@ -1,4 +1,5 @@
 import { commands } from "./bindings";
+import { isCustomProvider } from "./customAgents";
 import type { LaunchChoice } from "./launchPicker";
 
 /**
@@ -13,7 +14,9 @@ export async function createDefaultThread(
   options: { terminal?: boolean; launch?: LaunchChoice } = {},
 ) {
   const { settings } = await commands.getSettings();
-  if (options.terminal && settings.openThreadsAsTerminals) {
+  // A Custom agent only ever runs in an Agent terminal, whatever the preview says.
+  const custom = options.launch !== undefined && isCustomProvider(options.launch.provider);
+  if (custom || (options.terminal && settings.openThreadsAsTerminals)) {
     const { launch } = options;
     return commands.createTerminalThread(
       projectId,

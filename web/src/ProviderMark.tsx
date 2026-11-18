@@ -1,4 +1,4 @@
-import { BeakerIcon } from "@primer/octicons-react";
+import { BeakerIcon, TerminalIcon } from "@primer/octicons-react";
 import { siClaude, siGooglegemini } from "simple-icons";
 
 /** OpenAI's mark, which Simple Icons no longer ships; as used in the layout prototype. */
@@ -28,6 +28,13 @@ export function ProviderMark({ provider, size = 14 }: { provider: string; size?:
       >
         <path d={icon.path} />
       </svg>
+    );
+  }
+  if (provider.startsWith("custom:")) {
+    return (
+      <span className="provider-mark" role="img" aria-label="Custom agent">
+        <TerminalIcon size={size} />
+      </span>
     );
   }
   // The fake Provider used in tests has no brand.

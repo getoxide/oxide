@@ -136,6 +136,11 @@ export const commands = {
 	 */
 	createTerminalThreadFromIssue: (projectId: number, issue: TerminalIssue_Deserialize, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_from_issue", { projectId, issue, provider, model, effort, permissionMode })),
 	/**
+	 *  The prompt a terminal Thread from an issue would start with, for the user to read and confirm
+	 *  before it is pasted into a Custom agent. Starts nothing.
+	 */
+	terminalIssuePrompt: (issue: TerminalIssue_Deserialize) => __TAURI_INVOKE<string>("terminal_issue_prompt", { issue }),
+	/**
 	 *  Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
 	 *  it prints. A newer attachment replaces the previous one.
 	 */
@@ -529,6 +534,13 @@ export type ContinuedThread_Deserialize = {
 export type ContinuedThread_Serialize = {
 	thread: Thread_Serialize,
 	recap: string,
+};
+
+/**  An agent CLI the user added in Settings; its command runs through the user's shell. */
+export type CustomAgent = {
+	id: string,
+	name: string,
+	command: string,
 };
 
 export type DeleteOutcome = "deleted" | "needs-confirmation";
@@ -1480,6 +1492,7 @@ export type Settings_Deserialize = {
 	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
+	customAgents: CustomAgent[],
 };
 
 export type Settings_Serialize = {
@@ -1490,6 +1503,7 @@ export type Settings_Serialize = {
 	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
+	customAgents: CustomAgent[],
 };
 
 export type Shortcuts = {

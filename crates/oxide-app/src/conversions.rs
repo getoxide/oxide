@@ -197,6 +197,7 @@ impl From<oxide_core::Settings> for Settings {
             open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
+            custom_agents: s.custom_agents.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -211,6 +212,7 @@ impl From<&oxide_core::Settings> for Settings {
             open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: (&s.shortcuts).into(),
+            custom_agents: s.custom_agents.iter().cloned().map(Into::into).collect(),
         }
     }
 }
@@ -225,6 +227,27 @@ impl From<Settings> for oxide_core::Settings {
             open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
+            custom_agents: s.custom_agents.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<oxide_core::custom_agents::CustomAgent> for CustomAgent {
+    fn from(a: oxide_core::custom_agents::CustomAgent) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            command: a.command,
+        }
+    }
+}
+
+impl From<CustomAgent> for oxide_core::custom_agents::CustomAgent {
+    fn from(a: CustomAgent) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            command: a.command,
         }
     }
 }
@@ -1651,6 +1674,11 @@ mod tests {
                 hooks: false,
             },
             shortcuts: oxide_core::Shortcuts::default(),
+            custom_agents: vec![oxide_core::custom_agents::CustomAgent {
+                id: "mine".into(),
+                name: "Mine".into(),
+                command: "mine --fast".into(),
+            }],
         };
         let core_state = oxide_core::SettingsState {
             settings: core_settings.clone(),
@@ -1668,6 +1696,10 @@ mod tests {
         );
         let json = serde_json::to_value(&app_state).unwrap();
         assert_eq!(json["settings"]["defaultProvider"], json!("codex"));
+        assert_eq!(
+            json["settings"]["customAgents"][0],
+            json!({"id": "mine", "name": "Mine", "command": "mine --fast"})
+        );
         assert_eq!(
             json["settings"]["providers"]["claude"]["permissionMode"],
             json!("auto-edit")
