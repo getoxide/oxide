@@ -415,3 +415,32 @@ fn delivery_is_refused_while_the_agent_waits_for_an_answer_and_allowed_after() {
         .deliver_agent_prompt(thread.id, "Fix the failing check")
         .unwrap();
 }
+
+#[test]
+fn a_working_or_waiting_terminal_thread_counts_for_the_quit_confirmation() {
+    let f = fixture(REPORTING_AGENT);
+    let thread = f.core.start_terminal_thread(f.project.id).unwrap();
+    screen_has(&f, thread.id, "READY");
+    assert_eq!(f.core.quit_confirmation(), None);
+
+    type_into(&f, thread.id, "work");
+    wait_status(&f, thread.id, ThreadStatus::Working);
+    assert_eq!(f.core.quit_confirmation(), Some(1));
+
+    type_into(&f, thread.id, "ask");
+    wait_status(&f, thread.id, ThreadStatus::NeedsInput);
+    assert_eq!(f.core.quit_confirmation(), Some(1));
+
+    type_into(&f, thread.id, "work");
+    type_into(&f, thread.id, "finish");
+    wait_status(&f, thread.id, ThreadStatus::Completed);
+    assert!(wait_until(Duration::from_secs(5), || f
+        .core
+        .quit_confirmation()
+        .is_none()));
+
+    type_into(&f, thread.id, "work");
+    wait_status(&f, thread.id, ThreadStatus::Working);
+    f.core.delete_thread(thread.id, true).unwrap();
+    assert_eq!(f.core.quit_confirmation(), None);
+}

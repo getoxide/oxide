@@ -252,6 +252,12 @@ fn default_search_path() -> Vec<PathBuf> {
 }
 
 impl Core {
+    /// Records an Agent terminal's status on the board and in the activity tracker.
+    fn set_terminal_status(&self, thread_id: u32, status: ThreadStatus) {
+        self.board.set_status(thread_id, status);
+        self.activity.track_status(thread_id, status);
+    }
+
     /// Replaces the directories the Provider CLI is looked up in. Tests put a fake `claude`
     /// alone on it.
     pub fn set_agent_search_path(&self, dirs: Option<Vec<PathBuf>>) {
@@ -466,7 +472,7 @@ impl Core {
             if ready {
                 self.launch_agent(thread_id, Launch::Start, prompt)?;
             } else {
-                self.board.set_status(thread_id, ThreadStatus::Error);
+                self.set_terminal_status(thread_id, ThreadStatus::Error);
             }
             Ok(())
         });
@@ -489,7 +495,7 @@ impl Core {
         // A removed Custom agent cannot be launched again.
         self.refuse_removed_custom_agent(thread_id)?;
         if !self.ensure_worktree(thread_id)? {
-            self.board.set_status(thread_id, ThreadStatus::Error);
+            self.set_terminal_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
         }
         self.launch_agent(thread_id, Launch::Resume, None)?;
@@ -525,7 +531,7 @@ impl Core {
             if self.ensure_worktree(thread_id)? {
                 self.launch_agent(thread_id, Launch::Open, None)?;
             } else {
-                self.board.set_status(thread_id, ThreadStatus::Error);
+                self.set_terminal_status(thread_id, ThreadStatus::Error);
             }
         }
         self.thread_summary(thread_id)
@@ -557,7 +563,7 @@ impl Core {
             ));
         }
         if !self.ensure_worktree(thread_id)? {
-            self.board.set_status(thread_id, ThreadStatus::Error);
+            self.set_terminal_status(thread_id, ThreadStatus::Error);
             return self.thread_summary(thread_id);
         }
         self.launch_agent(thread_id, Launch::Fresh, None)?;
@@ -725,6 +731,7 @@ impl Core {
             run.stopped.store(true, Ordering::SeqCst);
             run.session.close();
         }
+        self.activity.forget(thread_id);
     }
 
     /// Stops every agent (quitting Oxide).
@@ -931,6 +938,7 @@ impl Core {
             checkout: PathBuf::from(&checkout),
             agents: Arc::clone(&self.agents),
             board: Arc::clone(&self.board),
+            activity: Arc::clone(&self.activity),
         };
         std::thread::spawn(move || worker.run(&worker_signals));
         let observer_signals = signals.clone();
@@ -1016,7 +1024,7 @@ impl Core {
                 bracketed_paste: paste_flag,
             }),
         );
-        self.board.set_status(thread_id, ThreadStatus::Running);
+        self.set_terminal_status(thread_id, ThreadStatus::Running);
         Ok(())
     }
 }
@@ -1091,9 +1099,17 @@ struct StatusWorker {
     checkout: PathBuf,
     agents: Agents,
     board: Arc<crate::board::BoardHub>,
+    activity: Arc<crate::activity::Activity>,
 }
 
 impl StatusWorker {
+    /// Records the Thread's status and tells the activity tracker, so working and waiting
+    /// terminal Threads count for the quit confirmation, the Dock badge and App Nap.
+    fn set_status(&self, status: ThreadStatus) {
+        self.board.set_status(self.thread_id, status);
+        self.activity.track_status(self.thread_id, status);
+    }
+
     /// A restart or a deletion may have replaced this run: what it says then is stale.
     fn is_current(&self) -> bool {
         self.agents
@@ -1126,7 +1142,7 @@ impl StatusWorker {
                     if self.is_current()
                         && let Some(status) = gate.flush(Instant::now())
                     {
-                        self.board.set_status(self.thread_id, status);
+                        self.set_status(status);
                     }
                 }
                 Some(AgentSignal::Report(state)) => {
@@ -1155,7 +1171,7 @@ impl StatusWorker {
                         None => {}
                     }
                     if let Some(status) = gate.offer(Instant::now(), thread_status(state)) {
-                        self.board.set_status(self.thread_id, status);
+                        self.set_status(status);
                     }
                 }
                 Some(AgentSignal::SessionGone) => {
@@ -1174,7 +1190,7 @@ impl StatusWorker {
                 Some(AgentSignal::Ended(status)) => {
                     self.end_turn(&mut open, "interrupted");
                     if self.is_current() {
-                        self.board.set_status(self.thread_id, status);
+                        self.set_status(status);
                     }
                     break;
                 }
