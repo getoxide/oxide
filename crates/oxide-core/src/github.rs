@@ -1461,6 +1461,49 @@ pub fn close_pull_request(gh: &Gh, cwd: &Path, number: u32) -> Result<()> {
     Ok(())
 }
 
+/// The most of a failed check's log that goes into a Fix prompt.
+pub const MAX_CHECK_LOG_BYTES: usize = 4 * 1024;
+
+/// The id of the workflow run a check's URL points at
+/// (`https://github.com/<owner>/<repo>/actions/runs/<id>[/job/<id>]`).
+fn check_run_id(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let id = rest.split("/actions/runs/").nth(1)?.split('/').next()?;
+    (!id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
+/// The last `MAX_CHECK_LOG_BYTES` of `log`, from a whole line when possible, with every control
+/// character other than a newline or tab turned into a space.
+fn log_tail(log: &str) -> String {
+    let clean: String = log
+        .chars()
+        .map(|c| if c.is_control() && c != '\n' && c != '\t' { ' ' } else { c })
+        .collect();
+    if clean.len() <= MAX_CHECK_LOG_BYTES {
+        return clean;
+    }
+    let mut start = clean.len() - MAX_CHECK_LOG_BYTES;
+    while !clean.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &clean[start..];
+    match tail.find('\n') {
+        Some(newline) if newline + 1 < tail.len() => tail[newline + 1..].to_string(),
+        _ => tail.to_string(),
+    }
+}
+
+/// The tail of the log of a failed check, read through `gh run view --log-failed`. The URL must
+/// be a GitHub Actions run; anything else is an error. The text is written by whoever wrote the
+/// workflow or its dependencies: the caller quotes it as external content.
+pub fn failed_check_log_tail(gh: &Gh, cwd: &Path, check_url: &str) -> Result<String> {
+    let id = check_run_id(check_url)
+        .ok_or_else(|| Error::Github("That check has no GitHub Actions log.".into()))?;
+    gh.require_ready(cwd)?;
+    let log = gh.run(cwd, &["run", "view", id, "--log-failed"])?;
+    Ok(log_tail(&log))
+}
+
 /// Checks the pull request's branch out in `cwd`. Git's refusal is the error.
 pub fn checkout_pull_request(gh: &Gh, cwd: &Path, number: u32) -> Result<()> {
     gh.require_ready(cwd)?;

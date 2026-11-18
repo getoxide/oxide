@@ -93,6 +93,17 @@ impl TerminalIssue {
     }
 }
 
+/// What a new terminal Thread starts from besides the Provider choice.
+#[derive(Default)]
+struct StartOptions<'a> {
+    issue: Option<&'a TerminalIssue>,
+    prompt: Option<&'a str>,
+    /// The branch the new worktree starts from.
+    base: Option<String>,
+    /// An existing branch the new worktree is on (a pull request's head).
+    branch: Option<String>,
+}
+
 /// The running (or ended) agent of one terminal Thread.
 pub(crate) struct AgentRun {
     id: u32,
@@ -308,7 +319,7 @@ impl Core {
         project_id: u32,
         choice: &TerminalLaunch,
     ) -> Result<ThreadSummary> {
-        self.start_agent_thread(project_id, choice, None, None)
+        self.start_agent_thread(project_id, choice, &StartOptions::default())
     }
 
     /// Starts a terminal Thread for a GitHub issue: a worktree on `oxide/<number>-<slug>`, the
@@ -322,9 +333,27 @@ impl Core {
         issue: &TerminalIssue,
         choice: &TerminalLaunch,
     ) -> Result<ThreadSummary> {
+        self.start_terminal_thread_from_issue_on(project_id, issue, choice, None)
+    }
+
+    /// Like [`Core::start_terminal_thread_from_issue`], with the base branch the worktree starts
+    /// from (the checkout's current branch when `None`).
+    pub fn start_terminal_thread_from_issue_on(
+        &self,
+        project_id: u32,
+        issue: &TerminalIssue,
+        choice: &TerminalLaunch,
+        base: Option<&str>,
+    ) -> Result<ThreadSummary> {
         let issue = issue.bounded();
         let prompt = issue_prompt(issue.number, &issue.title, &issue.body);
-        self.start_agent_thread(project_id, choice, Some(&issue), Some(&prompt))
+        let options = StartOptions {
+            issue: Some(&issue),
+            prompt: Some(&prompt),
+            base: base.map(str::to_string),
+            ..Default::default()
+        };
+        self.start_agent_thread(project_id, choice, &options)
     }
 
     /// Starts a terminal Thread whose agent receives `prompt` as its first prompt.
@@ -334,7 +363,28 @@ impl Core {
         choice: &TerminalLaunch,
         prompt: &str,
     ) -> Result<ThreadSummary> {
-        self.start_agent_thread(project_id, choice, None, Some(prompt))
+        let options = StartOptions {
+            prompt: Some(prompt),
+            ..Default::default()
+        };
+        self.start_agent_thread(project_id, choice, &options)
+    }
+
+    /// Starts a terminal Thread whose agent receives `prompt`, working on the existing branch
+    /// `branch` (a pull request's head) when given.
+    pub(crate) fn start_terminal_thread_with_prompt_on(
+        &self,
+        project_id: u32,
+        choice: &TerminalLaunch,
+        prompt: &str,
+        branch: Option<&str>,
+    ) -> Result<ThreadSummary> {
+        let options = StartOptions {
+            prompt: Some(prompt),
+            branch: branch.map(str::to_string),
+            ..Default::default()
+        };
+        self.start_agent_thread(project_id, choice, &options)
     }
 
     /// The shared start: the Thread, its checkout, then the agent with its first prompt if any.
@@ -342,9 +392,9 @@ impl Core {
         &self,
         project_id: u32,
         choice: &TerminalLaunch,
-        issue: Option<&TerminalIssue>,
-        prompt: Option<&str>,
+        options: &StartOptions<'_>,
     ) -> Result<ThreadSummary> {
+        let prompt = options.prompt;
         self.project(project_id)?;
         let default_provider = match self.settings().settings.default_provider {
             crate::settings::Provider::Claude => "claude",
@@ -361,7 +411,7 @@ impl Core {
                 project_id,
                 provider,
                 (None, None, PermissionMode::AutoEdit, None),
-                issue,
+                options,
                 None,
             );
         }
@@ -419,7 +469,7 @@ impl Core {
             project_id,
             provider,
             (model, effort, permission_mode, session_id),
-            issue,
+            options,
             prompt,
         )
     }
@@ -436,9 +486,10 @@ impl Core {
             PermissionMode,
             Option<String>,
         ),
-        issue: Option<&TerminalIssue>,
+        options: &StartOptions<'_>,
         prompt: Option<&str>,
     ) -> Result<ThreadSummary> {
+        let issue = options.issue;
         let thread_id = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
@@ -468,7 +519,11 @@ impl Core {
             }
             thread_id
         };
-        let started = self.ensure_worktree(thread_id).and_then(|ready| {
+        let placement = crate::worktree::Placement {
+            base: options.base.clone(),
+            branch: options.branch.clone(),
+        };
+        let started = self.ensure_worktree_placed(thread_id, &placement).and_then(|ready| {
             if ready {
                 self.launch_agent(thread_id, Launch::Start, prompt)?;
             } else {

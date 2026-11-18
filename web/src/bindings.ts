@@ -134,7 +134,7 @@ export const commands = {
 	 *  command, then the agent launched with a prompt built from the issue (its title and body quoted
 	 *  as external content). Starts a process.
 	 */
-	createTerminalThreadFromIssue: (projectId: number, issue: TerminalIssue_Deserialize, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_from_issue", { projectId, issue, provider, model, effort, permissionMode })),
+	createTerminalThreadFromIssue: (projectId: number, issue: TerminalIssue_Deserialize, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null, base: string | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_from_issue", { projectId, issue, provider, model, effort, permissionMode, base })),
 	/**
 	 *  The prompt a terminal Thread from an issue would start with, for the user to read and confirm
 	 *  before it is pasted into a Custom agent. Starts nothing.
@@ -232,7 +232,7 @@ export const commands = {
 	 *  Opens a terminal Thread whose agent starts with the Fix prompt the user confirmed. Starts a
 	 *  process.
 	 */
-	createTerminalThreadWithFix: (projectId: number, prompt: string, reviewRound: boolean, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_with_fix", { projectId, prompt, reviewRound, provider, model, effort, permissionMode })),
+	createTerminalThreadWithFix: (projectId: number, prompt: string, reviewRound: boolean, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null, headBranch: string | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_with_fix", { projectId, prompt, reviewRound, provider, model, effort, permissionMode, headBranch })),
 	/**  Sends a request that addresses selected reviewer comments, counting it as a review round. */
 	sendReviewerComments: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("send_reviewer_comments", { threadId, prompt })),
 	/**  Checks out a branch; a remote one (`origin/x`) becomes a tracking branch. */
@@ -268,6 +268,8 @@ export const commands = {
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
 	/**  Checks the pull request's branch out in a Thread's checkout (`None`: the main one). */
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
+	/**  The end of the log of a failed GitHub Actions check, for a Fix prompt (external content). */
+	failedCheckLog: (projectId: number, checkUrl: string) => typedError<string, AppError>(__TAURI_INVOKE("failed_check_log", { projectId, checkUrl })),
 	/**
 	 *  Opens a GitHub link, such as a check's run, in the system browser. A well-formed link
 	 *  outside GitHub and the fixed documentation is not opened: the answer is `Some(host)` (with

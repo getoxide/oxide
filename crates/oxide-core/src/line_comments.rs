@@ -305,7 +305,24 @@ impl Core {
         prompt: &str,
         review_round: bool,
     ) -> Result<crate::ThreadSummary> {
-        let thread = self.start_terminal_thread_with_prompt(project_id, choice, prompt)?;
+        self.start_terminal_thread_with_fix_on(project_id, choice, prompt, review_round, None)
+    }
+
+    /// Like [`Core::start_terminal_thread_with_fix`], with the pull request's head branch: the
+    /// new Thread works on that existing branch instead of a new `oxide/` one. A Project that
+    /// keeps its Threads in the main checkout stays where it is.
+    ///
+    /// Starts a process (the Provider CLI, from an argument array).
+    pub fn start_terminal_thread_with_fix_on(
+        &self,
+        project_id: u32,
+        choice: &crate::TerminalLaunch,
+        prompt: &str,
+        review_round: bool,
+        head_branch: Option<&str>,
+    ) -> Result<crate::ThreadSummary> {
+        let thread =
+            self.start_terminal_thread_with_prompt_on(project_id, choice, prompt, head_branch)?;
         if review_round && let Some(kind) = self.review_work_kind(thread.id) {
             self.record_review_round(thread.id, &kind);
         }

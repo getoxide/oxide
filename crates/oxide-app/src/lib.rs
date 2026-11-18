@@ -987,6 +987,7 @@ async fn create_terminal_thread_from_issue(
     model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<PermissionMode>,
+    base: Option<String>,
 ) -> Result<Thread, AppError> {
     let choice = oxide_core::TerminalLaunch {
         provider,
@@ -996,7 +997,7 @@ async fn create_terminal_thread_from_issue(
     };
     let issue: oxide_core::TerminalIssue = issue.into();
     git_blocking(&core, move |core| {
-        core.start_terminal_thread_from_issue(project_id, &issue, &choice)
+        core.start_terminal_thread_from_issue_on(project_id, &issue, &choice, base.as_deref())
     })
     .await
     .map(Thread::from)
@@ -1851,6 +1852,7 @@ async fn create_terminal_thread_with_fix(
     model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<PermissionMode>,
+    head_branch: Option<String>,
 ) -> Result<Thread, AppError> {
     let choice = oxide_core::TerminalLaunch {
         provider,
@@ -1859,7 +1861,13 @@ async fn create_terminal_thread_with_fix(
         permission_mode: permission_mode.map(Into::into),
     };
     git_blocking(&core, move |core| {
-        core.start_terminal_thread_with_fix(project_id, &choice, &prompt, review_round)
+        core.start_terminal_thread_with_fix_on(
+            project_id,
+            &choice,
+            &prompt,
+            review_round,
+            head_branch.as_deref(),
+        )
     })
     .await
     .map(Thread::from)
@@ -2757,6 +2765,20 @@ async fn edit_pull_request(
     let edit: oxide_core::PullRequestEdit = edit.into();
     git_blocking(&core, move |core| {
         core.edit_pull_request(project_id, number, &edit)
+    })
+    .await
+}
+
+/// The end of the log of a failed GitHub Actions check, for a Fix prompt (external content).
+#[tauri::command]
+#[specta::specta]
+async fn failed_check_log(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    check_url: String,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| {
+        core.failed_check_log(project_id, &check_url)
     })
     .await
 }
@@ -3711,6 +3733,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         merge_pull_request,
         close_pull_request,
         checkout_pull_request,
+        failed_check_log,
         open_link,
         open_local_url,
         set_pull_request_draft,

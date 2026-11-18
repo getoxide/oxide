@@ -369,6 +369,14 @@ if args[:2] == ["issue", "list"]:
     print(json.dumps(issues))
     sys.exit(0)
 
+if args[:2] == ["run", "view"] and "--log-failed" in args:
+    logs = state.get("run_logs", {})
+    if args[2] not in logs:
+        sys.stderr.write("could not find run %s\n" % args[2])
+        sys.exit(1)
+    sys.stdout.write(logs[args[2]])
+    sys.exit(0)
+
 if args[:2] == ["pr", "create"]:
     number = state.get("next_number", 1)
     head = flag("--head") or branch()

@@ -1690,3 +1690,32 @@ fn cleanup_keeps_uncommitted_changes_and_commits_that_were_not_merged() {
     assert!(!f.core.clean_up_merged_thread(thread.id).unwrap());
     assert!(Path::new(&worktree).exists() && branch_exists(&f.work, &branch));
 }
+
+#[test]
+fn a_failed_checks_log_is_read_bounded_and_only_for_actions_runs() {
+    let f = fixture();
+    let mut state = ok_state();
+    let long = format!("{}\nthe real error\n", "noise line\n".repeat(2_000));
+    state["run_logs"] = serde_json::json!({ "1234": long });
+    install_gh(&f, &state);
+
+    let log = f
+        .core
+        .failed_check_log(
+            f.project.id,
+            "https://github.com/fake/repo/actions/runs/1234/job/99",
+        )
+        .unwrap();
+    assert!(log.len() <= 4096, "{}", log.len());
+    assert!(log.ends_with("the real error\n"), "{log}");
+
+    for bad in [
+        "http://github.com/fake/repo/actions/runs/1234",
+        "https://example.com/fake/repo/actions/runs/1234",
+        "https://github.com/fake/repo/actions/runs/12x4",
+        "https://github.com/fake/repo/pull/5",
+        "--help",
+    ] {
+        assert!(f.core.failed_check_log(f.project.id, bad).is_err(), "{bad}");
+    }
+}

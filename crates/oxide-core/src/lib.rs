@@ -2311,6 +2311,12 @@ impl Core {
         )
     }
 
+    /// The end of the log of a failed GitHub Actions check, to put in a Fix prompt. Reads from
+    /// GitHub through `gh`; the text is external content.
+    pub fn failed_check_log(&self, project_id: u32, check_url: &str) -> Result<String> {
+        github::failed_check_log_tail(&self.gh, &self.main_checkout(project_id)?, check_url)
+    }
+
     /// Closes a pull request on GitHub without merging it.
     pub fn close_pull_request(&self, project_id: u32, number: u32) -> Result<()> {
         github::close_pull_request(&self.gh, &self.main_checkout(project_id)?, number)

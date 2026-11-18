@@ -982,3 +982,81 @@ fn a_restore_is_refused_while_a_live_agent_has_reported_nothing() {
         "a stopped agent no longer blocks a restore"
     );
 }
+
+#[test]
+fn a_fix_thread_works_on_the_pull_requests_existing_head_branch() {
+    let f = fixture();
+    git(&f.work, &["branch", "feature/pr-head"]);
+
+    let thread = f
+        .core
+        .start_terminal_thread_with_fix_on(
+            f.project.id,
+            &Default::default(),
+            "Fix PR #5",
+            false,
+            Some("feature/pr-head"),
+        )
+        .unwrap();
+
+    assert_eq!(thread.branch.as_deref(), Some("feature/pr-head"));
+    let worktree = thread.worktree_path.clone().unwrap();
+    let current = git(Path::new(&worktree), &["branch", "--show-current"]);
+    assert_eq!(current.trim(), "feature/pr-head");
+    let out = screen(&f.core, thread.id, "READY");
+    assert!(out.contains("Fix PR #5"), "{out}");
+}
+
+#[test]
+fn a_head_branch_that_is_not_a_branch_name_creates_no_thread() {
+    let f = fixture();
+    for bad in ["--detach", "a b", "x..y", "-b"] {
+        let result = f.core.start_terminal_thread_with_fix_on(
+            f.project.id,
+            &Default::default(),
+            "Fix",
+            false,
+            Some(bad),
+        );
+        assert!(result.is_err(), "{bad}");
+    }
+    let missing = f.core.start_terminal_thread_with_fix_on(
+        f.project.id,
+        &Default::default(),
+        "Fix",
+        false,
+        Some("no-such-branch"),
+    );
+    assert!(missing.is_err());
+    assert!(f.core.list_threads(f.project.id).unwrap().is_empty());
+}
+
+#[test]
+fn an_issue_thread_starts_from_the_chosen_base_branch() {
+    let f = fixture();
+    git(&f.work, &["checkout", "-q", "-b", "dev"]);
+    std::fs::write(f.work.join("dev-only.txt"), "dev\n").unwrap();
+    git(&f.work, &["add", "dev-only.txt"]);
+    git(&f.work, &["commit", "-qm", "dev"]);
+    git(&f.work, &["checkout", "-q", "main"]);
+
+    let thread = f
+        .core
+        .start_terminal_thread_from_issue_on(
+            f.project.id,
+            &issue(),
+            &Default::default(),
+            Some("dev"),
+        )
+        .unwrap();
+    let worktree = thread.worktree_path.clone().unwrap();
+    assert!(Path::new(&worktree).join("dev-only.txt").exists());
+
+    let bad = f.core.start_terminal_thread_from_issue_on(
+        f.project.id,
+        &issue(),
+        &Default::default(),
+        Some("--nope"),
+    );
+    assert!(bad.is_err());
+}
