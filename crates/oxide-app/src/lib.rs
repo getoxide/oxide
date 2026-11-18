@@ -2927,7 +2927,11 @@ async fn start_blind_review(
     let run = BlindReviewRun::from(prepared.run().clone());
     let background = Arc::clone(&core);
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = background.execute_blind_review(prepared);
+        let id = prepared.run().id;
+        if let Err(error) = background.execute_blind_review(prepared) {
+            // Never leave the run `running` for good.
+            background.fail_blind_review(id, &error.to_string());
+        }
     });
     Ok(run)
 }

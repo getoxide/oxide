@@ -476,3 +476,39 @@ fn a_huge_issue_is_capped_before_the_prompt_is_built() {
     assert!(seen[0].prompt.len() < 100_000, "{}", seen[0].prompt.len());
     assert!(seen[0].prompt.contains("[issue truncated]"));
 }
+
+#[test]
+fn a_run_that_could_not_be_recorded_is_marked_failed_without_credentials() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    install_runner(&f.core, Ok("[]".into()));
+    let prepared = f
+        .core
+        .prepare_blind_review(request(&f, original, "fake"))
+        .unwrap();
+    let id = prepared.run().id;
+    assert_eq!(
+        f.core.blind_review_runs(original).unwrap()[0].status,
+        BlindReviewStatus::Running
+    );
+
+    f.core
+        .fail_blind_review(id, "clone of https://user:secret@example.com/r.git failed");
+
+    let runs = f.core.blind_review_runs(original).unwrap();
+    assert_eq!(runs[0].status, BlindReviewStatus::Failed);
+    let error = runs[0].error.clone().unwrap();
+    assert!(error.contains("example.com") && !error.contains("secret"), "{error}");
+}
+
+#[test]
+fn a_provider_error_is_stored_without_url_credentials() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    install_runner(&f.core, Err("fetch https://u:hunter2@host/x failed".into()));
+    let run = f
+        .core
+        .run_blind_review(request(&f, original, "fake"))
+        .unwrap();
+    assert!(!run.error.unwrap().contains("hunter2"));
+}

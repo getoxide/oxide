@@ -579,7 +579,7 @@ impl Core {
             }
             Err(error) => {
                 run.status = BlindReviewStatus::Failed;
-                run.error = Some(error.to_string());
+                run.error = Some(crate::redact::redact_url_credentials(&error.to_string()));
             }
         }
         tx.execute(
@@ -588,6 +588,17 @@ impl Core {
         )?;
         tx.commit()?;
         Ok(run)
+    }
+
+    /// Marks a Blind review that could not be recorded as failed, so it never stays `running`.
+    /// The message is stored without URL credentials.
+    pub fn fail_blind_review(&self, id: u32, message: &str) {
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.execute(
+            "UPDATE blind_reviews SET status = 'failed', error = ?2, worktree = NULL
+             WHERE id = ?1 AND status = 'running'",
+            rusqlite::params![id, crate::redact::redact_url_credentials(message)],
+        );
     }
 
     /// Prepares and runs a Blind review, blocking until it ends.
