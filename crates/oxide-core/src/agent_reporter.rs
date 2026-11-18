@@ -480,7 +480,9 @@ mod imp {
                 .create(&dir)
                 .map_err(io)?;
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(io)?;
-            let path = dir.join(SOCKET);
+            // One socket per Oxide process, so a second instance never takes over (or deletes)
+            // the first one's.
+            let path = dir.join(format!("{SOCKET}-{}", std::process::id()));
             let _ = std::fs::remove_file(&path);
             let listener = UnixListener::bind(&path).map_err(io)?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(io)?;

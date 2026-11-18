@@ -234,6 +234,9 @@ pub(crate) type Agents = Arc<Mutex<HashMap<u32, Arc<AgentRun>>>>;
 /// How long a status stays on the sidebar before the next one may replace it.
 const STATUS_INTERVAL: Duration = Duration::from_millis(400);
 
+/// The shortest time between two Turns of one agent that Oxide records.
+const MIN_TURN_INTERVAL: Duration = Duration::from_millis(500);
+
 /// What the reading side of an Agent terminal tells its status worker.
 enum AgentSignal {
     Report(ReportedState),
@@ -1191,6 +1194,7 @@ impl StatusWorker {
         let mut gate = StatusGate::new(STATUS_INTERVAL);
         let mut turns = TurnTracker::default();
         let mut open: Option<(u32, u32)> = None;
+        let mut last_start: Option<Instant> = None;
         loop {
             let signal = match gate.due() {
                 Some(due) => {
@@ -1218,7 +1222,12 @@ impl StatusWorker {
                         continue;
                     }
                     match turns.apply(state) {
+                        // A program that prints reports in a loop must not fill the database and
+                        // the checkout's refs with Turns and Checkpoints.
+                        Some(TurnChange::Started)
+                            if last_start.is_some_and(|at| at.elapsed() < MIN_TURN_INTERVAL) => {}
                         Some(TurnChange::Started) => {
+                            last_start = Some(Instant::now());
                             if let Ok((id, index)) = self.board.start_agent_turn(self.thread_id) {
                                 checkpoint::take(
                                     &self.checkout,

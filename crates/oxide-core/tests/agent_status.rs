@@ -444,3 +444,21 @@ fn a_working_or_waiting_terminal_thread_counts_for_the_quit_confirmation() {
     f.core.delete_thread(thread.id, true).unwrap();
     assert_eq!(f.core.quit_confirmation(), None);
 }
+
+#[test]
+fn a_loop_of_reports_does_not_record_a_turn_each_time() {
+    let f = fixture(REPORTING_AGENT);
+    let thread = f.core.start_terminal_thread(f.project.id).unwrap();
+    screen_has(&f, thread.id, "READY");
+
+    for _ in 0..20 {
+        type_into(&f, thread.id, "work");
+        type_into(&f, thread.id, "finish");
+    }
+    type_into(&f, thread.id, "work");
+    type_into(&f, thread.id, "finish");
+    wait_status(&f, thread.id, ThreadStatus::Completed);
+    std::thread::sleep(Duration::from_millis(600));
+
+    assert!(turns(&f, thread.id).len() < 10, "{:?}", turns(&f, thread.id));
+}
