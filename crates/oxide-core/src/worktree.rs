@@ -418,6 +418,7 @@ impl Core {
             return Ok(false);
         };
         if self.thread_summary(thread_id)?.status == ThreadStatus::Working
+            || self.agent_is_running(thread_id)
             || self
                 .dirty_editors
                 .lock()

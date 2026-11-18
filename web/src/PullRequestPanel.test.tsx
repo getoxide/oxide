@@ -171,6 +171,7 @@ const pr = (number: number, title: string) => ({
   author: "alice",
   url: "",
   head: "feat",
+  crossRepository: false,
   base: "main",
   draft: false,
   createdAt: "2026-01-01T00:00:00Z",

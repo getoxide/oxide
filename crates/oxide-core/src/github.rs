@@ -46,6 +46,8 @@ pub struct PullRequest {
     pub draft: bool,
     pub base: String,
     pub head: String,
+    /// The head branch lives in a fork, so its name says nothing about this repository.
+    pub cross_repository: bool,
     pub author: String,
     pub created_at: String,
 }
@@ -519,7 +521,7 @@ impl Gh {
 }
 
 const PR_FIELDS: &str =
-    "number,title,url,state,isDraft,baseRefName,headRefName,author,createdAt,mergedAt";
+    "number,title,url,state,isDraft,baseRefName,headRefName,isCrossRepository,author,createdAt,mergedAt";
 
 /// Most pull requests the list shows.
 const MAX_LISTED: &str = "100";
@@ -536,6 +538,7 @@ fn pull_request_from(v: &serde_json::Value) -> PullRequest {
         draft: v["isDraft"].as_bool().unwrap_or(false),
         base: text(&v["baseRefName"]),
         head: text(&v["headRefName"]),
+        cross_repository: v["isCrossRepository"].as_bool().unwrap_or(false),
         author: text(&v["author"]["login"]),
         created_at: text(&v["createdAt"]),
     }

@@ -2138,6 +2138,7 @@ pub struct PullRequest {
     pub draft: bool,
     pub base: String,
     pub head: String,
+    pub cross_repository: bool,
     pub author: String,
     pub created_at: String,
 }

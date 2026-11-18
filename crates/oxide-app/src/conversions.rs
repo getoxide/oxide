@@ -1343,6 +1343,7 @@ impl From<oxide_core::PullRequest> for PullRequest {
             draft: p.draft,
             base: p.base,
             head: p.head,
+            cross_repository: p.cross_repository,
             author: p.author,
             created_at: p.created_at,
         }
@@ -2077,6 +2078,7 @@ mod tests {
                 draft: false,
                 base: "main".into(),
                 head: "fix".into(),
+                cross_repository: false,
                 author: "alice".into(),
                 created_at: "t0".into(),
             },

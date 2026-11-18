@@ -382,7 +382,7 @@ export function PullRequestReview({
   const fixPrompt = live ? pullRequestFixPrompt(detail, selectedReviewThreads) : null;
   // A Board Thread records its branch; a chat Thread's worktree branch is only in its checkout,
   // so the selected one counts when it is checked out on the pull request's head.
-  const ownerThread = live
+  const ownerThread = live && !pr.crossRepository
     ? threads.find((thread) => thread.branch === pr.head)
       ?? (git?.branch === pr.head ? threads.find((thread) => thread.id === threadId) ?? null : null)
     : null;
@@ -467,7 +467,7 @@ export function PullRequestReview({
           }),
       );
       const prompt = pullRequestFixPrompt(detail, selectedReviewThreads, checkLogs) ?? fixPrompt;
-      await onFixPullRequest(prompt, ownerThread?.id ?? null, selectedReviewThreads.length > 0, pr.head);
+      await onFixPullRequest(prompt, ownerThread?.id ?? null, selectedReviewThreads.length > 0, pr.crossRepository ? null : pr.head);
       setPickedReviewThreads(new Set());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

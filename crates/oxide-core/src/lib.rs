@@ -2676,7 +2676,7 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
     )?;
     if has_terminal {
         db.execute(
-            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status IN ('running', 'working', 'needs-input', 'completed')",
+            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status NOT IN ('stopped', 'error')",
             [],
         )?;
     }

@@ -1117,6 +1117,7 @@ export type PullRequest = {
 	draft: boolean,
 	base: string,
 	head: string,
+	crossRepository: boolean,
 	author: string,
 	createdAt: string,
 };
