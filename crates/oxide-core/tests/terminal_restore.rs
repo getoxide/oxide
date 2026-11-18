@@ -148,6 +148,8 @@ fn two_turns(f: &Fixture) -> u32 {
     run(f, thread.id, "edit1", "EDITED1");
     run(f, thread.id, "finish", "FINISHED");
     wait_status(f, thread.id, ThreadStatus::Completed);
+    // Oxide drops a Turn that starts within 500 ms of the previous one.
+    std::thread::sleep(Duration::from_millis(600));
     run(f, thread.id, "work", "WORKING");
     wait_status(f, thread.id, ThreadStatus::Working);
     run(f, thread.id, "edit2", "EDITED2");
