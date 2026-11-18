@@ -1,5 +1,7 @@
 # Attachments are prompt segments, delivered per Provider
 
+> Superseded by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Oxide no longer builds prompts from segments; the Provider's own CLI takes what the user types or pastes.
+
 A prompt is an ordered list of segments (text, or a stored Attachment), and every layer passes segments rather than a string plus a side list of paths. The Transcript records them that way (see ADR-0002), so the composer and the Transcript look the same on every Provider; how a file reaches the agent is each adapter's job.
 
 ## Consequences

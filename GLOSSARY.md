@@ -25,6 +25,10 @@ One conversation with a single Provider inside a Project, with its own Model, Ef
 A Thread's centre is its Agent terminal; chat Threads keep their Transcript until the chat is removed.
 _Avoid_: Agent, session, chat, Archived Thread
 
+**Terminal Thread**:
+A Thread whose centre is an Agent terminal: the Provider's own CLI runs in the Thread's checkout and Oxide renders no conversation. It has a worktree, a status from the Provider's own reports, Turns recorded by start and end only, and Checkpoints, like any other Thread. A prompt reaches its agent as a launch argument, or pasted (never submitted) after the user confirms its exact text. See ADR-0017.
+_Avoid_: Chat Thread, terminal session
+
 **Custom agent**:
 An agent CLI the user added in Settings with a name and the command that launches it. Its Threads get a worktree, Issues, Fix and review like any other, but Oxide knows nothing about its status, Turns, Models or sessions unless it reports them.
 _Avoid_: Plugin, external Provider
