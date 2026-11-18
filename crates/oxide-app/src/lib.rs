@@ -978,6 +978,7 @@ impl From<TerminalIssue> for oxide_core::TerminalIssue {
 /// command, then the agent launched with a prompt built from the issue (its title and body quoted
 /// as external content). Starts a process.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // flat arguments are the IPC contract
 #[specta::specta]
 async fn create_terminal_thread_from_issue(
     core: State<'_, Arc<Core>>,

@@ -460,5 +460,9 @@ fn a_loop_of_reports_does_not_record_a_turn_each_time() {
     wait_status(&f, thread.id, ThreadStatus::Completed);
     std::thread::sleep(Duration::from_millis(600));
 
-    assert!(turns(&f, thread.id).len() < 10, "{:?}", turns(&f, thread.id));
+    assert!(
+        turns(&f, thread.id).len() < 10,
+        "{:?}",
+        turns(&f, thread.id)
+    );
 }

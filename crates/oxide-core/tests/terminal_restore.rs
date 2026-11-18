@@ -188,6 +188,11 @@ fn the_starting_state_is_always_offered_even_without_turns() {
     assert!(f.core.turn_picks(thread.id).unwrap().is_empty());
     assert!(f.core.start_state_available(thread.id));
 
+    // A live agent that reports nothing may be mid-turn: files are not put back under it.
+    assert!(f.core.restore_start_preview(thread.id).is_err());
+    f.core.stop_agent(thread.id).unwrap();
+    wait_status(&f, thread.id, ThreadStatus::Stopped);
+
     let preview = f.core.restore_start_preview(thread.id).unwrap();
     assert_eq!(preview.files.len(), 2);
     f.core.restore_to_start(thread.id).unwrap();

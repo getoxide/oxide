@@ -1051,7 +1051,7 @@ fn an_issue_thread_starts_from_the_chosen_base_branch() {
             Some("dev"),
         )
         .unwrap();
-    let worktree = thread.worktree_path.clone().unwrap();
+    let worktree = thread.worktree_path.unwrap();
     assert!(Path::new(&worktree).join("dev-only.txt").exists());
 
     let bad = f.core.start_terminal_thread_from_issue_on(
