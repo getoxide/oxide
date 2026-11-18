@@ -13,7 +13,7 @@
 //    `platform-layer-baseline.json`; a file may not gain one, and a file that lost some must
 //    lower its entry. The expression form (`cfg!(windows)`, `std::env::consts::OS`) is fine
 //    anywhere: every OS compiles and checks both branches.
-// 2. The platform layer's per-OS implementations (`src/unix/**`, `src/windows/**`) offer the
+// 2. The platform layer's per-OS implementations (`src/macos/**`, `src/linux/**`, `src/windows/**`) offer the
 //    same public items with the same signatures, and select the OS with no `cfg` attribute
 //    (only `src/lib.rs` does that, once per implementation).
 // 3. Only the platform layer's Cargo.toml depends on OS binding crates.
@@ -256,7 +256,7 @@ export function readBaseline(root) {
 }
 
 const HOW_TO_FIX =
-  "OS-only code (an OS conditional-compilation attribute or an OS-only API) belongs in crates/oxide-platform: add one function to src/unix/ and the same one to src/windows/, then call it. " +
+  "OS-only code (an OS conditional-compilation attribute or an OS-only API) belongs in crates/oxide-platform: add one function to each of src/macos/, src/linux/ and src/windows/ (src/posix/ for the two Unix ones), then call it. " +
   "For a value that only differs per OS (a shell name, a flag, a suffix), use the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. See ADR-0018.";
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
