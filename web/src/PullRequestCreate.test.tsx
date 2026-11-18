@@ -10,21 +10,6 @@ const host = document.createElement("div");
 document.body.append(host);
 const root = createRoot(host);
 beforeEach(() => {
-  vi.spyOn(commands, "gitStatus").mockResolvedValue({
-    status: "ok",
-    data: {
-      branch: "fix/topic",
-      upstream: null,
-      ahead: 1,
-      behind: 0,
-      added: 0,
-      removed: 0,
-      changedFiles: 0,
-      protected: false,
-      unpublished: true,
-      pickerDisabledReason: null,
-    },
-  });
   vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
     status: "ok",
     data: {
@@ -54,7 +39,6 @@ it("submits a prefilled draft and keeps the form and diagnostics when the push f
     root.render(
       <PullRequestCreate
         projectId={1}
-        threadId={7}
         onCancel={() => {}}
         onCreated={created}
       />,
@@ -71,7 +55,7 @@ it("submits a prefilled draft and keeps the form and diagnostics when the push f
       .querySelector("form")!
       .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
   );
-  expect(create).toHaveBeenCalledWith(1, 7, {
+  expect(create).toHaveBeenCalledWith(1, {
     title: "Fix topic",
     body: "Tested locally",
     base: "main",
@@ -105,28 +89,6 @@ it("submits a prefilled draft and keeps the form and diagnostics when the push f
   expect(created).toHaveBeenCalledWith(pr);
 });
 
-it("blocks PR creation from main before loading defaults or pushing", async () => {
-  const status = await commands.gitStatus(1, 7);
-  if (status.status !== "ok") throw new Error("fixture");
-  vi.mocked(commands.gitStatus).mockResolvedValue({
-    status: "ok",
-    data: { ...status.data, branch: "main", protected: true },
-  });
-  await act(async () =>
-    root.render(
-      <PullRequestCreate
-        projectId={1}
-        threadId={7}
-        onCancel={() => {}}
-        onCreated={() => {}}
-      />,
-    ),
-  );
-  expect(host.textContent).toContain("create a branch");
-  expect(commands.pullRequestDraft).not.toHaveBeenCalled();
-  expect(host.querySelector('[type="submit"]')).toBeNull();
-});
-
 const pullRequest = {
   number: 12,
   title: "Fix topic",
@@ -140,12 +102,11 @@ const pullRequest = {
   createdAt: "",
 };
 
-async function open(threadId: number | null) {
+async function open() {
   await act(async () =>
     root.render(
       <PullRequestCreate
         projectId={1}
-        threadId={threadId}
         onCancel={() => {}}
         onCreated={() => {}}
       />,
@@ -165,9 +126,9 @@ it("creates the pull request with the description as written", async () => {
   const create = vi
     .spyOn(commands, "createPullRequest")
     .mockResolvedValue({ status: "ok", data: pullRequest });
-  await open(7);
+  await open();
   await submit();
-  expect(create).toHaveBeenCalledWith(1, 7, {
+  expect(create).toHaveBeenCalledWith(1, {
     title: "Fix topic",
     body: "Tested locally",
     base: "main",

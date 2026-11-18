@@ -25,26 +25,9 @@ afterEach(async () => {
 
 const render = () =>
   act(async () =>
-    root.render(<PullRequestPanel projectId={1} threadId={7} refreshKey={0} onChanged={() => {}} onFixPullRequest={async () => {}} />),
+    root.render(<PullRequestPanel projectId={1} refreshKey={0} onChanged={() => {}} />),
   );
 const listCalls = () => vi.mocked(commands.listPullRequests).mock.calls.length;
-
-it("opens creation from the Git header and keeps the form open after consuming its request", async () => {
-  vi.spyOn(commands, "gitStatus").mockResolvedValue({ status: "ok", data: { branch: "topic", upstream: null, ahead: 1, behind: 0, added: 0, removed: 0, changedFiles: 0, protected: false, unpublished: true, pickerDisabledReason: null } });
-  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "Topic", body: "", base: "main", head: "topic" } });
-  vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
-  const handled = vi.fn();
-  const view = (request: number) => <PullRequestPanel projectId={1} threadId={7} refreshKey={0} createRequest={request} onCreateHandled={handled} onChanged={() => {}} onFixPullRequest={async () => {}} />;
-  await act(async () => root.render(view(1)));
-  expect(handled).toHaveBeenCalled();
-  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
-  await act(async () => root.render(view(0)));
-  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
-  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Back to pull requests"]')!.click());
-  expect(host.querySelector('[aria-label="Create pull request"]')).toBeNull();
-  await act(async () => root.render(view(1)));
-  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
-});
 
 it("shows the open pull requests without a branch tab or a manual reload button", async () => {
   await render();
@@ -77,21 +60,8 @@ it("shows an empty pull request list on the shared Surface empty layout, with it
   expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
 });
 
-const gitStatus = (branch: string) => ({
-  branch,
-  upstream: null,
-  ahead: 0,
-  behind: 0,
-  added: 0,
-  removed: 0,
-  changedFiles: 0,
-  protected: false,
-  unpublished: false,
-  pickerDisabledReason: null,
-});
 
 it("puts search and Mine in the Surface toolbar, with New pull request at the right", async () => {
-  vi.spyOn(commands, "gitStatus").mockResolvedValue({ status: "ok", data: gitStatus("topic") });
   await render();
   const toolbar = host.querySelector(".surface-toolbar")!;
   expect(toolbar).not.toBeNull();
@@ -130,7 +100,6 @@ it("clears the pull request search with Escape and restores the unfiltered list"
 });
 
 it("opens the pull request form from New pull request", async () => {
-  vi.spyOn(commands, "gitStatus").mockResolvedValue({ status: "ok", data: gitStatus("topic") });
   vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
     status: "ok",
     data: { title: "Topic", body: "", base: "main", head: "topic" },
@@ -234,12 +203,6 @@ it("revalidates an older cached list in the background while it stays on screen"
 
 it("shows a pull request's header from the list while its detail is still loading", async () => {
   vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "Instant header")] });
-  vi.spyOn(commands, "gitStatus").mockResolvedValue({
-    status: "ok",
-    data: { branch: "feat", upstream: null, ahead: 0, behind: 0, added: 0, removed: 0, changedFiles: 0,
-      protected: false, unpublished: false, pickerDisabledReason: null },
-  });
-  vi.spyOn(commands, "pullRequestReviewThreads").mockResolvedValue({ status: "ok", data: [] });
   let resolveDetail!: (r: Awaited<ReturnType<typeof commands.pullRequestDetail>>) => void;
   vi.spyOn(commands, "pullRequestDetail").mockReturnValue(new Promise((r) => (resolveDetail = r)));
   await render();

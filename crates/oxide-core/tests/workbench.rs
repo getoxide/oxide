@@ -5,8 +5,8 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_core::Core;
 use oxide_core::diag;
-use oxide_core::{Core, LanguageServerConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -26,8 +26,8 @@ fn saves_complete_files_but_never_overwrites_a_stale_buffer() {
     let (temporary, core, id) = fixture();
     let path = temporary.path().join("project/main.py");
     std::fs::write(&path, "print('before')\r\n").unwrap();
-    let original = core.read_file(id, None, "main.py").unwrap().content;
-    core.write_file(id, None, "main.py", &original, "print('after')\r\n")
+    let original = core.read_file(id, "main.py").unwrap().content;
+    core.write_file(id, "main.py", &original, "print('after')\r\n")
         .unwrap();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
@@ -35,26 +35,26 @@ fn saves_complete_files_but_never_overwrites_a_stale_buffer() {
     );
     std::fs::write(&path, "agent's changes").unwrap();
     assert!(
-        core.write_file(id, None, "main.py", "print('after')\r\n", "my changes")
+        core.write_file(id, "main.py", "print('after')\r\n", "my changes")
             .unwrap_err()
             .to_string()
             .contains("changed on disk")
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent's changes");
-    assert!(core.write_file(id, None, "../outside", "", "no").is_err());
+    assert!(core.write_file(id, "../outside", "", "no").is_err());
 }
 
 #[test]
 fn new_files_do_not_overwrite_existing_files_or_escape_the_project() {
     let (temporary, core, id) = fixture();
-    core.create_file(id, None, "subdir/new.rs").unwrap();
+    core.create_file(id, "subdir/new.rs").unwrap();
     assert!(temporary.path().join("project/subdir/new.rs").is_file());
-    assert!(core.create_file(id, None, "subdir/new.rs").is_err());
-    assert!(core.create_file(id, None, "../escape.py").is_err());
+    assert!(core.create_file(id, "subdir/new.rs").is_err());
+    assert!(core.create_file(id, "../escape.py").is_err());
     std::fs::write(temporary.path().join("project/.gitignore"), "ignored/\n").unwrap();
     std::fs::create_dir_all(temporary.path().join("project/ignored")).unwrap();
     std::fs::write(temporary.path().join("project/ignored/secret.rs"), "no").unwrap();
-    assert_eq!(core.find_files(id, None, ".rs").unwrap(), ["subdir/new.rs"]);
+    assert_eq!(core.find_files(id, ".rs").unwrap(), ["subdir/new.rs"]);
     core.set_editor_dirty("project-main".into(), true);
     assert_eq!(core.dirty_editor_count(), 1);
     core.set_editor_dirty("project-main".into(), false);
@@ -158,7 +158,7 @@ impl Drop for Drained {
 fn a_stalled_terminal_view_never_stalls_the_shell() {
     let (_temporary, core, id) = fixture();
     let core = Arc::new(core);
-    let terminal = core.start_block_terminal(id, None).unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
     // Never read: the view's buffer fills and stays full.
     let _stalled = core.subscribe_terminal(terminal.id).unwrap();
     let live = drain_terminal(&core, terminal.id);
@@ -181,7 +181,7 @@ fn a_stalled_terminal_view_never_stalls_the_shell() {
 #[test]
 fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
     let (_temporary, core, id) = fixture();
-    let terminal = core.start_block_terminal(id, None).unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
     let rx = core.subscribe_terminal(terminal.id).unwrap();
     #[cfg(windows)]
     let first = "$savedValue=42; Set-Location subdir; Write-Output 'first output'";
@@ -210,7 +210,7 @@ fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
 #[test]
 fn terminal_block_accepts_interactive_input() {
     let (_temporary, core, id) = fixture();
-    let terminal = core.start_block_terminal(id, None).unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
     let rx = core.subscribe_terminal(terminal.id).unwrap();
     #[cfg(windows)]
     let command = "$name=Read-Host 'Enter name'; Write-Output \"Hello $name\"";
@@ -233,16 +233,30 @@ fn terminal_block_accepts_interactive_input() {
 fn language_server_transports_unsaved_diagnostics_and_completion() {
     let (_temporary, core, id) = fixture();
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/lsp.py");
-    core.configure_language_server(
-        "python",
-        LanguageServerConfig {
-            command: "python".into(),
-            args: vec![script.to_string_lossy().into_owned()],
-            interpreter: None,
-        },
+    // The user's configuration file names the server: the fixture script run by `python`.
+    let python = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| {
+            dir.join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            })
+        })
+        .find(|candidate| candidate.is_file())
+        .expect("a `python` on the PATH");
+    std::fs::write(
+        _temporary.path().join("home/language-servers.json"),
+        serde_json::json!({
+            "python": {
+                "command": python,
+                "args": [script],
+                "interpreter": null
+            }
+        })
+        .to_string(),
     )
     .unwrap();
-    let (server, rx) = core.start_language_server(id, None, "python").unwrap();
+    let (server, rx) = core.start_language_server(id, "python").unwrap();
     core.language_server_message(
         server.id,
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
@@ -286,7 +300,7 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
         "fixture",
     )
     .unwrap();
-    let terminal = core.start_block_terminal(id, None).unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
     assert!(!terminal.cwd.starts_with("\\\\?\\"));
     let rx = core.subscribe_terminal(terminal.id).unwrap();
     core.run_terminal_block(terminal.id, "cd subdir", "change")
@@ -319,7 +333,7 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
 #[test]
 fn interrupting_a_program_keeps_the_shell_usable() {
     let (_temporary, core, id) = fixture();
-    let terminal = core.start_block_terminal(id, None).unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
     let rx = core.subscribe_terminal(terminal.id).unwrap();
     core.run_terminal_block(
         terminal.id,

@@ -1,4 +1,4 @@
-//! Oxide's home holds Transcripts, Attachments and settings, so on Unix it is readable by its
+//! Oxide's home holds its database, process list and downloaded tools, so on Unix it is readable by its
 //! owner only: the home is `0700` and every file in it `0600`. Windows keeps the profile ACLs.
 
 use std::fs;
@@ -113,20 +113,14 @@ fn set_mode(path: &Path, to: impl Fn(u32) -> u32) -> io::Result<()> {
     Ok(())
 }
 
-/// Creates (or truncates) `path` for writing; on Unix a new file is `0600`.
+/// Creates (or truncates) `path` for writing; a new file is `0600`.
+#[cfg(unix)]
 pub(crate) fn create_file(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     options.open(path)
-}
-
-/// Like [`fs::write`], with the file private to the user.
-pub(crate) fn write(path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
-    use std::io::Write as _;
-    create_file(path)?.write_all(bytes.as_ref())
 }

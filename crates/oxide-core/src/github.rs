@@ -3,7 +3,6 @@
 //! user asked: there is no polling.
 
 use crate::git;
-use crate::line_comments::CommentSide;
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
@@ -181,34 +180,6 @@ pub struct PullRequestComment {
     pub created_at: String,
     /// Set when the entry is a review rather than a plain comment.
     pub review: Option<ReviewState>,
-}
-
-/// One comment in an inline review thread, as GitHub shows it next to the code.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReviewThreadComment {
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-}
-
-/// A GitHub inline review thread, anchored to a line of a pull request's diff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestReviewThread {
-    pub id: String,
-    pub path: String,
-    /// The line on the current diff; `None` when the thread is outdated and GitHub no longer maps it.
-    pub line: Option<u32>,
-    /// The line the thread was written on, kept when [`line`](Self::line) is gone.
-    pub original_line: Option<u32>,
-    /// `old` for a removed line, `new` for an added or unchanged one.
-    pub side: Option<CommentSide>,
-    pub resolved: bool,
-    pub outdated: bool,
-    /// GitHub's excerpt around the commented line.
-    pub diff_hunk: String,
-    pub comments: Vec<ReviewThreadComment>,
 }
 
 /// Who and what a pull request can be assigned, for the settings pickers.
@@ -850,130 +821,6 @@ pub fn list_pull_requests(
         .unwrap_or_default())
 }
 
-/// The head branch and merge time (ISO 8601, UTC) of a pull request; the time is `None` while it
-/// is not merged.
-pub fn merged_head(gh: &Gh, cwd: &Path, number: u32) -> Result<Option<(String, Option<String>)>> {
-    gh.require_ready(cwd)?;
-    let v = parse(&gh.run(
-        cwd,
-        &[
-            "pr",
-            "view",
-            &number.to_string(),
-            "--json",
-            "headRefName,mergedAt",
-        ],
-    )?)?;
-    let merged_at = v["mergedAt"].as_str().map(str::to_string);
-    Ok(v["headRefName"]
-        .as_str()
-        .map(|head| (head.to_string(), merged_at)))
-}
-
-/// The pull request of `branch` GitHub should show: an open one if there is one, else the latest.
-fn branch_pull_request_value(
-    gh: &Gh,
-    cwd: &Path,
-    branch: &str,
-) -> Result<Option<serde_json::Value>> {
-    gh.require_ready(cwd)?;
-    let fields = format!("{PR_FIELDS},statusCheckRollup,headRefOid");
-    let list = parse(&gh.run(
-        cwd,
-        &[
-            "pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", &fields,
-        ],
-    )?)?;
-    let prs = list.as_array().map(Vec::as_slice).unwrap_or_default();
-    let open = |v: &&serde_json::Value| v["state"].as_str() == Some("OPEN");
-    Ok(prs
-        .iter()
-        .filter(open)
-        .max_by_key(|v| v["number"].as_u64())
-        .or_else(|| prs.iter().max_by_key(|v| v["number"].as_u64()))
-        .cloned())
-}
-
-/// The commit `branch` was at when its pull request was merged on GitHub: `Some` only when the
-/// pull request GitHub shows for the branch is merged, `None` when it is open, closed or absent.
-pub fn merged_branch_head(gh: &Gh, cwd: &Path, branch: &str) -> Result<Option<String>> {
-    let Some(v) = branch_pull_request_value(gh, cwd, branch)? else {
-        return Ok(None);
-    };
-    if phase_from(&v) != PullRequestPhase::Merged {
-        return Ok(None);
-    }
-    Ok(v["headRefOid"].as_str().map(str::to_string))
-}
-
-/// The inline review threads of a pull request, as GitHub shows them on its diff.
-pub fn review_threads(gh: &Gh, cwd: &Path, number: u32) -> Result<Vec<PullRequestReviewThread>> {
-    gh.require_ready(cwd)?;
-    let query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){\
-        pullRequest(number:$number){reviewThreads(first:100){nodes{\
-        id isResolved isOutdated path line originalLine diffSide \
-        comments(first:100){nodes{author{login} body createdAt diffHunk}}}}}}}";
-    let number = format!("number={number}");
-    let query = format!("query={query}");
-    let nodes = parse(&gh.run(
-        cwd,
-        &[
-            "api",
-            "graphql",
-            "-F",
-            "owner={owner}",
-            "-F",
-            "name={repo}",
-            "-F",
-            &number,
-            "-f",
-            &query,
-            "--jq",
-            ".data.repository.pullRequest.reviewThreads.nodes",
-        ],
-    )?)?;
-    Ok(nodes
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(review_thread_from)
-        .collect())
-}
-
-fn review_thread_from(v: &serde_json::Value) -> PullRequestReviewThread {
-    let comments: Vec<&serde_json::Value> = v["comments"]["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .collect();
-    PullRequestReviewThread {
-        id: text(&v["id"]),
-        path: text(&v["path"]),
-        line: v["line"].as_u64().map(|n| n as u32),
-        original_line: v["originalLine"].as_u64().map(|n| n as u32),
-        side: match v["diffSide"].as_str() {
-            Some("LEFT") => Some(CommentSide::Old),
-            Some("RIGHT") => Some(CommentSide::New),
-            _ => None,
-        },
-        resolved: v["isResolved"].as_bool().unwrap_or(false),
-        outdated: v["isOutdated"].as_bool().unwrap_or(false),
-        // The hunk lives on the comments; the first one wrote the thread's opening line.
-        diff_hunk: comments
-            .first()
-            .map(|c| text(&c["diffHunk"]))
-            .unwrap_or_default(),
-        comments: comments
-            .into_iter()
-            .map(|c| ReviewThreadComment {
-                author: text(&c["author"]["login"]),
-                body: text(&c["body"]),
-                created_at: text(&c["createdAt"]),
-            })
-            .collect(),
-    }
-}
-
 /// One pull request with its description, checks, conversation, the merge
 /// methods the repository allows and its changed-file count.
 pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
@@ -1448,62 +1295,6 @@ pub fn merge_pull_request(
 pub fn close_pull_request(gh: &Gh, cwd: &Path, number: u32) -> Result<()> {
     gh.require_ready(cwd)?;
     gh.run(cwd, &["pr", "close", &number.to_string()])?;
-    Ok(())
-}
-
-/// The most of a failed check's log that goes into a Fix prompt.
-pub const MAX_CHECK_LOG_BYTES: usize = 4 * 1024;
-
-/// The id of the workflow run a check's URL points at
-/// (`https://github.com/<owner>/<repo>/actions/runs/<id>[/job/<id>]`).
-fn check_run_id(url: &str) -> Option<&str> {
-    let rest = url.strip_prefix("https://github.com/")?;
-    let id = rest.split("/actions/runs/").nth(1)?.split('/').next()?;
-    (!id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
-}
-
-/// The last `MAX_CHECK_LOG_BYTES` of `log`, from a whole line when possible, with every control
-/// character other than a newline or tab turned into a space.
-fn log_tail(log: &str) -> String {
-    let clean: String = log
-        .chars()
-        .map(|c| {
-            if c.is_control() && c != '\n' && c != '\t' {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect();
-    if clean.len() <= MAX_CHECK_LOG_BYTES {
-        return clean;
-    }
-    let mut start = clean.len() - MAX_CHECK_LOG_BYTES;
-    while !clean.is_char_boundary(start) {
-        start += 1;
-    }
-    let tail = &clean[start..];
-    match tail.find('\n') {
-        Some(newline) if newline + 1 < tail.len() => tail[newline + 1..].to_string(),
-        _ => tail.to_string(),
-    }
-}
-
-/// The tail of the log of a failed check, read through `gh run view --log-failed`. The URL must
-/// be a GitHub Actions run; anything else is an error. The text is written by whoever wrote the
-/// workflow or its dependencies: the caller quotes it as external content.
-pub fn failed_check_log_tail(gh: &Gh, cwd: &Path, check_url: &str) -> Result<String> {
-    let id = check_run_id(check_url)
-        .ok_or_else(|| Error::Github("That check has no GitHub Actions log.".into()))?;
-    gh.require_ready(cwd)?;
-    let log = gh.run(cwd, &["run", "view", id, "--log-failed"])?;
-    Ok(log_tail(&log))
-}
-
-/// Checks the pull request's branch out in `cwd`. Git's refusal is the error.
-pub fn checkout_pull_request(gh: &Gh, cwd: &Path, number: u32) -> Result<()> {
-    gh.require_ready(cwd)?;
-    gh.run(cwd, &["pr", "checkout", &number.to_string()])?;
     Ok(())
 }
 

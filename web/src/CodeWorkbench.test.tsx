@@ -204,13 +204,11 @@ describe("CodeWorkbench performance", () => {
       root.render(
         <CodeWorkbench
           projectId={1}
-          threadId={null}
           rootPath="/repo"
           contextKey="p1"
           visible
           openRequest={{ id: 1, path: "src/app.ts" }}
           onChanged={vi.fn()}
-          onOpenLanguageSettings={vi.fn()}
         />,
       ),
     );
@@ -256,14 +254,12 @@ describe("CodeWorkbench performance", () => {
       root.render(
         <CodeWorkbench
           projectId={1}
-          threadId={null}
           rootPath="/repo"
           contextKey="p1"
           visible
           showExplorer
           openRequest={{ id: 1, path: "src/app.ts" }}
           onChanged={vi.fn()}
-          onOpenLanguageSettings={vi.fn()}
         />,
       ),
     );
@@ -294,13 +290,11 @@ describe("CodeWorkbench performance", () => {
       root.render(
         <CodeWorkbench
           projectId={1}
-          threadId={null}
           rootPath="/repo"
           contextKey="p1"
           visible
           openRequest={{ id: 1, path: "src/app.ts" }}
           onChanged={vi.fn()}
-          onOpenLanguageSettings={vi.fn()}
         />,
       ),
     );

@@ -46,34 +46,6 @@ pub fn find_in(path: &OsStr, program: &OsStr, pathext: Option<&OsStr>) -> Option
     })
 }
 
-/// Build a Provider invocation using its own search environment. Rust's `Command` handles
-/// `.cmd`/`.bat` quoting once the full shim path has been resolved.
-pub fn provider_command(
-    program: &str,
-    extra_env: &std::collections::HashMap<String, String>,
-) -> std::process::Command {
-    #[cfg(windows)]
-    let resolved = {
-        let env = |name: &str| {
-            extra_env
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, value)| std::ffi::OsString::from(value))
-                .or_else(|| std::env::var_os(name))
-        };
-        find_in(
-            &env("PATH").unwrap_or_default(),
-            OsStr::new(program),
-            env("PATHEXT").as_deref(),
-        )
-    };
-    #[cfg(windows)]
-    let program = resolved.as_deref().unwrap_or_else(|| Path::new(program));
-    let mut command = resolved_command(program);
-    command.envs(extra_env);
-    command
-}
-
 /// A `Command` for the OS helper `name` (`ps`, `open`, `sh`, `cmd`, ...), started by the absolute
 /// path [`os_tool`] gives it. This is how Oxide starts an OS helper: a bare name would be found
 /// through `PATH`, which Oxide widens with the login shell's directories. It sets no stdio or

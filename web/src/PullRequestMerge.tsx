@@ -91,7 +91,6 @@ interface MergeFooterProps {
   autoMerge: boolean;
   tone: Tone;
   status: string;
-  fixAction?: React.ReactNode;
   onMethod: (method: MergeMethod) => void;
   onDeleteBranch: (on: boolean) => void;
   onMerge: () => void;
@@ -139,7 +138,6 @@ export function MergeFooter(p: MergeFooterProps) {
               Ready for review
             </Working>
           </button>
-          {p.fixAction}
           {closeButton}
         </div>
       </footer>
@@ -149,7 +147,7 @@ export function MergeFooter(p: MergeFooterProps) {
     return (
       <footer className="pr-merge" aria-label="Merge">
         <p className="pr-merge-status">This repository allows no merge method.</p>
-        <div className="pr-merge-row">{p.fixAction}{closeButton}</div>
+        <div className="pr-merge-row">{closeButton}</div>
       </footer>
     );
   }
@@ -169,7 +167,7 @@ export function MergeFooter(p: MergeFooterProps) {
             <GitMergeIcon size={14} /> {mergeLabel(p.method)}
           </Working>
         </button>
-        {p.fixAction}
+        
         {p.canAutoMerge && (
           <button
             className={p.pending === "auto" ? "pending" : undefined}

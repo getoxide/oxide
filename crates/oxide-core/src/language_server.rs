@@ -219,7 +219,6 @@ impl Default for LanguageServers {
     }
 }
 struct Session {
-    root: PathBuf,
     child: Mutex<Child>,
     input: Mutex<ChildStdin>,
     registry: Arc<ProcessRegistry>,
@@ -237,15 +236,6 @@ impl Session {
     }
 }
 impl LanguageServers {
-    pub fn configure(
-        &self,
-        home: &Path,
-        language: &str,
-        config: LanguageServerConfig,
-    ) -> Result<()> {
-        let _lock = self.install_lock.lock_recover();
-        configure(home, language, config)
-    }
     pub fn install(
         &self,
         home: &Path,
@@ -305,7 +295,6 @@ impl LanguageServers {
             return Err(failure("language server pipes were not available"));
         };
         let session = Arc::new(Session {
-            root: root.to_path_buf(),
             child: Mutex::new(child),
             input: Mutex::new(input),
             registry,
@@ -385,22 +374,6 @@ impl LanguageServers {
     }
     pub fn stop(&self, id: u32) {
         if let Some(session) = self.sessions.lock_recover().remove(&id) {
-            session.stop();
-        }
-    }
-    pub fn stop_root(&self, root: &Path) {
-        let sessions: Vec<_> = {
-            let mut active = self.sessions.lock_recover();
-            let ids: Vec<_> = active
-                .iter()
-                .filter(|(_, session)| session.root.starts_with(root))
-                .map(|(id, _)| *id)
-                .collect();
-            ids.into_iter()
-                .filter_map(|id| active.remove(&id))
-                .collect()
-        };
-        for session in sessions {
             session.stop();
         }
     }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The webview may call Oxide's own commands and listen for events. Plugins get no filesystem, shell or process access of their own, but Oxide's own commands do start processes (Git, provider CLIs, terminals), so this surface is a trust boundary. See ADR-0016.",
+  "description": "The webview may call Oxide's own commands and listen for events. Plugins get no filesystem, shell or process access of their own, but Oxide's own commands do start processes (Git, the GitHub CLI, terminals), so this surface is a trust boundary. See ADR-0016.",
   "windows": ["main"],
   "permissions": ["core:event:default", "dialog:allow-open", "core:window:allow-start-dragging", "core:window:allow-start-resize-dragging", "core:window:allow-close", "core:window:allow-minimize", "core:window:allow-toggle-maximize"]
 }

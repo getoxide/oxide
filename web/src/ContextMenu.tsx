@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { runEditCommand } from "./editCommand";
-import { formatAccelerator } from "./shortcuts";
+
+const isMacPlatform = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
+/** The hint for an operating-system edit key: ⌘C on macOS, Ctrl+C elsewhere. */
+const formatAccelerator = (accelerator: string) =>
+  accelerator.replace("Mod+", isMacPlatform ? "⌘" : "Ctrl+");
 
 export interface ContextMenuActions {
-  newThread?: () => void;
   openProject: () => void;
-  toggleSidebar: () => void;
-  toggleTools: () => void;
   openSettings: () => void;
 }
 
@@ -30,10 +31,7 @@ function isEditable(target: EventTarget | null): boolean {
 }
 
 /** Oxide's own right-click menu, replacing the webview's: edit commands where text is, app actions everywhere. */
-export function ContextMenu({ actions, shortcuts }: {
-  actions: ContextMenuActions;
-  shortcuts: { newThread: string; openProject: string; toggleSidebar: string; toggleTools: string; openSettings: string };
-}) {
+export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
   const [opening, setOpening] = useState<Opening | null>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -103,11 +101,8 @@ export function ContextMenu({ actions, shortcuts }: {
       ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => runEditCommand("copy") }]
       : [];
   const app: Entry[] = [
-    ...(actions.newThread ? [{ label: "New Thread", hint: formatAccelerator(shortcuts.newThread), run: actions.newThread }] : []),
-    { label: "Open a Project…", hint: formatAccelerator(shortcuts.openProject), run: actions.openProject },
-    { label: "Toggle sidebar", hint: formatAccelerator(shortcuts.toggleSidebar), run: actions.toggleSidebar },
-    { label: "Toggle tools panel", hint: formatAccelerator(shortcuts.toggleTools), run: actions.toggleTools },
-    { label: "Settings", hint: formatAccelerator(shortcuts.openSettings), run: actions.openSettings },
+    { label: "Open a Project…", run: actions.openProject },
+    { label: "Settings", run: actions.openSettings },
   ];
 
   const renderGroup = (entries: Entry[]) => entries.map((entry) => (

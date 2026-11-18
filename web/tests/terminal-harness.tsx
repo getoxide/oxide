@@ -7,7 +7,6 @@ import "../src/workbench.css";
 import "../src/appearance.css";
 import "../src/interactions.css";
 import { applyAppearance } from "../src/appearance";
-import { AppearanceSettings } from "../src/AppearanceSettings";
 import { Skeleton } from "../src/Skeleton";
 applyAppearance();
 declare global {
@@ -43,25 +42,14 @@ window.nativeOutput = (bytes) => {
 };
 createRoot(document.getElementById("root")!).render(
   <div style={{ height: "100vh", display: "flex" }}>
-    {location.search.includes("appearance") && (
-      <aside
-        className="settings"
-        style={{ width: 700, flex: "none", overflow: "auto" }}
-      >
-        <AppearanceSettings />
-      </aside>
-    )}
     {location.search.includes("loading") ? (
       <Skeleton kind="code" label="Loading Terminal…" />
     ) : (
       <TerminalWorkbench
         projectId={1}
-        threadId={null}
         rootPath={window.terminalRoot}
         contextKey="native-repro"
         visible
-        queuedCommand={null}
-        onCommandConsumed={() => {}}
       />
     )}
   </div>,

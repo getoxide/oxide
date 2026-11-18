@@ -43,8 +43,8 @@
     },
     "targets": ["app", "dmg", "nsis", "msi", "appimage", "deb", "rpm"],
     "category": "DeveloperTool",
-    "shortDescription": "The complete desktop app for agentic coding",
-    "longDescription": "Oxide drives Claude Code, Codex and Antigravity CLI in one window, with Git, GitHub, a code editor and a terminal around the conversation.",
+    "shortDescription": "A terminal app that knows your GitHub Projects",
+    "longDescription": "Oxide opens your Projects and as many clean terminals as you like in their folders, with each Project's GitHub Issues, pull requests and files at hand.",
     "macOS": { "minimumSystemVersion": "11.0" },
     "icon": [
       "icons/32x32.png",

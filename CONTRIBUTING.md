@@ -85,14 +85,12 @@ cargo test -p oxide-app --test bindings_and_capabilities
 
 Running the app in development mode regenerates it too. Commit it whenever it changes.
 
-### Live Provider smoke tests
+### Live language-install tests
 
-The Provider contract suite runs against fake Providers, so CI needs no real CLIs, logins or secrets. The live smoke tests drive the real installed CLIs and are `#[ignore]`d. Run them by hand when you touch a Provider adapter, with that Provider installed and logged in:
+Language support is downloaded only after the user presses Install, and CI never touches the network for it. The live tests download the real language servers and are `#[ignore]`d. Run them by hand when you change the pinned downloads:
 
 ```sh
-cargo test -p oxide-provider --test claude_live_smoke -- --ignored
-cargo test -p oxide-provider --test codex_live_smoke -- --ignored
-cargo test -p oxide-provider --test agy_live_smoke -- --ignored
+cargo test -p oxide-core --test language_install_live -- --ignored
 ```
 
 ## Issues and triage

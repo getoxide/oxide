@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayPath, middleEllipsis, readableModel, readablePath } from "./headerLines";
-import { learnEfforts } from "./effortVocabulary";
-
-// Efforts are only recognised once a catalog has declared them.
-learnEfforts([{ id: "m", name: "M", description: null, supportedEfforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: null, isLegacy: false }]);
+import { displayPath, middleEllipsis, readablePath } from "./headerLines";
 
 describe("displayPath", () => {
   it("shortens the home directory to ~", () => {
@@ -34,12 +30,5 @@ describe("middleEllipsis", () => {
     expect(cut.startsWith("~/Developer/")).toBe(true);
     expect(cut.endsWith("thread-header-banner")).toBe(true);
     expect(cut).toContain("…");
-  });
-});
-
-describe("readableModel", () => {
-  it("drops an effort the Model slug carries, even without a catalog", () => {
-    expect(readableModel("gemini-3.8-flash-low", null)).toBe("Gemini 3.8 Flash");
-    expect(readableModel("gpt-5-1-codex-high", null)).toBe("GPT 5.1 Codex");
   });
 });

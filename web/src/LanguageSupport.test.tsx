@@ -32,7 +32,7 @@ it("offers support on first use and downloads only after Install is clicked", as
   });
   await act(async () =>
     root.render(
-      <LanguageSupportNotice language="cpp" onConfigure={() => {}} />,
+      <LanguageSupportNotice language="cpp" />,
     ),
   );
   expect(host.textContent).toContain("support is available");
@@ -54,7 +54,7 @@ it("allows Later without installing and remembers it", async () => {
   );
   await act(async () =>
     root.render(
-      <LanguageSupportNotice language="python" onConfigure={() => {}} />,
+      <LanguageSupportNotice language="python" />,
     ),
   );
   await act(async () =>

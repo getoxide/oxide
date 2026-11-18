@@ -5,8 +5,8 @@
 <h1 align="center">Oxide</h1>
 
 <p align="center">
-  <strong>The complete desktop app for agentic coding.</strong><br />
-  Prompt, review, pull request and merge, with Claude Code, Codex and Antigravity CLI.
+  <strong>A terminal app that knows your GitHub Projects.</strong><br />
+  Open a Project, open as many clean terminals as you like in its folder, and run whatever you want in them.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img alt="Oxide: a Thread with Claude Code in the centre, the Project's Threads on the left and the Diff Surface on the right" src="assets/screenshots/oxide-thread.png" width="900" />
+  <img alt="Oxide: a terminal in the centre, the open Projects and their terminals on the left and the Project's files, issues and pull requests on the right" src="assets/screenshots/oxide-thread.png" width="900" />
 </p>
 
 <!-- The invisible site markers in this README delimit content that the Oxide website
@@ -37,13 +37,11 @@
 
 <!-- site:definition -->
 
-Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+Oxide is a free, open-source desktop terminal app that knows your GitHub Projects: open a Project, open as many clean terminals as you like in its folder, and run whatever you want in them, with the Project's GitHub Issues, pull requests and files at hand.
 
 <!-- /site:definition -->
 
-Oxide is not a coding agent: it doesn't ship an agent of its own. It drives the agent CLIs you already have installed and logged in, and it puts Git, GitHub, a code editor and a terminal around the conversation.
-
-Most agent tools optimize for starting more agents. Oxide optimizes for the other end: the path from a finished agent Turn to a **confident merge**. For every change it shows what the agent touched, which checks actually ran, what stayed unverified, and lets you send line-level feedback or undo the work without leaving the app. It is built for developers who can write code themselves and have AI write it with a clear purpose: they know what the agent is producing, review it, and stay responsible for what lands in `main` ([ADR-0010](docs/adr/0010-prioritize-the-path-to-a-confident-merge.md)).
+Oxide does not know about agents. A terminal is a plain shell that Oxide does not interpret, so if you want an agent you type `claude`, `codex` or anything else in it, like any other command. No Oxide launch flags, prompts, statuses or permissions are involved ([ADR-0018](docs/adr/0018-projects-and-plain-terminals.md)).
 
 > [!NOTE]
 > **Oxide is pre-release software.** Official builds target **macOS on Apple Silicon**, **Windows** (x64 and arm64) and **Linux** (x64 and arm64). Expect rough edges and breaking changes between versions.
@@ -52,28 +50,17 @@ Most agent tools optimize for starting more agents. Oxide optimizes for the othe
 
 <!-- site:features -->
 
-### One app, every agent CLI
+### Projects and plain terminals
 
-- **Multiple Providers.** Use [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`) and [Antigravity CLI](https://antigravity.google/download) (`agy`) side by side. Oxide detects which ones are installed and only offers those.
-- **Threads.** Each Thread is one conversation with one Provider, mapped one-to-one to the Provider's own session, with its own Model and Effort.
-- **Permission modes.** Choose per Thread between *Ask*, *Auto-edit* and *Full access*, and answer Approvals inline. The Attention Center collects every Thread waiting on you, across Projects.
-- **Slash commands, attachments and usage limits.** Each Provider's Slash commands and skills in the composer, files and images attached inside the prompt, and the 5-hour and weekly usage limits your Provider reports.
-- **Worktrees.** Chat Threads can run in their own Git worktree, with an optional per-Project setup command, so parallel work never collides.
+- **Open Projects.** The sidebar lists the Projects you opened and, under each, its terminals. A **New terminal** control on a Project opens a fresh shell already in its folder. Close a Project and its terminals end with it.
+- **Many terminals.** Run a server, an agent and a test watcher side by side. The selected terminal fills the centre; switching keeps each one's scrollback, working directory and running process.
+- **Command blocks.** The Warp-like grouping of command, output and exit status.
 
-### Review before you merge
+### GitHub at hand
 
-- **Line comments.** Drafts from a Blind review that you keep, sent back to the Thread as one prompt.
-- **Blind review.** Have a second Provider review the change seeing only the diff and the issue, never the original conversation. Its findings become Line comments you keep or dismiss.
-- **Restore.** Put a Thread's files back to how they were before any Turn. It is undoable.
-- **Rule suggestions.** Feedback you keep giving turns into a proposed rule for the Project's `AGENTS.md`.
-- **Pull requests, from review to merge.** Open the pull request from the Pull request Surface. **Fix** sends failing checks, conflicts and the review threads you select back to the agent, in the branch's Thread or a new one. Merge, squash or rebase when GitHub says it's ready, or turn on auto-merge while checks run.
-
-### A full workspace around the conversation
-
-- **Git and GitHub.** Branches, commit and push, and Issues, through `git` and the [GitHub CLI](https://cli.github.com). Pull requests have their own section above.
-- **Code editor.** Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
-- **Terminal.** Per-Project terminal tabs with Command blocks, kept alive while you switch Threads.
-- **Keyboard first.** Full keyboard navigation, themes and reduced-motion support.
+- **Issues.** List, read and create GitHub Issues for the Project, through the [GitHub CLI](https://cli.github.com).
+- **Pull requests.** List, read, create, review and merge pull requests, or turn on auto-merge while checks run.
+- **Files.** Browse the Project's folder and open a file in the built-in editor: Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
 
 <!-- /site:features -->
 
@@ -88,32 +75,20 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 | macOS (Apple Silicon) | `Oxide_<version>_macos_arm64.dmg` | Drag `Oxide.app` into `/Applications`. |
 | Windows 10/11 (x64) | `Oxide_<version>_windows_x64.exe` | NSIS installer. |
 | Windows 11 (arm64) | `Oxide_<version>_windows_arm64.exe` | NSIS installer. |
-| Linux (x64) | `Oxide_<version>_linux_x64.AppImage`, `.deb` or `.rpm` | The AppImage updates itself; the `.deb` and `.rpm` do not. |
-| Linux (arm64) | `Oxide_<version>_linux_arm64.AppImage`, `.deb` or `.rpm` | The AppImage updates itself; the `.deb` and `.rpm` do not. |
+| Linux (x64) | `Oxide_<version>_linux_x64.AppImage`, `.deb` or `.rpm` | |
+| Linux (arm64) | `Oxide_<version>_linux_arm64.AppImage`, `.deb` or `.rpm` | |
 
 <!-- /site:install -->
 
-Until the first stable release is published, [build from source](#build-from-source). Pre-release (`-rc`) builds are for testing and never reach the in-app updater.
+Until the first stable release is published, [build from source](#build-from-source).
 
 ### Requirements
 
-At least one **Provider installed and logged in** before you launch Oxide:
-
-<!-- site:requirements -->
-
-| Provider | Command | Install |
-| --- | --- | --- |
-| Claude Code | `claude` | [docs.claude.com](https://docs.claude.com/en/docs/claude-code) |
-| Codex | `codex` | [github.com/openai/codex](https://github.com/openai/codex) |
-| Antigravity CLI | `agy` | [antigravity.google](https://antigravity.google/download) |
-
-`git` is required. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and enables the pull request and Issues features.
-
-<!-- /site:requirements -->
+`git` is required. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and enables the pull request and Issues features. Anything else you run in a terminal, an agent CLI included, is installed and logged in the way it is outside Oxide.
 
 ### Updates
 
-Oxide checks for new versions in **Settings → Updates** and installs them in place. It only offers published stable releases, and only accepts packages signed with Oxide's updater key. On Linux only the AppImage updates itself; a `.deb` or `.rpm` install needs the newer package.
+Oxide has no in-app updater: the Settings page is empty for now. To update, download the newer installer from [GitHub Releases](https://github.com/getoxide/oxide/releases) and install it over the old one.
 
 ### Verifying a download
 
@@ -135,7 +110,7 @@ Each release says whether it is code-signed on your platform.
 1. Drag `Oxide.app` from the `.dmg` into `/Applications` and try to open it once.
 2. Open **System Settings → Privacy & Security**, scroll to the message about Oxide, and click **Open Anyway**.
 
-Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.apple.quarantine /Applications/Oxide.app`. Updates installed through Oxide are unaffected.
+Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.apple.quarantine /Applications/Oxide.app`.
 
 **Windows.** The installer is **not Authenticode-signed**, so SmartScreen may warn on first run. Choose **More info → Run anyway** after verifying the download as above.
 
@@ -145,11 +120,10 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 
 <!-- site:quick-start -->
 
-1. Install and log in to at least one Provider (for example, run `claude` once in a terminal).
-2. Launch Oxide and press **⌘⇧N** (Ctrl+Shift+N on Windows) to open the Project palette: pick a folder, create one with `git init`, or clone a repository.
-3. Start a Thread, choose the Provider, Model and Permission mode, and write your prompt.
-4. When the Turn finishes, start a Blind review or restore the files to before any Turn from the Git menu under the Thread title.
-5. **Commit & Push** from the same header, then open the pull request from the **Pull request** Surface.
+1. Launch Oxide and click **Open a Project**: pick a folder, create one with `git init`, or clone a repository (from a URL, or one of your GitHub repositories through `gh`).
+2. Click **New terminal** on the Project. You get a shell in its folder. Run whatever you want, `claude` or `codex` included.
+3. Open as many terminals as you like and switch between them in the sidebar.
+4. Use the right dock for the Project's **Files**, **Issues** and **Pull request**.
 
 <!-- /site:quick-start -->
 
@@ -158,19 +132,15 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 ```mermaid
 flowchart LR
   UI["React webview<br/>(web/)"] -- "typed Tauri commands" --> App["oxide-app<br/>thin Tauri shell"]
-  App --> Core["oxide-core<br/>Projects, Threads, Transcript,<br/>Git, GitHub, terminals, LSP"]
-  Core --> Prov["oxide-provider<br/>Provider contract"]
-  Prov --> Claude["claude"]
-  Prov --> Codex["codex"]
-  Prov --> Agy["agy"]
+  App --> Core["oxide-core<br/>Projects, terminals,<br/>Git, GitHub, LSP"]
+  Core --> Prims["oxide-provider<br/>process, lock and<br/>diagnostics primitives"]
   Core --> Tools["git · gh · language servers"]
 ```
 
-- **Native Provider adapters.** Each Provider has its own adapter in `oxide-provider` behind one contract, tested against fake Providers, rather than a lowest-common-denominator protocol ([ADR-0001](docs/adr/0001-native-provider-adapters-over-acp.md)).
-- **Oxide owns the Transcript.** Turns, Items and Approvals are stored locally in SQLite, so every Provider looks the same in the UI ([ADR-0002](docs/adr/0002-oxide-owns-the-transcript.md)).
-- **Core owns files and processes.** The webview gets no filesystem or shell permission. Every action goes through a typed Tauri command generated with [tauri-specta](https://github.com/specta-rs/tauri-specta).
+- **Core owns files and processes.** The webview gets no filesystem or shell permission. Every action goes through a typed Tauri command generated with [tauri-specta](https://github.com/specta-rs/tauri-specta), and every shell is a process Core owns ([ADR-0016](docs/adr/0016-security-boundaries.md)).
+- **A terminal is a plain shell.** Oxide does not interpret what runs in it ([ADR-0018](docs/adr/0018-projects-and-plain-terminals.md)).
 
-The domain language (Project, Thread, Turn, Provider, Surface…) is defined in [GLOSSARY.md](GLOSSARY.md), and every architecture decision is recorded in [docs/adr/](docs/adr/).
+The domain language (Project, Terminal, Surface…) is defined in [GLOSSARY.md](GLOSSARY.md), and every architecture decision is recorded in [docs/adr/](docs/adr/).
 
 ## Build from source
 
@@ -249,13 +219,7 @@ node tools/check.mjs        # everything the CI pull request lanes run on this O
 node tools/check.mjs fast   # rustfmt, ESLint and TypeScript, in seconds
 ```
 
-The Rust tests run with [cargo-nextest](https://nexte.st) (`cargo install --locked cargo-nextest`). The live smoke tests drive the real Provider CLIs, so they are opt-in and never run in CI:
-
-```sh
-cargo test -p oxide-provider --test claude_live_smoke -- --ignored
-cargo test -p oxide-provider --test codex_live_smoke -- --ignored
-cargo test -p oxide-provider --test agy_live_smoke -- --ignored
-```
+The Rust tests run with [cargo-nextest](https://nexte.st) (`cargo install --locked cargo-nextest`).
 
 [docs/devops.md](docs/devops.md) lists every check CI runs, why it exists and its local equivalent.
 
@@ -264,18 +228,18 @@ cargo test -p oxide-provider --test agy_live_smoke -- --ignored
 <!-- site:faq -->
 
 **What is Oxide?**
-Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+Oxide is a free, open-source desktop terminal app that knows your GitHub Projects: open a Project, open as many clean terminals as you like in its folder, and run whatever you want in them, with the Project's Issues, pull requests and files at hand.
 
-Oxide is not a coding agent: it is a desktop GUI that drives the agent CLIs you already have installed and logged in. Oxide is not affiliated with Oxide Computer Company.
+Oxide is not a coding agent and does not drive one: a terminal is a plain shell. Oxide is not affiliated with Oxide Computer Company.
 
 **Do I need an API key?**
-No separate key for Oxide. Each Provider uses its own login and its own subscription or API billing, exactly as it does in the terminal.
+No. Oxide has no account and no key. Whatever you run in a terminal uses its own login, exactly as it does anywhere else.
 
-**Does Oxide send my code or prompts anywhere?**
-Oxide has no telemetry and no server. Your prompts and code go only to the Provider you chose, through its own CLI. The Transcript, Checkpoints and Review ledger stay on your machine.
+**Does Oxide send my code anywhere?**
+Oxide has no telemetry and no server. It talks to GitHub only through your own `gh` login, when you open Issues or Pull request.
 
-**How is it different from using Claude Code or Codex in a terminal?**
-You keep the same CLIs, sessions and logins. Oxide adds Line comments, Blind review by a second Provider, Restore to before any Turn, worktrees per Thread and GitHub pull request review, in one window, for every Provider.
+**Can I run Claude Code or Codex in it?**
+Yes: type `claude` or `codex` in a terminal like any other command. Oxide adds nothing around it.
 
 **Which platforms are supported?**
 Official builds target macOS on Apple Silicon, Windows (x64 and arm64) and Linux (x64 and arm64, as an AppImage, `.deb` and `.rpm`). Linux is new, so expect more rough edges there than on macOS and Windows.

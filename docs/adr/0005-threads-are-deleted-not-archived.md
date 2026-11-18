@@ -1,5 +1,7 @@
 # Threads are deleted, not archived
 
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Oxide has no Threads any more.
+
 A finished Thread is deleted, not archived. Oxide keeps its default harness as small as it can, so every session starts from a clean context window; a hidden-but-kept Thread that a prompt silently brings back (the old archive behaviour) works against that, and an ever-growing archive is state nobody asked to carry. What is worth keeping about finished work belongs in the pull request, an ADR or the `GLOSSARY.md`, not in a kept Thread. This reverses the earlier rule "Threads are archived, never deleted".
 
 ## Consequences

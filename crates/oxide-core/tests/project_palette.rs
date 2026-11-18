@@ -5,7 +5,7 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
-use oxide_core::{Core, Notification, System};
+use oxide_core::{Core, System};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -36,10 +36,6 @@ struct RecordingSystem {
 }
 
 impl System for RecordingSystem {
-    fn hold_activity(&self) {}
-    fn release_activity(&self) {}
-    fn notify(&self, _: Notification) {}
-    fn set_badge(&self, _: u32) {}
     fn reveal_in_finder(&self, path: &Path) {
         self.revealed.lock().unwrap().push(path.into());
     }
@@ -60,7 +56,6 @@ impl Fixture {
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let core = Core::open_with_user_home(tmp.path().join("home"), tmp.path().join("user")).unwrap();
-    core.set_real_time_ticker(false);
     let system = Arc::new(RecordingSystem::default());
     core.set_system(system.clone());
     Fixture { tmp, core, system }
@@ -236,7 +231,7 @@ fn reveal_in_finder_reveals_the_checkout() {
     make_repo(&repo);
     let project = f.core.add_project(repo.to_str().unwrap()).unwrap();
 
-    f.core.reveal_in_finder(project.id, None).unwrap();
+    f.core.reveal_in_finder(project.id).unwrap();
 
     assert_eq!(
         f.system.revealed.lock().unwrap().as_slice(),
@@ -264,7 +259,7 @@ fn scanned_projects_stay_closed_until_opened_and_closing_keeps_them_known() {
     assert!(added.open, "adding a folder opens it");
 
     let other = scanned.iter().find(|p| p.name == "scanned").unwrap();
-    f.core.remember_selection(other.id, None).unwrap();
+    f.core.remember_selection(other.id).unwrap();
     let open = |name: &str| {
         f.core
             .list_projects()

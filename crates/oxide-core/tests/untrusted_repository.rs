@@ -8,7 +8,7 @@
 )]
 #![cfg(unix)]
 
-use oxide_core::{Core, DiffScope, ProjectSummary};
+use oxide_core::{Core, ProjectSummary};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -78,7 +78,6 @@ fn hostile() -> Hostile {
     std::fs::write(work.join("a.txt"), "two\n").unwrap();
 
     let core = Core::open(root.join("home")).unwrap();
-    core.set_real_time_ticker(false);
     Hostile {
         _tmp: tmp,
         core,
@@ -96,11 +95,9 @@ fn looking_at_an_untrusted_project_runs_nothing() {
     let h = hostile();
     let project = add(&h);
 
-    h.core.git_status_in(project.id, None).unwrap();
-    h.core.list_branches_in(project.id, None).unwrap();
-    h.core
-        .diff_in(project.id, None, DiffScope::Uncommitted)
-        .unwrap();
+    h.core.list_dir(project.id, "").unwrap();
+    h.core.read_file(project.id, "a.txt").unwrap();
+    h.core.find_files(project.id, "a").unwrap();
     // The automatic fetch must not reach the remote before the user acts.
     assert!(!h.core.fetch_project_at(project.id, Instant::now()).unwrap());
 
