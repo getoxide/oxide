@@ -4,6 +4,8 @@
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use oxide_core::LockExt as _;
 use oxide_core::diag;
+#[cfg(target_os = "windows")]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Notification, NotificationKind, System};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
