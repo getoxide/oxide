@@ -56,10 +56,29 @@ pub fn supports_one_shot(provider: &str) -> bool {
     matches!(provider, "claude" | "codex")
 }
 
+/// A Model or Effort value that is safe to hand over as one argument: it names something, never
+/// starts with `-` and holds no quote, control character or whitespace. Shared with the
+/// interactive launch recipes.
+pub fn is_flag_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('-')
+        && value.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'[' | b']' | b':' | b'/')
+        })
+}
+
 /// The CLI arguments of a one-shot run. Read-only: Claude Code plan mode with read tools only,
 /// the Codex read-only sandbox. The user's hooks, MCP servers and slash commands stay out, so
 /// the reviewer sees only what Oxide sends.
 pub fn one_shot_args(request: &OneShotRequest) -> Result<Vec<String>, ProviderError> {
+    for value in [&request.model, &request.effort].into_iter().flatten() {
+        if !is_flag_value(value) {
+            return Err(ProviderError::NotAvailable(
+                "the model or effort is not a plain value".into(),
+            ));
+        }
+    }
     let mut args: Vec<String> = Vec::new();
     let mut push = |items: &[&str]| args.extend(items.iter().map(|s| (*s).to_string()));
     match request.provider.as_str() {
@@ -232,6 +251,20 @@ mod tests {
 
     fn request(provider: &str) -> OneShotRequest {
         OneShotRequest::new(provider, ".", "review this")
+    }
+
+    #[test]
+    fn a_model_or_effort_that_is_not_a_plain_value_never_reaches_the_command_line() {
+        for bad in ["high\"", "-x", "a b", "", &"a".repeat(129), "x\") -c foo=\"1"] {
+            for provider in ["claude", "codex"] {
+                let mut r = request(provider);
+                r.effort = Some(bad.to_string());
+                assert!(one_shot_args(&r).is_err(), "{provider} effort {bad:?}");
+                let mut r = request(provider);
+                r.model = Some(bad.to_string());
+                assert!(one_shot_args(&r).is_err(), "{provider} model {bad:?}");
+            }
+        }
     }
 
     #[test]

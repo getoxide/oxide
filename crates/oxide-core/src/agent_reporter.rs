@@ -317,11 +317,13 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
     let Ok(count) = count.parse::<usize>() else {
         return 2;
     };
-    if rest.len() != count + 1 {
+    if count.checked_add(1) != Some(rest.len()) {
         return 2;
     }
     let (user, payload) = rest.split_at(count);
-    let payload = &payload[0];
+    let Some(payload) = payload.first() else {
+        return 2;
+    };
 
     let child = user.split_first().and_then(|(program, args)| {
         std::process::Command::new(program)
@@ -737,6 +739,9 @@ mod tests {
         assert_eq!(run_reporter(&[], &gone), 2);
         assert_eq!(run_reporter(&["x".into(), payload()], &gone), 2);
         assert_eq!(run_reporter(&["3".into(), payload()], &gone), 2);
+        for huge in ["18446744073709551615", "18446744073709551614"] {
+            assert_eq!(run_reporter(&[huge.into(), payload()], &gone), 2);
+        }
     }
 
     #[test]

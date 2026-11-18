@@ -60,15 +60,8 @@ pub(crate) fn is_uuid(id: &str) -> bool {
             .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// A Model or Effort value that is safe to hand over as one argument: it names something, never
-/// starts with `-` and holds no control characters or whitespace.
 fn is_flag_value(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && !value.starts_with('-')
-        && value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'[' | b']' | b':' | b'/')
-        })
+    oxide_provider::oneshot::is_flag_value(value)
 }
 
 /// Claude Code's `--permission-mode` value for an Oxide Permission mode. Always passed, because

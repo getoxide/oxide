@@ -143,6 +143,24 @@ pub struct BlindReviewFinding {
     pub decision: FindingDecision,
 }
 
+/// The most diff text a Blind review prompt carries.
+const MAX_REVIEW_DIFF_BYTES: usize = 512 * 1024;
+/// The most issue text a Blind review prompt carries.
+const MAX_REVIEW_ISSUE_BYTES: usize = 16 * 1024;
+
+fn truncate_text(mut text: String, max: usize, what: &str) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    text.push_str(&format!("\n[{what} truncated]\n"));
+    text
+}
+
 /// Builds the prompt for a Blind review: only the diff, the issue, and the required output
 /// format, with diff and issue delimited as data; no Transcript content is included.
 pub fn build_blind_review_prompt(issue_text: Option<&str>, diff_text: &str) -> String {
@@ -270,6 +288,23 @@ impl Core {
                 "Provider '{}' cannot honour a non-writing configuration",
                 request.provider
             )));
+        }
+
+        if !matches!(request.scope.as_str(), "turn" | "branch" | "uncommitted") {
+            return Err(Error::Git(format!(
+                "Unknown Blind review scope '{}'",
+                request.scope.chars().take(32).collect::<String>()
+            )));
+        }
+        let (def_model, def_effort, _) = self.default_settings_for_provider(&request.provider);
+        let model = request.model.clone().or(def_model);
+        let effort = request.effort.clone().or(def_effort);
+        for value in [&model, &effort].into_iter().flatten() {
+            if !oneshot::is_flag_value(value) {
+                return Err(Error::Provider(
+                    "The model or effort of a Blind review is not a plain value".into(),
+                ));
+            }
         }
 
         let (root, project_name) = {
@@ -441,16 +476,14 @@ impl Core {
             "No issue description provided.".to_string()
         };
 
+        let diff_text = truncate_text(diff_text, MAX_REVIEW_DIFF_BYTES, "diff");
+        let issue_text = truncate_text(issue_text, MAX_REVIEW_ISSUE_BYTES, "issue");
         let prompt = build_blind_review_prompt(Some(&issue_text), &diff_text);
 
         let worktree =
             self.create_detached_worktree(&root, &project_name, &commit_ish, "blind-review")?;
 
-        let (def_model, def_effort, _) = self.default_settings_for_provider(&request.provider);
-        let model = request.model.or(def_model);
-        let effort = request.effort.or(def_effort);
-
-        let id = {
+        let inserted = {
             let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
             db.execute(
                 "INSERT INTO blind_reviews (thread_id, provider, scope, status, worktree)
@@ -461,8 +494,19 @@ impl Core {
                     request.scope,
                     worktree.to_string_lossy()
                 ],
-            )?;
-            db.last_insert_rowid() as u32
+            )
+            .map_err(Error::from)
+            .and_then(|_| {
+                u32::try_from(db.last_insert_rowid())
+                    .map_err(|_| Error::Git("Blind review id out of range".into()))
+            })
+        };
+        let id = match inserted {
+            Ok(id) => id,
+            Err(error) => {
+                self.remove_detached_worktree(&root, &worktree);
+                return Err(error);
+            }
         };
 
         Ok(PreparedBlindReview {

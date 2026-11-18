@@ -443,3 +443,36 @@ fn single_provider_allowed_and_clearly_labelled_as_same_provider() {
     assert!(fake_opt.same_provider);
     assert!(fake_opt.label.contains("same provider"));
 }
+
+#[test]
+fn a_model_effort_or_scope_that_is_not_plain_is_refused_before_anything_starts() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let requests = install_runner(&f.core, Ok("[]".into()));
+    let long = "a".repeat(200);
+    for bad in ["high\"", "-x", long.as_str(), "a b"] {
+        let mut req = request(&f, original, "fake");
+        req.effort = Some(bad.into());
+        assert!(f.core.run_blind_review(req).is_err(), "effort {bad:?}");
+        let mut req = request(&f, original, "fake");
+        req.model = Some(bad.into());
+        assert!(f.core.run_blind_review(req).is_err(), "model {bad:?}");
+    }
+    let mut req = request(&f, original, "fake");
+    req.scope = "everything".into();
+    assert!(f.core.run_blind_review(req).is_err());
+    assert!(requests.lock().unwrap().is_empty(), "no Provider was run");
+}
+
+#[test]
+fn a_huge_issue_is_capped_before_the_prompt_is_built() {
+    let f = fixture();
+    let original = original_with_change(&f);
+    let requests = install_runner(&f.core, Ok("[]".into()));
+    let mut req = request(&f, original, "fake");
+    req.issue = Some("x".repeat(200_000));
+    f.core.run_blind_review(req).unwrap();
+    let seen = requests.lock().unwrap();
+    assert!(seen[0].prompt.len() < 100_000, "{}", seen[0].prompt.len());
+    assert!(seen[0].prompt.contains("[issue truncated]"));
+}
