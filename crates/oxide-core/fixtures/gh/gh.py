@@ -17,9 +17,11 @@ import sys
 import time
 
 # Real gh speaks UTF-8 on every OS, and so does Core. Python would otherwise use the locale code
-# page on Windows (cp1252), turning a UTF-8 body read from stdin into mojibake.
-for stream in (sys.stdin, sys.stdout, sys.stderr):
-    stream.reconfigure(encoding="utf-8")
+# page on Windows (cp1252), turning a UTF-8 body read from stdin into mojibake. Real gh also writes
+# LF line endings everywhere; Python's text mode would turn them into CRLF on Windows.
+sys.stdin.reconfigure(encoding="utf-8")
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(encoding="utf-8", newline="\n")
 
 here = os.path.dirname(os.path.abspath(__file__))
 state_path = os.path.join(here, "state.json")
