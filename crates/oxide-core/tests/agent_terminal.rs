@@ -963,3 +963,22 @@ fn an_issue_is_bounded_before_it_is_stored() {
         assert_eq!(url.is_some(), kept, "{candidate}");
     }
 }
+
+#[test]
+fn a_restore_is_refused_while_a_live_agent_has_reported_nothing() {
+    let f = fixture();
+    let thread = started(&f);
+    screen(&f.core, thread.id, "READY");
+    assert_eq!(status(&f, thread.id), ThreadStatus::Running);
+
+    let refused = f.core.restore_start_preview(thread.id).unwrap_err();
+    assert!(refused.to_string().contains("running"), "{refused}");
+
+    f.core.stop_agent(thread.id).unwrap();
+    wait_status(&f, thread.id, ThreadStatus::Stopped);
+    let after = f.core.restore_start_preview(thread.id);
+    assert!(
+        after.is_ok() || !after.unwrap_err().to_string().contains("A Turn is running"),
+        "a stopped agent no longer blocks a restore"
+    );
+}

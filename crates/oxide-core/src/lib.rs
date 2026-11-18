@@ -1822,6 +1822,8 @@ impl Core {
     /// Turn is running: neither the Thread's own, nor one of another Thread in the same
     /// checkout.
     fn restore_refused(&self, thread_id: u32, target: &GitTarget) -> Result<()> {
+        // Taken before the database lock: launching an agent holds this one, then the database.
+        let live_agents = self.live_agent_ids();
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let status: String = db.query_row(
             "SELECT status FROM threads WHERE id = ?1",
@@ -1833,7 +1835,9 @@ impl Core {
             [thread_id],
             |r| r.get(0),
         )?;
-        if running > 0 || matches!(status.as_str(), "working" | "needs-input") {
+        // A live agent that reports nothing may be mid-turn: its status stays `running`.
+        let unreported = status == "running" && live_agents.contains(&thread_id);
+        if running > 0 || unreported || matches!(status.as_str(), "working" | "needs-input") {
             return Err(Error::Git(
                 "A Turn is running in this Thread. Wait for it to finish or stop it.".into(),
             ));
@@ -1841,7 +1845,10 @@ impl Core {
         let others = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
         if others
             .iter()
-            .any(|(id, status)| *id != thread_id && is_busy(status))
+            .any(|(id, status)| {
+                *id != thread_id
+                    && (is_busy(status) || (status == "running" && live_agents.contains(id)))
+            })
         {
             return Err(Error::Git(
                 "Another Thread is working in this checkout. Wait for its Turn to finish or stop it."

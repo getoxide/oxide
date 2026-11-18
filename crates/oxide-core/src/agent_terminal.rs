@@ -712,6 +712,17 @@ impl Core {
             .is_some_and(|run| run.session.exit_success().is_none())
     }
 
+    /// The Threads whose agent process is alive.
+    pub(crate) fn live_agent_ids(&self) -> Vec<u32> {
+        self.agents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, run)| run.session.exit_success().is_none())
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Stops the Thread's agent for good and forgets its terminal (deleting the Thread).
     pub(crate) fn drop_agent(&self, thread_id: u32) {
         let run = self
