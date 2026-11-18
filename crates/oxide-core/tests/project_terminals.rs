@@ -8,8 +8,10 @@
 )]
 use oxide_core::Core;
 use rusqlite::Connection;
+#[cfg(unix)]
 use std::path::Path;
 
+#[cfg(unix)]
 fn open_with_project(dir: &Path) -> (Core, u32, std::path::PathBuf) {
     let core = Core::open(dir.join("home")).unwrap();
     let folder = dir.join("my-project");
