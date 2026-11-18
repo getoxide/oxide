@@ -60,14 +60,7 @@ fn not_a_regular_file() -> Error {
 /// Opens for reading without waiting for a writer, so a FIFO swapped in after the path was
 /// resolved cannot block the thread. The caller checks the handle is a regular file.
 fn open_without_blocking(path: &Path) -> std::io::Result<File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    options.open(path)
+    oxide_platform::fs::open_nonblocking(path)
 }
 
 /// Saves a complete UTF-8 document atomically, refusing stale buffers and links outside the checkout.

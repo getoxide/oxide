@@ -1,7 +1,10 @@
 use crate::terminal::TerminalSession;
 use crate::{Error, Result};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,55 +52,42 @@ pub fn complete(
     if line.len() > 64 * 1024 || cursor > line.encode_utf16().count() {
         return Err(Error::Terminal("Invalid completion position.".into()));
     }
-    #[cfg(windows)]
-    {
-        use base64::Engine;
-        use std::sync::atomic::{AtomicU32, Ordering};
-        use std::time::{Duration, Instant};
-        static SEQUENCE: AtomicU32 = AtomicU32::new(1);
-        let _ = cwd;
-        let token = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let prefix = format!("\x1b]633;Oxide;complete;{token};");
-        let input = base64::engine::general_purpose::STANDARD.encode(line);
-        let script = format!(
-            "$oxideLineText=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{input}')); $oxideCompletion=TabExpansion2 $oxideLineText {cursor}; $oxideResult=@{{replacementIndex=[Math]::Max(0,$oxideCompletion.ReplacementIndex); replacementLength=[Math]::Max(0,$oxideCompletion.ReplacementLength); matches=@($oxideCompletion.CompletionMatches | Select-Object -First 200 | ForEach-Object {{ @{{text=[string]$_.CompletionText; label=[string]$_.ListItemText; detail=[string]$_.ToolTip}} }})}} | ConvertTo-Json -Depth 5 -Compress; [Console]::Write(([char]27)+']633;Oxide;complete;{token};'+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($oxideResult))+[char]7)\r"
-        );
-        let receiver = session.subscribe();
-        session.write(script.as_bytes())?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut output = Vec::new();
-        while Instant::now() < deadline {
-            if let Ok(bytes) = receiver.recv_timeout(Duration::from_millis(100)) {
-                output.extend(bytes);
-            }
-            if output.len() > 1024 * 1024 {
-                break;
-            }
-            let text = String::from_utf8_lossy(&output);
-            if let Some(start) = text.find(&prefix)
-                && let Some(end) = text[start + prefix.len()..].find('\x07')
-            {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&text[start + prefix.len()..start + prefix.len() + end])
-                    .map_err(|error| Error::Terminal(error.to_string()))?;
-                return serde_json::from_slice(&bytes).map_err(|error| {
-                    Error::Terminal(format!("Invalid shell completion: {error}"))
-                });
-            }
+    // A shell that can complete for itself (PowerShell) is asked; any other gets files and PATH
+    // commands, without evaluating anything.
+    static SEQUENCE: AtomicU32 = AtomicU32::new(1);
+    let token = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let Some(script) = oxide_platform::terminal::completion_script(token, line, cursor) else {
+        return Ok(path_completion(line, cursor, Path::new(cwd)));
+    };
+    let prefix = format!("\x1b]633;Oxide;complete;{token};");
+    let receiver = session.subscribe();
+    session.write(script.as_bytes())?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut output = Vec::new();
+    while Instant::now() < deadline {
+        if let Ok(bytes) = receiver.recv_timeout(Duration::from_millis(100)) {
+            output.extend(bytes);
         }
-        Err(Error::Terminal(
-            "Shell completion timed out. Try Tab again when the shell is idle.".into(),
-        ))
+        if output.len() > 1024 * 1024 {
+            break;
+        }
+        let text = String::from_utf8_lossy(&output);
+        if let Some(start) = text.find(&prefix)
+            && let Some(end) = text[start + prefix.len()..].find('\x07')
+        {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&text[start + prefix.len()..start + prefix.len() + end])
+                .map_err(|error| Error::Terminal(error.to_string()))?;
+            return serde_json::from_slice(&bytes)
+                .map_err(|error| Error::Terminal(format!("Invalid shell completion: {error}")));
+        }
     }
-    #[cfg(not(windows))]
-    {
-        let _ = session;
-        Ok(path_completion(line, cursor, Path::new(cwd)))
-    }
+    Err(Error::Terminal(
+        "Shell completion timed out. Try Tab again when the shell is idle.".into(),
+    ))
 }
 
-/// Files and PATH commands, without evaluating user input. Also used to test quoting on every OS.
-#[cfg(any(not(windows), test))]
+/// Files and PATH commands, without evaluating user input.
 fn path_completion(line: &str, cursor: usize, cwd: &Path) -> TerminalCompletion {
     let mut units = 0;
     let end = line

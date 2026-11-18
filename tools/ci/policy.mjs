@@ -363,6 +363,8 @@ export function checkUpdateFeed(feed, tag) {
 // Node platform names and how the plan names them.
 const OS_NAMES = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 const EVERY_OS = Object.keys(OS_NAMES);
+/** The Rust target the local Windows check compiles for. */
+export const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 const CI_JOB_ONLY = (job, what) => `CI only: the ${job} job ${what}`;
 
 /**
@@ -382,6 +384,8 @@ const CHECKS = [
   { id: "rust-fmt", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["cargo", "fmt", "--all", "--check"] },
   // ADR-0016: Git and gh start only in the hardened builders. Pure Node, so it is cheap enough for `fast`.
   { id: "process-builders", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/process-builders.mjs"] },
+  // ADR-0019: OS-specific code lives in crates/oxide-platform. Pure Node, so it is cheap enough for `fast`.
+  { id: "platform-layer", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/platform-layer.mjs"] },
   { id: "web-lint", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "lint"] },
   { id: "web-typecheck", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "typecheck"] },
   { id: "web-test", tiers: ["pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "test"] },
@@ -401,6 +405,16 @@ const CHECKS = [
   { id: "zizmor", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("automation", "installs zizmor") },
   { id: "schemas", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("automation", "installs check-jsonschema") },
   { id: "pr-title", tiers: ["pr"], platforms: EVERY_OS, ci: CI_JOB_ONLY("pr-title", "checks the pull request title") },
+  // Local only (`node tools/check.mjs windows`): the CI Windows lane runs the real Clippy. This
+  // cross-compiles on macOS and Linux with cargo-xwin, which fetches the Windows SDK headers that
+  // C dependencies such as `ring` need. `oxide-app` is left out: its Tauri build script needs
+  // `llvm-rc`, which only a full LLVM install provides.
+  {
+    id: "windows-clippy",
+    tiers: ["windows"],
+    platforms: ["darwin", "linux"],
+    command: ["cargo", "xwin", "clippy", "--locked", "--target", WINDOWS_TARGET, "--workspace", "--exclude", "oxide-app", "--all-targets", "--", "-D", "warnings"],
+  },
 ];
 
 function skipReason(check, platform) {
@@ -412,11 +426,12 @@ function skipReason(check, platform) {
 
 /**
  * The commands the PR lanes run on this OS, in order, and what the local
- * runner can't run here and why. `fast` is the pre-commit subset.
+ * runner can't run here and why. `fast` is the pre-commit subset; `windows` is the Windows
+ * cross-check for contributors on another OS.
  */
 export function localPlan(platform, tier = "pr") {
   if (!Object.hasOwn(OS_NAMES, platform)) throw new Error(`Unsupported platform "${platform}".`);
-  if (!["fast", "pr"].includes(tier)) throw new Error(`Unknown tier "${tier}": use fast or pr.`);
+  if (!["fast", "pr", "windows"].includes(tier)) throw new Error(`Unknown tier "${tier}": use fast, pr or windows.`);
   const plan = { run: [], skipped: [] };
   for (const check of CHECKS.filter(({ tiers }) => tiers.includes(tier))) {
     const reason = skipReason(check, platform);

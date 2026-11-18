@@ -2,7 +2,6 @@
 //! The webview talks only to the TypeScript bindings generated from here.
 
 mod conversions;
-#[cfg(target_os = "macos")]
 mod shell_path;
 mod system;
 use oxide_core::diag;
@@ -1316,8 +1315,9 @@ pub fn export_bindings() -> Result<(), String> {
 
 pub fn run() {
     // Before anything spawns a thread or a Provider CLI: a Dock launch has a bare PATH.
-    #[cfg(target_os = "macos")]
-    shell_path::inherit_login_shell_path();
+    if cfg!(target_os = "macos") {
+        shell_path::inherit_login_shell_path();
+    }
 
     let builder = builder();
 
@@ -1358,9 +1358,8 @@ pub fn run() {
         })
         .setup(|app| {
             // Only the dev config names the app "Oxide Dev": a release never takes this path.
-            #[cfg(all(target_os = "macos", debug_assertions))]
-            if app.config().product_name.as_deref() == Some("Oxide Dev") {
-                system::set_dev_dock_icon(include_bytes!("../icons-dev/icon.png"));
+            if cfg!(debug_assertions) && app.config().product_name.as_deref() == Some("Oxide Dev") {
+                oxide_platform::system::set_dev_dock_icon(include_bytes!("../icons-dev/icon.png"));
             }
 
             let home = app
@@ -1370,8 +1369,9 @@ pub fn run() {
                 .join(".oxide");
             let core = Core::open(home)?;
             core.set_system(Arc::new(system::HostSystem::new(app.handle().clone())));
-            #[cfg(target_os = "windows")]
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+            if cfg!(windows)
+                && let Some(window) = app.get_webview_window(MAIN_WINDOW)
+            {
                 window.hide_menu()?;
                 window.set_decorations(false)?;
             }

@@ -498,12 +498,27 @@ describe("localPlan", () => {
     for (const { reason } of plan.skipped) assert.ok(reason.length > 0);
   });
 
-  test("fast has only rustfmt, the process-builder check, ESLint and TypeScript, on every platform", () => {
+  test("fast has only rustfmt, the two text checks, ESLint and TypeScript, on every platform", () => {
     for (const platform of ["darwin", "win32", "linux"]) {
       assert.deepEqual(lines(localPlan(platform, "fast")), [
-        "cargo fmt --all --check", "node tools/checks/process-builders.mjs", "pnpm --dir web lint", "pnpm --dir web typecheck",
+        "cargo fmt --all --check", "node tools/checks/process-builders.mjs", "node tools/checks/platform-layer.mjs", "pnpm --dir web lint", "pnpm --dir web typecheck",
       ]);
     }
+  });
+
+  test("the full tier checks that OS-specific code stays in the platform layer", () => {
+    for (const platform of ["darwin", "win32", "linux"]) assert.ok(lines(localPlan(platform)).includes("node tools/checks/platform-layer.mjs"), platform);
+  });
+
+  test("the windows tier cross-compiles and lints for Windows on macOS and Linux only", () => {
+    for (const platform of ["darwin", "linux"]) {
+      const [line] = lines(localPlan(platform, "windows"));
+      assert.match(line, /^cargo xwin clippy --locked --target x86_64-pc-windows-msvc --workspace /);
+      assert.match(line, /--all-targets -- -D warnings$/);
+    }
+    const onWindows = localPlan("win32", "windows");
+    assert.deepEqual(onWindows.run, []);
+    assert.match(onWindows.skipped[0].reason, /macOS and Linux/);
   });
 
   test("the full tier checks that Git and gh start only in the hardened builders", () => {

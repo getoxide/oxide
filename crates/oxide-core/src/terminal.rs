@@ -1,16 +1,13 @@
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
+use oxide_platform::terminal as os;
 use oxide_provider::diag;
 use oxide_provider::diag::SenderExt as _;
-use oxide_provider::process::ProcessRegistry;
-#[cfg(unix)]
-use oxide_provider::process::{SHUTDOWN_GRACE, signal_group, signal_process, terminate_group};
+use oxide_provider::process::{ProcessRegistry, SHUTDOWN_GRACE};
 use oxide_provider::sync::LockExt as _;
-#[cfg(unix)]
-use portable_pty::MasterPty;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Serialize;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,20 +44,7 @@ impl TerminalSession {
                 "Invalid command block or command exceeds 64 KiB.".into(),
             ));
         }
-        #[cfg(windows)]
-        let script = {
-            use base64::Engine;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(command);
-            format!(
-                "[Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}\r"
-            )
-        };
-        #[cfg(not(windows))]
-        let script = {
-            format!(
-                "_oxide_token='{token}'; _oxide_exit=; printf '\\033]633;Oxide;{token};start\\007'; __oxide_run_block() {{\n{command}\n}}; __oxide_run_block; _oxide_exit=$?; unset -f __oxide_run_block\n"
-            )
-        };
+        let script = os::block_script(token, command);
         self.write(script.as_bytes())
     }
 
@@ -71,15 +55,11 @@ impl TerminalSession {
         registry: Arc<ProcessRegistry>,
         blocks: bool,
     ) -> Result<Self> {
-        #[cfg(unix)]
         let shell_init = if blocks {
-            Some(create_shell_init_file(home, id)?)
+            os::create_shell_init_file(home, id).map_err(|error| {
+                Error::Terminal(format!("create terminal shell init file: {error}"))
+            })?
         } else {
-            None
-        };
-        #[cfg(windows)]
-        let shell_init: Option<PathBuf> = {
-            let _ = home;
             None
         };
         let command = shell_command(cwd, blocks, shell_init.as_deref());
@@ -91,8 +71,7 @@ impl TerminalSession {
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         mut command: CommandBuilder,
-        #[cfg(unix)] shell_init: Option<PathBuf>,
-        #[cfg(windows)] _shell_init: Option<PathBuf>,
+        shell_init: Option<PathBuf>,
         blocks: bool,
     ) -> Result<Self> {
         let pty = native_pty_system();
@@ -127,7 +106,6 @@ impl TerminalSession {
         let mut child = match pair.slave.spawn_command(command) {
             Ok(child) => child,
             Err(error) => {
-                #[cfg(unix)]
                 if let Some(path) = &shell_init {
                     diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
@@ -139,7 +117,6 @@ impl TerminalSession {
             Err(error) => {
                 diag::best_effort("kill", child.kill());
                 diag::best_effort("wait", child.wait());
-                #[cfg(unix)]
                 if let Some(path) = &shell_init {
                     diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
@@ -153,11 +130,11 @@ impl TerminalSession {
                 "contain terminal shell process: {error}"
             )));
         }
-        #[cfg(unix)]
-        let process_group = pair.master.process_group_leader().unwrap_or(pid as i32);
-        // The PTY child is a session leader, so it also leads its own process group.
-        #[cfg(unix)]
-        registry.register(process_group, &shell);
+        // The PTY child is a session leader, so it also leads its own process group (Unix only).
+        let process_group = os::session_group(pid, pair.master.as_ref());
+        if let Some(group) = process_group {
+            registry.register(group, &shell);
+        }
         let reader = pair
             .master
             .try_clone_reader()
@@ -173,8 +150,6 @@ impl TerminalSession {
             read_output(reader, &output_subscribers, blocks);
         });
         std::thread::spawn(move || {
-            #[cfg(unix)]
-            let shell_init = shell_init;
             let mut writer = writer;
             let master = pair.master;
             loop {
@@ -183,11 +158,7 @@ impl TerminalSession {
                 };
                 match command {
                     SessionCommand::Write(input, reply) => {
-                        #[cfg(unix)]
-                        let result =
-                            write_terminal_input(&mut writer, master.as_ref(), &input, pid as i32);
-                        #[cfg(windows)]
-                        let result = write_terminal_input(&mut writer, &input, pid);
+                        let result = os::write_input(&mut writer, &input, pid, master.as_ref());
                         reply.tell(result);
                     }
                     SessionCommand::Resize(size, reply) => {
@@ -195,27 +166,15 @@ impl TerminalSession {
                         reply.tell(result);
                     }
                     SessionCommand::Close(reply) => {
-                        #[cfg(unix)]
-                        {
-                            // Interactive shells ignore SIGTERM but hang up on SIGHUP.
-                            diag::best_effort(
-                                "signal_group",
-                                signal_group(process_group, libc::SIGHUP),
-                            );
-                            terminate_group(process_group, SHUTDOWN_GRACE, || {
-                                diag::best_effort("try_wait", child.try_wait());
-                            });
-                            // Anything that moved to its own process group but stayed in the session.
-                            kill_session_processes(process_group);
-                            registry.unregister(process_group);
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            let _ = (&registry, &shell);
-                            diag::best_effort("kill", child.kill());
+                        os::close_session(
+                            process_group,
+                            SHUTDOWN_GRACE,
+                            &mut PtyShell(&mut *child),
+                        );
+                        if let Some(group) = process_group {
+                            registry.unregister(group);
                         }
                         diag::best_effort("wait", child.wait());
-                        #[cfg(unix)]
                         if let Some(path) = shell_init {
                             diag::best_effort("remove_file", std::fs::remove_file(path));
                         }
@@ -280,137 +239,17 @@ impl TerminalSession {
     }
 }
 
-#[cfg(windows)]
-fn write_terminal_input(
-    writer: &mut dyn Write,
-    input: &[u8],
-    shell_pid: u32,
-) -> std::io::Result<()> {
-    let mut start = 0;
-    for (index, byte) in input.iter().enumerate() {
-        if *byte != 0x03 {
-            continue;
-        }
-        writer.write_all(&input[start..index])?;
-        if !interrupt_shell_children(shell_pid) {
-            writer.write_all(&input[index..index + 1])?;
-        }
-        start = index + 1;
-    }
-    writer.write_all(&input[start..])?;
-    writer.flush()
-}
+/// The PTY child, as the platform layer closes it.
+struct PtyShell<'a>(&'a mut (dyn portable_pty::Child + Send + Sync));
 
-#[cfg(windows)]
-fn interrupt_shell_children(shell_pid: u32) -> bool {
-    use std::collections::HashSet;
-    use sysinfo::{Pid, ProcessesToUpdate, System};
-
-    let shell = Pid::from_u32(shell_pid);
-    let Ok(mut system) = System::new() else {
-        return false;
-    };
-    system.refresh_processes(ProcessesToUpdate::All, true);
-
-    let mut descendants = vec![shell];
-    let mut seen = HashSet::from([shell]);
-    let mut index = 0;
-    while index < descendants.len() {
-        let parent = descendants[index];
-        index += 1;
-        for (&pid, process) in system.processes() {
-            if process.parent() == Some(parent) && seen.insert(pid) {
-                descendants.push(pid);
-            }
-        }
+impl oxide_platform::ShellProcess for PtyShell<'_> {
+    fn reap(&mut self) {
+        diag::best_effort("try_wait", self.0.try_wait());
     }
 
-    let mut interrupted = false;
-    for pid in descendants.into_iter().skip(1).rev() {
-        if let Some(process) = system.process(pid) {
-            interrupted |= process.kill();
-        }
+    fn kill(&mut self) {
+        diag::best_effort("kill", self.0.kill());
     }
-    interrupted
-}
-
-#[cfg(unix)]
-fn write_terminal_input(
-    writer: &mut dyn Write,
-    master: &dyn MasterPty,
-    input: &[u8],
-    shell_pid: i32,
-) -> std::io::Result<()> {
-    let mut start = 0;
-    for (index, byte) in input.iter().enumerate() {
-        if *byte != 0x03 {
-            continue;
-        }
-        writer.write_all(&input[start..index])?;
-        let signaled = master.process_group_leader().is_some_and(|process_group| {
-            process_group > 0
-                && if process_group == shell_pid {
-                    interrupt_session_processes(shell_pid)
-                } else {
-                    signal_group(process_group, libc::SIGINT).is_ok()
-                }
-        });
-        if !signaled {
-            writer.write_all(&input[index..index + 1])?;
-        }
-        start = index + 1;
-    }
-    writer.write_all(&input[start..])?;
-    writer.flush()
-}
-
-#[cfg(unix)]
-fn interrupt_session_processes(session_id: i32) -> bool {
-    let Ok(output) = oxide_provider::command::os_command("ps")
-        .args(["-A", "-o", "pid="])
-        .output()
-    else {
-        return false;
-    };
-    let mut interrupted = false;
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Ok(pid) = line.trim().parse::<i32>() else {
-            continue;
-        };
-        if pid != session_id && session_of(pid) == Some(session_id) {
-            interrupted |= signal_process(pid, libc::SIGTERM).is_ok();
-        }
-    }
-    interrupted
-}
-
-#[cfg(unix)]
-fn kill_session_processes(session_id: i32) {
-    if let Ok(output) = oxide_provider::command::os_command("ps")
-        .args(["-A", "-o", "pid="])
-        .output()
-    {
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Ok(pid) = line.trim().parse::<i32>()
-                && session_of(pid) == Some(session_id)
-            {
-                diag::best_effort("signal_process", signal_process(pid, libc::SIGKILL));
-            }
-        }
-    }
-    diag::best_effort("signal_group", signal_group(session_id, libc::SIGKILL));
-}
-
-/// The session id of `pid`, or `None` when it is gone or not a real process id.
-#[cfg(unix)]
-fn session_of(pid: i32) -> Option<i32> {
-    if pid < 2 {
-        return None;
-    }
-    // SAFETY: `getsid` takes a plain integer, touches no memory and only reports an error; `pid`
-    // is at least 2 so it never means the calling process (0).
-    let sid = unsafe { libc::getsid(pid) };
-    (sid >= 0).then_some(sid)
 }
 
 /// The shell's process id; a PTY child that has none (or reports 0) fails the start instead of
@@ -430,74 +269,16 @@ impl Drop for TerminalSession {
     }
 }
 
-fn shell_command(
-    cwd: &Path,
-    blocks: bool,
-    #[cfg(unix)] shell_init: Option<&Path>,
-    #[cfg(windows)] _shell_init: Option<&Path>,
-) -> CommandBuilder {
-    #[cfg(windows)]
-    let mut command = CommandBuilder::new("powershell.exe");
-    #[cfg(windows)]
-    if blocks {
-        // Use PowerShell's real REPL: Ctrl+C cancels a pipeline without killing the shell.
-        command.args(["-NoLogo", "-NoExit", "-Command", r#"function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write(([char]27)+"]633;Oxide;$($global:oxideCommandToken);end;$oxideCode;$($pwd.ProviderPath)"+[char]7); $global:oxideCommandToken=$null }; ' ' }"#]);
-    }
-    #[cfg(not(windows))]
-    let mut command = CommandBuilder::new(if blocks {
-        "/bin/bash".into()
-    } else {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
-    });
-    #[cfg(not(windows))]
-    if blocks {
-        let prompt = r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#;
-        command.env("PS1", prompt);
-        command.env("PS2", "");
-        // Debian and Ubuntu build bash to run /etc/bash.bashrc even with `--rcfile`, and that file
-        // resets PS1. The init file puts the block prompt back once the system file has run.
-        command.env("_OXIDE_PS1", prompt);
-        command.args(["--noprofile"]);
-        if let Some(shell_init) = shell_init {
-            command.arg("--rcfile");
-            command.arg(shell_init);
-        }
-        command.args(["-m", "-i"]);
+fn shell_command(cwd: &Path, blocks: bool, shell_init: Option<&Path>) -> CommandBuilder {
+    let launch = os::shell_launch(blocks, shell_init);
+    let mut command = CommandBuilder::new(launch.program);
+    command.args(launch.args);
+    for (name, value) in launch.env {
+        command.env(name, value);
     }
     command.cwd(dunce::simplified(cwd));
     command.env("TERM", "xterm-256color");
     command
-}
-
-#[cfg(unix)]
-fn create_shell_init_file(home: &Path, id: u32) -> Result<PathBuf> {
-    use std::io::Write as _;
-
-    static NEXT_INIT_FILE: AtomicU32 = AtomicU32::new(0);
-    use std::os::unix::fs::OpenOptionsExt as _;
-
-    // In Oxide's private home, not the shared temp directory: any local account could otherwise
-    // plant or read a file there.
-    let dir = home.join("terminal");
-    crate::private::create_dir_all(&dir).map_err(|error| {
-        Error::Terminal(format!("create terminal shell init directory: {error}"))
-    })?;
-    let path = dir.join(format!(
-        "oxide-terminal-{}-{id}-{}.bashrc",
-        std::process::id(),
-        NEXT_INIT_FILE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|error| Error::Terminal(format!("create terminal shell init file: {error}")))?;
-    file.write_all(
-        b"PS1=$_OXIDE_PS1\nPS2=\nunset _OXIDE_PS1 PROMPT_COMMAND\nstty isig -echo\ntrap ':' INT\n",
-    )
-    .map_err(|error| Error::Terminal(format!("write terminal shell init file: {error}")))?;
-    Ok(path)
 }
 
 /// How many chunks a terminal view may fall behind before the terminal gives up

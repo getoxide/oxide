@@ -4,6 +4,5 @@
 
 pub mod bounded_lines;
 pub mod command;
-pub mod diag;
 pub mod process;
-pub mod sync;
+pub use oxide_platform::{diag, sync};

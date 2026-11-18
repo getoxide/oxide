@@ -8,10 +8,8 @@
 )]
 use oxide_core::Core;
 use rusqlite::Connection;
-#[cfg(unix)]
 use std::path::Path;
 
-#[cfg(unix)]
 fn open_with_project(dir: &Path) -> (Core, u32, std::path::PathBuf) {
     let core = Core::open(dir.join("home")).unwrap();
     let folder = dir.join("my-project");
@@ -21,9 +19,12 @@ fn open_with_project(dir: &Path) -> (Core, u32, std::path::PathBuf) {
     (core, id, canonical)
 }
 
-#[cfg(unix)]
 #[test]
 fn a_new_terminal_is_a_shell_in_the_projects_folder() {
+    // The shell input below is POSIX, so these tests do not run on Windows.
+    if cfg!(windows) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let (core, project, folder) = open_with_project(tmp.path());
 
@@ -37,9 +38,12 @@ fn a_new_terminal_is_a_shell_in_the_projects_folder() {
     core.close_terminal(terminal.id).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn a_project_holds_several_terminals_each_with_its_own_shell() {
+    // The shell input below is POSIX, so these tests do not run on Windows.
+    if cfg!(windows) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let (core, project, _) = open_with_project(tmp.path());
 
@@ -54,9 +58,12 @@ fn a_project_holds_several_terminals_each_with_its_own_shell() {
     core.close_terminal(second.id).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn closing_a_terminal_ends_its_shell() {
+    // The shell input below is POSIX, so these tests do not run on Windows.
+    if cfg!(windows) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let (core, project, _) = open_with_project(tmp.path());
     let terminal = core.start_block_terminal(project).unwrap();
@@ -67,9 +74,12 @@ fn closing_a_terminal_ends_its_shell() {
     assert!(core.close_terminal(terminal.id).is_err(), "already closed");
 }
 
-#[cfg(unix)]
 #[test]
 fn closing_a_project_ends_all_its_terminals_and_keeps_it_known() {
+    // The shell input below is POSIX, so these tests do not run on Windows.
+    if cfg!(windows) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let (core, project, _) = open_with_project(tmp.path());
     let other_folder = tmp.path().join("other");
@@ -96,6 +106,10 @@ fn closing_a_project_ends_all_its_terminals_and_keeps_it_known() {
 
 #[test]
 fn the_upgrade_drops_threads_keeps_projects_and_leaves_worktrees_on_disk() {
+    // The shell input below is POSIX, so these tests do not run on Windows.
+    if cfg!(windows) {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let before_strip = oxide_core::MIGRATIONS.len() - 1;
     drop(Core::open_with_migrations(tmp.path(), &oxide_core::MIGRATIONS[..before_strip]).unwrap());
