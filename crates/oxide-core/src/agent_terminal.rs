@@ -104,6 +104,9 @@ pub(crate) struct AgentRun {
     needs_input: Arc<AtomicBool>,
     /// A resume printed that the Provider session no longer exists.
     session_gone: Arc<AtomicBool>,
+    /// The program turned bracketed paste on (`CSI ? 2004 h`) and has not turned it off: a paste
+    /// is then one block of text, never a line the program takes as Enter.
+    bracketed_paste: Arc<AtomicBool>,
 }
 
 /// What a Provider prints when resuming names a session that does not exist.
@@ -119,20 +122,40 @@ fn is_agy(provider: &str) -> bool {
 
 /// Finds a Provider's missing-session notice in a stream of output chunks, also when it is split
 /// across two.
+///
+/// Only the start of a launch is scanned: a Provider prints this notice right away, so text that
+/// shows up later (an agent quoting the notice, a file it prints) is never taken for it.
 struct SessionGoneScanner {
     marker: &'static [u8],
     tail: Vec<u8>,
+    /// How many more bytes of output are scanned.
+    budget: usize,
 }
+
+/// The first bytes of output a launch is scanned for the missing-session notice.
+const SESSION_GONE_WINDOW: usize = 4096;
 
 impl SessionGoneScanner {
     fn new(marker: &'static [u8]) -> Self {
         Self {
             marker,
             tail: Vec::new(),
+            budget: SESSION_GONE_WINDOW,
         }
     }
 
+    /// The agent reported its state: it is up, so the startup window is over.
+    fn end_window(&mut self) {
+        self.budget = 0;
+        self.tail.clear();
+    }
+
     fn feed(&mut self, chunk: &[u8]) -> bool {
+        if self.budget == 0 {
+            return false;
+        }
+        let chunk = &chunk[..chunk.len().min(self.budget)];
+        self.budget -= chunk.len();
         self.tail.extend_from_slice(chunk);
         let marker = self.marker;
         let found = self.tail.windows(marker.len()).any(|w| w == marker);
@@ -141,6 +164,38 @@ impl SessionGoneScanner {
             self.tail.drain(..self.tail.len() - keep);
         }
         found
+    }
+}
+
+/// Follows `CSI ? 2004 h` and `CSI ? 2004 l` in the agent's output, also when split across
+/// chunks: the last one seen decides.
+struct PasteModeTracker {
+    tail: Vec<u8>,
+}
+
+impl PasteModeTracker {
+    const ON: &'static [u8] = b"\x1b[?2004h";
+    const OFF: &'static [u8] = b"\x1b[?2004l";
+
+    fn new() -> Self {
+        Self { tail: Vec::new() }
+    }
+
+    /// The mode after `chunk`, if it changed it.
+    fn feed(&mut self, chunk: &[u8]) -> Option<bool> {
+        self.tail.extend_from_slice(chunk);
+        let last = |needle: &[u8]| self.tail.windows(needle.len()).rposition(|w| w == needle);
+        let mode = match (last(Self::ON), last(Self::OFF)) {
+            (Some(on), Some(off)) => Some(on > off),
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (None, None) => None,
+        };
+        let keep = Self::ON.len() - 1;
+        if self.tail.len() > keep {
+            self.tail.drain(..self.tail.len() - keep);
+        }
+        mode
     }
 }
 
@@ -559,9 +614,23 @@ impl Core {
     /// Refused while the agent waits for an answer, so a paste can never answer an Approval,
     /// and when the agent is not running.
     pub fn deliver_agent_prompt(&self, thread_id: u32, prompt: &str) -> Result<()> {
+        if prompt.len() > MAX_INPUT_BYTES {
+            return Err(Error::Terminal(
+                "That prompt is too large for the terminal.".into(),
+            ));
+        }
         let run = self.agent_run(thread_id)?;
+        let bytes = bracketed_paste(prompt)?;
+        // Checked last, right before the write, so the window in which the agent could start
+        // waiting for an answer is as short as it can be.
         if run.session.exit_success().is_some() {
             return Err(Error::Terminal("The agent is not running.".into()));
+        }
+        if !run.bracketed_paste.load(Ordering::SeqCst) {
+            return Err(Error::Terminal(
+                "The agent has not turned on bracketed paste, so a prompt cannot be pasted safely. Type it in the terminal."
+                    .into(),
+            ));
         }
         if run.needs_input.load(Ordering::SeqCst) {
             return Err(Error::Terminal(
@@ -569,7 +638,7 @@ impl Core {
                     .into(),
             ));
         }
-        run.session.write(&bracketed_paste(prompt)?)
+        run.session.write(&bytes)
     }
 
     /// The prompt that starts work on an issue, for the user to read and confirm before it is
@@ -878,7 +947,13 @@ impl Core {
         } else {
             CLAUDE_SESSION_GONE
         });
+        let mut paste_mode = PasteModeTracker::new();
+        let paste_flag = Arc::new(AtomicBool::new(false));
+        let observed_paste = Arc::clone(&paste_flag);
         let observer = Box::new(move |output: &[u8]| {
+            if let Some(on) = paste_mode.feed(output) {
+                observed_paste.store(on, Ordering::SeqCst);
+            }
             if resume && scanner.feed(output) && !gone_flag.swap(true, Ordering::SeqCst) && agy {
                 let _ = gone_signals.send(AgentSignal::SessionGone);
             }
@@ -886,6 +961,7 @@ impl Core {
             for event in parser.feed(output) {
                 match event {
                     Osc7501Event::Report(state) => {
+                        scanner.end_window();
                         observed_needs_input.store(
                             thread_status(state) == ThreadStatus::NeedsInput,
                             Ordering::SeqCst,
@@ -937,6 +1013,7 @@ impl Core {
                 stopped,
                 needs_input,
                 session_gone,
+                bracketed_paste: paste_flag,
             }),
         );
         self.board.set_status(thread_id, ThreadStatus::Running);
@@ -1116,6 +1193,30 @@ impl StatusWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bracketed_paste_mode_follows_the_last_switch_even_when_split() {
+        let mut tracker = PasteModeTracker::new();
+        assert_eq!(tracker.feed(b"hello"), None);
+        assert_eq!(tracker.feed(b"\x1b[?20"), None);
+        assert_eq!(tracker.feed(b"04h"), Some(true));
+        assert_eq!(tracker.feed(b"more output"), None);
+        assert_eq!(tracker.feed(b"\x1b[?2004l"), Some(false));
+        assert_eq!(tracker.feed(b"\x1b[?2004l\x1b[?2004h"), Some(true));
+    }
+
+    #[test]
+    fn the_missing_session_notice_is_only_looked_for_at_startup() {
+        let mut late = SessionGoneScanner::new(CLAUDE_SESSION_GONE);
+        assert!(!late.feed(&vec![b'.'; SESSION_GONE_WINDOW]));
+        assert!(!late.feed(b"No conversation found"));
+        let mut reported = SessionGoneScanner::new(AGY_SESSION_GONE);
+        assert!(!reported.feed(b"booting"));
+        reported.end_window();
+        assert!(!reported.feed(b"warning: conversation \"x\" not found"));
+        let mut early = SessionGoneScanner::new(AGY_SESSION_GONE);
+        assert!(early.feed(b"warning: conversation \"x\" not found"));
+    }
 
     #[test]
     fn the_missing_session_notice_is_found_whole_or_split_across_chunks() {

@@ -43,6 +43,7 @@ printf '\033]7501;?\033\\'
 stty -icanon -echo min 1
 reply=$(dd bs=1 count=80 2>/dev/null | cat -v)
 echo "REPLY:$reply"
+printf '\033[?2004h'
 echo READY
 while IFS= read -r line; do
   case "$line" in
@@ -59,6 +60,7 @@ done
 
 /// Prints ordinary lines and never reports anything.
 const SILENT_AGENT: &str = r#"#!/bin/sh
+printf '\033[?2004h'
 echo READY
 while IFS= read -r line; do
   echo "ECHO:$line"

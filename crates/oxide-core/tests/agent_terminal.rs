@@ -39,6 +39,7 @@ const FAKE_CLAUDE: &str = r#"#!/bin/sh
 echo "ARGS:$*"
 echo "CWD:$(pwd)"
 echo "SETUP:$(cat setup-marker 2>/dev/null)"
+printf '\033[?2004h'
 echo "READY"
 while IFS= read -r line; do
   if [ "$line" = "quit" ]; then exit 3; fi
@@ -504,6 +505,7 @@ case "$*" in
 esac
 echo "ARGS:$*"
 echo "CWD:$(pwd)"
+printf '\033[?2004h'
 echo "READY"
 while IFS= read -r line; do echo "ECHO:$line"; done
 "#;

@@ -31,7 +31,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 /// A stand-in for an unknown agent CLI: prints where it runs, then echoes what it is typed.
-const COMMAND: &str = r#"echo "CWD:$(pwd)"; echo "ARGC:$#"; echo READY; while IFS= read -r line; do echo "ECHO:$line"; done"#;
+const COMMAND: &str = r#"echo "CWD:$(pwd)"; echo "ARGC:$#"; printf '\033[?2004h'; echo READY; while IFS= read -r line; do echo "ECHO:$line"; done"#;
 
 struct Fixture {
     _tmp: TempDir,
@@ -276,4 +276,50 @@ fn a_hand_edited_settings_file_with_a_bad_agent_reports_it_and_launches_nothing(
             .iter()
             .any(|e| e.path == "customAgents.0.command")
     }));
+}
+
+#[test]
+fn a_prompt_is_not_pasted_into_an_agent_that_never_turned_on_bracketed_paste() {
+    let f = fixture();
+    let mut settings = f.core.settings().settings;
+    settings.custom_agents.push(agent(
+        "plain",
+        "Plain",
+        r#"echo READY; while IFS= read -r line; do echo "ECHO:$line"; done"#,
+    ));
+    f.core.save_settings(&settings).unwrap();
+    let thread = f
+        .core
+        .start_terminal_thread_with(
+            f.project.id,
+            &TerminalLaunch {
+                provider: Some("custom:plain".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    screen(&f, thread.id, "READY");
+
+    let refused = f
+        .core
+        .deliver_agent_prompt(thread.id, "line one\nline two")
+        .unwrap_err();
+
+    assert!(refused.to_string().contains("bracketed paste"), "{refused}");
+    // The newline never reached the agent as an Enter.
+    f.core.write_agent_terminal(thread.id, b"ping\r").unwrap();
+    let seen = screen(&f, thread.id, "ECHO:ping");
+    assert!(!seen.contains("ECHO:line"), "{seen}");
+}
+
+#[test]
+fn an_oversized_prompt_is_refused_before_it_is_built() {
+    let f = fixture();
+    let thread = f
+        .core
+        .start_terminal_thread_with(f.project.id, &custom())
+        .unwrap();
+    screen(&f, thread.id, "READY");
+    let huge = "x".repeat(2 * 1024 * 1024);
+    assert!(f.core.deliver_agent_prompt(thread.id, &huge).is_err());
 }
