@@ -108,6 +108,7 @@ export function AgentTerminalView({ customAgents = [], thread, visible, gitContr
     // Opening the Thread resumes an agent that is stopped because Oxide was relaunched.
     void commands.openAgent(threadId).then((opened) => {
       if (!active) return;
+      if (opened.status === "error") setError(opened.error.message);
       if (opened.status === "ok" && opened.data) onUpdated.current(opened.data);
       return commands.attachAgentTerminal(threadId, channel).then((result) => {
         if (active && result.status === "error") setError(result.error.message);

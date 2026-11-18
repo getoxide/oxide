@@ -1843,13 +1843,10 @@ impl Core {
             ));
         }
         let others = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
-        if others
-            .iter()
-            .any(|(id, status)| {
-                *id != thread_id
-                    && (is_busy(status) || (status == "running" && live_agents.contains(id)))
-            })
-        {
+        if others.iter().any(|(id, status)| {
+            *id != thread_id
+                && (is_busy(status) || (status == "running" && live_agents.contains(id)))
+        }) {
             return Err(Error::Git(
                 "Another Thread is working in this checkout. Wait for its Turn to finish or stop it."
                     .into(),

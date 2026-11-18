@@ -96,6 +96,7 @@ export function DispatchDialog({
         null,
         null,
         null,
+        form.baseBranch.trim() || null,
       );
       if (created.status === "error") {
         setBusy(false);
@@ -116,6 +117,7 @@ export function DispatchDialog({
             form.model.trim() || null,
             form.effort.trim() || null,
             form.permissionMode,
+            form.baseBranch.trim() || null,
           )
         : await commands.dispatchThread(
             dispatchRequest(projectId, form, issue),

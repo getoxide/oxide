@@ -515,10 +515,10 @@ export function App() {
 
   /** A Fix waiting for the user to read its prompt and confirm; nothing reaches an agent before. */
   const [fixRequest, setFixRequest] = useState<
-    { projectId: number; prompt: string; ownerThreadId: number | null; reviewRound: boolean } | null
+    { projectId: number; prompt: string; ownerThreadId: number | null; reviewRound: boolean; headBranch: string | null } | null
   >(null);
-  const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false) => {
-    setFixRequest({ projectId, prompt, ownerThreadId, reviewRound });
+  const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false, headBranch: string | null = null) => {
+    setFixRequest({ projectId, prompt, ownerThreadId, reviewRound, headBranch });
   };
 
   /** Where a confirmed Fix goes: the branch's Thread if it can take it, else a new Thread. */
@@ -530,7 +530,7 @@ export function App() {
     return owner.status === "working" ? null : owner;
   };
 
-  const deliverFix = async ({ projectId, prompt, ownerThreadId, reviewRound }: NonNullable<typeof fixRequest>) => {
+  const deliverFix = async ({ projectId, prompt, ownerThreadId, reviewRound, headBranch }: NonNullable<typeof fixRequest>) => {
     const owner = fixOwner(ownerThreadId);
     if (owner?.terminal) {
       // Pasted into the running agent, without Enter; Core refuses while it waits for an answer.
@@ -545,7 +545,7 @@ export function App() {
       return;
     }
     if (!owner && terminalThreads) {
-      const created = await commands.createTerminalThreadWithFix(projectId, prompt, reviewRound, null, null, null, null);
+      const created = await commands.createTerminalThreadWithFix(projectId, prompt, reviewRound, null, null, null, null, headBranch);
       if (created.status === "error") throw new Error(created.error.message);
       if (currentProjectRef.current === projectId) {
         setProjectThreads(projectId, (prev) => [created.data, ...(prev ?? [])]);
@@ -1436,7 +1436,7 @@ export function App() {
                   threads={threads ?? []}
                   refreshKey={gitRevision + turnRevision.count}
                   onChanged={onGitChanged}
-                  onFixPullRequest={(prompt, ownerThreadId, reviewRound) => fixPullRequest(selected.id, prompt, ownerThreadId, reviewRound)}
+                  onFixPullRequest={(prompt, ownerThreadId, reviewRound, headBranch) => fixPullRequest(selected.id, prompt, ownerThreadId, reviewRound, headBranch ?? null)}
                 />
               </Suspense></div>
             )}

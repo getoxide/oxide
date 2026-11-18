@@ -498,7 +498,10 @@ fn a_run_that_could_not_be_recorded_is_marked_failed_without_credentials() {
     let runs = f.core.blind_review_runs(original).unwrap();
     assert_eq!(runs[0].status, BlindReviewStatus::Failed);
     let error = runs[0].error.clone().unwrap();
-    assert!(error.contains("example.com") && !error.contains("secret"), "{error}");
+    assert!(
+        error.contains("example.com") && !error.contains("secret"),
+        "{error}"
+    );
 }
 
 #[test]

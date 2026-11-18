@@ -523,14 +523,16 @@ impl Core {
             base: options.base.clone(),
             branch: options.branch.clone(),
         };
-        let started = self.ensure_worktree_placed(thread_id, &placement).and_then(|ready| {
-            if ready {
-                self.launch_agent(thread_id, Launch::Start, prompt)?;
-            } else {
-                self.set_terminal_status(thread_id, ThreadStatus::Error);
-            }
-            Ok(())
-        });
+        let started = self
+            .ensure_worktree_placed(thread_id, &placement)
+            .and_then(|ready| {
+                if ready {
+                    self.launch_agent(thread_id, Launch::Start, prompt)?;
+                } else {
+                    self.set_terminal_status(thread_id, ThreadStatus::Error);
+                }
+                Ok(())
+            });
         if let Err(error) = started {
             // Nothing was started: leave no half-made Thread behind.
             let _ = self.delete_thread(thread_id, true);

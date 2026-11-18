@@ -255,7 +255,14 @@ mod tests {
 
     #[test]
     fn a_model_or_effort_that_is_not_a_plain_value_never_reaches_the_command_line() {
-        for bad in ["high\"", "-x", "a b", "", &"a".repeat(129), "x\") -c foo=\"1"] {
+        for bad in [
+            "high\"",
+            "-x",
+            "a b",
+            "",
+            &"a".repeat(129),
+            "x\") -c foo=\"1",
+        ] {
             for provider in ["claude", "codex"] {
                 let mut r = request(provider);
                 r.effort = Some(bad.to_string());

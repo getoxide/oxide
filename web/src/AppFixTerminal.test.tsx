@@ -95,7 +95,7 @@ it("starts a new Thread with the prompt when the branch's agent is not running, 
 
   expect(sent("create_terminal_thread_with_fix")).toEqual([{
     command: "create_terminal_thread_with_fix",
-    args: { projectId: 1, prompt: "Fix PR #42\n- Fix failing CI check: build\n> external", reviewRound: false, provider: null, model: null, effort: null, permissionMode: null },
+    args: { projectId: 1, prompt: "Fix PR #42\n- Fix failing CI check: build\n> external", reviewRound: false, provider: null, model: null, effort: null, permissionMode: null, headBranch: null },
   }]);
   expect(host.querySelector('[role="dialog"]')).toBeNull();
 });

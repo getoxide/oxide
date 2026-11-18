@@ -1477,7 +1477,13 @@ fn check_run_id(url: &str) -> Option<&str> {
 fn log_tail(log: &str) -> String {
     let clean: String = log
         .chars()
-        .map(|c| if c.is_control() && c != '\n' && c != '\t' { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() && c != '\n' && c != '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
     if clean.len() <= MAX_CHECK_LOG_BYTES {
         return clean;

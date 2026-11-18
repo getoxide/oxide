@@ -919,7 +919,9 @@ fn an_issue_is_bounded_before_it_is_stored() {
         title: "t".repeat(5_000),
         body: "b".repeat(500_000),
         url: Some("javascript:alert(1)".into()),
-        labels: (0..100).map(|i| format!("{i}{}", "l".repeat(500))).collect(),
+        labels: (0..100)
+            .map(|i| format!("{i}{}", "l".repeat(500)))
+            .collect(),
     };
     let thread = f
         .core

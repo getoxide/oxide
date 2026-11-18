@@ -17,7 +17,7 @@ interface PullRequestPanelProps {
   /** Called after a pull request was created, merged or checked out, so other Git views reload. */
   onChanged: () => void;
   /** Sends the repair request to the Thread that owns the branch, or a new Thread with Settings defaults. */
-  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
+  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean, headBranch?: string | null) => Promise<void>;
 }
 
 /** The repository's open pull requests on GitHub, through `gh`. It loads when opened, after the

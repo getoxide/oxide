@@ -102,7 +102,12 @@ fn checked_base(root: &Path, base: &str) -> Result<String> {
         || base.chars().any(|c| c.is_control() || c.is_whitespace())
         || !git::succeeds(
             root,
-            &["rev-parse", "--verify", "--quiet", &format!("{base}^{{commit}}")],
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}^{{commit}}"),
+            ],
         )
     {
         return Err(Error::Git(format!(
