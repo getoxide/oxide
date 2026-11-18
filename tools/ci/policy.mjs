@@ -384,7 +384,7 @@ const CHECKS = [
   { id: "rust-fmt", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["cargo", "fmt", "--all", "--check"] },
   // ADR-0016: Git and gh start only in the hardened builders. Pure Node, so it is cheap enough for `fast`.
   { id: "process-builders", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/process-builders.mjs"] },
-  // ADR-0018: OS-specific code lives in crates/oxide-platform. Pure Node, so it is cheap enough for `fast`.
+  // ADR-0019: OS-specific code lives in crates/oxide-platform. Pure Node, so it is cheap enough for `fast`.
   { id: "platform-layer", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["node", "tools/checks/platform-layer.mjs"] },
   { id: "web-lint", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "lint"] },
   { id: "web-typecheck", tiers: ["fast", "pr"], platforms: EVERY_OS, command: ["pnpm", "--dir", "web", "typecheck"] },

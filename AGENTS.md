@@ -22,7 +22,7 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### OS-specific code
 
-Code that needs an API existing on one OS only (`#[cfg(windows)]`, `unix`, `target_os`, `std::os::*`, `libc`, `windows-sys`, `objc2`) goes in `crates/oxide-platform`: add one function to each of `src/macos/`, `src/linux/` and `src/windows/` (or `src/posix/` for the two Unix ones) with the same signature, and call it. A value that only differs per OS (a shell name, a flag, a suffix) uses `if cfg!(windows) { .. } else { .. }` anywhere. `node tools/checks/platform-layer.mjs` (part of `node tools/check.mjs fast`) enforces it against a baseline that only shrinks. After changing `crates/oxide-platform/src/windows/`, run `node tools/check.mjs windows` on macOS or Linux. Details in [ADR-0018](docs/adr/0018-platform-layer.md).
+Code that needs an API existing on one OS only (`#[cfg(windows)]`, `unix`, `target_os`, `std::os::*`, `libc`, `windows-sys`, `objc2`) goes in `crates/oxide-platform`: add one function to each of `src/macos/`, `src/linux/` and `src/windows/` (or `src/posix/` for the two Unix ones) with the same signature, and call it. A value that only differs per OS (a shell name, a flag, a suffix) uses `if cfg!(windows) { .. } else { .. }` anywhere. `node tools/checks/platform-layer.mjs` (part of `node tools/check.mjs fast`) enforces it against a baseline that only shrinks. After changing `crates/oxide-platform/src/windows/`, run `node tools/check.mjs windows` on macOS or Linux. Details in [ADR-0019](docs/adr/0019-platform-layer.md).
 
 ### Checks
 

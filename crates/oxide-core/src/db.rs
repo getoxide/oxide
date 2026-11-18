@@ -1,4 +1,3 @@
-use oxide_provider::sync::LockExt as _;
 use std::fs;
 use std::path::Path;
 
@@ -89,7 +88,7 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX turns_by_thread ON turns(thread_id, id);
     CREATE INDEX items_by_turn ON items(turn_id, item_index);
 ",
-    // Small app-level facts, such as the Project and Thread last open.
+    // Small app-level facts, such as the Project last open.
     "
     CREATE TABLE app_state (
         key TEXT PRIMARY KEY,
@@ -420,6 +419,31 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE threads ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
 ",
+    // Oxide is Projects and plain terminals (ADR-0018): everything that only served Threads,
+    // Providers, Checkpoints, worktrees, the Review ledger or Blind review goes. The backup
+    // `oxide.db.bak-<version>` is written first by `migrate`. Worktree folders and branches on
+    // disk are not touched.
+    "
+    DROP TABLE IF EXISTS blind_review_findings;
+    DROP TABLE IF EXISTS blind_reviews;
+    DROP TABLE IF EXISTS blind_reviews_old;
+    DROP TABLE IF EXISTS rule_suggestion_comments;
+    DROP TABLE IF EXISTS rule_suggestions;
+    DROP TABLE IF EXISTS review_follow_ups;
+    DROP TABLE IF EXISTS review_reverts;
+    DROP TABLE IF EXISTS review_rounds;
+    DROP TABLE IF EXISTS review_ledger;
+    DROP TABLE IF EXISTS line_comments;
+    DROP TABLE IF EXISTS restores;
+    DROP TABLE IF EXISTS unknown_events;
+    DROP TABLE IF EXISTS approvals;
+    DROP TABLE IF EXISTS items;
+    DROP TABLE IF EXISTS turns;
+    DROP TABLE IF EXISTS threads;
+    ALTER TABLE projects DROP COLUMN setup_command;
+    ALTER TABLE projects DROP COLUMN threads_in_main_checkout;
+    DELETE FROM app_state WHERE key <> 'selection';
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -429,24 +453,6 @@ pub const MIGRATIONS: &[&str] = &[
 /// does not retry, so the write is simply lost.
 pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
     Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(Into::into)
-}
-
-/// Opens `db_path` once on demand with a 5 s busy timeout and runs `f` against the cached connection.
-pub(crate) fn with_conn<T>(
-    db_path: &Path,
-    slot: &std::sync::Mutex<Option<Connection>>,
-    f: impl FnOnce(&Connection) -> Result<T>,
-) -> Result<T> {
-    let mut guard = slot.lock_recover();
-    let conn = match &mut *guard {
-        Some(conn) => conn,
-        empty @ None => {
-            let conn = Connection::open(db_path)?;
-            conn.busy_timeout(std::time::Duration::from_secs(5))?;
-            empty.insert(conn)
-        }
-    };
-    f(conn)
 }
 
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing
@@ -532,117 +538,6 @@ mod tests {
         assert_eq!(acted("/q"), 0, "an untouched Project stays unacted");
     }
 
-    #[test]
-    fn rebuilding_blind_reviews_keeps_old_reviews_findings_and_kept_comments() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("oxide.db");
-        let step = MIGRATIONS
-            .iter()
-            .position(|m| m.contains("DROP TABLE blind_reviews;"))
-            .unwrap();
-        let old = open(&path, &MIGRATIONS[..step]).unwrap();
-        old.execute_batch(
-            "INSERT INTO projects (name, path) VALUES ('p', '/p');
-             INSERT INTO threads (id, project_id, provider, permission_mode, status)
-                 VALUES (1, 1, 'fake', 'ask', 'idle'), (2, 1, 'fake', 'ask', 'completed');
-             INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope)
-                 VALUES (1, 1, 2, 'claude', 'branch');
-             INSERT INTO blind_review_findings (id, review_id, body, anchored)
-                 VALUES (7, 1, 'old finding', 0);
-             INSERT INTO line_comments (thread_id, scope, path, side, line, code, body, finding_id)
-                 VALUES (1, 'branch', 'a.rs', 'new', 1, '', 'kept', 7);",
-        )
-        .unwrap();
-        drop(old);
-
-        let migrated = open(&path, MIGRATIONS).unwrap();
-
-        let (provider, status, thread): (String, String, Option<u32>) = migrated
-            .query_row(
-                "SELECT provider, status, review_thread_id FROM blind_reviews WHERE id = 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            (provider.as_str(), status.as_str(), thread),
-            ("claude", "finished", Some(2))
-        );
-        let findings: i64 = migrated
-            .query_row("SELECT COUNT(*) FROM blind_review_findings", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(findings, 1);
-        let comments: i64 = migrated
-            .query_row(
-                "SELECT COUNT(*) FROM line_comments WHERE finding_id = 7",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(comments, 1);
-        // A review without a review Thread can now be stored.
-        migrated
-            .execute(
-                "INSERT INTO blind_reviews (thread_id, provider, scope, status)
-                 VALUES (1, 'codex', 'branch', 'running')",
-                [],
-            )
-            .unwrap();
-        let violations: i64 = migrated
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(violations, 0);
-    }
-
-    #[test]
-    fn rebuilding_blind_reviews_drops_a_pre_existing_orphan_instead_of_failing_the_open() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("oxide.db");
-        let step = MIGRATIONS
-            .iter()
-            .position(|m| m.contains("DROP TABLE blind_reviews;"))
-            .unwrap();
-        let old = open(&path, &MIGRATIONS[..step]).unwrap();
-        old.execute_batch(
-            "PRAGMA foreign_keys = OFF;
-             INSERT INTO projects (name, path) VALUES ('p', '/p');
-             INSERT INTO threads (id, project_id, provider, permission_mode, status)
-                 VALUES (1, 1, 'fake', 'ask', 'idle');
-             INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope)
-                 VALUES (1, 1, 1, 'claude', 'branch'), (2, 99, 98, 'codex', 'branch');
-             INSERT INTO blind_review_findings (id, review_id, body, anchored)
-                 VALUES (7, 1, 'kept', 0), (8, 2, 'orphan', 0);
-             INSERT INTO line_comments (thread_id, scope, path, side, line, code, body, finding_id)
-                 VALUES (1, 'branch', 'a.rs', 'new', 1, '', 'comment', 8);",
-        )
-        .unwrap();
-        drop(old);
-
-        let migrated = open(&path, MIGRATIONS).unwrap();
-
-        let reviews: Vec<u32> = migrated
-            .prepare("SELECT id FROM blind_reviews ORDER BY id")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap();
-        assert_eq!(reviews, [1]);
-        let findings: i64 = migrated
-            .query_row("SELECT COUNT(*) FROM blind_review_findings", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(findings, 1);
-    }
-
-    /// Oxide writes the database from several connections at once. A transaction that
-    /// reads before it writes must hold the write lock while it does, or another
-    /// connection's write lands in between and its own write is lost.
     #[test]
     fn a_write_transaction_survives_another_connection_writing_meanwhile() {
         let directory = tempfile::tempdir().unwrap();

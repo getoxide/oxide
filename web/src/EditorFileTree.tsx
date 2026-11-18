@@ -10,7 +10,6 @@ import { Skeleton } from "./Skeleton";
 
 export const EditorFileTree = memo(function EditorFileTree({
   projectId,
-  threadId,
   selected,
   onOpen,
   onKeep,
@@ -19,7 +18,6 @@ export const EditorFileTree = memo(function EditorFileTree({
   empty,
 }: {
   projectId: number;
-  threadId: number | null;
   selected: string | null;
   /** Single click: opens or previews the file. */
   onOpen: (path: string) => void;
@@ -38,7 +36,7 @@ export const EditorFileTree = memo(function EditorFileTree({
   const [error, setError] = useState<string | null>(null);
   async function load(path: string) {
     try {
-      const result = await commands.listDir(projectId, threadId, path);
+      const result = await commands.listDir(projectId, path);
       if (result.status === "error") setError(result.error.message);
       else setDirectories((previous) => ({ ...previous, [path]: result.data }));
     } catch (e) {
@@ -48,7 +46,7 @@ export const EditorFileTree = memo(function EditorFileTree({
   useEffect(() => {
     let active = true;
     void commands
-      .listDir(projectId, threadId, "")
+      .listDir(projectId, "")
       .then((result) => {
         if (!active) return;
         if (result.status === "error") setError(result.error.message);
@@ -60,7 +58,7 @@ export const EditorFileTree = memo(function EditorFileTree({
     return () => {
       active = false;
     };
-  }, [revision, projectId, threadId]);
+  }, [revision, projectId]);
   // The selected file's folders open so it is visible in the list.
   const [revealed, setRevealed] = useState<string | null>(null);
   // A new token folds everything; a later selection may unfold its own path again.

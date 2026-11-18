@@ -67,7 +67,6 @@ it("uses Core's SDK options, correlates replies and answers interpreter configur
   });
   const connection = new LspConnection(
     1,
-    null,
     tool,
     () => {},
     () => {},
@@ -108,7 +107,6 @@ it("stops a process that finishes starting after its editor was closed", async (
   });
   const connection = new LspConnection(
     1,
-    null,
     tool,
     () => {},
     () => {},

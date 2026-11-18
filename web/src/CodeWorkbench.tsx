@@ -28,7 +28,6 @@ import { LanguageSupportNotice } from "./LanguageSupport";
 import { Skeleton } from "./Skeleton";
 import { fontStyle, getAppearance } from "./appearance";
 import { registerEditorSave } from "./editorSaves";
-import { shortcutLabel } from "./shortcuts";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
 
@@ -56,28 +55,23 @@ interface Problem {
 interface Props {
   openRequest?: CodeOpenRequest | null;
   projectId: number;
-  threadId: number | null;
   rootPath: string;
   contextKey: string;
   visible: boolean;
   /** The dock owns file navigation in the central workspace, so the editor needs no own tree. */
   showExplorer?: boolean;
   onChanged: () => void;
-  /** Opens the application Settings at the Language tools section. */
-  onOpenLanguageSettings: () => void;
   /** Reports whether any file is open, so the host can offer full-screen editing. */
   onOpenFilesChange?: (open: boolean) => void;
 }
 
 export function CodeWorkbench({
   projectId,
-  threadId,
   rootPath,
   contextKey,
   visible,
   showExplorer = true,
   onChanged,
-  onOpenLanguageSettings,
   onOpenFilesChange,
   openRequest,
 }: Props) {
@@ -176,7 +170,7 @@ export function CodeWorkbench({
       setLoading(true);
       setError(null);
       try {
-        const result = await commands.readFile(projectId, threadId, path);
+        const result = await commands.readFile(projectId, path);
         if (result.status === "error") throw new Error(result.error.message);
         if (result.data.binary || result.data.truncated)
           throw new Error(
@@ -230,7 +224,7 @@ export function CodeWorkbench({
         setLoading(opening.current.size > 0);
       }
     },
-    [projectId, threadId, rootPath, publish, select, discardDocument],
+    [projectId, rootPath, publish, select, discardDocument],
   );
 
   const saveDocument = useCallback(
@@ -245,7 +239,6 @@ export function CodeWorkbench({
       try {
         const result = await commands.writeFile(
           projectId,
-          threadId,
           doc.path,
           doc.saved,
           content,
@@ -265,7 +258,7 @@ export function CodeWorkbench({
         publish();
       }
     },
-    [projectId, threadId, publish, onChanged],
+    [projectId, publish, onChanged],
   );
   const saveAll = useCallback(async () => {
     for (const doc of records.current.values())
@@ -375,7 +368,6 @@ export function CodeWorkbench({
     window.addEventListener("oxide-appearance-changed",appearance);
     const bridge = new EditorLanguages(
       projectId,
-      threadId,
       (language, state) =>
         setStates((previous) => ({ ...previous, [language]: state })),
       async (resource) => {
@@ -450,7 +442,7 @@ export function CodeWorkbench({
       ownedRecords.clear();
       void commands.setEditorDirty(contextKey, false).catch(() => {});
     };
-  }, [projectId, threadId, rootPath, contextKey, publish, select]);
+  }, [projectId, rootPath, contextKey, publish, select]);
 
   useEffect(() => {
     if (!openRequest || !editor.current) return;
@@ -468,14 +460,6 @@ export function CodeWorkbench({
     });
     const key = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      if (e.key.toLowerCase() === "n" && !e.shiftKey) {
-        e.preventDefault();
-        setNewFile("");
-      }
-      if (e.key.toLowerCase() === "p" && !e.shiftKey) {
-        e.preventDefault();
-        setQuickOpen(true);
-      }
       if (e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (e.shiftKey) void actions.current.saveAll();
@@ -485,13 +469,6 @@ export function CodeWorkbench({
           );
           if (doc) void actions.current.saveDocument(doc);
         }
-      }
-      if (e.key.toLowerCase() === "w") {
-        e.preventDefault();
-        const doc = [...records.current.values()].find(
-          (d) => d.model === editor.current?.getModel(),
-        );
-        if (doc) void actions.current.requestClose([doc.path]);
       }
     };
     window.addEventListener("keydown", key, true);
@@ -525,7 +502,7 @@ export function CodeWorkbench({
   async function reload() {
     const doc = records.current.get(active ?? "");
     if (!doc) return;
-    const result = await commands.readFile(projectId, threadId, doc.path);
+    const result = await commands.readFile(projectId, doc.path);
     if (result.status === "error") {
       setError(result.error.message);
       return;
@@ -585,7 +562,7 @@ export function CodeWorkbench({
           </button>
           <button
             className="icon-btn sm"
-            title={`Find file (${shortcutLabel}P)`}
+            title="Find file"
             aria-label="Find file"
             onClick={() => setQuickOpen(true)}
           >
@@ -600,7 +577,7 @@ export function CodeWorkbench({
               const path = newFile.trim();
               if (!path) return;
               void commands
-                .createFile(projectId, threadId, path)
+                .createFile(projectId, path)
                 .then((result) => {
                   if (result.status === "error") setError(result.error.message);
                   else {
@@ -633,7 +610,6 @@ export function CodeWorkbench({
         )}
         <EditorFileTree
           projectId={projectId}
-          threadId={threadId}
           selected={active}
           onOpen={handleTreeOpen}
           onKeep={handleTreeKeep}
@@ -821,7 +797,6 @@ export function CodeWorkbench({
           <LanguageSupportNotice
             key={language}
             language={language}
-            onConfigure={() => onOpenLanguageSettings()}
           />
         )}
         {error && (
@@ -860,16 +835,13 @@ export function CodeWorkbench({
               <h1>Your Project, open for editing.</h1>
               <p>{showExplorer ? "Choose a file, or find one by name." : "Choose a file in the Files dock, or find one by name."}</p>
               <button className="btn" onClick={() => setQuickOpen(true)}>
-                <SearchIcon size={14} /> Find file <kbd>{shortcutLabel}P</kbd>
+                <SearchIcon size={14} /> Find file
               </button>
               {compact && (
                 <button className="btn" onClick={openTree}>
                   <ListUnorderedIcon size={14} /> Browse files
                 </button>
               )}
-              <button className="link" onClick={() => onOpenLanguageSettings()}>
-                Set up language tools
-              </button>
             </div>
           )}
           {loading && (
@@ -912,7 +884,6 @@ export function CodeWorkbench({
           <CursorReadout editor={editorInstance} />
           <button
             title={language ? states[language] : undefined}
-            onClick={() => onOpenLanguageSettings()}
           >
             <CodeIcon size={12} />{" "}
             {current?.model.getLanguageId() ?? "Plain text"}
@@ -924,7 +895,6 @@ export function CodeWorkbench({
       {quickOpen && (
         <QuickOpen
           projectId={projectId}
-          threadId={threadId}
           onClose={() => setQuickOpen(false)}
           onOpen={(path) => {
             setQuickOpen(false);
@@ -978,12 +948,10 @@ function CursorReadout({ editor }: { editor: monaco.editor.IStandaloneCodeEditor
 
 function QuickOpen({
   projectId,
-  threadId,
   onOpen,
   onClose,
 }: {
   projectId: number;
-  threadId: number | null;
   onOpen: (path: string) => void;
   onClose: () => void;
 }) {
@@ -994,7 +962,7 @@ function QuickOpen({
   useEffect(() => {
     let active = true;
     const timer = setTimeout(() => {
-      void commands.findFiles(projectId, threadId, query).then((result) => {
+      void commands.findFiles(projectId, query).then((result) => {
         if (!active) return;
         if (result.status === "ok") {
           setFiles(result.data);
@@ -1006,7 +974,7 @@ function QuickOpen({
       active = false;
       clearTimeout(timer);
     };
-  }, [projectId, threadId, query]);
+  }, [projectId, query]);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div

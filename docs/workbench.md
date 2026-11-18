@@ -1,12 +1,12 @@
-# Chat, Terminal and Code
+# Terminal and Code
 
-The centre shows the selected Project's Thread. Above it, the **Thread / Code**
-switch opens that Project's Code workspace in the same central area; switching
-keeps open buffers and terminal processes alive. The **Files** Surface in the right
-dock is the navigator for the selected checkout, not an editor: a single click
+The centre shows the selected Terminal: a shell in the selected Project's folder
+(ADR-0018). Opening a file from the **Files** Surface shows that Project's Code
+workspace in the same central area, with a **Back to terminals** button; switching
+keeps open buffers and terminal processes alive. The Files Surface in the right
+dock is the navigator for the Project's folder, not an editor: a single click
 selects a file, and a double click (or Enter/Space on a focused row) opens it in
-the central Code workspace. Ordinary Threads share their Project's checkout; a
-Thread with a worktree of its own gets its own editor and terminal there.
+the central Code workspace.
 
 ## Terminal
 
@@ -32,7 +32,7 @@ exit status together. `cd` and shell variables carry over between commands.
   fails. Output is always shown; select it to copy. `clear` or Ctrl+L clears
   the blocks.
 
-History retains up to 300 commands per checkout in local application storage.
+History retains up to 300 commands per Terminal in local application storage.
 Output is session-only: the latest 24 blocks retain up to 256 KiB each, with an
 explicit truncation notice. This is a local terminal workflow, not a Warp account
 integration or Warp's AI service.
@@ -47,10 +47,8 @@ and its command palette. Local LSP servers add completion, hover information,
 definitions, references, rename and formatting where the server supports them.
 Problems shows errors and warnings in open files and jumps to their locations.
 
-- Ctrl+P / âŒ˜P: find a file by name in the Project.
-- Ctrl+N / âŒ˜N: create a file (existing parent folders only).
+- The **Find file** button finds a file by name in the Project.
 - Ctrl+S / âŒ˜S: save; Ctrl+Shift+S / âŒ˜Shift+S: save all.
-- Ctrl+W / âŒ˜W: close the current file, with an unsaved-change prompt.
 - Ctrl+F / âŒ˜F and Ctrl+H / âŒ˜H: Monaco's Find and Replace.
 - F12: definition; Shift+F12: references; F2: rename, when supported by LSP.
 
@@ -62,8 +60,8 @@ disk. Quitting asks about unsaved buffers and offers Save all, Discard, or Cance
 ## First-use language support
 
 Opening a supported file offers **Install support** when its server is missing.
-Choosing Later dismisses that language's offer; **Language tools** in Settings
-remains available. The download does not start merely by opening a file.
+Choosing Later dismisses that language's offer. The download does not start
+merely by opening a file.
 
 | Files | Server |
 | --- | --- |
@@ -84,30 +82,20 @@ managed TypeScript 6 SDK. TypeScript 7's native package does not ship tsserver.j
 Python/TypeScript package versions are pinned to the tested versions. Updates are
 explicit installs, not background activity.
 
-In **Language tools**, configure the executable, a JSON array of arguments and an
-optional Python interpreter. Configuration is stored in `language-servers.json`
-in the application home. Save or Recheck reconnects the servers for open files.
+A server can also be named by hand in `language-servers.json` in the application
+home: an executable, a JSON array of arguments and an optional Python interpreter.
 Rust project diagnostics need a Rust toolchain; Python imports depend on the
 selected environment. For C/C++ project flags, provide `compile_commands.json` or
 clangd arguments such as `--compile-commands-dir`.
 
-Official clangd Linux binaries target x86_64. Other architectures can configure
-a server installed through their own package manager. Manual setup commands and
-upstream guides remain available under advanced language settings.
+Official clangd Linux binaries target x86_64. Other architectures can name a
+server installed through their own package manager in `language-servers.json`.
 
-## Images and appearance
+## Dropping files
 
-Paste images into the shared inline chat composer or drop files onto it. A
-preview appears before sending; attachments can be removed individually. A
-prompt can hold ten attachments, up to 25 MB each. Native drops and clipboard
-data use the shared Attachment store introduced on main in #212.
-
-Delivery follows [ADR-0007](adr/0007-attachments-are-segments-delivered-per-provider.md):
-Providers receive native image inputs where supported, otherwise readable path
-references. The ordered prompt segments preserve each attachment's position.
-
-See [Fonts and JSON themes](themes.md) for per-area fonts, theme imports, the
-supported Zed-style JSON structure and a complete example.
+Dropping files onto a terminal types their paths, quoted literally and without
+submitting them. Pasting images no longer saves a file: Oxide has no attachments
+(ADR-0018).
 
 ## Validation
 
@@ -129,11 +117,10 @@ bridge. With Node.js, Python, Playwright/Chromium and the web dev server availab
 
 ```sh
 cargo build -p oxide-core --example terminal_harness
-node web/scripts/terminal-regression.cjs --appearance
+node web/scripts/terminal-regression.cjs
 ```
 
 Set `OXIDE_PLAYWRIGHT_PATH` to an existing Playwright module installation when it
 is not on Node's module path. `OXIDE_TEST_URL` overrides the default dev server
 (`http://127.0.0.1:1420`). The test checks stable full-screen geometry, real shell
-completion, Right-arrow history completion, the Up history picker and applying
-a JSON theme. It does not submit Provider/model prompts.
+completion, Right-arrow history completion and the Up history picker.

@@ -98,7 +98,7 @@ pub fn write_file(root: &Path, relative: &str, expected: &str, content: &str) ->
         .map_err(io)?;
     temporary.write_all(content.as_bytes()).map_err(io)?;
     temporary.as_file().sync_all().map_err(io)?;
-    // Recheck after preparing the replacement so changes made by a Provider are not silently lost.
+    // Recheck after preparing the replacement so changes made by another program are not silently lost.
     if std::fs::read(&path).map_err(io)? != current {
         return Err(Error::Editor(
             "This file changed on disk while saving. Reload it before saving again.".into(),

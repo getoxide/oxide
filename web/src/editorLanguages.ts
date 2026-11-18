@@ -39,7 +39,6 @@ export class EditorLanguages {
   private disposed = false;
   constructor(
     private projectId: number,
-    private threadId: number | null,
     private onState: (language: string, state: string) => void,
     private ensureModel: (uri: monaco.Uri) => Promise<void>,
   ) {
@@ -56,7 +55,6 @@ export class EditorLanguages {
           throw new Error("Not installed · open Language tools");
         const connection = new LspConnection(
           this.projectId,
-          this.threadId,
           tool,
           (uri, diagnostics) => {
             if (generation === this.generation)

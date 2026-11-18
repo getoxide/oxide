@@ -1,4 +1,4 @@
-//! The platform layer (ADR-0018): everything that needs an API existing on one operating system
+//! The platform layer (ADR-0019): everything that needs an API existing on one operating system
 //! only lives here, one implementation per OS behind the same functions.
 //!
 //! - `macos/`, `linux/` and `windows/` are the implementations. Each is compiled only for its OS

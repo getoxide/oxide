@@ -29,7 +29,7 @@ The Rust tests run with [cargo-nextest](https://nexte.st), as in CI. Install it 
 
 Every job, why it exists and its local command are in [docs/devops.md](docs/devops.md#ci-jobs).
 
-**OS-specific code.** Code that needs an API existing on one operating system only goes in `crates/oxide-platform`, one implementation per OS (`src/macos/`, `src/linux/`, `src/windows/`) behind the same functions; shared code calls them. A value that only differs per OS (a shell name, a flag) is written with the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. `node tools/checks/platform-layer.mjs` (in `fast`) fails otherwise, and when the implementations stop matching. The Windows implementation can't be compiled by a Mac compiler, so after changing `crates/oxide-platform/src/windows/` run `node tools/check.mjs windows` (it needs [cargo-xwin](https://github.com/rust-cross/cargo-xwin) and LLVM: `cargo install --locked cargo-xwin`, `brew install llvm`); the full check reminds you when you haven't. See [ADR-0018](docs/adr/0018-platform-layer.md).
+**OS-specific code.** Code that needs an API existing on one operating system only goes in `crates/oxide-platform`, one implementation per OS (`src/macos/`, `src/linux/`, `src/windows/`) behind the same functions; shared code calls them. A value that only differs per OS (a shell name, a flag) is written with the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. `node tools/checks/platform-layer.mjs` (in `fast`) fails otherwise, and when the implementations stop matching. The Windows implementation can't be compiled by a Mac compiler, so after changing `crates/oxide-platform/src/windows/` run `node tools/check.mjs windows` (it needs [cargo-xwin](https://github.com/rust-cross/cargo-xwin) and LLVM: `cargo install --locked cargo-xwin`, `brew install llvm`); the full check reminds you when you haven't. See [ADR-0019](docs/adr/0019-platform-layer.md).
 
 The security rules the checks enforce (no `unwrap` on outside data, documented `unsafe`, `git` and `gh` only through the hardened builders, no HTML sinks) are in [ADR-0016](docs/adr/0016-security-boundaries.md).
 
@@ -88,14 +88,12 @@ cargo test -p oxide-app --test bindings_and_capabilities
 
 Running the app in development mode regenerates it too. Commit it whenever it changes.
 
-### Live Provider smoke tests
+### Live language-install tests
 
-The Provider contract suite runs against fake Providers, so CI needs no real CLIs, logins or secrets. The live smoke tests drive the real installed CLIs and are `#[ignore]`d. Run them by hand when you touch a Provider adapter, with that Provider installed and logged in:
+Language support is downloaded only after the user presses Install, and CI never touches the network for it. The live tests download the real language servers and are `#[ignore]`d. Run them by hand when you change the pinned downloads:
 
 ```sh
-cargo test -p oxide-provider --test claude_live_smoke -- --ignored
-cargo test -p oxide-provider --test codex_live_smoke -- --ignored
-cargo test -p oxide-provider --test agy_live_smoke -- --ignored
+cargo test -p oxide-core --test language_install_live -- --ignored
 ```
 
 ## Issues and triage

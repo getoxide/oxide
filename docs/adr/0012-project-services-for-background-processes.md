@@ -1,6 +1,6 @@
 # Managed Project Services for local servers and background processes
 
-> Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Oxide no longer sees the commands an agent runs, so Provider commands are not detached into Project Services. Services started from Project terminal tabs are unchanged.
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Project Services are removed; a server runs in its Terminal. (Earlier note: Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Oxide no longer sees the commands an agent runs, so Provider commands are not detached into Project Services. Services started from Project terminal tabs are unchanged.)
 
 Run local web servers, watchers and daemon processes as background Project Services, detached from the interactive terminal, with status in the sidebar and log streaming in the Terminal Surface.
 

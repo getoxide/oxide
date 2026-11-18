@@ -64,8 +64,7 @@ const repository = path.resolve(__dirname, "../..");
     await page.addInitScript((root) => (window.terminalRoot = root), info.root);
     await page.goto(
       (process.env.OXIDE_TEST_URL || "http://127.0.0.1:1420") +
-        "/tests/terminal-harness.html" +
-        (process.argv.includes("--appearance") ? "?appearance" : ""),
+        "/tests/terminal-harness.html",
     );
     const input = page.getByLabel("Terminal command");
     await input.waitFor();
@@ -133,30 +132,6 @@ const repository = path.resolve(__dirname, "../..");
     await input.press("ArrowUp");
     await page.getByRole("dialog", { name: "Command history" }).waitFor();
     await page.screenshot({ path: path.join(output, "native-history.png") });
-    if (process.argv.includes("--appearance")) {
-      await input.press("Escape");
-      await page
-        .getByLabel("Code editor font", { exact: true })
-        .selectOption("Consolas");
-      await page.getByRole("button", { name: "Edit JSON", exact: true }).click();
-      await page
-        .getByLabel("Theme JSON", { exact: true })
-        .fill(
-          fs.readFileSync(
-            path.join(repository, "docs/themes/oxide-night.json"),
-            "utf8",
-          ),
-        );
-      await page.getByRole("button", { name: /^Theme variant:/ }).click();
-      await page
-        .getByRole("option", { name: "Oxide Night", exact: true })
-        .click();
-      await page
-        .getByRole("button", { name: "Apply appearance", exact: true })
-        .click();
-      await page.getByText("Appearance saved", { exact: true }).waitFor();
-      await page.screenshot({ path: path.join(output, "appearance.png") });
-    }
     assert.deepEqual(errors, []);
     console.log(
       JSON.stringify(

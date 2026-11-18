@@ -1,23 +1,23 @@
 # Oxide
 
-> Oxide is a free, open-source desktop app for agentic coding that drives Claude Code, Codex and Antigravity CLI in one window and shows what each change touched and what was actually checked, so you can merge with confidence.
+> Oxide is a free, open-source desktop terminal app that knows your GitHub Projects: open a Project, open as many clean terminals as you like in its folder, and run whatever you want in them, with the Project's Issues, pull requests and files at hand.
 
 This file is contributor-facing: architecture, ADRs, and the CI and release process. User-facing docs (install, quick start, concepts, FAQ) live in the website's [llms.txt](https://oxide.cavallinilorenzo.com/llms.txt).
 
-Oxide is a GUI for the coding agent CLIs already installed on the user's machine (Claude Code, OpenAI Codex and Antigravity CLI): it does not ship its own agent. It focuses on the path from a finished agent Turn to a confident merge: Line comments sent back to the agent, Blind review by a second Provider, Restore to before any Turn, Git worktrees per Thread, and GitHub pull requests and Issues. It has no telemetry; prompts go only to the chosen Provider. It is built with Rust and Tauri 2, for macOS (Apple Silicon) and Windows x64.
+Oxide does not know about agents: a terminal is a plain shell, so an agent CLI is just a command typed in it. It has no telemetry. It is built with Rust and Tauri 2, for macOS (Apple Silicon), Windows and Linux.
 
 Key facts:
 
 - Repository: https://github.com/getoxide/oxide
 - License: MIT. Status: pre-release (version 0.x). Downloads: https://github.com/getoxide/oxide/releases
-- Stack: Rust core (`crates/oxide-core`), Provider adapters (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage.
-- Requirements: at least one Provider CLI (`claude`, `codex` or `agy`) installed and logged in; `git`; optionally the GitHub CLI `gh`.
+- Stack: Rust core (`crates/oxide-core`), process and locking primitives (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage.
+- Requirements: `git`; optionally the GitHub CLI `gh`.
 
 ## Docs
 
 - [README](https://github.com/getoxide/oxide/blob/main/README.md): features, install, build from source, FAQ
-- [Glossary](https://github.com/getoxide/oxide/blob/main/GLOSSARY.md): the domain language (Project, Thread, Turn, Provider, Blind review…)
-- [Architecture decisions](https://github.com/getoxide/oxide/tree/main/docs/adr): why Oxide uses native Provider adapters, owns the Transcript, and prioritizes the path to a confident merge
+- [Glossary](https://github.com/getoxide/oxide/blob/main/GLOSSARY.md): the domain language (Project, Terminal, Surface…)
+- [Architecture decisions](https://github.com/getoxide/oxide/tree/main/docs/adr): why Oxide is Projects and plain terminals, and how its security boundaries work
 - [Contributing](https://github.com/getoxide/oxide/blob/main/CONTRIBUTING.md): branch model, local checks, pull requests
 - [DevOps](https://github.com/getoxide/oxide/blob/main/docs/devops.md): CI jobs, signed releases, the release runbook
 

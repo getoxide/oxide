@@ -28,7 +28,6 @@ export class LspConnection {
   root = "";
   constructor(
     private projectId: number,
-    private threadId: number | null,
     readonly tool: LanguageTool,
     private onDiagnostics: (uri: string, diagnostics: Diagnostic[]) => void,
     private onState: (state: string) => void,
@@ -46,7 +45,6 @@ export class LspConnection {
     };
     const result = await commands.startLanguageServer(
       this.projectId,
-      this.threadId,
       this.tool.language,
       channel,
     );

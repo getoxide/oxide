@@ -6,12 +6,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-base64 = { workspace = true }
 crossbeam-channel = { workspace = true }
 oxide-platform = { path = "../oxide-platform" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

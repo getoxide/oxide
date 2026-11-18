@@ -1,5 +1,7 @@
 # Threads run the Provider's own CLI in an Agent terminal
 
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Threads and Agent terminals are removed; Oxide no longer runs any Provider CLI.
+
 A Thread's centre is a terminal running its Provider's own interactive CLI (`claude`, `codex`, `agy`, or a Custom agent's command) in the Thread's checkout. Oxide no longer renders the conversation. Rebuilding each Provider's conversation, Approvals, Slash commands and Attachments over three headless protocols kept Oxide behind every CLI release, made each new Provider a large adapter and pinned narrow CLI versions, while Oxide's distinctive value (ADR-0010) lives in the workspace around the agent. This reverses the decision in #274 (no terminal-agent integration), supersedes ADR-0001, ADR-0002, ADR-0006 and ADR-0007, and amends ADR-0004, ADR-0009, ADR-0011, ADR-0012 and ADR-0016.
 
 ## Decision

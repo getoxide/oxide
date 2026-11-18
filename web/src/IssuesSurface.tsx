@@ -4,7 +4,7 @@ import { CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "./queryCache";
 import { RefreshNotice } from "./RefreshNotice";
-import { commands, type Thread } from "./bindings";
+import { commands } from "./bindings";
 import { Avatar } from "./Avatar";
 import { IssueCreate } from "./IssueCreate";
 import { IssueDetailView } from "./IssueDetailView";
@@ -22,8 +22,6 @@ export interface IssuesSurfaceProps {
   refreshKey?: number;
   /** Called after issue mutations (create/close/comment), so parent views can react if needed. */
   onChanged?: () => void;
-  /** A Thread was started from an issue: the new Thread, for the sidebar. */
-  onDispatched?: (thread: Thread) => void;
 }
 
 /** How long typing pauses before the search runs: every search is a `gh` call. */
@@ -36,7 +34,7 @@ export function IssuesSurface(props: IssuesSurfaceProps) {
   return <IssuesViews key={props.projectId} {...props} />;
 }
 
-function IssuesViews({ projectId, refreshKey = 0, onChanged, onDispatched }: IssuesSurfaceProps) {
+function IssuesViews({ projectId, refreshKey = 0, onChanged }: IssuesSurfaceProps) {
   const tick = useAutoRefresh();
   const reload = refreshKey + tick;
   const availability = useQuery(`p${projectId}:issues:state`, () => commands.issuesState(projectId), reload, { staleMs: QUERY_STALE_MS });
@@ -82,7 +80,6 @@ function IssuesViews({ projectId, refreshKey = 0, onChanged, onDispatched }: Iss
           setListRevision((n) => n + 1);
         }}
         onChanged={changed}
-        onDispatched={onDispatched}
       />
     );
   } else {

@@ -1,6 +1,6 @@
 //! Contract tests of the platform layer: they run unchanged on macOS, Linux and Windows, so a
 //! behaviour that differs between the implementations fails here and not in a scattered
-//! integration test (ADR-0018). A per-OS test input is a value chosen with the expression form.
+//! integration test (ADR-0019). A per-OS test input is a value chosen with the expression form.
 #![allow(
     clippy::disallowed_methods,
     clippy::expect_used,

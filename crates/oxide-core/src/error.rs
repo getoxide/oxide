@@ -27,10 +27,6 @@ pub enum Error {
     /// and asks before opening it. The prefix is matched by the webview.
     #[error("Unlisted link host: {host}")]
     UnlistedLinkHost { host: String },
-    #[error("provider error: {0}")]
-    Provider(String),
-    #[error("{0}")]
-    Attachment(#[from] crate::attachments::AttachmentError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

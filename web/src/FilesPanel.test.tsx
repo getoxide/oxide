@@ -38,7 +38,7 @@ function treeIpc() {
 it("selects a file on a single click and only opens it on a double click", async () => {
   const open = vi.fn();
   const calls = treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={open} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={open} />));
   await settle();
 
   expect(host.querySelector(".files-viewer")).toBeNull();
@@ -56,7 +56,7 @@ it("selects a file on a single click and only opens it on a double click", async
 it("finds files by name and opens a result from the keyboard", async () => {
   const open = vi.fn();
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={open} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={open} />));
   await settle();
 
   const search = host.querySelector<HTMLInputElement>('input[aria-label="Search files"]')!;
@@ -78,7 +78,7 @@ it("finds files by name and opens a result from the keyboard", async () => {
 it("opens a focused file row from the keyboard with Enter or Space", async () => {
   const open = vi.fn();
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={open} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={open} />));
   await settle();
   await act(async () => buttonWith("src").click());
   await settle();
@@ -98,18 +98,18 @@ it("opens a focused file row from the keyboard with Enter or Space", async () =>
 it("reloads the tree when the checkout revision changes", async () => {
   const calls = treeIpc();
   const open = vi.fn();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={open} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={open} />));
   await settle();
   expect(calls).toHaveLength(1);
 
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={1} onOpenFile={open} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={1} onOpenFile={open} />));
   await settle();
   expect(calls).toHaveLength(2);
 });
 
 it("collapses every expanded folder with one control", async () => {
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={vi.fn()} />));
   await settle();
 
   await act(async () => buttonWith("src").click());
@@ -123,7 +123,7 @@ it("collapses every expanded folder with one control", async () => {
 
 it("puts the unified search field and the collapse action on the Surface toolbar", async () => {
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={vi.fn()} />));
   await settle();
 
   const toolbar = host.querySelector<HTMLElement>('section[aria-label="Files"] > .surface-toolbar')!;
@@ -143,7 +143,7 @@ it("puts the unified search field and the collapse action on the Surface toolbar
 
 it("clears the file search with Escape and returns to the tree", async () => {
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={vi.fn()} />));
   await settle();
 
   const search = host.querySelector<HTMLInputElement>('input[aria-label="Search files"]')!;
@@ -165,7 +165,7 @@ it("clears the file search with Escape and returns to the tree", async () => {
 
 it("explains an empty checkout with the shared Surface empty layout", async () => {
   mockIPC((command) => (command === "list_dir" ? [] : null));
-  await act(async () => root.render(<FilesPanel projectId={1} threadId={null} revision={0} onOpenFile={vi.fn()} />));
+  await act(async () => root.render(<FilesPanel projectId={1} revision={0} onOpenFile={vi.fn()} />));
   await settle();
 
   const empty = host.querySelector<HTMLElement>('section[aria-label="Files"] .surface-empty')!;

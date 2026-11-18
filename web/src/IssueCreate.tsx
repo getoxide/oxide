@@ -18,7 +18,7 @@ import { MarkdownEditor } from "./MarkdownEditor";
 import { Working } from "./PullRequestMerge";
 import { Avatar } from "./Avatar";
 import { Field, LabelChip, Picker, useCandidates } from "./PullRequestPeople";
-import { shortcutLabel } from "./shortcuts";
+import { shortcutLabel } from "./platform";
 
 interface IssueCreateProps {
   projectId: number;

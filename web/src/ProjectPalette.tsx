@@ -44,7 +44,7 @@ function describeStage(stage: Stage): string {
 }
 
 /**
- * ⌘⇧N: find a Project and start a Thread in it, or register one more (an existing folder,
+ * Find a Project and open it, or register one more (an existing folder,
  * a new `git init` folder, a clone from a URL or from the user's GitHub repositories).
  * Click a row, or use ↑/↓ to pick, Enter to confirm and Esc to step back.
  */
@@ -52,14 +52,14 @@ export function ProjectPalette({
   projects,
   defaultParent,
   onClose,
-  onStartThread,
+  onPickProject,
   onOpenProject,
 }: {
   projects: Project[];
   defaultParent: string;
   onClose: () => void;
-  /** A Project was picked from the search: start a new Thread in it. */
-  onStartThread: (project: Project) => void;
+  /** A Project was picked from the search: open it. */
+  onPickProject: (project: Project) => void;
   /** A Project was just registered: open it. */
   onOpenProject: (project: Project) => void;
 }) {
@@ -178,7 +178,7 @@ export function ProjectPalette({
   };
 
   const chooseProject = (project: Project) => {
-    onStartThread(project);
+    onPickProject(project);
     onClose();
   };
 

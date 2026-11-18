@@ -1,4 +1,4 @@
-// The local Windows check (ADR-0018): `node tools/check.mjs windows` cross-compiles the workspace
+// The local Windows check (ADR-0019): `node tools/check.mjs windows` cross-compiles the workspace
 // for Windows and runs Clippy, so a contributor on macOS or Linux sees a Windows-only mistake in
 // the platform layer before pushing. Helpers for the runner:
 //

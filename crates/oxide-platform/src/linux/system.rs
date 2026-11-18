@@ -1,16 +1,7 @@
-//! Native system integration on Linux: `xdg-open`. Linux has no activity assertion to hold and
-//! no Dock icon.
+//! Native system integration on Linux: `xdg-open`. Linux has no Dock icon.
 
 use crate::diag;
 use std::path::Path;
-
-/// What keeps the app awake while a Thread works. Linux holds nothing, so none is ever made.
-pub struct ActivityHold;
-
-/// Keeps the app awake while a Thread works. Nothing to hold on Linux.
-pub fn hold_activity() -> Option<ActivityHold> {
-    None
-}
 
 /// Opens `url` in the default browser. Core passes only links it has checked.
 pub fn open_url(url: &str) {

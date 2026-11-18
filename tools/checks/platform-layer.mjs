@@ -1,4 +1,4 @@
-// ADR-0018 (Platform layer): OS-specific code lives in `crates/oxide-platform`, nowhere else.
+// ADR-0019 (Platform layer): OS-specific code lives in `crates/oxide-platform`, nowhere else.
 //
 //   node tools/checks/platform-layer.mjs                   check (the fast tier and CI run this)
 //   node tools/checks/platform-layer.mjs --write-baseline  lower the baseline after a migration
@@ -257,7 +257,7 @@ export function readBaseline(root) {
 
 const HOW_TO_FIX =
   "OS-only code (an OS conditional-compilation attribute or an OS-only API) belongs in crates/oxide-platform: add one function to each of src/macos/, src/linux/ and src/windows/ (src/posix/ for the two Unix ones), then call it. " +
-  "For a value that only differs per OS (a shell name, a flag, a suffix), use the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. See ADR-0018.";
+  "For a value that only differs per OS (a shell name, a flag, a suffix), use the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. See ADR-0019.";
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = fileURLToPath(new URL("../../", import.meta.url));

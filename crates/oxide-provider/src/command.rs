@@ -1,7 +1,7 @@
 //! CLI lookup shared by Providers and GitHub integration.
 
 pub use oxide_platform::command::{os_command, os_tool, resolved_command};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Finds a CLI in `path`. Explicit paths stay explicit; Windows command names are expanded
@@ -39,34 +39,4 @@ pub fn find_in(path: &OsStr, program: &OsStr, pathext: Option<&OsStr>) -> Option
                 .flatten()
         })
     })
-}
-
-/// Build a Provider invocation using its own search environment. Rust's `Command` handles
-/// `.cmd`/`.bat` quoting once the full shim path has been resolved.
-pub fn provider_command(
-    program: &str,
-    extra_env: &std::collections::HashMap<String, String>,
-) -> std::process::Command {
-    // Windows finds a shim through the Provider's own PATH and PATHEXT; elsewhere the name is
-    // handed to the OS as it is.
-    let resolved = cfg!(windows)
-        .then(|| {
-            let env = |name: &str| {
-                extra_env
-                    .iter()
-                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                    .map(|(_, value)| OsString::from(value))
-                    .or_else(|| std::env::var_os(name))
-            };
-            find_in(
-                &env("PATH").unwrap_or_default(),
-                OsStr::new(program),
-                env("PATHEXT").as_deref(),
-            )
-        })
-        .flatten();
-    let program = resolved.as_deref().unwrap_or_else(|| Path::new(program));
-    let mut command = resolved_command(program);
-    command.envs(extra_env);
-    command
 }

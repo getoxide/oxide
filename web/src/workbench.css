@@ -959,3 +959,9 @@
   width: min(300px, 100%);
   box-shadow: 8px 8px 24px #0005;
 }
+
+/* Back from the Code workspace to the Project's terminals. */
+.centre-back { align-self: flex-start; margin: 8px 12px; }
+.settings-view { padding: 0 20px; }
+.settings-header { display: flex; align-items: center; justify-content: space-between; }
+.settings-header h1 { margin: 16px 0; font-size: 18px; }

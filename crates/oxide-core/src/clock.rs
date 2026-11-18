@@ -2,9 +2,6 @@ use oxide_provider::sync::LockExt as _;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// How long a completed, idle Thread keeps its Provider process before Core shuts it down.
-pub const PROVIDER_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
 /// The source of time for idle reaping, injectable so tests need not wait 10 minutes.
 pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> Instant;

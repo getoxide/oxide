@@ -1,35 +1,7 @@
-//! Native system integration on macOS: App Nap, `open`, the Dock icon.
+//! Native system integration on macOS: `open` and the Dock icon.
 
 use crate::diag;
-use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 use std::path::Path;
-
-/// An `NSProcessInfo` activity that keeps the app out of App Nap while it is held. Dropping it
-/// ends the activity.
-pub struct ActivityHold(
-    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>,
-);
-
-// SAFETY: the wrapped activity object is documented as thread-safe, and the token is only ever
-// used to call `endActivity:`, which may run on any thread.
-unsafe impl Send for ActivityHold {}
-
-impl Drop for ActivityHold {
-    fn drop(&mut self) {
-        // SAFETY: the token came from `beginActivityWithOptions:reason:`.
-        unsafe { NSProcessInfo::processInfo().endActivity(&self.0) };
-    }
-}
-
-/// Keeps the app awake while a Thread works: user-initiated work stays out of App Nap, and idle
-/// system sleep stays allowed.
-pub fn hold_activity() -> Option<ActivityHold> {
-    let token = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
-        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-        &NSString::from_str("A Thread is working"),
-    );
-    Some(ActivityHold(token))
-}
 
 /// Opens `url` in the default browser. Core passes only links it has checked.
 pub fn open_url(url: &str) {
