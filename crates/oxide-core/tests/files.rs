@@ -5,6 +5,7 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+#[cfg(unix)]
 use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, FileEntry};
 use std::fs;

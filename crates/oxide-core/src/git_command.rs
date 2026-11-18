@@ -14,7 +14,6 @@
 
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
-use oxide_provider::diag;
 use oxide_provider::sync::LockExt as _;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -200,7 +199,7 @@ fn empty_hooks_dir() -> Result<PathBuf> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                diag::best_effort(
+                oxide_provider::diag::best_effort(
                     "set_permissions",
                     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)),
                 );
