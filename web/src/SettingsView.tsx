@@ -17,6 +17,7 @@ import { getAppearance, saveAppearance, validateAppearance } from "./appearance"
 import { Skeleton } from "./Skeleton";
 import { listenTo } from "./ipc";
 import { ProviderMark } from "./ProviderMark";
+import { CustomAgentsSettings } from "./CustomAgentsSettings";
 import { Dropdown, type DropdownOption } from "./Dropdown";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import {
@@ -228,6 +229,20 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           When a Thread's pull request is merged on GitHub, remove its worktree and local branch.
           Skipped when there are uncommitted changes or commits that were not merged.
         </p>
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={draft.openThreadsAsTerminals}
+            onChange={(e) => set({ openThreadsAsTerminals: e.target.checked })}
+          />
+          Open new Threads as terminals (preview)
+          {fieldErrors("openThreadsAsTerminals")}
+        </label>
+        <p className="settings-hint">
+          A new Thread runs the Provider's own terminal interface (Claude Code or Codex) in the Thread's checkout instead of
+          Oxide's chat, with the Model, Effort and Permission mode from Settings as launch options.
+          Threads started from an Issue, a pull request or a review keep the chat for now.
+        </p>
       </div>
     </section>
   );
@@ -357,6 +372,11 @@ export function SettingsView({ onClose, onRunCommand, section }: { onClose: () =
           </section>
         );
       })}
+      <CustomAgentsSettings
+        agents={draft.customAgents}
+        onChange={(customAgents) => set({ customAgents })}
+        fieldErrors={fieldErrors}
+      />
     </section>
   );
 

@@ -22,17 +22,34 @@ _Avoid_: Project switcher, quick open
 
 **Thread**:
 One conversation with a single Provider inside a Project, with its own Model, Effort and context (Model and Effort can change between Turns); it maps one-to-one to the Provider's own session. `/clear` and ⌘N start a new Thread in the same Project; the old one stays in the sidebar until the user deletes it. A finished Thread is deleted, not archived: deleting removes its Transcript, Approvals, Attachments and Checkpoints for good, and its worktree with them (its branch stays). The Settings option "Delete merged branches and worktrees" (off by default) removes a Thread's worktree and local branch once its pull request is merged on GitHub, and keeps the Thread; it skips anything with uncommitted changes or unmerged commits. The Provider's own session files are left to the Provider. A new chat Thread works in a worktree of its own by default. See ADR-0005 and ADR-0011.
+A Thread's centre is its Agent terminal; chat Threads keep their Transcript until the chat is removed.
 _Avoid_: Agent, session, chat, Archived Thread
 
+**Terminal Thread**:
+A Thread whose centre is an Agent terminal: the Provider's own CLI runs in the Thread's checkout and Oxide renders no conversation. It has a worktree, a status from the Provider's own reports, Turns recorded by start and end only, and Checkpoints, like any other Thread. A prompt reaches its agent as a launch argument, or pasted (never submitted) after the user confirms its exact text. See ADR-0017.
+_Avoid_: Chat Thread, terminal session
+
+**Custom agent**:
+An agent CLI the user added in Settings with a name and the command that launches it. Its Threads get a worktree, Issues, Fix and review like any other, but Oxide knows nothing about its status, Turns, Models or sessions unless it reports them.
+_Avoid_: Plugin, external Provider
+
+**Agent terminal**:
+The terminal at a Thread's centre, running the Thread's Provider CLI in the Thread's checkout. Oxide's core owns it, so it keeps running while the user moves around the app and shows its screen again when the Thread is reopened. Stop ends the agent; Restart resumes the same Provider session. It is not a Project terminal tab, which is a plain shell.
+_Avoid_: Console, agent tab, shell
+
+**Reporter**:
+Oxide's own executable, run by a Provider's per-launch `notify` (Codex) or status line command (Antigravity CLI), that tells the running app the Provider session's id over an owner-only socket, then runs the user's own command unchanged. It is how Oxide learns a session id it cannot assign.
+_Avoid_: Hook, notifier, daemon
+
 **Thread status**:
-Where a Thread stands right now: working (a Turn is running), needs input (the Provider is waiting on an approval or answer), completed (the last Turn finished and it's the user's move), error (the Turn failed), or interrupted (the Turn was stopped by the user or by quitting Oxide).
+Where a Thread stands right now: working (the Provider reports a Turn running), needs input (the Provider reports it is waiting on an Approval or an answer), completed (the Provider reports the Turn finished, or is idle), running (the agent is alive but has reported nothing, so its state is unknown), stopped (the agent is not running), or error (the Turn failed, or the agent exited with a failure). Oxide never guesses a status the Provider did not report. A chat Thread can also be interrupted (the Turn was stopped by the user or by quitting Oxide).
 _Avoid_: State, phase
 
 **Continue in new Thread**:
 What a Thread offers instead of its composer when resuming its Provider session fails because the session is gone. It creates a new Thread with the same Provider, Model, Effort and permission mode, whose first prompt is prefilled with a recap (user prompts and final agent messages, no tool output, cut to a fixed length). The two Threads link to each other.
 
 **Turn**:
-One user prompt in a Thread and everything the Provider does in response, until it completes, is interrupted, or fails.
+One user prompt in a Thread and everything the Provider does in response, as the Provider reports it: from its working report until it reports done, idle or error.
 _Avoid_: Run, exchange, round
 
 **Attachment**:
@@ -94,7 +111,7 @@ A command that counts as a check (tests, type checks, lint, build), recognized f
 _Avoid_: Test command, check script
 
 **Blind review**:
-A review of a change by a Provider session that received only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
+A review of a change by a one-shot run of a Provider that receives only the diff and the issue, never the original Thread. Its findings become Line comments the user keeps or dismisses.
 _Avoid_: Second opinion, AI review, auto-review
 
 **Review ledger**:
@@ -116,17 +133,17 @@ _Avoid_: Review comment, review note
 ## Providers
 
 **Provider**:
-An agent CLI installed and logged in on the user's machine that Oxide drives: Claude Code, Codex, or Antigravity CLI (`agy`).
+An agent CLI installed on the user's machine that Oxide runs in an Agent terminal: Claude Code, Codex, Antigravity CLI (`agy`), or a Custom agent.
 _Avoid_: Agent, backend, harness
 
 **Model**:
 A specific LLM a Provider offers, chosen per conversation (e.g. Opus 5.5).
 
 **Model picker**:
-The single overlay where a Thread's Provider, Model and Effort are chosen together, opened with ⌘⇧M or from the composer's Model control. Providers are tabs along the top, that Provider's Models are listed on the left, and the highlighted Model's Effort slider sits on the right: it takes on a colour and more flourish (glow, shimmer, sparkles) as the Effort rises. ↑↓ move through Models, ←→ step the Effort, Tab cycles Providers, Enter applies and Esc closes.
+The overlay where a new Thread's Provider, Model, Effort and Permission mode are chosen before it launches, opened with ⌘⇧M, with the Settings defaults preselected. Providers are tabs along the top, Models on the left, the Effort slider on the right. Enter launches the Thread and Esc closes. A running Thread's Model is changed in the Provider's own UI.
 
 **Favourite Model**:
-A Model the user starred in the Model picker (see **Model picker**). Starred with the star on a Model row; ⌘1..9 outside the picker switches the Thread to the nth Favourite, in Provider order.
+A Model the user starred in the Model picker (see **Model picker**). Starred with the star on a Model row; ⌘1..9 outside the picker starts a new Thread with the nth Favourite, in Provider order.
 
 **Effort**:
 The reasoning-depth setting a Provider exposes for a Model (e.g. low, high).

@@ -12,6 +12,10 @@ pub enum ThreadStatus {
     Completed,
     Error,
     Interrupted,
+    /// An Agent terminal's agent is alive but has reported nothing: its state is unknown.
+    Running,
+    /// An Agent terminal's agent is not running.
+    Stopped,
 }
 
 impl std::fmt::Display for ThreadStatus {
@@ -22,6 +26,8 @@ impl std::fmt::Display for ThreadStatus {
             ThreadStatus::Completed => write!(f, "completed"),
             ThreadStatus::Error => write!(f, "error"),
             ThreadStatus::Interrupted => write!(f, "interrupted"),
+            ThreadStatus::Running => write!(f, "running"),
+            ThreadStatus::Stopped => write!(f, "stopped"),
         }
     }
 }
@@ -36,6 +42,8 @@ impl std::str::FromStr for ThreadStatus {
             "completed" => Ok(ThreadStatus::Completed),
             "error" => Ok(ThreadStatus::Error),
             "interrupted" => Ok(ThreadStatus::Interrupted),
+            "running" => Ok(ThreadStatus::Running),
+            "stopped" => Ok(ThreadStatus::Stopped),
             _ => Err(format!("unknown thread status: {s}")),
         }
     }
@@ -70,10 +78,12 @@ pub struct ThreadSummary {
     pub issue_number: Option<u32>,
     /// Whether this Thread was created as a Blind review.
     pub blind_review: bool,
+    /// The Thread's centre is an Agent terminal running the Provider's own CLI (ADR-0017).
+    pub terminal: bool,
 }
 
 /// The `threads` columns [`parse_thread_summary`] reads, in order.
-pub const THREAD_COLUMNS: &str = "id, project_id, provider, model, effort, permission_mode, status, created_at, updated_at, session_lost, continued_from, (SELECT MIN(c.id) FROM threads c WHERE c.continued_from = threads.id), title, branch, worktree_path, setup_output, issue_number, blind_review";
+pub const THREAD_COLUMNS: &str = "id, project_id, provider, model, effort, permission_mode, status, created_at, updated_at, session_lost, continued_from, (SELECT MIN(c.id) FROM threads c WHERE c.continued_from = threads.id), title, branch, worktree_path, setup_output, issue_number, blind_review, terminal";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,5 +300,6 @@ pub fn parse_thread_summary(r: &rusqlite::Row) -> rusqlite::Result<ThreadSummary
         setup_output: r.get(15)?,
         issue_number: r.get(16)?,
         blind_review: r.get::<_, i64>(17)? != 0,
+        terminal: r.get::<_, i64>(18)? != 0,
     })
 }

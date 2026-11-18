@@ -1,17 +1,20 @@
-//! Blind review: a review of a change by another installed Provider that receives only the
-//! diff and the issue, with no Transcript content, in a detached worktree at the reviewed state
-//! where it cannot touch the user's checkout.
+//! Blind review: a review of a change by a one-shot headless run of a Provider that receives only
+//! the diff and the issue, with no Transcript content, in a throwaway detached worktree at the
+//! reviewed state where it cannot touch the user's checkout. The run is not a Thread: its closing
+//! message is parsed into findings that the user keeps or dismisses.
 
 use crate::checkpoint;
 use crate::git;
 use crate::git_diff::{self, DiffKind};
 use crate::line_comments::{CommentScope, CommentSide, LineComment};
-use crate::thread::{ThreadStatus, ThreadSummary};
 use crate::worktree::{free_name, slugify};
-use crate::{Core, Error, PermissionMode, Result};
+use crate::{Core, Error, Result};
+use oxide_provider::ProviderError;
+use oxide_provider::oneshot::{self, OneShotRequest};
 use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +42,67 @@ pub struct BlindReviewRequest {
     pub issue: Option<String>,
 }
 
+/// How a one-shot Provider run is launched. Core uses the Provider's CLI; tests substitute a fake.
+pub type OneShotRunner =
+    Arc<dyn Fn(&OneShotRequest) -> std::result::Result<String, ProviderError> + Send + Sync>;
+
+/// Where a Blind review stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BlindReviewStatus {
+    Running,
+    Finished,
+    Failed,
+}
+
+impl BlindReviewStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Finished => "finished",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "running" => Self::Running,
+            "failed" => Self::Failed,
+            _ => Self::Finished,
+        }
+    }
+}
+
+/// One Blind review of a Thread's change: which Provider ran it and how far it got.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewRun {
+    pub id: u32,
+    pub thread_id: Option<u32>,
+    pub provider: String,
+    pub scope: String,
+    pub status: BlindReviewStatus,
+    /// Why the run failed.
+    pub error: Option<String>,
+}
+
+/// A Blind review that is set up (row recorded, worktree created, prompt built) but not yet run.
+pub struct PreparedBlindReview {
+    run: BlindReviewRun,
+    root: PathBuf,
+    worktree: PathBuf,
+    prompt: String,
+    diff_text: String,
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+impl PreparedBlindReview {
+    pub fn run(&self) -> &BlindReviewRun {
+        &self.run
+    }
+}
+
 /// What the reviewer decided about one finding. Only a kept finding becomes a draft Line comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +128,7 @@ impl FindingDecision {
 #[serde(rename_all = "camelCase")]
 pub struct BlindReviewFinding {
     pub id: u32,
-    pub review_thread_id: u32,
+    pub review_id: u32,
     /// The reviewing Provider, so the finding is never mistaken for the user's own comment.
     pub provider: String,
     /// The line the finding is about; `None` when it could not be anchored.
@@ -78,6 +142,24 @@ pub struct BlindReviewFinding {
     /// The finding could not be anchored to the reviewed Diff and is shown as plain text.
     pub plain: bool,
     pub decision: FindingDecision,
+}
+
+/// The most diff text a Blind review prompt carries.
+const MAX_REVIEW_DIFF_BYTES: usize = 512 * 1024;
+/// The most issue text a Blind review prompt carries.
+const MAX_REVIEW_ISSUE_BYTES: usize = 16 * 1024;
+
+fn truncate_text(mut text: String, max: usize, what: &str) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    text.push_str(&format!("\n[{what} truncated]\n"));
+    text
 }
 
 /// Builds the prompt for a Blind review: only the diff, the issue, and the required output
@@ -118,11 +200,9 @@ fn provider_display_name(id: &str) -> &str {
 }
 
 impl Core {
-    /// Whether a Provider can honour a non-writing configuration.
+    /// Whether a Provider can run a Blind review: it has a one-shot mode with a read-only setup.
     pub fn provider_can_honour_non_writing(&self, provider: &str) -> bool {
-        let caps = self.get_provider_capabilities(provider);
-        caps.supported_permission_modes
-            .contains(&PermissionMode::Ask)
+        provider == "fake" || oneshot::supports_one_shot(provider)
     }
 
     /// The installed Providers that can honour a non-writing configuration.
@@ -198,17 +278,34 @@ impl Core {
         Ok(worktree)
     }
 
-    /// Creates the Thread and detached worktree for a Blind review, builds its prompt, but does
-    /// not send the prompt yet.
-    pub fn create_blind_review_thread(
-        &self,
-        request: BlindReviewRequest,
-    ) -> Result<(ThreadSummary, String)> {
+    /// Records a Blind review, creates its throwaway detached worktree at the reviewed state and
+    /// builds its prompt, but does not run the Provider yet.
+    pub fn prepare_blind_review(&self, request: BlindReviewRequest) -> Result<PreparedBlindReview> {
+        let reviewed_thread = request
+            .thread_id
+            .ok_or_else(|| Error::Git("A Thread is required for a Blind review".into()))?;
         if !self.provider_can_honour_non_writing(&request.provider) {
             return Err(Error::Provider(format!(
                 "Provider '{}' cannot honour a non-writing configuration",
                 request.provider
             )));
+        }
+
+        if !matches!(request.scope.as_str(), "turn" | "branch" | "uncommitted") {
+            return Err(Error::Git(format!(
+                "Unknown Blind review scope '{}'",
+                request.scope.chars().take(32).collect::<String>()
+            )));
+        }
+        let (def_model, def_effort, _) = self.default_settings_for_provider(&request.provider);
+        let model = request.model.clone().or(def_model);
+        let effort = request.effort.clone().or(def_effort);
+        for value in [&model, &effort].into_iter().flatten() {
+            if !oneshot::is_flag_value(value) {
+                return Err(Error::Provider(
+                    "The model or effort of a Blind review is not a plain value".into(),
+                ));
+            }
         }
 
         let (root, project_name) = {
@@ -380,92 +477,213 @@ impl Core {
             "No issue description provided.".to_string()
         };
 
+        let diff_text = truncate_text(diff_text, MAX_REVIEW_DIFF_BYTES, "diff");
+        let issue_text = truncate_text(issue_text, MAX_REVIEW_ISSUE_BYTES, "issue");
         let prompt = build_blind_review_prompt(Some(&issue_text), &diff_text);
 
-        let worktree_path =
+        let worktree =
             self.create_detached_worktree(&root, &project_name, &commit_ish, "blind-review")?;
 
-        let cur_provider = request.thread_id.and_then(|tid| {
+        let inserted = {
             let db = self.db.lock_recover();
-            db.query_row("SELECT provider FROM threads WHERE id = ?1", [tid], |r| {
-                r.get::<_, String>(0)
+            db.execute(
+                "INSERT INTO blind_reviews (thread_id, provider, scope, status, worktree)
+                 VALUES (?1, ?2, ?3, 'running', ?4)",
+                rusqlite::params![
+                    reviewed_thread,
+                    request.provider,
+                    request.scope,
+                    worktree.to_string_lossy()
+                ],
+            )
+            .map_err(Error::from)
+            .and_then(|_| {
+                u32::try_from(db.last_insert_rowid())
+                    .map_err(|_| Error::Git("Blind review id out of range".into()))
             })
-            .ok()
-        });
-        let is_same = cur_provider
-            .as_deref()
-            .is_some_and(|cp| is_same_provider(cp, &request.provider));
-        let provider_display = provider_display_name(&request.provider);
-        let title = if is_same {
-            format!("Blind review ({provider_display} · same provider)")
-        } else {
-            format!("Blind review ({provider_display})")
+        };
+        let id = match inserted {
+            Ok(id) => id,
+            Err(error) => {
+                self.remove_detached_worktree(&root, &worktree);
+                return Err(error);
+            }
         };
 
-        let (def_model, def_effort, _) = self.default_settings_for_provider(&request.provider);
-        let model = request.model.or(def_model);
-        let effort = request.effort.or(def_effort);
-
-        let thread_id = {
-            let db = self.db.lock_recover();
-            db.execute(
-                "INSERT INTO threads (project_id, provider, model, effort, permission_mode, status, title, worktree_path, blind_review, blind_review_of)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6, ?7, 1, ?8)",
-                rusqlite::params![
-                    request.project_id,
-                    request.provider,
-                    model,
-                    effort,
-                    PermissionMode::Ask.as_str(),
-                    title,
-                    worktree_path.to_string_lossy(),
-                    request.thread_id,
-                ],
-            )?;
-            let thread_id = db.last_insert_rowid() as u32;
-            // Record who reviewed the change now, so the reviewer is named even before
-            // the reply is parsed.
-            db.execute(
-                "INSERT INTO blind_reviews (thread_id, review_thread_id, provider, scope)
-                 VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![
-                    request.thread_id,
-                    thread_id,
-                    request.provider,
-                    request.scope
-                ],
-            )?;
-            thread_id
-        };
-
-        let db = self.db.lock_recover();
-        let thread_summary = self.get_thread_by_id(&db, thread_id)?;
-        drop(db);
-        self.board.publish(thread_id);
-
-        Ok((thread_summary, prompt))
+        Ok(PreparedBlindReview {
+            run: BlindReviewRun {
+                id,
+                thread_id: Some(reviewed_thread),
+                provider: request.provider,
+                scope: request.scope,
+                status: BlindReviewStatus::Running,
+                error: None,
+            },
+            root,
+            worktree,
+            prompt,
+            diff_text,
+            model,
+            effort,
+        })
     }
 
-    /// Starts a Blind review: creates the Thread with a detached worktree at the reviewed state,
-    /// and sends the review prompt.
-    pub fn start_blind_review(&self, request: BlindReviewRequest) -> Result<ThreadSummary> {
-        let (thread, prompt) = self.create_blind_review_thread(request)?;
-        self.send_prompt(thread.id, &prompt)?;
-        let db = self.db.lock_recover();
-        self.get_thread_by_id(&db, thread.id)
+    /// Replaces how one-shot Provider runs are launched.
+    pub fn set_one_shot_runner(&self, runner: OneShotRunner) {
+        *self.one_shot_runner.lock_recover() = runner;
     }
 
-    /// Parses and records the findings of every finished Blind review of `thread_id` (or of the
-    /// review Thread itself), then lists them. Parsing happens once per review and keeps every
-    /// reply, including one that cannot be parsed, as plain text.
-    pub fn list_blind_review_findings(&self, thread_id: u32) -> Result<Vec<BlindReviewFinding>> {
-        self.record_blind_review_findings(thread_id)?;
+    /// Runs a prepared Blind review to its end: launches the Provider once in the throwaway
+    /// worktree, records its closing message as findings (or the failure), and removes the
+    /// worktree. Blocks until the Provider is done.
+    pub fn execute_blind_review(&self, prepared: PreparedBlindReview) -> Result<BlindReviewRun> {
+        let runner = self.one_shot_runner.lock_recover().clone();
+        let mut request = OneShotRequest::new(
+            prepared.run.provider.clone(),
+            prepared.worktree.clone(),
+            prepared.prompt.clone(),
+        );
+        request.model = prepared.model.clone();
+        request.effort = prepared.effort.clone();
+        let outcome = runner(&request);
+        self.remove_detached_worktree(&prepared.root, &prepared.worktree);
+
+        let mut run = prepared.run;
+        let db = self.db.lock_recover();
+        let tx = crate::db::write_transaction(&db)?;
+        match outcome {
+            Ok(message) => {
+                for finding in parse_findings(&message, &prepared.diff_text) {
+                    tx.execute(
+                        "INSERT INTO blind_review_findings
+                         (review_id, path, side, line, code, body, anchored)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        rusqlite::params![
+                            run.id,
+                            finding.path,
+                            finding.side.map(CommentSide::as_str),
+                            finding.line,
+                            finding.code,
+                            finding.body,
+                            finding.anchored as i64,
+                        ],
+                    )?;
+                }
+                run.status = BlindReviewStatus::Finished;
+            }
+            Err(error) => {
+                run.status = BlindReviewStatus::Failed;
+                run.error = Some(crate::redact::redact_url_credentials(&error.to_string()));
+            }
+        }
+        tx.execute(
+            "UPDATE blind_reviews SET status = ?2, error = ?3, worktree = NULL WHERE id = ?1",
+            rusqlite::params![run.id, run.status.as_str(), run.error],
+        )?;
+        tx.commit()?;
+        Ok(run)
+    }
+
+    /// Marks a Blind review that could not be recorded as failed, so it never stays `running`.
+    /// The message is stored without URL credentials.
+    pub fn fail_blind_review(&self, id: u32, message: &str) {
+        let db = self.db.lock_recover();
+        crate::diag::best_effort(
+            "fail_blind_review",
+            db.execute(
+                "UPDATE blind_reviews SET status = 'failed', error = ?2, worktree = NULL
+                 WHERE id = ?1 AND status = 'running'",
+                rusqlite::params![id, crate::redact::redact_url_credentials(message)],
+            ),
+        );
+    }
+
+    /// Prepares and runs a Blind review, blocking until it ends.
+    pub fn run_blind_review(&self, request: BlindReviewRequest) -> Result<BlindReviewRun> {
+        let prepared = self.prepare_blind_review(request)?;
+        self.execute_blind_review(prepared)
+    }
+
+    /// The Blind reviews of a Thread, oldest first.
+    pub fn blind_review_runs(&self, thread_id: u32) -> Result<Vec<BlindReviewRun>> {
         let db = self.db.lock_recover();
         let mut stmt = db.prepare(
-            "SELECT f.id, r.review_thread_id, r.provider, f.path, f.side, f.line, f.code, f.body,
+            "SELECT id, thread_id, provider, scope, status, error FROM blind_reviews
+             WHERE thread_id = ?1 ORDER BY id",
+        )?;
+        let runs = stmt
+            .query_map([thread_id], |r| {
+                Ok(BlindReviewRun {
+                    id: r.get(0)?,
+                    thread_id: r.get(1)?,
+                    provider: r.get(2)?,
+                    scope: r.get(3)?,
+                    status: BlindReviewStatus::parse(&r.get::<_, String>(4)?),
+                    error: r.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(runs)
+    }
+
+    /// Removes a review's throwaway worktree. Best effort: a leftover worktree is only clutter.
+    fn remove_detached_worktree(&self, root: &Path, worktree: &Path) {
+        crate::diag::best_effort(
+            "remove the review worktree",
+            self.git.mutate(root, || {
+                git::run(
+                    root,
+                    &["worktree", "remove", "--force", &worktree.to_string_lossy()],
+                )
+                .map(drop)
+            }),
+        );
+    }
+
+    /// A review that was running when Oxide quit never finished: report it as failed and remove
+    /// its worktree.
+    pub(crate) fn recover_interrupted_blind_reviews(&self) {
+        let stale: Vec<(u32, Option<String>, Option<String>)> = {
+            let db = self.db.lock_recover();
+            let Ok(mut stmt) = db.prepare(
+                "SELECT r.id, r.worktree, p.path FROM blind_reviews r
+                 LEFT JOIN threads t ON t.id = r.thread_id
+                 LEFT JOIN projects p ON p.id = t.project_id
+                 WHERE r.status = 'running'",
+            ) else {
+                return;
+            };
+            let Ok(rows) = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) else {
+                return;
+            };
+            rows.filter_map(std::result::Result::ok).collect()
+        };
+        for (id, worktree, root) in stale {
+            if let (Some(worktree), Some(root)) = (worktree, root) {
+                self.remove_detached_worktree(Path::new(&root), Path::new(&worktree));
+            }
+            let db = self.db.lock_recover();
+            crate::diag::best_effort(
+                "recover_interrupted_blind_reviews",
+                db.execute(
+                    "UPDATE blind_reviews
+                     SET status = 'failed', error = 'Oxide quit before the review finished', worktree = NULL
+                     WHERE id = ?1",
+                    [id],
+                ),
+            );
+        }
+    }
+
+    /// The findings of every Blind review of `thread_id`. They were parsed once when the review
+    /// finished, and keep every reply, including one that cannot be parsed, as plain text.
+    pub fn list_blind_review_findings(&self, thread_id: u32) -> Result<Vec<BlindReviewFinding>> {
+        let db = self.db.lock_recover();
+        let mut stmt = db.prepare(
+            "SELECT f.id, r.id, r.provider, f.path, f.side, f.line, f.code, f.body,
                     f.anchored, f.decision
              FROM blind_review_findings f JOIN blind_reviews r ON r.id = f.review_id
-             WHERE r.thread_id = ?1 OR r.review_thread_id = ?1
+             WHERE r.thread_id = ?1
              ORDER BY r.id, f.id",
         )?;
         let findings = stmt
@@ -473,7 +691,7 @@ impl Core {
                 let side: Option<String> = r.get(4)?;
                 Ok(BlindReviewFinding {
                     id: r.get(0)?,
-                    review_thread_id: r.get(1)?,
+                    review_id: r.get(1)?,
                     provider: r.get(2)?,
                     path: r.get(3)?,
                     side: side.map(|s| CommentSide::parse(&s)),
@@ -595,76 +813,6 @@ impl Core {
         db.execute("DELETE FROM line_comments WHERE finding_id = ?1", [id])?;
         Ok(())
     }
-
-    fn record_blind_review_findings(&self, thread_id: u32) -> Result<()> {
-        let reviews: Vec<(u32, u32, String)> = {
-            let db = self.db.lock_recover();
-            let mut stmt = db.prepare(
-                "SELECT r.id, r.review_thread_id, r.scope FROM blind_reviews r
-                 WHERE r.thread_id = ?1 OR r.review_thread_id = ?1 ORDER BY r.id",
-            )?;
-            stmt.query_map([thread_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<std::result::Result<_, _>>()?
-        };
-        for (review_id, review_thread_id, _scope) in reviews {
-            let recorded: u32 = {
-                let db = self.db.lock_recover();
-                db.query_row(
-                    "SELECT COUNT(*) FROM blind_review_findings WHERE review_id = ?1",
-                    [review_id],
-                    |r| r.get(0),
-                )?
-            };
-            if recorded > 0 {
-                continue;
-            }
-            let snapshot = self.storage.get_snapshot(review_thread_id, u32::MAX)?;
-            if snapshot.thread.status == ThreadStatus::Working {
-                continue;
-            }
-            let Some(prompt) = snapshot.turns.first().map(|t| t.prompt.clone()) else {
-                continue;
-            };
-            let Some(closing) = snapshot
-                .turns
-                .iter()
-                .rev()
-                .find_map(|turn| turn.final_agent_message())
-            else {
-                continue;
-            };
-            let diff_text = prompt_diff(&prompt).unwrap_or("");
-            let findings = parse_findings(&closing.content, diff_text);
-            let db = self.db.lock_recover();
-            let tx = crate::db::write_transaction(&db)?;
-            // Two readers may have reached this point together; only one writes the findings.
-            let recorded: u32 = tx.query_row(
-                "SELECT COUNT(*) FROM blind_review_findings WHERE review_id = ?1",
-                [review_id],
-                |r| r.get(0),
-            )?;
-            if recorded == 0 {
-                for finding in findings {
-                    tx.execute(
-                        "INSERT INTO blind_review_findings
-                         (review_id, path, side, line, code, body, anchored)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                        rusqlite::params![
-                            review_id,
-                            finding.path,
-                            finding.side.map(CommentSide::as_str),
-                            finding.line,
-                            finding.code,
-                            finding.body,
-                            finding.anchored as i64,
-                        ],
-                    )?;
-                }
-            }
-            tx.commit()?;
-        }
-        Ok(())
-    }
 }
 
 struct ParsedFinding {
@@ -676,14 +824,6 @@ struct ParsedFinding {
     anchored: bool,
 }
 
-/// The reviewed Diff embedded in the Blind review prompt.
-fn prompt_diff(prompt: &str) -> Option<&str> {
-    let rest = prompt.split_once("<diff>\n")?.1;
-    let end = rest.find("\n</diff>")?;
-    Some(&rest[..end])
-}
-
-/// Every line of the reviewed Diff, by path, side and line number.
 fn diff_anchors(diff_text: &str) -> std::collections::HashMap<(String, CommentSide, u32), String> {
     let mut anchors = std::collections::HashMap::new();
     for file in git_diff::parse_patch(diff_text) {

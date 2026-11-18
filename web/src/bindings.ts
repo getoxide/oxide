@@ -49,10 +49,16 @@ export const commands = {
 	/**  Creates the Thread's worktree and branch, runs the Project's Setup command, starts its first Turn. */
 	dispatchThread: (request: DispatchRequest_Deserialize) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("dispatch_thread", { request })),
 	blindReviewProviders: (currentProvider: string | null) => typedError<BlindReviewProviderOption[], AppError>(__TAURI_INVOKE("blind_review_providers", { currentProvider })),
-	startBlindReview: (request: BlindReviewRequest_Deserialize) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("start_blind_review", { request })),
 	/**
-	 *  The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
-	 *  review's closing message and validated against the reviewed Diff.
+	 *  Starts a Blind review: sets it up, then runs the reviewing Provider once in the background.
+	 *  Returns at once with the running review; its findings appear when it finishes.
+	 */
+	startBlindReview: (request: BlindReviewRequest_Deserialize) => typedError<BlindReviewRun_Serialize, AppError>(__TAURI_INVOKE("start_blind_review", { request })),
+	/**  The Blind reviews of a Thread, with whether each is running, finished or failed. */
+	listBlindReviews: (threadId: number) => typedError<BlindReviewRun_Serialize[], AppError>(__TAURI_INVOKE("list_blind_reviews", { threadId })),
+	/**
+	 *  The Blind review findings of a Thread, parsed once from the review's closing message and
+	 *  validated against the reviewed Diff.
 	 */
 	listBlindReviewFindings: (threadId: number) => typedError<BlindReviewFinding_Serialize[], AppError>(__TAURI_INVOKE("list_blind_review_findings", { threadId })),
 	/**  Keeps one finding: an anchored finding becomes a draft Line comment on the reviewed Thread. */
@@ -118,6 +124,49 @@ export const commands = {
 	/**  Starts a Thread that proposes the rule in the Project's agent instructions. */
 	acceptRuleSuggestion: (projectId: number, id: number, provider: string) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("accept_rule_suggestion", { projectId, id, provider })),
 	startBlockTerminal: (projectId: number, threadId: number | null, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, threadId, onOutput })),
+	/**
+	 *  Opens a terminal Thread: a worktree and Setup command (unless the Project keeps Threads in
+	 *  its main checkout), then Claude Code in an Agent terminal. Starts a process.
+	 */
+	createTerminalThread: (projectId: number, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread", { projectId, provider, model, effort, permissionMode })),
+	/**
+	 *  Opens a terminal Thread for a GitHub issue: a worktree and branch named after it, the Setup
+	 *  command, then the agent launched with a prompt built from the issue (its title and body quoted
+	 *  as external content). Starts a process.
+	 */
+	createTerminalThreadFromIssue: (projectId: number, issue: TerminalIssue_Deserialize, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null, base: string | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_from_issue", { projectId, issue, provider, model, effort, permissionMode, base })),
+	/**
+	 *  The prompt a terminal Thread from an issue would start with, for the user to read and confirm
+	 *  before it is pasted into a Custom agent. Starts nothing.
+	 */
+	terminalIssuePrompt: (issue: TerminalIssue_Deserialize) => __TAURI_INVOKE<string>("terminal_issue_prompt", { issue }),
+	/**
+	 *  Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
+	 *  it prints. A newer attachment replaces the previous one.
+	 */
+	attachAgentTerminal: (threadId: number, onOutput: Channel<number[]>) => typedError<null, AppError>(__TAURI_INVOKE("attach_agent_terminal", { threadId, onOutput })),
+	/**
+	 *  Writes what the user typed, pasted or dropped into a terminal Thread's agent. Writes into a
+	 *  process; Core refuses unknown or chat Threads and input over 1 MiB.
+	 */
+	writeAgentTerminal: (threadId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_agent_terminal", { threadId, input })),
+	resizeAgentTerminal: (threadId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_agent_terminal", { threadId, rows, cols })),
+	/**  Ends a terminal Thread's agent. */
+	stopAgent: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_agent", { threadId })),
+	/**  Relaunches a stopped terminal Thread's agent in the same Provider session. Starts a process. */
+	restartAgent: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("restart_agent", { threadId })),
+	/**
+	 *  Opens a terminal Thread: resumes its Provider session if Oxide was relaunched since its agent
+	 *  ran. Starts a process.
+	 */
+	openAgent: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("open_agent", { threadId })),
+	/**  Whether resuming the Thread's agent failed because its Provider session no longer exists. */
+	agentSessionGone: (threadId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("agent_session_gone", { threadId })),
+	/**
+	 *  Starts a new Provider session in the Thread's checkout after the old one was lost, and stores
+	 *  its id. Starts a process.
+	 */
+	startFreshAgentSession: (threadId: number) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("start_fresh_agent_session", { threadId })),
 	writeFile: (projectId: number, threadId: number | null, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, threadId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	systemFonts: () => typedError<string[], AppError>(__TAURI_INVOKE("system_fonts")),
@@ -153,9 +202,11 @@ export const commands = {
 	/**  The Thread's Turns, oldest first, for the Turn picker. */
 	listTurnPicks: (threadId: number) => typedError<TurnPick[], AppError>(__TAURI_INVOKE("list_turn_picks", { threadId })),
 	/**  What restoring a Thread's files to before a Turn would change. */
-	restorePreview: (threadId: number, turnIndex: number) => typedError<RestorePreview, AppError>(__TAURI_INVOKE("restore_preview", { threadId, turnIndex })),
+	restorePreview: (threadId: number, turnIndex: number | null) => typedError<RestorePreview, AppError>(__TAURI_INVOKE("restore_preview", { threadId, turnIndex })),
 	/**  Puts a Thread's files back to how they were before a Turn. */
-	restoreTurn: (threadId: number, turnIndex: number) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("restore_turn", { threadId, turnIndex })),
+	restoreTurn: (threadId: number, turnIndex: number | null) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("restore_turn", { threadId, turnIndex })),
+	/**  Whether a Thread has a starting state Restore can go back to. */
+	startStateAvailable: (threadId: number) => typedError<boolean, AppError>(__TAURI_INVOKE("start_state_available", { threadId })),
 	/**  Undoes a Thread's latest restore, putting the files back to its safety Checkpoint. */
 	undoRestore: (threadId: number) => typedError<RestoreOutcome, AppError>(__TAURI_INVOKE("undo_restore", { threadId })),
 	/**  The restore of a Thread that can still be undone, if there is one. */
@@ -164,8 +215,24 @@ export const commands = {
 	deleteLineComment: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("delete_line_comment", { id })),
 	/**  A Thread's draft comments, each flagged when its line has changed. */
 	listLineComments: (threadId: number) => typedError<LineComment_Serialize[], AppError>(__TAURI_INVOKE("list_line_comments", { threadId })),
-	/**  Sends every draft to the Thread as one prompt. */
-	sendLineComments: (threadId: number) => typedError<null, AppError>(__TAURI_INVOKE("send_line_comments", { threadId })),
+	/**  The prompt that sending the Thread's drafts would deliver, for the user to read and confirm. */
+	lineCommentsPrompt: (threadId: number) => typedError<string, AppError>(__TAURI_INVOKE("line_comments_prompt", { threadId })),
+	/**
+	 *  Sends every draft to the Thread as one prompt. For a terminal Thread, `confirmed` is the
+	 *  prompt the user was shown and confirmed: it is pasted (no Enter) only if it still is what the
+	 *  drafts produce, and never while the agent waits for an answer.
+	 */
+	sendLineComments: (threadId: number, confirmed: string | null) => typedError<null, AppError>(__TAURI_INVOKE("send_line_comments", { threadId, confirmed })),
+	/**
+	 *  Pastes a prompt the user confirmed into a terminal Thread's agent, without pressing Enter.
+	 *  Refused while the agent waits for an answer.
+	 */
+	deliverAgentPrompt: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("deliver_agent_prompt", { threadId, prompt })),
+	/**
+	 *  Opens a terminal Thread whose agent starts with the Fix prompt the user confirmed. Starts a
+	 *  process.
+	 */
+	createTerminalThreadWithFix: (projectId: number, prompt: string, reviewRound: boolean, provider: string | null, model: string | null, effort: string | null, permissionMode: PermissionMode | null, headBranch: string | null) => typedError<Thread_Serialize, AppError>(__TAURI_INVOKE("create_terminal_thread_with_fix", { projectId, prompt, reviewRound, provider, model, effort, permissionMode, headBranch })),
 	/**  Sends a request that addresses selected reviewer comments, counting it as a review round. */
 	sendReviewerComments: (threadId: number, prompt: string) => typedError<null, AppError>(__TAURI_INVOKE("send_reviewer_comments", { threadId, prompt })),
 	/**  Checks out a branch; a remote one (`origin/x`) becomes a tracking branch. */
@@ -201,6 +268,8 @@ export const commands = {
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
 	/**  Checks the pull request's branch out in a Thread's checkout (`None`: the main one). */
 	checkoutPullRequest: (projectId: number, threadId: number | null, number: number) => typedError<null, AppError>(__TAURI_INVOKE("checkout_pull_request", { projectId, threadId, number })),
+	/**  The end of the log of a failed GitHub Actions check, for a Fix prompt (external content). */
+	failedCheckLog: (projectId: number, checkUrl: string) => typedError<string, AppError>(__TAURI_INVOKE("failed_check_log", { projectId, checkUrl })),
 	/**
 	 *  Opens a GitHub link, such as a check's run, in the system browser. A well-formed link
 	 *  outside GitHub and the fixed documentation is not opened: the answer is `Some(host)` (with
@@ -321,7 +390,7 @@ export type BlindReviewFinding = BlindReviewFinding_Serialize | BlindReviewFindi
 /**  One finding of a Blind review, anchored to the reviewed Diff or kept as plain text. */
 export type BlindReviewFinding_Deserialize = {
 	id: number,
-	reviewThreadId: number,
+	reviewId: number,
 	provider: string,
 	path?: string | null,
 	side?: CommentSide | null,
@@ -335,7 +404,7 @@ export type BlindReviewFinding_Deserialize = {
 /**  One finding of a Blind review, anchored to the reviewed Diff or kept as plain text. */
 export type BlindReviewFinding_Serialize = {
 	id: number,
-	reviewThreadId: number,
+	reviewId: number,
 	provider: string,
 	path: string | null,
 	side: CommentSide | null,
@@ -376,6 +445,32 @@ export type BlindReviewRequest_Serialize = {
 	turnIndex: number | null,
 	issue: string | null,
 };
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun = BlindReviewRun_Serialize | BlindReviewRun_Deserialize;
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun_Deserialize = {
+	id: number,
+	threadId?: number | null,
+	provider: string,
+	scope: string,
+	status: BlindReviewStatus,
+	error?: string | null,
+};
+
+/**  One Blind review of a Thread's change. */
+export type BlindReviewRun_Serialize = {
+	id: number,
+	threadId: number | null,
+	provider: string,
+	scope: string,
+	status: BlindReviewStatus,
+	error: string | null,
+};
+
+/**  Where a Blind review stands. */
+export type BlindReviewStatus = "running" | "finished" | "failed";
 
 /**  A Thread on the Thread Board with the Approvals it is waiting on. */
 export type BoardCard = BoardCard_Serialize | BoardCard_Deserialize;
@@ -441,6 +536,13 @@ export type ContinuedThread_Deserialize = {
 export type ContinuedThread_Serialize = {
 	thread: Thread_Serialize,
 	recap: string,
+};
+
+/**  An agent CLI the user added in Settings; its command runs through the user's shell. */
+export type CustomAgent = {
+	id: string,
+	name: string,
+	command: string,
 };
 
 export type DeleteOutcome = "deleted" | "needs-confirmation";
@@ -1015,6 +1117,7 @@ export type PullRequest = {
 	draft: boolean,
 	base: string,
 	head: string,
+	crossRepository: boolean,
 	author: string,
 	createdAt: string,
 };
@@ -1389,8 +1492,10 @@ export type Settings_Deserialize = {
 	providers: Providers_Deserialize,
 	confirmQuit: boolean,
 	deleteMergedBranches: boolean,
+	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
+	customAgents: CustomAgent[],
 };
 
 export type Settings_Serialize = {
@@ -1398,8 +1503,10 @@ export type Settings_Serialize = {
 	providers: Providers_Serialize,
 	confirmQuit: boolean,
 	deleteMergedBranches: boolean,
+	openThreadsAsTerminals: boolean,
 	claudeCustomizations: ClaudeCustomizations,
 	shortcuts: Shortcuts,
+	customAgents: CustomAgent[],
 };
 
 export type Shortcuts = {
@@ -1449,6 +1556,27 @@ export type TerminalCompletion = {
 	replacementIndex: number,
 	replacementLength: number,
 	matches: TerminalMatch[],
+};
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue = TerminalIssue_Serialize | TerminalIssue_Deserialize;
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue_Deserialize = {
+	number: number,
+	title: string,
+	body: string,
+	url?: string | null,
+	labels?: string[],
+};
+
+/**  The GitHub issue a terminal Thread starts from. */
+export type TerminalIssue_Serialize = {
+	number: number,
+	title: string,
+	body: string,
+	url: string | null,
+	labels: string[],
 };
 
 export type TerminalMatch = {
@@ -1577,7 +1705,7 @@ export type ThreadSnapshot_Serialize = {
 	supportedPermissionModes: PermissionMode[],
 };
 
-export type ThreadStatus = "working" | "needs-input" | "completed" | "error" | "interrupted";
+export type ThreadStatus = "working" | "needs-input" | "completed" | "error" | "interrupted" | "running" | "stopped";
 
 export type Thread_Deserialize = {
 	id: number,
@@ -1598,6 +1726,7 @@ export type Thread_Deserialize = {
 	setupOutput?: string | null,
 	issueNumber?: number | null,
 	blindReview: boolean,
+	terminal: boolean,
 };
 
 export type Thread_Serialize = {
@@ -1619,6 +1748,7 @@ export type Thread_Serialize = {
 	setupOutput: string | null,
 	issueNumber: number | null,
 	blindReview: boolean,
+	terminal: boolean,
 };
 
 export type TurnError = TurnError_Serialize | TurnError_Deserialize;
@@ -1653,6 +1783,8 @@ export type TurnPick = {
 	prompt: string,
 	/**  Without Checkpoints a Turn has no diff. */
 	checkpointed: boolean,
+	/**  When the Turn started. */
+	startedAt: string,
 };
 
 export type TurnSnapshot = TurnSnapshot_Serialize | TurnSnapshot_Deserialize;

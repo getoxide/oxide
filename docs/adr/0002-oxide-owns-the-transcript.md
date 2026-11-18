@@ -1,5 +1,7 @@
 # Oxide owns the transcript; Provider sessions are only for resuming
 
+> Superseded by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): a Thread's conversation lives in the Provider's own CLI, and Oxide no longer stores a Transcript. Oxide keeps only each Turn's start and end, and its Checkpoints.
+
 Oxide stores every Thread's Turns and Items, normalized, in its own SQLite database (`~/.oxide/oxide.db`) and renders Threads only from that copy; the Provider's session files are used solely to resume the conversation, never read for display. Reading them instead would mean three parsers for private, evolving formats, and would make a Thread unreadable as soon as the Provider cleans up: Claude Code deletes its sessions after 30 days by default, and `agy` documents no storage at all. The duplication is deliberate.
 
 ## Consequences

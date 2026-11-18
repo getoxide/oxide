@@ -7,10 +7,14 @@ const CHANGE_LABEL: Record<RestoreChange, string> = {
   removed: "is deleted",
 };
 
-/** How a Turn is named: its position and the start of its prompt. */
-function turnLabel(turn: { turnIndex: number; prompt: string }): string {
+/** How a Turn is named: its position and when it started. A terminal Thread's Turns have no prompt. */
+function turnLabel(turn: { turnIndex: number; prompt: string; startedAt: string }): string {
   const prompt = turn.prompt.replace(/\s+/g, " ").trim();
-  return `Turn ${turn.turnIndex + 1} · ${prompt.length > 60 ? `${prompt.slice(0, 59)}…` : prompt}`;
+  if (prompt) return `Turn ${turn.turnIndex + 1} · ${prompt.length > 60 ? `${prompt.slice(0, 59)}…` : prompt}`;
+  const started = new Date(turn.startedAt);
+  return Number.isNaN(started.getTime())
+    ? `Turn ${turn.turnIndex + 1}`
+    : `Turn ${turn.turnIndex + 1} · ${started.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
 }
 
 interface Props {
@@ -25,6 +29,9 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
   const [turns, setTurns] = useState<TurnPick[] | null>(null);
   const [pending, setPending] = useState<PendingRestore | null>(null);
   const [preview, setPreview] = useState<RestorePreview | null>(null);
+  /** The Turn the preview is for; `null` is the Thread's starting state. */
+  const [target, setTarget] = useState<number | null>(null);
+  const [startState, setStartState] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -35,16 +42,20 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
       if (result.status === "error") setError(result.error.message);
       else setTurns(result.data.filter((turn) => turn.checkpointed));
     });
+    void commands.startStateAvailable(threadId).then((result) => {
+      if (live && result.status === "ok") setStartState(result.data);
+    });
     void commands.pendingRestore(threadId).then((result) => {
       if (live && result.status === "ok") setPending(result.data);
     });
     return () => { live = false; };
   }, [threadId]);
 
-  async function ask(turnIndex: number) {
+  async function ask(turnIndex: number | null) {
     setError(null);
     const result = await commands.restorePreview(threadId, turnIndex);
     if (result.status === "error") return setError(result.error.message);
+    setTarget(turnIndex);
     setPreview(result.data);
   }
 
@@ -69,9 +80,13 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
         <h2>Restore files</h2>
         {preview ? (
           <div className="restore-confirm" role="alertdialog" aria-label="Confirm restore">
-            <span>Put the files back to how they were before Turn {preview.turnIndex + 1}?</span>
+            <span>
+              {target === null
+                ? "Put the files back to how they were when the Thread started?"
+                : `Put the files back to how they were before Turn ${target + 1}?`}
+            </span>
             {preview.files.length === 0 ? (
-              <span>No file stands between the checkout and that Turn.</span>
+              <span>No file stands between the checkout and that point.</span>
             ) : (
               <ul>
                 {preview.files.map((file) => (
@@ -81,7 +96,7 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
             )}
             <div className="restore-actions">
               <button type="button" className="btn primary" disabled={busy}
-                onClick={() => void finish(() => commands.restoreTurn(threadId, preview.turnIndex))}>
+                onClick={() => void finish(() => commands.restoreTurn(threadId, target))}>
                 Restore
               </button>
               <button type="button" className="btn" onClick={() => setPreview(null)}>Back</button>
@@ -90,7 +105,7 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
         ) : (
           <>
             {turns === null && !error && <p>Loading Turns…</p>}
-            {turns !== null && turns.length === 0 && <p>No Turn of this Thread has a Checkpoint to restore.</p>}
+            {turns !== null && turns.length === 0 && !startState && <p>No Turn of this Thread has a Checkpoint to restore.</p>}
             {turns !== null && turns.length > 0 && (
               <ul className="restore-turns" aria-label="Turns">
                 {turns.map((turn) => (
@@ -101,6 +116,11 @@ export function RestoreDialog({ threadId, onClose, onRestored }: Props) {
                   </li>
                 ))}
               </ul>
+            )}
+            {turns !== null && startState && (
+              <button type="button" className="btn" onClick={() => void ask(null)}>
+                Restore to the Thread's starting state
+              </button>
             )}
             {pending && (
               <button type="button" className="btn" disabled={busy}

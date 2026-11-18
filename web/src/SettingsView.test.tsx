@@ -46,7 +46,7 @@ function mockSettings(settings: Settings, onSave?: (saved: Settings) => void) {
 }
 
 const baseSettings = (): Settings => ({
-  defaultProvider: "claude", confirmQuit: true, deleteMergedBranches: false, shortcuts: DEFAULT_SHORTCUTS,
+  defaultProvider: "claude", customAgents: [], confirmQuit: true, deleteMergedBranches: false, openThreadsAsTerminals: false, shortcuts: DEFAULT_SHORTCUTS,
   claudeCustomizations: { claudeMd: false, skills: false, plugins: false, mcpServers: false, hooks: false },
   providers: {
     claude: { model: null, effort: null, permissionMode: "ask" },
@@ -200,4 +200,33 @@ it("groups model effort variants while keeping the saved effort selectable", asy
   act(() => high.click());
   await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Save")!.click());
   expect(saved?.providers.antigravity.effort).toBe("high");
+});
+
+it("adds a Custom agent with a name and command, saves it, and removes it again", async () => {
+  let saved: Settings | undefined;
+  mockSettings(baseSettings(), (s) => { saved = s; });
+  await act(async () => root.render(<SettingsView onRunCommand={() => {}} onClose={() => {}} />));
+  act(() => categoryButton("Providers").click());
+  const panel = categoryPanel("providers");
+  const setValue = (input: HTMLInputElement, value: string) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const add = [...panel.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes("Add a custom agent"))!;
+  expect(panel.textContent).toContain("no status or Turns unless it emits OSC 7501");
+  act(() => add.click());
+  await act(async () => {
+    setValue(panel.querySelector<HTMLInputElement>('input[aria-label="Custom agent 1 name"]')!, "My agent");
+    setValue(panel.querySelector<HTMLInputElement>('input[aria-label="Custom agent 1 command"]')!, "my-agent --fast");
+  });
+  const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Save")!;
+  await act(async () => save.click());
+  expect(saved?.customAgents).toHaveLength(1);
+  expect(saved?.customAgents[0]).toMatchObject({ name: "My agent", command: "my-agent --fast" });
+  expect(saved?.customAgents[0]!.id).toMatch(/^[a-z0-9]+$/);
+
+  const remove = panel.querySelector<HTMLButtonElement>('button[aria-label="Remove My agent"]')!;
+  act(() => remove.click());
+  await act(async () => save.click());
+  expect(saved?.customAgents).toEqual([]);
 });

@@ -41,7 +41,7 @@ import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMe
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
 import { defaultMergeMethod, mergeRequirements, readiness, unresolvedReviewThreads } from "./pullRequestReview";
 import { relativeTime } from "./relativeTime";
-import { pullRequestFixPrompt } from "./fixPullRequest";
+import { failingChecks, pullRequestFixPrompt } from "./fixPullRequest";
 import { reviewThreadsPrefix } from "./reviewKeys";
 import { threadLine } from "./reviewThreadPlacement";
 
@@ -56,7 +56,7 @@ interface PullRequestBrowserProps {
   refreshKey: number;
   /** Called after a checkout or merge, so other Git views reload. */
   onChanged: () => void;
-  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
+  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean, headBranch?: string | null) => Promise<void>;
   createRequest?: number;
   onCreateHandled?: () => void;
 }
@@ -249,7 +249,7 @@ interface PullRequestReviewProps {
   refreshKey: number;
   onBack: (done?: "merged" | "closed") => void;
   onChanged: () => void;
-  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean) => Promise<void>;
+  onFixPullRequest: (prompt: string, ownerThreadId?: number | null, reviewRound?: boolean, headBranch?: string | null) => Promise<void>;
 }
 
 /** How often an open pull request reloads while some of its checks are still running. */
@@ -382,7 +382,7 @@ export function PullRequestReview({
   const fixPrompt = live ? pullRequestFixPrompt(detail, selectedReviewThreads) : null;
   // A Board Thread records its branch; a chat Thread's worktree branch is only in its checkout,
   // so the selected one counts when it is checked out on the pull request's head.
-  const ownerThread = live
+  const ownerThread = live && !pr.crossRepository
     ? threads.find((thread) => thread.branch === pr.head)
       ?? (git?.branch === pr.head ? threads.find((thread) => thread.id === threadId) ?? null : null)
     : null;
@@ -451,7 +451,23 @@ export function PullRequestReview({
     setFixing(true);
     setError(null);
     try {
-      await onFixPullRequest(fixPrompt, ownerThread?.id ?? null, selectedReviewThreads.length > 0);
+      // The tail of each failing check's log, read now so the prompt the user confirms has it.
+      const checkLogs: Record<string, string> = {};
+      await Promise.all(
+        failingChecks(detail)
+          .filter((check) => check.url)
+          .slice(0, 3)
+          .map(async (check) => {
+            try {
+              const log = await commands.failedCheckLog(projectId, check.url!);
+              if (log?.status === "ok") checkLogs[check.name] = log.data;
+            } catch {
+              // The prompt goes without that log; the check's URL is still in it.
+            }
+          }),
+      );
+      const prompt = pullRequestFixPrompt(detail, selectedReviewThreads, checkLogs) ?? fixPrompt;
+      await onFixPullRequest(prompt, ownerThread?.id ?? null, selectedReviewThreads.length > 0, pr.crossRepository ? null : pr.head);
       setPickedReviewThreads(new Set());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

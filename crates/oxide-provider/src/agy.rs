@@ -42,11 +42,6 @@ pub fn command_for(program: &str, extra_env: &HashMap<String, String>) -> std::p
     cmd
 }
 
-/// Pinned version range for `agy` tested with Oxide (the fixtures come from 1.4.5).
-/// Range: >= 1.4.0, < 1.5.0
-pub const PINNED_VERSION_MIN: (u64, u64, u64) = (1, 4, 0);
-pub const PINNED_VERSION_MAX: (u64, u64, u64) = (1, 5, 0);
-
 // CLI-owned names take precedence over skills with the same name and can end a stream.
 const AGY_CLI_COMMANDS: &[&str] = &[
     "add-dir",
@@ -452,10 +447,6 @@ impl AgyProvider {
         crate::parse_version_string(raw)
     }
 
-    pub fn is_version_within_pinned_range(version: &str) -> bool {
-        crate::is_version_within_range(version, PINNED_VERSION_MIN, PINNED_VERSION_MAX)
-    }
-
     /// The Model catalog, from `agy models`.
     pub fn list_models(&self) -> Result<Vec<AgyModel>, ProviderError> {
         let output = self
@@ -706,14 +697,6 @@ impl AgyProvider {
         let raw = String::from_utf8_lossy(&version_output.stdout);
         let version = Self::parse_version_string(&raw)
             .or_else(|| Some(raw.trim().to_string()).filter(|v| !v.is_empty()));
-        let warning = version
-            .as_deref()
-            .filter(|v| !Self::is_version_within_pinned_range(v))
-            .map(|v| {
-                format!(
-                    "Antigravity CLI version {v} is outside the pinned range tested with Oxide (>= 1.4.0, < 1.5.0)"
-                )
-            });
 
         // `agy` has no auth command; listing models needs the cached credentials.
         let models_output = self.run_probe(&["models"]);
@@ -736,7 +719,7 @@ impl AgyProvider {
                 installed: true,
                 version,
                 authenticated,
-                warning,
+                warning: None,
             },
             Some(catalog),
         ))

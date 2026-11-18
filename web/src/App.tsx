@@ -4,7 +4,10 @@ import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ContextMenu } from "./ContextMenu";
 import { listenTo } from "./ipc";
-import { commands, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import { commands, type CustomAgent, type PermissionMode, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
+import { ModelEffortPicker } from "./ModelEffortPicker";
+import { cachedCatalogs, detectProviders, installedCache } from "./modelCatalogCache";
+import { launchableProviders, resolveLaunchFavourite, type LaunchChoice } from "./launchPicker";
 import type { CodeOpenRequest } from "./codeOpen";
 import {
   ChevronRightIcon,
@@ -41,6 +44,7 @@ import { ProjectOverview } from "./ProjectOverview";
 import { ProjectPalette } from "./ProjectPalette";
 import { ProjectServices } from "./ProjectServices";
 import { ServiceConflictDialog } from "./ServiceConflictDialog";
+import { DeliveryDialog } from "./DeliveryDialog";
 import { LinkConfirmDialog } from "./LinkConfirmDialog";
 import { QuitDialog } from "./QuitDialog";
 import { ThreadView } from "./ThreadView";
@@ -55,6 +59,8 @@ import { useShortcuts } from "./useShortcuts";
 import { useModifierHeld } from "./useModifierHeld";
 import { getDraft, isUnusedThread, setDraft } from "./threadDrafts";
 import { createDefaultThread } from "./createDefaultThread";
+import { AgentTerminalView } from "./AgentTerminalView";
+import { withBoardStatus } from "./board";
 import { filterThreads, sidebarProjects, threadTitle } from "./threadList";
 import { relativeAge } from "./relativeTime";
 import { rovingTab } from "./editorTabs";
@@ -99,6 +105,13 @@ export function App() {
   const shortcuts = useShortcuts();
   const keys = (action: ShortcutAction) => formatAccelerator(shortcuts[action]);
   const modifierHeld = useModifierHeld();
+  /** The "Open new Threads as terminals" preview: the Model picker then starts a new Thread. */
+  const [terminalThreads, setTerminalThreads] = useState(false);
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const [launchDefaults, setLaunchDefaults] = useState<{ model: string | null; effort: string | null; permissionMode: PermissionMode | null }>({ model: null, effort: null, permissionMode: null });
+  const [launchProvider, setLaunchProvider] = useState<"claude" | "codex" | "antigravity">("claude");
+  const defaultLaunchMode = launchDefaults.permissionMode;
   const [showTools, setShowTools] = useState(false);
   const [fallbackTool, setFallbackTool] = useState<string>("Files");
   const [activeToolsByProject, setActiveToolsByProject] = useState<Record<number, string>>({});
@@ -124,7 +137,7 @@ export function App() {
   }, []);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [threadsByProject, setThreadsByProject] = useState<Record<number, Thread[]>>({});
+  const [loadedThreads, setThreadsByProject] = useState<Record<number, Thread[]>>({});
   const [expandedProjectIds, setExpandedProjectIds] = useState<number[]>([]);
   const lastAutoExpandedProjectId = useRef<number | null>(null);
   const [lastSelectionLoaded, setLastSelectionLoaded] = useState(false);
@@ -142,6 +155,10 @@ export function App() {
   const [prefill, setPrefill] = useState<{ threadId: number; text: string } | null>(null);
   // The Project and Thread of the last session: `undefined` until read, `null` once applied.
   const restore = useRef<{ projectId: number; threadId: number | null } | null | undefined>(undefined);
+  const openProjectIds = useMemo(() => sidebarProjects(projects ?? []).map((project) => project.id), [projects]);
+  const attentionCards = useAttention(openProjectIds);
+  // A terminal Thread has no Transcript to report its status: Core's Board feed does.
+  const threadsByProject = useMemo(() => withBoardStatus(loadedThreads, attentionCards), [loadedThreads, attentionCards]);
   // Derived, so it always reflects the latest list (missing badge) and
   // disappears when the Project is hidden.
   const selected = projects?.find((p) => p.id === selectedId && !p.hidden) ?? null;
@@ -166,8 +183,6 @@ export function App() {
         : { ...previous, [selectedId]: "thread" });
     }
   }, [selectedId]);
-  const openProjectIds = useMemo(() => sidebarProjects(projects ?? []).map((project) => project.id), [projects]);
-  const attentionCards = useAttention(openProjectIds);
   // A requested jump: kept until its Thread is shown and the response focused, so loading or failure never drops it.
   const [attentionJump, setAttentionJump] = useState<{ target: AttentionTarget; failed: boolean } | null>(null);
   const pendingThread = useRef<number | null>(null);
@@ -489,8 +504,8 @@ export function App() {
   }, [setProjectThreads]);
 
   /** A new Thread in the Project with Settings defaults; `null` if it could not be created. */
-  const createThreadIn = useCallback(async (projectId: number): Promise<Thread | null> => {
-    const created = await createDefaultThread(projectId);
+  const createThreadIn = useCallback(async (projectId: number, launch?: LaunchChoice): Promise<Thread | null> => {
+    const created = await createDefaultThread(projectId, { terminal: true, launch });
     if (created.status === "error") {
       setOpenError(created.error.message);
       return null;
@@ -498,15 +513,51 @@ export function App() {
     return created.data;
   }, []);
 
-  const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false) => {
+  /** A Fix waiting for the user to read its prompt and confirm; nothing reaches an agent before. */
+  const [fixRequest, setFixRequest] = useState<
+    { projectId: number; prompt: string; ownerThreadId: number | null; reviewRound: boolean; headBranch: string | null } | null
+  >(null);
+  const fixPullRequest = async (projectId: number, prompt: string, ownerThreadId: number | null = null, reviewRound = false, headBranch: string | null = null) => {
+    setFixRequest({ projectId, prompt, ownerThreadId, reviewRound, headBranch });
+  };
+
+  /** Where a confirmed Fix goes: the branch's Thread if it can take it, else a new Thread. */
+  const fixOwner = (ownerThreadId: number | null) => {
+    const owner = ownerThreadId === null ? null : (threads ?? []).find((thread) => thread.id === ownerThreadId) ?? null;
+    if (!owner) return null;
+    // A terminal Thread takes a paste while its agent runs; a chat Thread only while idle.
+    if (owner.terminal) return owner.status === "stopped" || owner.status === "error" ? null : owner;
+    return owner.status === "working" ? null : owner;
+  };
+
+  const deliverFix = async ({ projectId, prompt, ownerThreadId, reviewRound, headBranch }: NonNullable<typeof fixRequest>) => {
+    const owner = fixOwner(ownerThreadId);
+    if (owner?.terminal) {
+      // Pasted into the running agent, without Enter; Core refuses while it waits for an answer.
+      const sent = reviewRound
+        ? await commands.sendReviewerComments(owner.id, prompt)
+        : await commands.deliverAgentPrompt(owner.id, prompt);
+      if (sent.status === "error") throw new Error(sent.error.message);
+      if (currentProjectRef.current === projectId) {
+        setSelectedThreadId(owner.id);
+        setMaximized(false);
+      }
+      return;
+    }
+    if (!owner && terminalThreads) {
+      const created = await commands.createTerminalThreadWithFix(projectId, prompt, reviewRound, null, null, null, null, headBranch);
+      if (created.status === "error") throw new Error(created.error.message);
+      if (currentProjectRef.current === projectId) {
+        setProjectThreads(projectId, (prev) => [created.data, ...(prev ?? [])]);
+        setSelectedThreadId(created.data.id);
+        setMaximized(false);
+      }
+      return;
+    }
     const send = (threadId: number) =>
       reviewRound
         ? commands.sendReviewerComments(threadId, prompt)
         : commands.sendPrompt(threadId, [{ kind: "text", text: prompt }]);
-    // The branch's Thread takes the request unless it is busy; otherwise a new Thread does.
-    const owner = ownerThreadId === null
-      ? null
-      : (threads ?? []).find((thread) => thread.id === ownerThreadId && thread.status !== "working") ?? null;
     if (owner) {
       // Keep the request recoverable in the composer if the Thread has no draft of its own.
       const hadDraft = Boolean(drafts[owner.id]);
@@ -533,6 +584,11 @@ export function App() {
       const sent = await send(thread.id);
       if (sent.status === "error") throw new Error(sent.error.message);
       setDrafts((prev) => setDraft(prev, thread.id, ""));
+    } catch (error) {
+      // The Thread exists now and keeps the request as its draft: sending again from the dialog
+      // would make a second one, so the dialog closes and the failure is reported.
+      setFixRequest(null);
+      setOpenError(error instanceof Error ? error.message : String(error));
     } finally {
       if (currentProjectRef.current === projectId) {
         setProjectThreads(projectId, (prev) => [thread, ...(prev ?? [])]);
@@ -545,7 +601,7 @@ export function App() {
 
   // Only one unused Thread (no Turn, no draft, not working) at a time: asking for another reopens it.
   const startingThread = useRef(false);
-  const startNewThread = useCallback(async () => {
+  const startNewThread = useCallback(async (launch?: LaunchChoice) => {
     if (!selected || startingThread.current) return;
     startingThread.current = true;
     try {
@@ -555,7 +611,8 @@ export function App() {
       const askForComposerFocus = (threadId: number) =>
         setNewThreadFocus({ threadId, id: ++newThreadFocusSequence.current });
       // Only Threads that could be unused need a Turn count; a failed lookup just rules one out.
-      const candidates = (threads ?? []).filter((t) => t.status !== "working" && getDraft(drafts, t.id).trim() === "");
+      // A chosen Provider, Model or Permission mode always starts a Thread of its own.
+      const candidates = launch ? [] : (threads ?? []).filter((t) => t.status !== "working" && !t.terminal && getDraft(drafts, t.id).trim() === "");
       const counts = await Promise.all(
         candidates.map((t) => commands.listTurns(t.id, 0, 1).catch(() => null)),
       );
@@ -569,7 +626,7 @@ export function App() {
         askForComposerFocus(empty.id);
         return;
       }
-      const created = await createThreadIn(selected.id).catch((cause: unknown) => {
+      const created = await createThreadIn(selected.id, launch).catch((cause: unknown) => {
         setOpenError(cause instanceof Error ? cause.message : String(cause));
         return null;
       });
@@ -585,6 +642,39 @@ export function App() {
       startingThread.current = false;
     }
   }, [selected, threads, drafts, createThreadIn, expandProject, selectThread, setProjectThreads]);
+
+  // Whether Threads open as terminals, and the Permission mode the picker preselects.
+  useEffect(() => {
+    if (showSettings) return;
+    let active = true;
+    void Promise.resolve(commands.getSettings())
+      .then(({ settings }) => {
+        if (!active) return;
+        setTerminalThreads(settings.openThreadsAsTerminals);
+        setCustomAgents(settings.customAgents ?? []);
+        // Every Provider has a launch recipe, so the default Provider is the one a new terminal
+        // Thread starts with; its own defaults preselect the picker.
+        const provider = (["claude", "codex", "antigravity"] as const).find((p) => p === settings.defaultProvider) ?? "claude";
+        setLaunchProvider(provider);
+        const defaults = settings.providers[provider];
+        setLaunchDefaults({ model: defaults?.model ?? null, effort: defaults?.effort ?? null, permissionMode: defaults?.permissionMode ?? null });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [showSettings]);
+
+  /** ⌘1..9 outside the picker: a new Thread with the nth Favourite Model, in Provider order. */
+  const startWithFavourite = useCallback(async (index: number) => {
+    await detectProviders();
+    const launchable = launchableProviders(installedCache);
+    if (launchable.length === 0) return;
+    const [favourites, catalogs] = await Promise.all([commands.getFavouriteModels(), cachedCatalogs(launchable)]);
+    if (favourites.status !== "ok") return;
+    const choice = resolveLaunchFavourite(index, catalogs, favourites.data, launchable, defaultLaunchMode);
+    if (choice) await startNewThread(choice);
+  }, [defaultLaunchMode, startNewThread]);
 
   /** Jumps to a Thread waiting on the user, by default the most urgent. Never answers or clears it. */
   const jumpToAttention = useCallback((target: AttentionTarget | null = attentionTarget(attentionCards, openProjectIds)) => {
@@ -794,7 +884,21 @@ export function App() {
         jumpToAttention();
         return;
       }
-      // The Model picker belongs to the open Thread, which handles it.
+      // The Model picker belongs to the open Thread, which handles it; with terminal Threads it
+      // starts a new one, so it lives here.
+      if (terminalThreads && selected && !showSettings && action === "modelPicker") {
+        e.preventDefault();
+        setLaunchPickerOpen((open) => !open);
+        return;
+      }
+      if (terminalThreads && selected && !showSettings && !launchPickerOpen) {
+        const index = modelDigitShortcut(e);
+        if (index !== null) {
+          e.preventDefault();
+          void startWithFavourite(index);
+          return;
+        }
+      }
       if (!action || action === "modelPicker") return;
       if (action === "newThread") {
         if (selected) {
@@ -866,7 +970,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shortcuts, selected, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
+  }, [shortcuts, selected, terminalThreads, launchPickerOpen, startWithFavourite, startNewThread, closeThread, showSettings, showTools, activeTool, currentThreadId, threads, selectSurface, layout.sidebarVisible, dockVisible, canMaximize, maximized, focusRegion, selectThread, jumpToAttention, serviceConflict]);
 
   // ⌘1..9 (Ctrl+1..9 elsewhere) picks the nth visible sidebar Thread. Capture runs before the
   // Thread's own digit shortcuts, but an open picker or dialog keeps those digits for itself.
@@ -946,6 +1050,22 @@ export function App() {
     };
   }, [selected, createThreadIn, threadReload, selectThread, setProjectThreads]);
 
+  const gitControlsFor = (project: Project, threadId: number) => !project.missing ? (
+      <GitHeader
+        projectId={project.id}
+        threadId={threadId}
+        threadsKey={threadsKey}
+        agentBusy={["working", "needs-input"].includes(selectedThread?.status ?? "")}
+        threadProvider={selectedThread?.provider}
+        threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
+        threadWorking={selectedThread?.status === "working"}
+        threadNeedsInput={selectedThread?.status === "needs-input"}
+        onRestored={onRestored}
+        onOpenPullRequest={openPullRequest}
+        onChanged={onGitChanged}
+      />
+    ) : undefined;
+
   const starting = !projectsLoaded || !lastSelectionLoaded || (selected !== null && threads === null);
 
   useEffect(() => {
@@ -966,6 +1086,20 @@ export function App() {
         }}
       />
       <QuitDialog />
+      {fixRequest && (() => {
+        const owner = fixOwner(fixRequest.ownerThreadId);
+        return (
+          <DeliveryDialog
+            title="Send Fix to the agent"
+            prompt={fixRequest.prompt}
+            destination={!owner && terminalThreads ? "new-thread" : "paste"}
+            blocked={owner?.terminal && owner.status === "needs-input" ? "The agent is waiting for an answer. Answer it in the terminal, then send the Fix." : null}
+            confirmLabel={owner ? "Send to Thread" : "Start new Thread"}
+            onConfirm={async () => { await deliverFix(fixRequest); setFixRequest(null); }}
+            onCancel={() => setFixRequest(null)}
+          />
+        );
+      })()}
       <LinkConfirmDialog />
       <WorkspaceOverlays ref={overlays} projects={projects ?? []} onProjectsScanned={onProjectsScanned}
         onStartThread={startThreadIn} onOpenProject={openProject} onThreadDeleted={onThreadDeleted} />
@@ -1169,28 +1303,23 @@ export function App() {
                 </button>
               </div>
             <main className="centre" aria-label="Thread" hidden={centreView === "code"}>
+              {selectedThread?.terminal ? (
+                <AgentTerminalView
+                  key={selectedThread.id}
+                  customAgents={customAgents}
+                  thread={selectedThread}
+                  visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
+                  gitControls={gitControlsFor(selected, currentThreadId)}
+                  onThreadUpdated={onThreadUpdated}
+                  onThreadTitleChange={onThreadTitleChange}
+                />
+              ) : (
               <ThreadView
+                modelShortcuts={!terminalThreads}
                 visible={!showSettings && !(maximized && dockVisible) && centreView === "thread"}
                 threadId={currentThreadId}
                 projectId={selected.id}
-                gitControls={!selected.missing ? (
-                  <GitHeader
-                    projectId={selected.id}
-                    threadId={currentThreadId}
-                    threadsKey={threadsKey}
-                    agentBusy={["working", "needs-input"].includes(selectedThread?.status ?? "")}
-                    threadProvider={selectedThread?.provider}
-                    threadIssue={selectedThread?.issueNumber != null ? `#${selectedThread.issueNumber}` : null}
-                    threadWorking={selectedThread?.status === "working"}
-                    onThreadCreated={(thread) => {
-                      setProjectThreads(thread.projectId, (prev) => [thread, ...(prev ?? []).filter((t) => t.id !== thread.id)]);
-                      selectThread(thread.id);
-                    }}
-                    onRestored={onRestored}
-                    onOpenPullRequest={openPullRequest}
-                    onChanged={onGitChanged}
-                  />
-                ) : undefined}
+                gitControls={gitControlsFor(selected, currentThreadId)}
                 draft={getDraft(drafts, currentThreadId)}
                 onDraftChange={(text) =>
                   setDrafts((prev) => setDraft(prev, currentThreadId, text))
@@ -1223,6 +1352,7 @@ export function App() {
                 newThreadFocus={newThreadFocus?.threadId === currentThreadId ? newThreadFocus : null}
                 onNewThreadFocusHandled={() => setNewThreadFocus(null)}
               />
+              )}
             </main>
             {workbenches.map((context) => openedSurfaces[context.key]?.code && (
               <Suspense key={context.key} fallback={centreView === "code" && context.key === workbenchContext?.key
@@ -1302,7 +1432,7 @@ export function App() {
                   threads={threads ?? []}
                   refreshKey={gitRevision + turnRevision.count}
                   onChanged={onGitChanged}
-                  onFixPullRequest={(prompt, ownerThreadId, reviewRound) => fixPullRequest(selected.id, prompt, ownerThreadId, reviewRound)}
+                  onFixPullRequest={(prompt, ownerThreadId, reviewRound, headBranch) => fixPullRequest(selected.id, prompt, ownerThreadId, reviewRound, headBranch ?? null)}
                 />
               </Suspense></div>
             )}
@@ -1366,6 +1496,23 @@ export function App() {
             )}
           </aside>
       </div>
+      {launchPickerOpen && selected && (
+        <ModelEffortPicker
+          open
+          launch={{
+            defaultPermissionMode: defaultLaunchMode,
+            customAgents,
+            onLaunch: (choice) => void startNewThread(choice),
+          }}
+          onClose={() => setLaunchPickerOpen(false)}
+          currentProvider={launchProvider}
+          currentModel={launchDefaults.model}
+          currentEffort={launchDefaults.effort}
+          turnCount={0}
+          midThreadModelSwitch
+          onSelectModelAndEffort={() => {}}
+        />
+      )}
     </div>
   );
 }

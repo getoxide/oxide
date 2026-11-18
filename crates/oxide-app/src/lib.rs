@@ -238,8 +238,19 @@ pub struct Settings {
     providers: Providers,
     confirm_quit: bool,
     delete_merged_branches: bool,
+    open_threads_as_terminals: bool,
     claude_customizations: ClaudeCustomizations,
     shortcuts: Shortcuts,
+    custom_agents: Vec<CustomAgent>,
+}
+
+/// An agent CLI the user added in Settings; its command runs through the user's shell.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomAgent {
+    id: String,
+    name: String,
+    command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -465,6 +476,8 @@ pub enum ThreadStatus {
     Completed,
     Error,
     Interrupted,
+    Running,
+    Stopped,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -526,6 +539,7 @@ pub struct Thread {
     pub setup_output: Option<String>,
     pub issue_number: Option<u32>,
     pub blind_review: bool,
+    pub terminal: bool,
 }
 
 /// An Approval the Provider is still waiting on.
@@ -910,6 +924,189 @@ fn resize_terminal(
 #[allow(clippy::needless_pass_by_value)]
 fn close_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), AppError> {
     Ok(core.close_terminal(terminal_id)?)
+}
+
+/// Opens a terminal Thread: a worktree and Setup command (unless the Project keeps Threads in
+/// its main checkout), then Claude Code in an Agent terminal. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn create_terminal_thread(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
+) -> Result<Thread, AppError> {
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_with(project_id, &choice)
+    })
+    .await
+    .map(Thread::from)
+}
+
+/// The GitHub issue a terminal Thread starts from.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIssue {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+impl From<TerminalIssue> for oxide_core::TerminalIssue {
+    fn from(issue: TerminalIssue) -> Self {
+        Self {
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            url: issue.url,
+            labels: issue.labels,
+        }
+    }
+}
+
+/// Opens a terminal Thread for a GitHub issue: a worktree and branch named after it, the Setup
+/// command, then the agent launched with a prompt built from the issue (its title and body quoted
+/// as external content). Starts a process.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // flat arguments are the IPC contract
+#[specta::specta]
+async fn create_terminal_thread_from_issue(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    issue: TerminalIssue,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
+    base: Option<String>,
+) -> Result<Thread, AppError> {
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    let issue: oxide_core::TerminalIssue = issue.into();
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_from_issue_on(project_id, &issue, &choice, base.as_deref())
+    })
+    .await
+    .map(Thread::from)
+}
+
+/// The prompt a terminal Thread from an issue would start with, for the user to read and confirm
+/// before it is pasted into a Custom agent. Starts nothing.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn terminal_issue_prompt(core: State<'_, Arc<Core>>, issue: TerminalIssue) -> String {
+    core.issue_prompt_preview(&issue.into())
+}
+
+/// Attaches the view to a terminal Thread's Agent terminal: the recent output first, then what
+/// it prints. A newer attachment replaces the previous one.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn attach_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    on_output: tauri::ipc::Channel<Vec<u8>>,
+) -> Result<(), AppError> {
+    let attachment = core.attach_agent_terminal(thread_id)?;
+    std::thread::spawn(move || {
+        if !attachment.replay.is_empty() && on_output.send(attachment.replay).is_err() {
+            return;
+        }
+        while let Ok(chunk) = attachment.feed.recv() {
+            if on_output.send(chunk).is_err() {
+                break;
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Writes what the user typed, pasted or dropped into a terminal Thread's agent. Writes into a
+/// process; Core refuses unknown or chat Threads and input over 1 MiB.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn write_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    input: Vec<u8>,
+) -> Result<(), AppError> {
+    Ok(core.write_agent_terminal(thread_id, &input)?)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn resize_agent_terminal(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    rows: u16,
+    cols: u16,
+) -> Result<(), AppError> {
+    Ok(core.resize_agent_terminal(thread_id, rows, cols)?)
+}
+
+/// Ends a terminal Thread's agent.
+#[tauri::command]
+#[specta::specta]
+async fn stop_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
+    git_blocking(&core, move |core| core.stop_agent(thread_id)).await
+}
+
+/// Relaunches a stopped terminal Thread's agent in the same Provider session. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn restart_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.restart_agent(thread_id))
+        .await
+        .map(Thread::from)
+}
+
+/// Opens a terminal Thread: resumes its Provider session if Oxide was relaunched since its agent
+/// ran. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn open_agent(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.open_agent(thread_id))
+        .await
+        .map(Thread::from)
+}
+
+/// Whether resuming the Thread's agent failed because its Provider session no longer exists.
+#[tauri::command]
+#[specta::specta]
+async fn agent_session_gone(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<bool, AppError> {
+    git_blocking(&core, move |core| core.agent_session_gone(thread_id)).await
+}
+
+/// Starts a new Provider session in the Thread's checkout after the old one was lost, and stores
+/// its id. Starts a process.
+#[tauri::command]
+#[specta::specta]
+async fn start_fresh_agent_session(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Thread, AppError> {
+    git_blocking(&core, move |core| core.start_fresh_agent_session(thread_id))
+        .await
+        .map(Thread::from)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -1599,11 +1796,83 @@ async fn list_line_comments(
         .map(|c| c.into_iter().map(LineComment::from).collect())
 }
 
-/// Sends every draft to the Thread as one prompt.
+/// The prompt that sending the Thread's drafts would deliver, for the user to read and confirm.
 #[tauri::command]
 #[specta::specta]
-async fn send_line_comments(core: State<'_, Arc<Core>>, thread_id: u32) -> Result<(), AppError> {
-    git_blocking(&core, move |core| core.send_line_comments(thread_id)).await
+async fn line_comments_prompt(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| core.line_comments_prompt(thread_id)).await
+}
+
+/// Sends every draft to the Thread as one prompt. For a terminal Thread, `confirmed` is the
+/// prompt the user was shown and confirmed: it is pasted (no Enter) only if it still is what the
+/// drafts produce, and never while the agent waits for an answer.
+#[tauri::command]
+#[specta::specta]
+async fn send_line_comments(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    confirmed: Option<String>,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| match confirmed {
+        Some(prompt) if core.is_terminal_thread(thread_id) => {
+            core.send_line_comments_confirmed(thread_id, &prompt)
+        }
+        _ => core.send_line_comments(thread_id),
+    })
+    .await
+}
+
+/// Pastes a prompt the user confirmed into a terminal Thread's agent, without pressing Enter.
+/// Refused while the agent waits for an answer.
+#[tauri::command]
+#[specta::specta]
+async fn deliver_agent_prompt(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+    prompt: String,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.deliver_agent_prompt(thread_id, &prompt)
+    })
+    .await
+}
+
+/// Opens a terminal Thread whose agent starts with the Fix prompt the user confirmed. Starts a
+/// process.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)] // flat arguments are the IPC contract
+async fn create_terminal_thread_with_fix(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    prompt: String,
+    review_round: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission_mode: Option<PermissionMode>,
+    head_branch: Option<String>,
+) -> Result<Thread, AppError> {
+    let choice = oxide_core::TerminalLaunch {
+        provider,
+        model,
+        effort,
+        permission_mode: permission_mode.map(Into::into),
+    };
+    git_blocking(&core, move |core| {
+        core.start_terminal_thread_with_fix_on(
+            project_id,
+            &choice,
+            &prompt,
+            review_round,
+            head_branch.as_deref(),
+        )
+    })
+    .await
+    .map(Thread::from)
 }
 
 /// Sends a request that addresses selected reviewer comments, counting it as a review round.
@@ -1628,6 +1897,8 @@ pub struct TurnPick {
     pub prompt: String,
     /// Without Checkpoints a Turn has no diff.
     pub checkpointed: bool,
+    /// When the Turn started.
+    pub started_at: String,
 }
 
 /// The Thread's Turns, oldest first, for the Turn picker.
@@ -1645,6 +1916,7 @@ async fn list_turn_picks(
                 turn_index: p.turn_index,
                 prompt: p.prompt,
                 checkpointed: p.checkpointed,
+                started_at: p.started_at,
             })
             .collect::<Vec<_>>())
     })
@@ -1711,10 +1983,11 @@ pub struct PendingRestore {
 async fn restore_preview(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
-    turn_index: u32,
+    turn_index: Option<u32>,
 ) -> Result<RestorePreview, AppError> {
-    git_blocking(&core, move |core| {
-        core.restore_preview(thread_id, turn_index)
+    git_blocking(&core, move |core| match turn_index {
+        Some(turn_index) => core.restore_preview(thread_id, turn_index),
+        None => core.restore_start_preview(thread_id),
     })
     .await
     .map(RestorePreview::from)
@@ -1726,11 +1999,24 @@ async fn restore_preview(
 async fn restore_turn(
     core: State<'_, Arc<Core>>,
     thread_id: u32,
-    turn_index: u32,
+    turn_index: Option<u32>,
 ) -> Result<RestoreOutcome, AppError> {
-    git_blocking(&core, move |core| core.restore_turn(thread_id, turn_index))
-        .await
-        .map(RestoreOutcome::from)
+    git_blocking(&core, move |core| match turn_index {
+        Some(turn_index) => core.restore_turn(thread_id, turn_index),
+        None => core.restore_to_start(thread_id),
+    })
+    .await
+    .map(RestoreOutcome::from)
+}
+
+/// Whether a Thread has a starting state Restore can go back to.
+#[tauri::command]
+#[specta::specta]
+async fn start_state_available(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<bool, AppError> {
+    git_blocking(&core, move |core| Ok(core.start_state_available(thread_id))).await
 }
 
 /// Undoes a Thread's latest restore, putting the files back to its safety Checkpoint.
@@ -1853,6 +2139,7 @@ pub struct PullRequest {
     pub draft: bool,
     pub base: String,
     pub head: String,
+    pub cross_repository: bool,
     pub author: String,
     pub created_at: String,
 }
@@ -2485,6 +2772,20 @@ async fn edit_pull_request(
     .await
 }
 
+/// The end of the log of a failed GitHub Actions check, for a Fix prompt (external content).
+#[tauri::command]
+#[specta::specta]
+async fn failed_check_log(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    check_url: String,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| {
+        core.failed_check_log(project_id, &check_url)
+    })
+    .await
+}
+
 /// Checks the pull request's branch out in a Thread's checkout (`None`: the main one).
 #[tauri::command]
 #[specta::specta]
@@ -2582,12 +2883,33 @@ pub enum FindingDecision {
     Dismissed,
 }
 
+/// Where a Blind review stands.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum BlindReviewStatus {
+    Running,
+    Finished,
+    Failed,
+}
+
+/// One Blind review of a Thread's change.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindReviewRun {
+    pub id: u32,
+    pub thread_id: Option<u32>,
+    pub provider: String,
+    pub scope: String,
+    pub status: BlindReviewStatus,
+    pub error: Option<String>,
+}
+
 /// One finding of a Blind review, anchored to the reviewed Diff or kept as plain text.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BlindReviewFinding {
     pub id: u32,
-    pub review_thread_id: u32,
+    pub review_id: u32,
     pub provider: String,
     pub path: Option<String>,
     pub side: Option<CommentSide>,
@@ -2617,20 +2939,42 @@ fn blind_review_providers(
         .collect())
 }
 
+/// Starts a Blind review: sets it up, then runs the reviewing Provider once in the background.
+/// Returns at once with the running review; its findings appear when it finishes.
 #[tauri::command]
 #[specta::specta]
 async fn start_blind_review(
     core: State<'_, Arc<Core>>,
     request: BlindReviewRequest,
-) -> Result<Thread, AppError> {
+) -> Result<BlindReviewRun, AppError> {
     let req: oxide_core::BlindReviewRequest = request.into();
-    git_blocking(&core, move |core| core.start_blind_review(req))
-        .await
-        .map(Thread::from)
+    let prepared = git_blocking(&core, move |core| core.prepare_blind_review(req)).await?;
+    let run = BlindReviewRun::from(prepared.run().clone());
+    let background = Arc::clone(&core);
+    tauri::async_runtime::spawn_blocking(move || {
+        let id = prepared.run().id;
+        if let Err(error) = background.execute_blind_review(prepared) {
+            // Never leave the run `running` for good.
+            background.fail_blind_review(id, &error.to_string());
+        }
+    });
+    Ok(run)
 }
 
-/// The Blind review findings of a Thread (or of a review Thread itself), parsed once from the
-/// review's closing message and validated against the reviewed Diff.
+/// The Blind reviews of a Thread, with whether each is running, finished or failed.
+#[tauri::command]
+#[specta::specta]
+async fn list_blind_reviews(
+    core: State<'_, Arc<Core>>,
+    thread_id: u32,
+) -> Result<Vec<BlindReviewRun>, AppError> {
+    git_blocking(&core, move |core| core.blind_review_runs(thread_id))
+        .await
+        .map(|runs| runs.into_iter().map(BlindReviewRun::from).collect())
+}
+
+/// The Blind review findings of a Thread, parsed once from the review's closing message and
+/// validated against the reviewed Diff.
 #[tauri::command]
 #[specta::specta]
 async fn list_blind_review_findings(
@@ -3296,6 +3640,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         dispatch_thread,
         blind_review_providers,
         start_blind_review,
+        list_blind_reviews,
         list_blind_review_findings,
         keep_blind_review_finding,
         dismiss_blind_review_finding,
@@ -3330,6 +3675,17 @@ pub fn builder() -> Builder<tauri::Wry> {
         dismiss_rule_suggestion,
         accept_rule_suggestion,
         start_block_terminal,
+        create_terminal_thread,
+        create_terminal_thread_from_issue,
+        terminal_issue_prompt,
+        attach_agent_terminal,
+        write_agent_terminal,
+        resize_agent_terminal,
+        stop_agent,
+        restart_agent,
+        open_agent,
+        agent_session_gone,
+        start_fresh_agent_session,
         write_file,
         language_tools,
         system_fonts,
@@ -3357,12 +3713,16 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_turn_picks,
         restore_preview,
         restore_turn,
+        start_state_available,
         undo_restore,
         pending_restore,
         edit_line_comment,
         delete_line_comment,
         list_line_comments,
+        line_comments_prompt,
         send_line_comments,
+        deliver_agent_prompt,
+        create_terminal_thread_with_fix,
         send_reviewer_comments,
         checkout_branch,
         create_branch,
@@ -3382,6 +3742,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         merge_pull_request,
         close_pull_request,
         checkout_pull_request,
+        failed_check_log,
         open_link,
         open_local_url,
         set_pull_request_draft,
@@ -3643,6 +4004,7 @@ mod tests {
                 setup_output: None,
                 issue_number: None,
                 blind_review: false,
+                terminal: false,
             },
             turns: vec![oxide_core::TurnSnapshot {
                 id: 3,

@@ -2,7 +2,9 @@ import { readText, storageKeys, writeText } from "./storage";
 import { modelDigitShortcut, shortcutLabel } from "./shortcuts";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LockIcon, StarFillIcon, StarIcon, XIcon } from "@primer/octicons-react";
-import { commands, type ModelInfo } from "./bindings";
+import { commands, type CustomAgent, type ModelInfo, type PermissionMode } from "./bindings";
+import { CUSTOM_AGENT_LIMITS, customProviderId } from "./customAgents";
+import { LAUNCH_RECIPES, launchChoice, nextPermissionMode, permissionModeNote, permissionModesFor, type LaunchChoice } from "./launchPicker";
 import { ProviderMark } from "./ProviderMark";
 import { catalogCache, detectProviders, installedCache, loadCatalog } from "./modelCatalogCache";
 import { effortBlurb, effortLook } from "./effortStyle";
@@ -33,7 +35,23 @@ function rememberedTab(tabs: string[], fallback: string): string {
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+const PERMISSION_LABELS: Record<PermissionMode, string> = {
+  ask: "Ask",
+  "auto-edit": "Auto-edit",
+  "full-access": "Full access",
+};
+
+/** Starting a new Thread: the picker preselects the Settings defaults and Enter launches. */
+export interface LaunchMode {
+  defaultPermissionMode: PermissionMode | null;
+  /** Custom agents from Settings, offered as launch targets next to the Providers. */
+  customAgents?: CustomAgent[];
+  onLaunch: (choice: LaunchChoice) => void;
+}
+
 export interface ModelEffortPickerProps {
+  /** Set when the picker starts a new Thread instead of switching a running one's Model. */
+  launch?: LaunchMode;
   open: boolean;
   onClose: () => void;
   currentProvider: string;
@@ -49,6 +67,7 @@ export interface ModelEffortPickerProps {
 }
 
 export function ModelEffortPicker({
+  launch,
   open,
   onClose,
   currentProvider,
@@ -70,10 +89,16 @@ export function ModelEffortPicker({
   const listRef = useRef<HTMLDivElement>(null);
 
   const modelSwitchLocked = turnCount > 0 && !midThreadModelSwitch;
+  /** Launching offers only the Providers with a terminal launch recipe. */
+  const offered = useMemo(
+    () => (launch ? PROVIDERS.filter((p) => LAUNCH_RECIPES.includes(p.id)) : PROVIDERS),
+    [launch],
+  );
+  const [permissionMode, setPermissionMode] = useState<PermissionMode | null>(launch?.defaultPermissionMode ?? null);
 
   const tabs = useMemo(
-    () => ["favourites", ...PROVIDERS.filter((p) => detecting || !unavailable.includes(p.id)).map((p) => p.id as string), ...(currentProvider === "fake" ? ["fake"] : [])],
-    [currentProvider, unavailable, detecting]
+    () => ["favourites", ...offered.filter((p) => detecting || !unavailable.includes(p.id)).map((p) => p.id as string), ...(currentProvider === "fake" && !launch ? ["fake"] : [])],
+    [currentProvider, unavailable, detecting, offered, launch]
   );
   const ctx = useMemo<PickerContext>(
     () => ({ tabs, catalogs, currentProvider, currentModel, locked: modelSwitchLocked, favourites, unavailable }),
@@ -121,8 +146,8 @@ export function ModelEffortPicker({
       }
 
       const providersToFetch = [
-        ...detected.filter((p) => p.installed).map((p) => p.id),
-        ...(currentProvider === "fake" ? ["fake"] : []),
+        ...detected.filter((p) => p.installed && offered.some((o) => o.id === p.id)).map((p) => p.id as string),
+        ...(currentProvider === "fake" && !launch ? ["fake"] : []),
       ];
 
       // Each Provider lands as soon as it answers; the slow ones (spawning a CLI)
@@ -146,7 +171,7 @@ export function ModelEffortPicker({
     return () => {
       active = false;
     };
-  }, [open, currentProvider]);
+  }, [open, currentProvider, offered, launch]);
 
   const toggleFavourite = async (modelId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -175,6 +200,18 @@ export function ModelEffortPicker({
     document.getElementById(optionId(highlightedIndex))?.scrollIntoView?.({ block: "nearest" });
   }, [highlightedIndex]);
 
+  const permissionModeRef = useRef(permissionMode);
+  useLayoutEffect(() => { permissionModeRef.current = permissionMode; });
+  /** Apply a choice: start a Thread with it when launching, else switch the open Thread to it. */
+  const commit = useCallback(
+    (provider: string, model: string | null, effort: string | null) => {
+      if (launch) launch.onLaunch(launchChoice(provider, model, effort, permissionModeRef.current));
+      else onSelectModelAndEffort(provider, model, effort);
+      onClose();
+    },
+    [launch, onSelectModelAndEffort, onClose],
+  );
+
   /** Apply `row` with the Effort the slider would show for it, and close. */
   const applyRow = useCallback(
     (row: PickerRow) => {
@@ -182,10 +219,9 @@ export function ModelEffortPicker({
       const aimed = pickerReduce(stateRef.current, { type: "hover", family: modelFamilyId(row.model.id) }, ctxRef.current);
       const choice = resolvePickerChoice(aimed, ctxRef.current);
       if (!choice) return;
-      onSelectModelAndEffort(choice.provider, choice.model, choice.effort);
-      onClose();
+      commit(choice.provider, choice.model, choice.effort);
     },
-    [onSelectModelAndEffort, onClose]
+    [commit]
   );
 
   // The picker handles its keys at the window, so they work wherever focus sits.
@@ -209,14 +245,16 @@ export function ModelEffortPicker({
       case "ArrowUp": dispatch({ type: "move", delta: -1 }); break;
       case "ArrowRight": dispatch({ type: "step-effort", delta: 1 }); break;
       case "ArrowLeft": dispatch({ type: "step-effort", delta: -1 }); break;
+      case "p":
+      case "P":
+        if (!launch) return;
+        setPermissionMode((mode) => nextPermissionMode(stateRef.current.tab === "favourites" ? "claude" : stateRef.current.tab, mode, e.shiftKey ? -1 : 1));
+        break;
       case "Tab": dispatch({ type: "cycle-tab", delta: e.shiftKey ? -1 : 1 }); break;
       case "Enter": {
         if (e.isComposing) return;
         const choice = resolvePickerChoice(stateRef.current, ctxRef.current);
-        if (choice) {
-          onSelectModelAndEffort(choice.provider, choice.model, choice.effort);
-          onClose();
-        }
+        if (choice) commit(choice.provider, choice.model, choice.effort);
         break;
       }
       default: return;
@@ -252,7 +290,8 @@ export function ModelEffortPicker({
         className={`model-row ${legacy ? "legacy-row" : ""} ${row.isCurrent ? "selected" : ""} ${
           isHighlighted ? "highlighted" : ""
         } ${row.locked ? "locked" : ""}`}
-        onClick={() => applyRow(row)}
+        onClick={() => (launch ? dispatch({ type: "hover", family }) : applyRow(row))}
+        onDoubleClick={() => launch && applyRow(row)}
         onMouseMove={() => dispatch({ type: "hover", family })}
         onMouseDown={keepFocus}
         role="option"
@@ -290,6 +329,8 @@ export function ModelEffortPicker({
 
   const look = effortIndex >= 0 ? effortLook(efforts[effortIndex]!, effortIndex, efforts.length) : null;
   const markerAt = effortIndex >= 0 ? ((effortIndex + 0.5) / efforts.length) * 100 : 0;
+  const launchProvider = highlightedProvider ?? (state.tab === "favourites" ? offered[0]?.id ?? "claude" : state.tab);
+  const launchMode = launchChoice(launchProvider, null, null, permissionMode).permissionMode;
   const isDefaultEffort = !!state.effort && state.effort === highlightedModel?.defaultEffort;
 
   return (
@@ -297,7 +338,7 @@ export function ModelEffortPicker({
       <div className="modal model-picker-modal" onClick={(e) => e.stopPropagation()}>
         <div className="model-picker-header">
           <nav className="provider-tabs" aria-label="Providers">
-            {["favourites", ...PROVIDERS.map((p) => p.id), ...(currentProvider === "fake" ? ["fake"] : [])].map((id) => (
+            {["favourites", ...offered.filter((p) => !launch || detecting || !unavailable.includes(p.id)).map((p) => p.id), ...(currentProvider === "fake" && !launch ? ["fake"] : [])].map((id) => (
               <button
                 key={id}
                 type="button"
@@ -355,6 +396,28 @@ export function ModelEffortPicker({
                 </>
               )}
             </div>
+            {launch && (launch.customAgents ?? []).length > 0 && (
+              <div className="custom-agent-launch" role="group" aria-label="Custom agents">
+                <div className="models-group-title">Custom agents</div>
+                {(launch.customAgents ?? []).map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className="model-row"
+                    title={CUSTOM_AGENT_LIMITS}
+                    onClick={() => {
+                      launch.onLaunch(launchChoice(customProviderId(agent), null, null, "auto-edit"));
+                      onClose();
+                    }}
+                  >
+                    <div className="model-details">
+                      <span className="model-name">{agent.name}</span>
+                      <div className="model-desc">No status or Turns unless it reports them</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div
@@ -424,11 +487,34 @@ export function ModelEffortPicker({
                 </p>
               </>
             )}
+            {launch && (
+              <div className="permission-modes" role="radiogroup" aria-label="Permission mode">
+                {permissionModesFor(launchProvider).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === launchMode}
+                    tabIndex={-1}
+                    className={`permission-mode ${mode === launchMode ? "active" : ""}`}
+                    onMouseDown={keepFocus}
+                    onClick={() => setPermissionMode(mode)}
+                  >
+                    {PERMISSION_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {launch && permissionModeNote(launchProvider, launchMode) && (
+              <p className="permission-note">{permissionModeNote(launchProvider, launchMode)}</p>
+            )}
           </div>
         </div>
 
         <div className="picker-legend">
-          ↑↓ Model · ←→ Effort · Tab Provider · ↩ Select · Esc Close
+          {launch
+            ? "↑↓ Model · ←→ Effort · P Permission · Tab Provider · ↩ Start Thread · Esc Close"
+            : "↑↓ Model · ←→ Effort · Tab Provider · ↩ Select · Esc Close"}
         </div>
       </div>
     </div>

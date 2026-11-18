@@ -31,17 +31,17 @@ describe("providerHints", () => {
     expect(hint?.command).toBe("claude login");
   });
 
-  it("provides warning when Claude Code is out of pinned version range", () => {
+  it("passes a Provider's own warning through", () => {
     const hint = getClaudeCodeHint({
       available: true,
       installed: true,
       version: "3.0.0",
       authenticated: true,
-      warning: "Claude Code version 3.0.0 is outside the pinned range tested with Oxide (>= 0.2.0, < 3.0.0)",
+      warning: "Something the Provider reported",
     });
     expect(hint).not.toBeNull();
     expect(hint?.type).toBe("warning");
-    expect(hint?.message).toContain("outside the pinned range");
+    expect(hint?.message).toBe("Something the Provider reported");
   });
 
   it("exposes the 30-day session retention warning", () => {

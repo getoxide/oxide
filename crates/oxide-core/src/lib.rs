@@ -2,12 +2,18 @@
 //! The App shell exposes [`Core`] to the webview; tests drive it headless.
 
 mod activity;
+mod agent_launch;
+pub mod agent_reporter;
+mod agent_status;
+mod agent_terminal;
+pub use agent_terminal::{AgentAttachment, TerminalIssue, TerminalLaunch};
 pub mod attachments;
 pub mod blind_review;
 mod board;
 mod checkpoint;
 mod clock;
 mod continuation;
+pub mod custom_agents;
 mod db;
 pub mod desktop_tools;
 mod detection_cache;
@@ -48,7 +54,8 @@ mod worktree;
 
 pub use activity::{Notification, NotificationKind, System};
 pub use blind_review::{
-    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, FindingDecision,
+    BlindReviewFinding, BlindReviewProviderOption, BlindReviewRequest, BlindReviewRun,
+    BlindReviewStatus, FindingDecision, OneShotRunner, PreparedBlindReview,
 };
 pub use board::{BoardCard, BoardEvent, PendingApproval};
 pub use continuation::{ContinuedThread, RECAP_MAX_CHARS};
@@ -61,6 +68,8 @@ pub struct TurnPick {
     pub prompt: String,
     /// Whether the Turn has Checkpoints; without them it has no diff.
     pub checkpointed: bool,
+    /// When the Turn started; Oxide records no prompt for a terminal Thread, so this names it.
+    pub started_at: String,
 }
 pub use git::{FETCH_INTERVAL, GitBranch, GitStatus};
 pub use git_diff::{Diff, DiffFile, DiffHunk, DiffKind, DiffLine, DiffScope, DiffStatus};
@@ -107,7 +116,10 @@ pub use oxide_provider::{
     CommandRecord, Detection, ItemKind, ModelInfo, PromptSegment, ProviderCapabilities,
     SlashCommandInfo, SlashRoute, TurnStatus, UsageStatus,
 };
-pub use restore::{PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview};
+pub use restore::{
+    PendingRestore, RestoreChange, RestoreFile, RestoreOutcome, RestorePreview,
+    START_STATE as RESTORE_START_STATE,
+};
 pub use review_ledger::{
     FollowUpStatus, RECENT_ENTRIES, ReviewFollowUp, ReviewLedger, ReviewLedgerEntry, ReviewRevert,
     ReviewRoundGroup, ReviewSizeBand, ReviewWorkKind,
@@ -185,6 +197,13 @@ pub struct Core {
     clock: Mutex<Arc<dyn Clock>>,
     processes: Arc<ProcessRegistry>,
     terminals: Mutex<HashMap<u32, Arc<TerminalSession>>>,
+    /// The Agent terminal of each running or ended terminal Thread (ADR-0017).
+    agents: agent_terminal::Agents,
+    agent_search_path: Mutex<Option<Vec<PathBuf>>>,
+    /// The session reporter socket, listening once the first Codex Thread launches.
+    reporter: Mutex<Option<agent_reporter::ReporterServer>>,
+    /// The executable Codex runs as the reporter; Oxide itself unless a test replaces it.
+    reporter_executable: Mutex<Option<PathBuf>>,
     next_terminal_id: AtomicU32,
     /// The Project each open terminal belongs to, to mark it acted upon on its first command.
     terminal_projects: Mutex<HashMap<u32, u32>>,
@@ -204,6 +223,8 @@ pub struct Core {
     model_catalogs: Mutex<HashMap<String, Vec<ModelInfo>>>,
     slash_catalogs: Mutex<HashMap<String, Vec<SlashCommandInfo>>>,
     detections: detection_cache::DetectionCache,
+    /// How a one-shot Provider run (Blind review) is launched; replaceable in tests.
+    one_shot_runner: Mutex<OneShotRunner>,
 }
 
 impl Core {
@@ -246,6 +267,12 @@ impl Core {
         let board = Arc::new(board::BoardHub::new(home.join(DB_FILE)));
         let usage = Arc::new(usage::UsageHub::new(home.join(DB_FILE)));
         let ledger = Arc::new(review_ledger::LedgerStore::new(home.join(DB_FILE)));
+        let one_shot_runner: OneShotRunner = {
+            let processes = Arc::clone(&processes);
+            Arc::new(move |request| {
+                oxide_provider::oneshot::run_one_shot(request, Some(&processes))
+            })
+        };
         let core = Self {
             home: home.clone(),
             user_home: std::env::var_os("HOME")
@@ -262,6 +289,10 @@ impl Core {
             clock: Mutex::new(Arc::new(SystemClock)),
             processes,
             terminals: Mutex::new(HashMap::new()),
+            agents: Arc::default(),
+            agent_search_path: Mutex::new(None),
+            reporter: Mutex::new(None),
+            reporter_executable: Mutex::new(None),
             next_terminal_id: AtomicU32::new(1),
             terminal_projects: Mutex::new(HashMap::new()),
             acted_terminals: Mutex::new(std::collections::HashSet::new()),
@@ -277,6 +308,7 @@ impl Core {
             usage_poller: Mutex::new(None),
             model_catalogs: Mutex::new(HashMap::new()),
             detections: detection_cache::DetectionCache::default(),
+            one_shot_runner: Mutex::new(one_shot_runner),
             slash_catalogs: Mutex::new(
                 fs::read(home.join("cache/slash-commands/catalogs.json"))
                     .ok()
@@ -285,6 +317,7 @@ impl Core {
             ),
         };
         core.remove_abandoned_attachments();
+        core.recover_interrupted_blind_reviews();
         Ok(core)
     }
 
@@ -325,6 +358,7 @@ impl Core {
         for session in terminals {
             session.close();
         }
+        self.close_agents();
         self.project_services.shutdown();
     }
 
@@ -1573,6 +1607,7 @@ impl Core {
             .map(|turn| TurnPick {
                 turn_index: turn.turn_index,
                 checkpointed: checkpoint::has_start(&cwd, thread_id, turn.turn_index),
+                started_at: turn.started_at,
                 prompt: turn.prompt,
             })
             .collect())
@@ -1580,9 +1615,30 @@ impl Core {
 
     /// What restoring the Thread's files to how they were before `turn_index` would change.
     pub fn restore_preview(&self, thread_id: u32, turn_index: u32) -> Result<RestorePreview> {
+        self.preview_to(thread_id, Some(turn_index))
+    }
+
+    /// What restoring the Thread's files to its starting state would change.
+    pub fn restore_start_preview(&self, thread_id: u32) -> Result<RestorePreview> {
+        self.preview_to(thread_id, None)
+    }
+
+    /// Whether the Thread has a starting state to go back to.
+    pub fn start_state_available(&self, thread_id: u32) -> bool {
+        self.thread_target(thread_id)
+            .is_ok_and(|target| checkpoint::has_thread_start(&target.root, thread_id))
+    }
+
+    /// Puts the Thread's files back to how they were when it started.
+    pub fn restore_to_start(&self, thread_id: u32) -> Result<RestoreOutcome> {
+        self.restore_to(thread_id, None)
+    }
+
+    fn preview_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestorePreview> {
         let target = self.thread_target(thread_id)?;
         self.restore_refused(thread_id, &target)?;
-        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        let source = self.restore_source(&target.root, thread_id, turn_index)?;
+        let turn_index = turn_index.unwrap_or(restore::START_STATE);
         let files = restore::plan(&target.root, &source)?;
         Ok(RestorePreview { turn_index, files })
     }
@@ -1590,9 +1646,14 @@ impl Core {
     /// Puts the Thread's files back to how they were before `turn_index`. A Checkpoint of
     /// the files is taken first, so the restore can be undone.
     pub fn restore_turn(&self, thread_id: u32, turn_index: u32) -> Result<RestoreOutcome> {
+        self.restore_to(thread_id, Some(turn_index))
+    }
+
+    fn restore_to(&self, thread_id: u32, turn_index: Option<u32>) -> Result<RestoreOutcome> {
         let target = self.thread_target(thread_id)?;
         self.restore_refused(thread_id, &target)?;
-        let source = self.turn_checkpoint_tree(&target.root, thread_id, turn_index)?;
+        let source = self.restore_source(&target.root, thread_id, turn_index)?;
+        let turn_index = turn_index.unwrap_or(restore::START_STATE);
         // The files are written under the checkout's lock, like every other change to
         // it: the plan, the safety Checkpoint and the restore happen together.
         let (safety, files) = self.git.mutate(&target.root, || {
@@ -1604,10 +1665,7 @@ impl Core {
         })?;
         // The restore is kept only once it happened: one that failed is not undoable.
         self.record_restore(thread_id, turn_index, &safety, &files)?;
-        self.record_restore_in_transcript(thread_id, turn_index, &files, false)?;
-        // The agent is told on its next prompt which files went back.
-        self.storage
-            .set_restore_notice(thread_id, restore::notice(turn_index, &files, false))?;
+        self.note_restore(thread_id, turn_index, &files, false)?;
         Ok(RestoreOutcome {
             turn_index,
             files,
@@ -1638,14 +1696,48 @@ impl Core {
             restore::undo(&target.root, &source, &record.files)
         })?;
         self.mark_restore_undone(thread_id)?;
-        self.record_restore_in_transcript(thread_id, record.turn_index, &files, true)?;
-        self.storage
-            .set_restore_notice(thread_id, restore::notice(record.turn_index, &files, true))?;
+        self.note_restore(thread_id, record.turn_index, &files, true)?;
         Ok(RestoreOutcome {
             turn_index: record.turn_index,
             files,
             undone: true,
         })
+    }
+
+    /// Tells a chat Thread about a restore: a marker in its Transcript and a notice for the
+    /// agent's next prompt. A terminal Thread has neither, since Oxide sees none of its prompts.
+    fn note_restore(
+        &self,
+        thread_id: u32,
+        turn_index: u32,
+        files: &[RestoreFile],
+        undone: bool,
+    ) -> Result<()> {
+        if self.is_terminal_thread(thread_id) {
+            return Ok(());
+        }
+        self.record_restore_in_transcript(thread_id, turn_index, files, undone)?;
+        self.storage
+            .set_restore_notice(thread_id, restore::notice(turn_index, files, undone))?;
+        Ok(())
+    }
+
+    /// The tree a restore goes back to: a Turn's start Checkpoint, or the Thread's starting state.
+    fn restore_source(
+        &self,
+        cwd: &Path,
+        thread_id: u32,
+        turn_index: Option<u32>,
+    ) -> Result<String> {
+        match turn_index {
+            Some(turn_index) => self.turn_checkpoint_tree(cwd, thread_id, turn_index),
+            None if checkpoint::has_thread_start(cwd, thread_id) => {
+                checkpoint::thread_start_tree(cwd, thread_id)
+            }
+            None => Err(Error::Git(
+                "This Thread has no starting state to restore to.".into(),
+            )),
+        }
     }
 
     /// Writes the mark of a restore into the Transcript, at the end of the Thread's last
@@ -1687,6 +1779,8 @@ impl Core {
     /// Turn is running: neither the Thread's own, nor one of another Thread in the same
     /// checkout.
     fn restore_refused(&self, thread_id: u32, target: &GitTarget) -> Result<()> {
+        // Taken before the database lock: launching an agent holds this one, then the database.
+        let live_agents = self.live_agent_ids();
         let db = self.db.lock_recover();
         let status: String = db.query_row(
             "SELECT status FROM threads WHERE id = ?1",
@@ -1698,16 +1792,18 @@ impl Core {
             [thread_id],
             |r| r.get(0),
         )?;
-        if running > 0 || matches!(status.as_str(), "working" | "needs-input") {
+        // A live agent that reports nothing may be mid-turn: its status stays `running`.
+        let unreported = status == "running" && live_agents.contains(&thread_id);
+        if running > 0 || unreported || matches!(status.as_str(), "working" | "needs-input") {
             return Err(Error::Git(
                 "A Turn is running in this Thread. Wait for it to finish or stop it.".into(),
             ));
         }
         let others = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
-        if others
-            .iter()
-            .any(|(id, status)| *id != thread_id && is_busy(status))
-        {
+        if others.iter().any(|(id, status)| {
+            *id != thread_id
+                && (is_busy(status) || (status == "running" && live_agents.contains(id)))
+        }) {
             return Err(Error::Git(
                 "Another Thread is working in this checkout. Wait for its Turn to finish or stop it."
                     .into(),
@@ -2174,6 +2270,12 @@ impl Core {
         )
     }
 
+    /// The end of the log of a failed GitHub Actions check, to put in a Fix prompt. Reads from
+    /// GitHub through `gh`; the text is external content.
+    pub fn failed_check_log(&self, project_id: u32, check_url: &str) -> Result<String> {
+        github::failed_check_log_tail(&self.gh, &self.main_checkout(project_id)?, check_url)
+    }
+
     /// Closes a pull request on GitHub without merging it.
     pub fn close_pull_request(&self, project_id: u32, number: u32) -> Result<()> {
         github::close_pull_request(&self.gh, &self.main_checkout(project_id)?, number)
@@ -2504,6 +2606,20 @@ fn mark_unfinished_work_interrupted(db: &Connection) -> Result<()> {
     )?;
     if !has_threads {
         return Ok(());
+    }
+    // An Agent terminal ends with the app, whatever it last reported (a view of a ended agent
+    // must not offer to stop it). Its error stays. (Databases opened with only some migrations,
+    // as the migration tests do, have no such column yet.)
+    let has_terminal: bool = db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('threads') WHERE name = 'terminal')",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_terminal {
+        db.execute(
+            "UPDATE threads SET status = 'stopped' WHERE terminal = 1 AND status NOT IN ('stopped', 'error')",
+            [],
+        )?;
     }
     db.execute_batch(
         "UPDATE approvals SET decision = 'deny', decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')

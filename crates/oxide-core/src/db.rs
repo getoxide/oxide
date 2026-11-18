@@ -381,6 +381,45 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE projects SET acted_upon = 1
     WHERE EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id);
 ",
+    // Blind review is a one-shot headless run, not a Thread: a review has no review Thread any
+    // more, and records whether it is running, finished or failed and where its throwaway
+    // worktree is. The table is rebuilt to make `review_thread_id` optional (old reviews keep
+    // theirs); foreign keys are deferred so the findings that point at it survive the rebuild.
+    "
+    PRAGMA defer_foreign_keys = ON;
+    CREATE TABLE blind_reviews_old AS SELECT * FROM blind_reviews;
+    DROP TABLE blind_reviews;
+    CREATE TABLE blind_reviews (
+        id INTEGER PRIMARY KEY,
+        thread_id INTEGER REFERENCES threads(id),
+        review_thread_id INTEGER UNIQUE REFERENCES threads(id),
+        provider TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        status TEXT NOT NULL DEFAULT 'finished',
+        error TEXT,
+        worktree TEXT
+    );
+    -- A row that already pointed at a missing Thread is dropped, not carried over: it would fail
+    -- the foreign-key check and with it the whole database open.
+    INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope, created_at)
+        SELECT id, thread_id,
+               CASE WHEN review_thread_id IN (SELECT id FROM threads) THEN review_thread_id END,
+               provider, scope, created_at
+        FROM blind_reviews_old
+        WHERE thread_id IS NULL OR thread_id IN (SELECT id FROM threads);
+    UPDATE line_comments SET finding_id = NULL
+        WHERE finding_id IN (SELECT id FROM blind_review_findings
+                             WHERE review_id NOT IN (SELECT id FROM blind_reviews));
+    DELETE FROM blind_review_findings WHERE review_id NOT IN (SELECT id FROM blind_reviews);
+    DROP TABLE blind_reviews_old;
+    CREATE INDEX blind_reviews_by_thread ON blind_reviews(thread_id, id);
+",
+    // A Thread whose centre is an Agent terminal running the Provider's own CLI (ADR-0017).
+    // Its Provider session id is `provider_session_id`, assigned by Oxide at launch.
+    "
+    ALTER TABLE threads ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
+",
 ];
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
@@ -460,7 +499,11 @@ mod tests {
     fn migrating_keeps_fetch_on_for_projects_with_threads_and_off_for_the_rest() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("oxide.db");
-        let before = &MIGRATIONS[..MIGRATIONS.len() - 1];
+        let step = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("UPDATE projects SET acted_upon = 1"))
+            .unwrap();
+        let before = &MIGRATIONS[..step];
         let old = open(&path, before).unwrap();
         old.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
             .unwrap();
@@ -487,6 +530,114 @@ mod tests {
         };
         assert_eq!(acted("/p"), 1, "a Project with a Thread was acted upon");
         assert_eq!(acted("/q"), 0, "an untouched Project stays unacted");
+    }
+
+    #[test]
+    fn rebuilding_blind_reviews_keeps_old_reviews_findings_and_kept_comments() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        let step = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("DROP TABLE blind_reviews;"))
+            .unwrap();
+        let old = open(&path, &MIGRATIONS[..step]).unwrap();
+        old.execute_batch(
+            "INSERT INTO projects (name, path) VALUES ('p', '/p');
+             INSERT INTO threads (id, project_id, provider, permission_mode, status)
+                 VALUES (1, 1, 'fake', 'ask', 'idle'), (2, 1, 'fake', 'ask', 'completed');
+             INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope)
+                 VALUES (1, 1, 2, 'claude', 'branch');
+             INSERT INTO blind_review_findings (id, review_id, body, anchored)
+                 VALUES (7, 1, 'old finding', 0);
+             INSERT INTO line_comments (thread_id, scope, path, side, line, code, body, finding_id)
+                 VALUES (1, 'branch', 'a.rs', 'new', 1, '', 'kept', 7);",
+        )
+        .unwrap();
+        drop(old);
+
+        let migrated = open(&path, MIGRATIONS).unwrap();
+
+        let (provider, status, thread): (String, String, Option<u32>) = migrated
+            .query_row(
+                "SELECT provider, status, review_thread_id FROM blind_reviews WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (provider.as_str(), status.as_str(), thread),
+            ("claude", "finished", Some(2))
+        );
+        let findings: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM blind_review_findings", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(findings, 1);
+        let comments: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM line_comments WHERE finding_id = 7",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(comments, 1);
+        // A review without a review Thread can now be stored.
+        migrated
+            .execute(
+                "INSERT INTO blind_reviews (thread_id, provider, scope, status)
+                 VALUES (1, 'codex', 'branch', 'running')",
+                [],
+            )
+            .unwrap();
+        let violations: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn rebuilding_blind_reviews_drops_a_pre_existing_orphan_instead_of_failing_the_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        let step = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("DROP TABLE blind_reviews;"))
+            .unwrap();
+        let old = open(&path, &MIGRATIONS[..step]).unwrap();
+        old.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO projects (name, path) VALUES ('p', '/p');
+             INSERT INTO threads (id, project_id, provider, permission_mode, status)
+                 VALUES (1, 1, 'fake', 'ask', 'idle');
+             INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope)
+                 VALUES (1, 1, 1, 'claude', 'branch'), (2, 99, 98, 'codex', 'branch');
+             INSERT INTO blind_review_findings (id, review_id, body, anchored)
+                 VALUES (7, 1, 'kept', 0), (8, 2, 'orphan', 0);
+             INSERT INTO line_comments (thread_id, scope, path, side, line, code, body, finding_id)
+                 VALUES (1, 'branch', 'a.rs', 'new', 1, '', 'comment', 8);",
+        )
+        .unwrap();
+        drop(old);
+
+        let migrated = open(&path, MIGRATIONS).unwrap();
+
+        let reviews: Vec<u32> = migrated
+            .prepare("SELECT id FROM blind_reviews ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(reviews, [1]);
+        let findings: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM blind_review_findings", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(findings, 1);
     }
 
     /// Oxide writes the database from several connections at once. A transaction that

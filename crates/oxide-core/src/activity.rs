@@ -87,11 +87,18 @@ impl Activity {
     }
 
     pub(crate) fn set_status(&self, thread_id: u32, status: ThreadStatus) {
+        self.track_status(thread_id, status);
+        self.board.publish(thread_id);
+    }
+
+    /// Like [`Activity::set_status`] for a status the caller already published (an Agent
+    /// terminal's, written through the board): the counts, the badge and the notifications
+    /// follow, the board is not told twice.
+    pub(crate) fn track_status(&self, thread_id: u32, status: ThreadStatus) {
         let mut tracked = self.tracked.lock_recover();
         let previous = tracked.statuses.insert(thread_id, status);
         self.sync(&mut tracked);
         drop(tracked);
-        self.board.publish(thread_id);
         let kind = match status {
             ThreadStatus::NeedsInput => NotificationKind::NeedsInput,
             ThreadStatus::Completed => NotificationKind::Completed,

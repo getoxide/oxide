@@ -1,6 +1,6 @@
 import { Skeleton } from "./Skeleton";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "./queryCache";
+import { invalidateQueries, useQuery } from "./queryCache";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -16,12 +16,12 @@ import {
   TriangleDownIcon,
   XIcon,
 } from "@primer/octicons-react";
-import { commands, type AppError, type GitBranch, type GitStatus, type Thread } from "./bindings";
+import { commands, type AppError, type GitBranch, type GitStatus } from "./bindings";
 import { canCreateBranch, filterBranches } from "./branchFilter";
 import { AGENT_BUSY, createPrBlockedReason, nextAction, pushBlockedReason } from "./gitAction";
 import { usePushFlow } from "./usePushFlow";
 import { BlindReviewDialog } from "./BlindReviewDialog";
-import { BlindReviewFindings } from "./BlindReviewFindings";
+import { BlindReviewFindings, blindReviewFindingsPrefix } from "./BlindReviewFindings";
 import { CommitDialog } from "./CommitDialog";
 import { LineComments } from "./LineComments";
 import { RestoreDialog } from "./RestoreDialog";
@@ -40,8 +40,7 @@ interface GitHeaderProps {
   threadIssue?: string | null;
   /** The Thread is running a Turn, so its draft Line comments cannot be sent yet. */
   threadWorking?: boolean;
-  /** A Blind review started its own Thread. */
-  onThreadCreated?: (thread: Thread) => void;
+  threadNeedsInput?: boolean;
   /** Called after a restore, so the Transcript shows that it happened. */
   onRestored?: () => void;
   onOpenPullRequest: () => void;
@@ -58,7 +57,7 @@ export function GitHeader(props: GitHeaderProps) {
   return <GitHeaderBody key={`${props.projectId}:${props.threadId}`} {...props} />;
 }
 
-function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvider, threadIssue, threadWorking = false, onThreadCreated, onRestored, onOpenPullRequest, onChanged }: GitHeaderProps) {
+function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvider, threadIssue, threadWorking = false, threadNeedsInput = false, onRestored, onOpenPullRequest, onChanged }: GitHeaderProps) {
   const [dialog, setDialog] = useState<"commit" | "restore" | "blind" | null>(null);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -282,10 +281,10 @@ function GitHeaderBody({ projectId, threadId, threadsKey, agentBusy, threadProvi
     {dialog === "blind" && (
       <BlindReviewDialog projectId={projectId} threadId={threadId} threadProvider={threadProvider}
         threadIssue={threadIssue} onClose={() => setDialog(null)}
-        onStarted={(thread) => { onThreadCreated?.(thread); onChanged(); }} />
+        onStarted={() => { invalidateQueries(blindReviewFindingsPrefix(projectId)); onChanged(); }} />
     )}
     <BlindReviewFindings projectId={projectId} threadId={threadId} refreshKey={reviewKey} />
-    <LineComments projectId={projectId} threadId={threadId} working={threadWorking} refreshKey={reviewKey} />
+    <LineComments projectId={projectId} threadId={threadId} working={threadWorking} needsInput={threadNeedsInput} refreshKey={reviewKey} />
     </div>
   );
 }

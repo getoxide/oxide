@@ -1,5 +1,7 @@
 # A central Thread and one maximizable Surfaces dock
 
+> Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): the Thread's centre is its Agent terminal, not a rendered Transcript.
+
 Keep the Thread and its Transcript central, Projects and recent Threads in a
 collapsible left sidebar, and exactly one right dock for Diff, Files, Terminal,
 Pull request and Issues (the Diff Surface was later removed, ADR-0014). Files owns the editor. Maximizing a Surface changes its

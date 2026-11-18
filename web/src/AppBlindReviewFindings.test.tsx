@@ -19,7 +19,7 @@ const thread = { id: 2, projectId: 1, title: "Existing", provider: "claude", sta
 
 type Finding = {
   id: number;
-  reviewThreadId: number;
+  reviewId: number;
   provider: string;
   path: string | null;
   side: "new" | "old" | null;
@@ -33,18 +33,20 @@ type Finding = {
 const calls: { command: string; args: Record<string, unknown> }[] = [];
 let findings: Finding[];
 let drafts: Record<string, unknown>[];
+let runs: Record<string, unknown>[];
 
 beforeEach(() => {
   clearQueryCache();
   calls.length = 0;
   drafts = [];
+  runs = [];
   findings = [
     {
-      id: 10, reviewThreadId: 9, provider: "claude", path: "src/a.ts", side: "new", line: 2,
+      id: 10, reviewId: 9, provider: "claude", path: "src/a.ts", side: "new", line: 2,
       code: "new", body: "Is this rename needed?", plain: false, decision: "pending",
     },
     {
-      id: 11, reviewThreadId: 9, provider: "claude", path: null, side: null, line: null,
+      id: 11, reviewId: 9, provider: "claude", path: null, side: null, line: null,
       code: "", body: "The reply could not be parsed.", plain: true, decision: "pending",
     },
   ];
@@ -60,6 +62,7 @@ beforeEach(() => {
     if (command === "last_selection") return { projectId: 1, threadId: 2 };
     if (command === "list_threads") return [thread];
     if (command === "list_blind_review_findings") return findings;
+    if (command === "list_blind_reviews") return runs;
     if (command === "keep_blind_review_finding") {
       const finding = findings.find((f) => f.id === args.id && !f.plain)!;
       finding.decision = "kept";
@@ -75,6 +78,7 @@ beforeEach(() => {
       return null;
     }
     if (command === "list_line_comments") return drafts;
+    if (command === "line_comments_prompt") return "I reviewed your changes.";
     if (command === "send_line_comments") { drafts = []; return null; }
     if (command === "plugin:event|listen") return 1;
     return null;
@@ -117,7 +121,25 @@ it("shows Blind review findings under the Thread header, keeps the anchored one 
   expect(draftsSection.textContent).toContain("Is this rename needed?");
 
   await press('[aria-label="Line comments"] .btn.primary');
+  // The prompt is shown and nothing is sent until the user confirms it.
+  expect(host.querySelector('[role="dialog"] pre')?.textContent).toBe("I reviewed your changes.");
+  expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([]);
+  await press('[role="dialog"] .primary');
   expect(calls.filter((c) => c.command === "send_line_comments")).toEqual([
-    { command: "send_line_comments", args: { threadId: 2 } },
+    { command: "send_line_comments", args: { threadId: 2, confirmed: "I reviewed your changes." } },
   ]);
+});
+
+it("says a Blind review is running and why one failed, without a Thread", async () => {
+  findings = [];
+  runs = [
+    { id: 1, threadId: 2, provider: "codex", scope: "branch", status: "running", error: null },
+    { id: 2, threadId: 2, provider: "claude", scope: "branch", status: "failed", error: "the CLI crashed" },
+  ];
+  await openThread();
+
+  const section = host.querySelector('[aria-label="Blind review findings"]')!;
+  expect(section.textContent).toContain("Blind review running with codex");
+  expect(section.textContent).toContain("Blind review with claude failed: the CLI crashed");
+  expect(calls.some((c) => c.command === "list_threads")).toBe(true);
 });

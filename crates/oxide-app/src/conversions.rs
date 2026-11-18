@@ -194,8 +194,10 @@ impl From<oxide_core::Settings> for Settings {
             providers: s.providers.into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
+            custom_agents: s.custom_agents.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -207,8 +209,10 @@ impl From<&oxide_core::Settings> for Settings {
             providers: (&s.providers).into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: (&s.shortcuts).into(),
+            custom_agents: s.custom_agents.iter().cloned().map(Into::into).collect(),
         }
     }
 }
@@ -220,8 +224,30 @@ impl From<Settings> for oxide_core::Settings {
             providers: s.providers.into(),
             confirm_quit: s.confirm_quit,
             delete_merged_branches: s.delete_merged_branches,
+            open_threads_as_terminals: s.open_threads_as_terminals,
             claude_customizations: s.claude_customizations.into(),
             shortcuts: s.shortcuts.into(),
+            custom_agents: s.custom_agents.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<oxide_core::custom_agents::CustomAgent> for CustomAgent {
+    fn from(a: oxide_core::custom_agents::CustomAgent) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            command: a.command,
+        }
+    }
+}
+
+impl From<CustomAgent> for oxide_core::custom_agents::CustomAgent {
+    fn from(a: CustomAgent) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            command: a.command,
         }
     }
 }
@@ -397,6 +423,8 @@ impl From<oxide_core::ThreadStatus> for ThreadStatus {
             oxide_core::ThreadStatus::Completed => Self::Completed,
             oxide_core::ThreadStatus::Error => Self::Error,
             oxide_core::ThreadStatus::Interrupted => Self::Interrupted,
+            oxide_core::ThreadStatus::Running => Self::Running,
+            oxide_core::ThreadStatus::Stopped => Self::Stopped,
         }
     }
 }
@@ -459,6 +487,7 @@ impl From<oxide_core::ThreadSummary> for Thread {
             setup_output: t.setup_output,
             issue_number: t.issue_number,
             blind_review: t.blind_review,
+            terminal: t.terminal,
         }
     }
 }
@@ -846,11 +875,28 @@ impl From<oxide_core::FindingDecision> for FindingDecision {
     }
 }
 
+impl From<oxide_core::BlindReviewRun> for BlindReviewRun {
+    fn from(r: oxide_core::BlindReviewRun) -> Self {
+        Self {
+            id: r.id,
+            thread_id: r.thread_id,
+            provider: r.provider,
+            scope: r.scope,
+            status: match r.status {
+                oxide_core::BlindReviewStatus::Running => BlindReviewStatus::Running,
+                oxide_core::BlindReviewStatus::Finished => BlindReviewStatus::Finished,
+                oxide_core::BlindReviewStatus::Failed => BlindReviewStatus::Failed,
+            },
+            error: r.error,
+        }
+    }
+}
+
 impl From<oxide_core::BlindReviewFinding> for BlindReviewFinding {
     fn from(f: oxide_core::BlindReviewFinding) -> Self {
         Self {
             id: f.id,
-            review_thread_id: f.review_thread_id,
+            review_id: f.review_id,
             provider: f.provider,
             path: f.path,
             side: f.side.map(Into::into),
@@ -1297,6 +1343,7 @@ impl From<oxide_core::PullRequest> for PullRequest {
             draft: p.draft,
             base: p.base,
             head: p.head,
+            cross_repository: p.cross_repository,
             author: p.author,
             created_at: p.created_at,
         }
@@ -1619,6 +1666,7 @@ mod tests {
             },
             confirm_quit: false,
             delete_merged_branches: true,
+            open_threads_as_terminals: true,
             claude_customizations: oxide_core::ClaudeCustomizations {
                 claude_md: true,
                 skills: false,
@@ -1627,6 +1675,11 @@ mod tests {
                 hooks: false,
             },
             shortcuts: oxide_core::Shortcuts::default(),
+            custom_agents: vec![oxide_core::custom_agents::CustomAgent {
+                id: "mine".into(),
+                name: "Mine".into(),
+                command: "mine --fast".into(),
+            }],
         };
         let core_state = oxide_core::SettingsState {
             settings: core_settings.clone(),
@@ -1645,6 +1698,10 @@ mod tests {
         let json = serde_json::to_value(&app_state).unwrap();
         assert_eq!(json["settings"]["defaultProvider"], json!("codex"));
         assert_eq!(
+            json["settings"]["customAgents"][0],
+            json!({"id": "mine", "name": "Mine", "command": "mine --fast"})
+        );
+        assert_eq!(
             json["settings"]["providers"]["claude"]["permissionMode"],
             json!("auto-edit")
         );
@@ -1653,6 +1710,7 @@ mod tests {
             json!("full-access")
         );
         assert_eq!(json["settings"]["deleteMergedBranches"], json!(true));
+        assert_eq!(json["settings"]["openThreadsAsTerminals"], json!(true));
         assert_eq!(
             json["settings"]["claudeCustomizations"],
             json!({
@@ -2020,6 +2078,7 @@ mod tests {
                 draft: false,
                 base: "main".into(),
                 head: "fix".into(),
+                cross_repository: false,
                 author: "alice".into(),
                 created_at: "t0".into(),
             },

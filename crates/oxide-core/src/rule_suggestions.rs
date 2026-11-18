@@ -244,16 +244,18 @@ impl Core {
                 "This rule suggestion is no longer available.".into(),
             ));
         }
-        let started = match self.create_thread(project_id, provider, None, None, None) {
-            Ok(thread) => match self.send_prompt(thread.id, &prompt(&comments)) {
-                Ok(()) => Ok(thread),
-                // Leave no empty Thread behind a proposal that never went out.
-                Err(error) => {
-                    diag::best_effort("delete_thread", self.delete_thread(thread.id, true));
-                    Err(error)
-                }
-            },
-            Err(error) => Err(error),
+        // With terminal Threads on and a Provider that has an Agent terminal, the proposal is
+        // the agent's first prompt, passed at launch.
+        let terminal = matches!(provider, "claude" | "codex" | "antigravity" | "agy")
+            && self.settings().settings.open_threads_as_terminals;
+        let started = if terminal {
+            let choice = crate::TerminalLaunch {
+                provider: Some(provider.to_string()),
+                ..Default::default()
+            };
+            self.start_terminal_thread_with_prompt(project_id, &choice, &prompt(&comments))
+        } else {
+            self.accept_in_chat_thread(project_id, provider, &comments)
         };
         if started.is_err() {
             // The user may try again.
@@ -263,6 +265,25 @@ impl Core {
             );
         }
         started
+    }
+
+    fn accept_in_chat_thread(
+        &self,
+        project_id: u32,
+        provider: &str,
+        comments: &[String],
+    ) -> Result<ThreadSummary> {
+        match self.create_thread(project_id, provider, None, None, None) {
+            Ok(thread) => match self.send_prompt(thread.id, &prompt(comments)) {
+                Ok(()) => Ok(thread),
+                // Leave no empty Thread behind a proposal that never went out.
+                Err(error) => {
+                    diag::best_effort("delete_thread", self.delete_thread(thread.id, true));
+                    Err(error)
+                }
+            },
+            Err(error) => Err(error),
+        }
     }
 
     /// Moves an open suggestion to `status`; false when it was already decided or is not there.

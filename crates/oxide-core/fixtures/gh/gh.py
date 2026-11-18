@@ -17,9 +17,11 @@ import sys
 import time
 
 # Real gh speaks UTF-8 on every OS, and so does Core. Python would otherwise use the locale code
-# page on Windows (cp1252), turning a UTF-8 body read from stdin into mojibake.
-for stream in (sys.stdin, sys.stdout, sys.stderr):
-    stream.reconfigure(encoding="utf-8")
+# page on Windows (cp1252), turning a UTF-8 body read from stdin into mojibake. Real gh also writes
+# LF line endings everywhere; Python's text mode would turn them into CRLF on Windows.
+sys.stdin.reconfigure(encoding="utf-8")
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(encoding="utf-8", newline="\n")
 
 here = os.path.dirname(os.path.abspath(__file__))
 state_path = os.path.join(here, "state.json")
@@ -367,6 +369,14 @@ if args[:2] == ["issue", "list"]:
     if query:
         issues = [i for i in issues if query.lower() in i.get("title", "").lower() or query.lower() in i.get("body", "").lower()]
     print(json.dumps(issues))
+    sys.exit(0)
+
+if args[:2] == ["run", "view"] and "--log-failed" in args:
+    logs = state.get("run_logs", {})
+    if args[2] not in logs:
+        sys.stderr.write("could not find run %s\n" % args[2])
+        sys.exit(1)
+    sys.stdout.write(logs[args[2]])
     sys.exit(0)
 
 if args[:2] == ["pr", "create"]:

@@ -11,6 +11,7 @@ function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
       draft: false,
       base: "main",
       head: "topic",
+      crossRepository: false,
       author: "alice",
       createdAt: "2026-01-01T00:00:00Z",
     },
@@ -105,4 +106,17 @@ it("ignores resolved and empty threads, and sends nothing when there is no work"
   expect(pullRequestFixPrompt(detail(), [thread({ resolved: true })])).toBeNull();
   expect(pullRequestFixPrompt(detail(), [thread({ comments: [] })])).toBeNull();
   expect(pullRequestFixPrompt(detail({ phase: "merged" }), [thread()])).toBeNull();
+});
+
+it("quotes only the bounded tail of a failing check's log", () => {
+  const log = `${"old line\n".repeat(2000)}the real error`;
+  const prompt = pullRequestFixPrompt(
+    detail({ checks: [{ name: "web", state: "failure", url: null, required: true }] }),
+    [],
+    { web: log, rust: "not failing" },
+  )!;
+  expect(prompt).toContain("> the real error");
+  expect(prompt).not.toContain("not failing");
+  const block = prompt.split("--- BEGIN EXTERNAL CHECK LOG ---")[1].split("--- END EXTERNAL CHECK LOG ---")[0];
+  expect(block.length).toBeLessThan(4096 * 2 + 200);
 });

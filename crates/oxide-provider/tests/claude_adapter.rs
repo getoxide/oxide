@@ -69,7 +69,7 @@ fn claude_detect_installed_and_authenticated_pinned_version() {
 }
 
 #[test]
-fn claude_detect_installed_outside_pinned_range_gives_warning_not_block() {
+fn claude_detect_accepts_any_installed_version_without_a_warning() {
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_path = make_fake_cli(temp_dir.path(), "3.5.0", true);
 
@@ -77,17 +77,9 @@ fn claude_detect_installed_outside_pinned_range_gives_warning_not_block() {
     let detection = provider.detect().expect("detect must succeed");
     assert!(detection.installed);
     assert!(detection.authenticated);
-    assert!(
-        detection.available,
-        "out-of-range version should warn, not block"
-    );
+    assert!(detection.available, "any version is accepted");
     assert_eq!(detection.version.as_deref(), Some("3.5.0"));
-    assert!(
-        detection.warning.is_some(),
-        "detection warning should be present when version is outside pinned range"
-    );
-    let warning = detection.warning.unwrap();
-    assert!(warning.contains("3.5.0"));
+    assert_eq!(detection.warning, None, "no version warning");
 }
 
 #[test]

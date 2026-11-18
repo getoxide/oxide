@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { commands, type BlindReviewProviderOption, type Thread } from "./bindings";
+import { commands, type BlindReviewProviderOption } from "./bindings";
 
 interface Props {
   projectId: number;
@@ -9,10 +9,10 @@ interface Props {
   /** Optional issue description or reference. */
   threadIssue?: string | null;
   onClose: () => void;
-  onStarted: (thread: Thread) => void;
+  onStarted: () => void;
 }
 
-/** Reviews the Thread's changes with a fresh provider, in a separate Thread and detached worktree. */
+/** Reviews the Thread's changes with a one-shot run of a provider, in a throwaway detached worktree. */
 export function BlindReviewDialog({ projectId, threadId, threadProvider, threadIssue, onClose, onStarted }: Props) {
   const [providers, setProviders] = useState<BlindReviewProviderOption[] | null>(null);
   const [provider, setProvider] = useState("");
@@ -40,7 +40,7 @@ export function BlindReviewDialog({ projectId, threadId, threadProvider, threadI
     });
     setStarting(false);
     if (result.status === "error") return setError(result.error.message);
-    onStarted(result.data);
+    onStarted();
     onClose();
   }
 
@@ -55,7 +55,7 @@ export function BlindReviewDialog({ projectId, threadId, threadProvider, threadI
       >
         <h2>Blind review</h2>
         <p className="hint">
-          Review changes with a fresh provider in a separate thread and detached worktree. The review prompt only includes the diff, issue, and structured format—no transcript history is shared.
+          Review changes with a one-shot, read-only run of a provider in a throwaway detached worktree. It only receives the diff and the issue, never the thread's history, and it does not appear as a thread.
         </p>
         {providers === null && !error ? (
           <p>Loading available providers…</p>

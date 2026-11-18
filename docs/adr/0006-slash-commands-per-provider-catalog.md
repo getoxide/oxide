@@ -1,5 +1,7 @@
 # Slash commands are a per-Provider catalog with a route per command
 
+> Superseded by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): Slash commands are typed into the Provider's own CLI, and Oxide keeps no catalog.
+
 The three Providers expose Slash commands in incompatible ways: Claude Code runs them when they arrive as prompt text in `-p` stream-json (built-ins such as `/context` included, even under `--safe-mode`), Codex's `app-server` has no text commands at all but one RPC per TUI command (`thread/compact/start`, `review/start`, …) and a structured `skill` input, and `agy` expands skills and custom commands over stream-json while its own CLI commands (`/model`, `/usage`) end the stream. So Oxide does not forward `/…` text blindly: each Thread gets a catalog of Slash commands, built from what its Provider reports, and every entry carries the route Oxide uses to run it.
 
 - **Oxide**: intercepted and run by Oxide, the same for every Provider: `/clear`, `/model`, `/effort`, `/rename`, `/diff`, `/permissions`, `/reload-cache`. They win over a Provider command of the same name, since a Thread maps one-to-one to a Provider session and Oxide owns its Model, Effort, name and Permission mode.

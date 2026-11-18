@@ -1,8 +1,31 @@
 import { commands } from "./bindings";
+import { isCustomProvider } from "./customAgents";
+import type { LaunchChoice } from "./launchPicker";
 
-/** Read Settings at creation time so every entry point uses the current defaults. */
-export async function createDefaultThread(projectId: number) {
+/**
+ * Read Settings at creation time so every entry point uses the current defaults.
+ *
+ * With `terminal` and the "Open new Threads as terminals" preview on, the Thread's centre is an
+ * Agent terminal running Claude Code (ADR-0017). Flows that send a prompt (Fix, Issues) pass
+ * nothing and keep the chat Thread until their own slice moves them.
+ */
+export async function createDefaultThread(
+  projectId: number,
+  options: { terminal?: boolean; launch?: LaunchChoice } = {},
+) {
   const { settings } = await commands.getSettings();
+  // A Custom agent only ever runs in an Agent terminal, whatever the preview says.
+  const custom = options.launch !== undefined && isCustomProvider(options.launch.provider);
+  if (custom || (options.terminal && settings.openThreadsAsTerminals)) {
+    const { launch } = options;
+    return commands.createTerminalThread(
+      projectId,
+      launch?.provider ?? null,
+      launch?.model ?? null,
+      launch?.effort ?? null,
+      launch?.permissionMode ?? null,
+    );
+  }
   const provider = settings.defaultProvider || "claude";
   const defaults = settings.providers[provider];
   return commands.createThread(

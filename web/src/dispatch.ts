@@ -1,4 +1,6 @@
-import type { DispatchRequest, PermissionMode, Settings, Thread } from "./bindings";
+import type { DispatchRequest, PermissionMode, Settings, TerminalIssue, Thread } from "./bindings";
+import { isCustomProvider } from "./customAgents";
+import { LAUNCH_RECIPES } from "./launchPicker";
 
 export interface DispatchForm {
   prompt: string;
@@ -61,6 +63,21 @@ export function dispatchRequest(projectId: number, form: DispatchForm, issue?: D
     issueUrl: issue?.url ?? null,
     issueLabels: issue?.labels ?? [],
   };
+}
+
+/**
+ * Whether starting from an issue opens a terminal Thread: the preview is on and the chosen
+ * Provider has a launch recipe. Core builds the first prompt from the issue, so it is not edited.
+ */
+export function startsAsTerminal(settings: Pick<Settings, "openThreadsAsTerminals">, provider: string, issue: DispatchIssue | undefined): boolean {
+  if (issue === undefined) return false;
+  // A Custom agent only ever runs in an Agent terminal.
+  return isCustomProvider(provider) || (settings.openThreadsAsTerminals && LAUNCH_RECIPES.includes(provider));
+}
+
+/** The issue as Core receives it; the title and body stay external content there. */
+export function terminalIssue(issue: DispatchIssue): TerminalIssue {
+  return { number: issue.number, title: issue.title, body: issue.body, url: issue.url, labels: issue.labels ?? [] };
 }
 
 /** Whether the Thread has a worktree of its own: it came from the Board. */

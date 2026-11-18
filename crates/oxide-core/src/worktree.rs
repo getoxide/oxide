@@ -86,6 +86,39 @@ pub(crate) fn free_name(checkout: &Path, parent: &Path, slug: &str) -> String {
     }
 }
 
+/// Where a new Thread's worktree starts.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Placement {
+    /// A branch to start from instead of the checkout's current one.
+    pub base: Option<String>,
+    /// An existing branch to work on, instead of a new `oxide/` branch.
+    pub branch: Option<String>,
+}
+
+/// `base` when it names a commit in the repository and cannot be taken for an option.
+fn checked_base(root: &Path, base: &str) -> Result<String> {
+    if base.is_empty()
+        || base.len() > 200
+        || base.starts_with('-')
+        || base.chars().any(|c| c.is_control() || c.is_whitespace())
+        || !git::succeeds(
+            root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}^{{commit}}"),
+            ],
+        )
+    {
+        return Err(Error::Git(format!(
+            "The base branch '{}' was not found.",
+            base.chars().take(60).collect::<String>()
+        )));
+    }
+    Ok(base.to_string())
+}
+
 /// What deleting a Thread did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +368,7 @@ impl Core {
         if let Some(actor) = actor {
             actor.shutdown();
         }
+        self.drop_agent(thread_id);
         if let Some(worktree) = worktree {
             self.remove_worktree(&root, &worktree)?;
         }
@@ -379,6 +413,7 @@ impl Core {
             return Ok(false);
         };
         if self.thread_summary(thread_id)?.status == ThreadStatus::Working
+            || self.agent_is_running(thread_id)
             || self
                 .dirty_editors
                 .lock_recover()
@@ -435,6 +470,16 @@ impl Core {
     /// checkout or this is not a Git checkout with a commit: then it keeps running where it is.
     /// Returns `false` when the Project's Setup command failed, so no Turn is started.
     pub(crate) fn ensure_worktree(&self, thread_id: u32) -> Result<bool> {
+        self.ensure_worktree_placed(thread_id, &Placement::default())
+    }
+
+    /// Like [`Core::ensure_worktree`], with where a new worktree starts: from a chosen base, or
+    /// on an existing branch (a pull request's head) instead of a new `oxide/` one.
+    pub(crate) fn ensure_worktree_placed(
+        &self,
+        thread_id: u32,
+        placement: &Placement,
+    ) -> Result<bool> {
         let (project_id, root, branch, worktree) = self.thread_checkouts(thread_id)?;
 
         // A Board Thread's worktree deleted by hand: recreate it from its branch.
@@ -455,14 +500,28 @@ impl Core {
                 return Ok(true); // not a Git checkout with any commit
             }
             let project = self.project(project_id)?;
-            let base = git::run(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?
-                .trim()
-                .to_string();
-            let slug = format!("thread-{thread_id}");
-            let (_branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
+            if let Some(existing) = placement.branch.as_deref() {
+                return self.start_on_existing_branch(thread_id, &root, &project, existing);
+            }
+            let base = match placement.base.as_deref() {
+                Some(base) => checked_base(&root, base)?,
+                None => git::run(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?
+                    .trim()
+                    .to_string(),
+            };
+            // A Thread started from an issue is named after it, like a dispatched one.
+            let issue_slug = self.issue_slug(thread_id)?;
+            let slug = issue_slug
+                .clone()
+                .unwrap_or_else(|| format!("thread-{thread_id}"));
+            let (branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
             self.db.lock_recover().execute(
-                "UPDATE threads SET worktree_path = ?1 WHERE id = ?2",
-                rusqlite::params![worktree.to_string_lossy(), thread_id],
+                "UPDATE threads SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
+                rusqlite::params![
+                    worktree.to_string_lossy(),
+                    issue_slug.map(|_| branch),
+                    thread_id
+                ],
             )?;
             return self.run_setup_in(project.id, &worktree, &root, thread_id);
         }
@@ -472,6 +531,98 @@ impl Core {
             self.recreate_worktree(&root, &worktree, "HEAD")?;
         }
         Ok(true)
+    }
+
+    /// Gives a new Thread a worktree on a branch that already exists (a pull request's head), so
+    /// its work lands on that branch. The branch is taken from the local repository, else from
+    /// `origin` (fetched when it is not there yet); a branch another worktree has checked out is
+    /// refused by Git and that is the error.
+    fn start_on_existing_branch(
+        &self,
+        thread_id: u32,
+        root: &Path,
+        project: &crate::ProjectSummary,
+        branch: &str,
+    ) -> Result<bool> {
+        let parent = self
+            .home
+            .join("worktrees")
+            .join(slugify(&project.name, "project"));
+        let worktree = self.git.mutate(root, || {
+            if branch.is_empty()
+                || branch.len() > 200
+                || branch.starts_with('-')
+                || branch.chars().any(|c| c.is_control() || c.is_whitespace())
+                || !git::succeeds(root, &["check-ref-format", &format!("refs/heads/{branch}")])
+            {
+                return Err(Error::Git("That is not a branch name.".into()));
+            }
+            std::fs::create_dir_all(&parent).map_err(|source| Error::Io {
+                path: parent.clone(),
+                source,
+            })?;
+            let mut name = slugify(branch, "branch");
+            let mut n = 1u32;
+            while parent.join(&name).exists() {
+                n = n.saturating_add(1);
+                name = format!("{}-{n}", slugify(branch, "branch"));
+            }
+            let worktree = parent.join(&name);
+            let path = worktree.to_string_lossy().into_owned();
+            if git::ref_exists(root, &format!("refs/heads/{branch}")) {
+                git::run_user_initiated(root, &["worktree", "add", "-q", &path, branch])?;
+            } else {
+                let remote = format!("refs/remotes/origin/{branch}");
+                if !git::ref_exists(root, &remote) {
+                    let spec = format!("+refs/heads/{branch}:{remote}");
+                    git::run_user_initiated(root, &["fetch", "--quiet", "origin", &spec]).map_err(
+                        |_| {
+                            Error::Git(format!(
+                                "Branch {branch} is not in this repository or on origin."
+                            ))
+                        },
+                    )?;
+                }
+                git::run_user_initiated(
+                    root,
+                    &[
+                        "worktree",
+                        "add",
+                        "-q",
+                        "--track",
+                        "-b",
+                        branch,
+                        &path,
+                        &format!("origin/{branch}"),
+                    ],
+                )?;
+            }
+            Ok(worktree)
+        })?;
+        self.db.lock_recover().execute(
+            "UPDATE threads SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
+            rusqlite::params![worktree.to_string_lossy(), branch, thread_id],
+        )?;
+        self.run_setup_in(project.id, &worktree, root, thread_id)
+    }
+
+    /// `<number>-<slug of the title>` for a Thread that remembers the issue it came from.
+    fn issue_slug(&self, thread_id: u32) -> Result<Option<String>> {
+        let db = self.db.lock_recover();
+        let (number, title): (Option<u32>, Option<String>) = db.query_row(
+            "SELECT issue_number, issue_title FROM threads WHERE id = ?1",
+            [thread_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(number.map(|n| {
+            format!(
+                "{n}-{}",
+                slugify(
+                    &crate::thread::truncate_title(&title.unwrap_or_default()),
+                    "thread"
+                )
+            )
+        }))
     }
 
     fn recreate_worktree(&self, root: &Path, worktree: &Path, rev: &str) -> Result<()> {
@@ -531,7 +682,7 @@ impl Core {
             .mutate(&root, || git::run(&root, &["worktree", "prune"]).map(drop))
     }
 
-    fn thread_summary(&self, thread_id: u32) -> Result<ThreadSummary> {
+    pub(crate) fn thread_summary(&self, thread_id: u32) -> Result<ThreadSummary> {
         let db = self.db.lock_recover();
         self.get_thread_by_id(&db, thread_id)
     }

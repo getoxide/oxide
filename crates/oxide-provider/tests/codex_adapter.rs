@@ -83,7 +83,7 @@ fn codex_detect_installed_and_authenticated_pinned_version() {
 
 #[cfg(unix)]
 #[test]
-fn codex_detect_installed_outside_pinned_range_gives_warning_not_block() {
+fn codex_detect_accepts_any_installed_version_without_a_warning() {
     let temp_dir = tempfile::tempdir().unwrap();
     let cli_path = make_fake_cli(temp_dir.path(), "2.5.0", true);
 
@@ -91,17 +91,9 @@ fn codex_detect_installed_outside_pinned_range_gives_warning_not_block() {
     let detection = provider.detect().expect("detect must succeed");
     assert!(detection.installed);
     assert!(detection.authenticated);
-    assert!(
-        detection.available,
-        "out-of-range version should warn, not block"
-    );
+    assert!(detection.available, "any version is accepted");
     assert_eq!(detection.version.as_deref(), Some("2.5.0"));
-    assert!(
-        detection.warning.is_some(),
-        "detection warning should be present when version is outside pinned range"
-    );
-    let warning = detection.warning.unwrap();
-    assert!(warning.contains("2.5.0"));
+    assert_eq!(detection.warning, None, "no version warning");
 }
 
 #[cfg(unix)]
@@ -358,19 +350,19 @@ fn server_initiated_approval_answered_while_client_request_in_flight_no_deadlock
 
 #[cfg(unix)]
 #[test]
-fn version_mismatch_at_handshake_produces_warning_not_block() {
+fn any_version_at_handshake_is_accepted() {
     use oxide_provider::{PermissionMode, ProviderEvent, StartContext, TurnStatus};
     use std::time::Duration;
 
     let fake_cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/codex/fake_codex.py");
 
     let mut provider = CodexProvider::with_command(fake_cli.to_str().unwrap());
-    // Force fake version to 2.5.0 (outside pinned range >= 0.100.0, < 1.0.0)
+    // Any version is accepted, even one far from what Oxide was developed against.
     provider.set_env("OXIDE_FAKE_VERSION", "2.5.0");
 
     let detection = provider.detect().expect("detect must succeed");
     assert!(detection.available, "detection must not be blocked");
-    assert!(detection.warning.is_some(), "detection must have warning");
+    assert_eq!(detection.warning, None, "no version warning");
 
     let context = StartContext {
         working_dir: PathBuf::from("."),
@@ -383,13 +375,6 @@ fn version_mismatch_at_handshake_produces_warning_not_block() {
     let rx = provider
         .start(&context)
         .expect("start must succeed despite version mismatch");
-    assert!(
-        provider.app_server().warning().is_some(),
-        "handshake warning must be recorded on app-server"
-    );
-    let warning = provider.app_server().warning().unwrap();
-    assert!(warning.contains("2.5.0"));
-
     provider
         .send_prompt("Hello test")
         .expect("prompt must succeed");
@@ -402,7 +387,7 @@ fn version_mismatch_at_handshake_produces_warning_not_block() {
             break;
         }
     }
-    assert!(turn_completed, "turn must complete despite version warning");
+    assert!(turn_completed, "turn must complete on any version");
 
     provider.shutdown().expect("shutdown must succeed");
 }
