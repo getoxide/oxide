@@ -95,6 +95,14 @@ fn login_shell_path() -> Option<String> {
 mod tests {
     use super::*;
 
+    /// `~/.local/bin` of the test home, joined the way the platform joins paths.
+    fn local_bin() -> String {
+        Path::new("/Users/a")
+            .join(".local/bin")
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn the_login_shell_path_and_the_usual_install_dirs_are_added_after_the_apps_own() {
         let merged = merge_path(
@@ -104,7 +112,10 @@ mod tests {
         );
         assert_eq!(
             merged,
-            "/usr/bin:/bin:/Users/a/.nvm/bin:/Users/a/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+            format!(
+                "/usr/bin:/bin:/Users/a/.nvm/bin:{}:/opt/homebrew/bin:/usr/local/bin",
+                local_bin()
+            )
         );
     }
 
@@ -113,7 +124,10 @@ mod tests {
         let merged = merge_path("/usr/bin:/bin", "", Some(Path::new("/Users/a")));
         assert_eq!(
             merged,
-            "/usr/bin:/bin:/Users/a/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+            format!(
+                "/usr/bin:/bin:{}:/opt/homebrew/bin:/usr/local/bin",
+                local_bin()
+            )
         );
     }
 
