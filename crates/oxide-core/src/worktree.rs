@@ -2,6 +2,7 @@
 //! `oxide/` branch, prepared by the Project's Setup command before its first Turn.
 
 use crate::{Core, Error, PermissionMode, Result, ThreadStatus, ThreadSummary, git};
+use oxide_provider::sync::LockExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -136,13 +137,13 @@ struct SetupRun {
 fn setup_command(command: &str, worktree: &Path, project_root: &Path) -> Command {
     #[cfg(unix)]
     let mut cmd = {
-        let mut cmd = Command::new(oxide_provider::command::os_tool("sh"));
+        let mut cmd = oxide_provider::command::os_command("sh");
         cmd.arg("-c").arg(format!("exec 2>&1\n{command}"));
         cmd
     };
     #[cfg(windows)]
     let mut cmd = {
-        let mut cmd = Command::new(oxide_provider::command::os_tool("cmd"));
+        let mut cmd = oxide_provider::command::os_command("cmd");
         cmd.arg("/C").arg(format!("{command} 2>&1"));
         oxide_provider::process::hide_console(&mut cmd);
         cmd
@@ -183,7 +184,7 @@ fn run_setup(command: &str, worktree: &Path, project_root: &Path) -> SetupRun {
 impl Core {
     /// The Project's Setup command, kept by Oxide and never written into its repository.
     pub(crate) fn project_setup_command(&self, project_id: u32) -> Result<Option<String>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(db.query_row(
             "SELECT setup_command FROM projects WHERE id = ?1",
             [project_id],
@@ -240,7 +241,7 @@ impl Core {
             request.permission_mode.unwrap_or(def_perm),
             None,
         )?;
-        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+        self.db.lock_recover().execute(
             "UPDATE threads SET branch = ?1, worktree_path = ?2, issue_number = ?3, issue_title = ?4, issue_url = ?5, issue_labels = ?6 WHERE id = ?7",
             rusqlite::params![
                 branch,
@@ -261,7 +262,7 @@ impl Core {
 
     /// The issue a Board Thread of the Project was started from on `branch`, if any.
     pub(crate) fn issue_of_branch(&self, project_id: u32, branch: &str) -> Result<Option<u32>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let found: Option<Option<u32>> = db
             .query_row(
                 "SELECT issue_number FROM threads WHERE project_id = ?1 AND branch = ?2 AND issue_number IS NOT NULL ORDER BY id DESC LIMIT 1",
@@ -283,7 +284,7 @@ impl Core {
         &self,
         thread_id: u32,
     ) -> Result<(u32, PathBuf, Option<String>, Option<PathBuf>)> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(db.query_row(
             "SELECT t.project_id, p.path, t.branch, t.worktree_path FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
             [thread_id],
@@ -344,8 +345,7 @@ impl Core {
         if worktree.is_some()
             && self
                 .dirty_editors
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .contains(&format!("{project_id}:{thread_id}"))
         {
             return Err(Error::Editor(
@@ -364,11 +364,7 @@ impl Core {
                 return Ok(DeleteOutcome::NeedsConfirmation);
             }
         }
-        let actor = self
-            .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id);
+        let actor = self.thread_actors.lock_recover().remove(&thread_id);
         if let Some(actor) = actor {
             actor.shutdown();
         }
@@ -385,8 +381,7 @@ impl Core {
         self.language_servers.stop_root(worktree);
         let terminals: Vec<_> = self
             .terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .values()
             .filter(|terminal| Path::new(&terminal.summary.cwd).starts_with(worktree))
             .map(|terminal| terminal.summary.id)
@@ -421,8 +416,7 @@ impl Core {
             || self.agent_is_running(thread_id)
             || self
                 .dirty_editors
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .contains(&format!("{project_id}:{thread_id}"))
         {
             return Ok(false);
@@ -460,7 +454,7 @@ impl Core {
         if !deleted {
             return Ok(false); // e.g. checked out in the main checkout
         }
-        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+        self.db.lock_recover().execute(
             "UPDATE threads SET branch = NULL, worktree_path = NULL WHERE id = ?1",
             [thread_id],
         )?;
@@ -521,7 +515,7 @@ impl Core {
                 .clone()
                 .unwrap_or_else(|| format!("thread-{thread_id}"));
             let (branch, worktree) = self.create_worktree(&root, &project, &base, &slug)?;
-            self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            self.db.lock_recover().execute(
                 "UPDATE threads SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
                 rusqlite::params![
                     worktree.to_string_lossy(),
@@ -605,7 +599,7 @@ impl Core {
             }
             Ok(worktree)
         })?;
-        self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+        self.db.lock_recover().execute(
             "UPDATE threads SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
             rusqlite::params![worktree.to_string_lossy(), branch, thread_id],
         )?;
@@ -614,7 +608,7 @@ impl Core {
 
     /// `<number>-<slug of the title>` for a Thread that remembers the issue it came from.
     fn issue_slug(&self, thread_id: u32) -> Result<Option<String>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let (number, title): (Option<u32>, Option<String>) = db.query_row(
             "SELECT issue_number, issue_title FROM threads WHERE id = ?1",
             [thread_id],
@@ -666,7 +660,7 @@ impl Core {
                 Some(ThreadStatus::NeedsInput)
             };
             {
-                let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+                let db = self.db.lock_recover();
                 db.execute(
                     "UPDATE threads SET setup_output = ?1, status = COALESCE(?2, status) WHERE id = ?3",
                     rusqlite::params![run.output, status.map(|s| s.to_string()), thread_id],
@@ -689,7 +683,7 @@ impl Core {
     }
 
     pub(crate) fn thread_summary(&self, thread_id: u32) -> Result<ThreadSummary> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         self.get_thread_by_id(&db, thread_id)
     }
 }

@@ -1,3 +1,4 @@
+use oxide_provider::sync::LockExt as _;
 use std::fs;
 use std::path::Path;
 
@@ -436,7 +437,7 @@ pub(crate) fn with_conn<T>(
     slot: &std::sync::Mutex<Option<Connection>>,
     f: impl FnOnce(&Connection) -> Result<T>,
 ) -> Result<T> {
-    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = slot.lock_recover();
     let conn = match &mut *guard {
         Some(conn) => conn,
         empty @ None => {

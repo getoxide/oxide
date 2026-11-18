@@ -15,8 +15,9 @@ use crate::agent_status::{
 };
 use crate::checkpoint::{self, Phase};
 use crate::custom_agents::{CustomAgent, PROVIDER_PREFIX, custom_id, shell_invocation};
+use crate::diag::SenderExt as _;
 use crate::terminal::{AgentCommand, TerminalSession, next_id};
-use crate::{Core, Error, PermissionMode, Result, ThreadStatus, ThreadSummary};
+use crate::{Core, Error, LockExt as _, PermissionMode, Result, ThreadStatus, ThreadSummary};
 use crossbeam_channel::Receiver;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -275,10 +276,7 @@ impl Core {
     /// Replaces the directories the Provider CLI is looked up in. Tests put a fake `claude`
     /// alone on it.
     pub fn set_agent_search_path(&self, dirs: Option<Vec<PathBuf>>) {
-        *self
-            .agent_search_path
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = dirs;
+        *self.agent_search_path.lock_recover() = dirs;
     }
 
     fn find_provider(&self, provider: &str) -> Result<PathBuf> {
@@ -289,8 +287,7 @@ impl Core {
         };
         let dirs = self
             .agent_search_path
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .clone()
             .unwrap_or_else(default_search_path);
         let path = std::env::join_paths(dirs)
@@ -494,7 +491,7 @@ impl Core {
     ) -> Result<ThreadSummary> {
         let issue = options.issue;
         let thread_id = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "INSERT INTO threads (project_id, provider, provider_session_id, model, effort, permission_mode, status, terminal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', 1)",
                 rusqlite::params![
@@ -538,7 +535,7 @@ impl Core {
             });
         if let Err(error) = started {
             // Nothing was started: leave no half-made Thread behind.
-            let _ = self.delete_thread(thread_id, true);
+            crate::diag::best_effort("delete_thread", self.delete_thread(thread_id, true));
             return Err(error);
         }
         self.thread_summary(thread_id)
@@ -569,13 +566,9 @@ impl Core {
     /// Starts a process (the Provider CLI, from an argument array).
     pub fn open_agent(&self, thread_id: u32) -> Result<ThreadSummary> {
         self.terminal_thread(thread_id)?;
-        let launched = self
-            .agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&thread_id);
+        let launched = self.agents.lock_recover().contains_key(&thread_id);
         let stopped: bool = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT status = 'stopped' FROM threads WHERE id = ?1",
                 [thread_id],
@@ -603,8 +596,7 @@ impl Core {
         self.terminal_thread(thread_id)?;
         Ok(self
             .agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&thread_id)
             .is_some_and(|run| {
                 run.session.exit_success().is_some() && run.session_gone.load(Ordering::SeqCst)
@@ -633,12 +625,7 @@ impl Core {
     /// Ends the Thread's agent. Stopping one that already ended does nothing.
     pub fn stop_agent(&self, thread_id: u32) -> Result<()> {
         self.terminal_thread(thread_id)?;
-        let run = self
-            .agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&thread_id)
-            .cloned();
+        let run = self.agents.lock_recover().get(&thread_id).cloned();
         if let Some(run) = run
             && run.session.exit_success().is_none()
         {
@@ -655,7 +642,7 @@ impl Core {
         let run = self.agent_run(thread_id)?;
         let (replay, feed) = run.session.attach();
         if run.session.exit_success().is_none() {
-            let _ = run.session.nudge_redraw();
+            crate::diag::best_effort("nudge_redraw", run.session.nudge_redraw());
         }
         Ok(AgentAttachment { replay, feed })
     }
@@ -731,7 +718,7 @@ impl Core {
     }
 
     fn thread_provider(&self, thread_id: u32) -> Result<String> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(db.query_row(
             "SELECT provider FROM threads WHERE id = ?1",
             [thread_id],
@@ -766,8 +753,7 @@ impl Core {
     /// Whether the Thread's agent process is alive.
     pub fn agent_is_running(&self, thread_id: u32) -> bool {
         self.agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&thread_id)
             .is_some_and(|run| run.session.exit_success().is_none())
     }
@@ -775,8 +761,7 @@ impl Core {
     /// The Threads whose agent process is alive.
     pub(crate) fn live_agent_ids(&self) -> Vec<u32> {
         self.agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .iter()
             .filter(|(_, run)| run.session.exit_success().is_none())
             .map(|(id, _)| *id)
@@ -785,17 +770,8 @@ impl Core {
 
     /// Stops the Thread's agent for good and forgets its terminal (deleting the Thread).
     pub(crate) fn drop_agent(&self, thread_id: u32) {
-        let run = self
-            .agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id);
-        if let Some(server) = self
-            .reporter
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
+        let run = self.agents.lock_recover().remove(&thread_id);
+        if let Some(server) = self.reporter.lock_recover().as_ref() {
             server.revoke(thread_id);
         }
         if let Some(run) = run {
@@ -807,13 +783,7 @@ impl Core {
 
     /// Stops every agent (quitting Oxide).
     pub(crate) fn close_agents(&self) {
-        let runs: Vec<_> = self
-            .agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .cloned()
-            .collect();
+        let runs: Vec<_> = self.agents.lock_recover().values().cloned().collect();
         for run in &runs {
             run.stopped.store(true, Ordering::SeqCst);
         }
@@ -828,8 +798,7 @@ impl Core {
     fn agent_run(&self, thread_id: u32) -> Result<Arc<AgentRun>> {
         self.terminal_thread(thread_id)?;
         self.agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&thread_id)
             .cloned()
             .ok_or_else(|| Error::Terminal("The agent is not running.".into()))
@@ -837,7 +806,7 @@ impl Core {
 
     /// Refuses an id that is not a terminal Thread.
     fn terminal_thread(&self, thread_id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let terminal: Option<i64> = db
             .query_row(
                 "SELECT terminal FROM threads WHERE id = ?1",
@@ -862,13 +831,7 @@ impl Core {
     /// the first prompt of a new session; a resumed session is never given one.
     fn launch_agent(&self, thread_id: u32, launch: Launch, prompt: Option<&str>) -> Result<()> {
         let resume = launch.resumes();
-        if launch == Launch::Open
-            && self
-                .agents
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(&thread_id)
-        {
+        if launch == Launch::Open && self.agents.lock_recover().contains_key(&thread_id) {
             return Ok(());
         }
         type Row = (
@@ -880,7 +843,7 @@ impl Core {
             String,
         );
         let (provider, session_id, model, effort, mode, checkout): Row = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT t.provider, t.provider_session_id, t.model, t.effort, t.permission_mode, COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
                 [thread_id],
@@ -1034,7 +997,7 @@ impl Core {
                 observed_paste.store(on, Ordering::SeqCst);
             }
             if resume && scanner.feed(output) && !gone_flag.swap(true, Ordering::SeqCst) && agy {
-                let _ = gone_signals.send(AgentSignal::SessionGone);
+                gone_signals.tell(AgentSignal::SessionGone);
             }
             let mut answer = Vec::new();
             for event in parser.feed(output) {
@@ -1045,7 +1008,7 @@ impl Core {
                             thread_status(state) == ThreadStatus::NeedsInput,
                             Ordering::SeqCst,
                         );
-                        let _ = observer_signals.send(AgentSignal::Report(state));
+                        observer_signals.tell(AgentSignal::Report(state));
                     }
                     Osc7501Event::Query => answer.extend_from_slice(QUERY_REPLY),
                 }
@@ -1059,10 +1022,10 @@ impl Core {
             } else {
                 ThreadStatus::Error
             };
-            let _ = signals.send(AgentSignal::Ended(status));
+            signals.tell(AgentSignal::Ended(status));
         });
         // Held until the run is recorded, so an agent that ends at once is not missed by `on_exit`.
-        let mut agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        let mut agents = self.agents.lock_recover();
         if launch == Launch::Open && agents.contains_key(&thread_id) {
             return Ok(());
         }
@@ -1075,7 +1038,7 @@ impl Core {
             on_exit,
         )?);
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             // Codex's id stays what the reporter stored; a fresh session clears the old one.
             if provider == "claude" || launch == Launch::Fresh {
                 db.execute(
@@ -1108,17 +1071,12 @@ impl Core {
     /// Provider runs) and the environment carrying the socket and a token that is new for this
     /// launch. Starts listening on the first call.
     fn reporter_launch(&self, thread_id: u32) -> Result<ReporterLaunch> {
-        let executable = match self
-            .reporter_executable
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
+        let executable = match self.reporter_executable.lock_recover().clone() {
             Some(path) => path,
             None => std::env::current_exe()
                 .map_err(|e| Error::Provider(format!("Oxide's executable is unknown: {e}")))?,
         };
-        let mut reporter = self.reporter.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reporter = self.reporter.lock_recover();
         if reporter.is_none() {
             let storage = self.storage.clone();
             *reporter = Some(crate::agent_reporter::ReporterServer::start(
@@ -1146,17 +1104,13 @@ impl Core {
 
     /// Replaces the executable Codex runs as the reporter. Tests use a stand-in.
     pub fn set_reporter_executable(&self, path: Option<PathBuf>) {
-        *self
-            .reporter_executable
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = path;
+        *self.reporter_executable.lock_recover() = path;
     }
 
     /// The socket of the session reporter, once a Codex or agy Thread has started it.
     pub fn reporter_socket(&self) -> Option<PathBuf> {
         self.reporter
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .as_ref()
             .map(|server| server.socket_path().to_path_buf())
     }
@@ -1184,8 +1138,7 @@ impl StatusWorker {
     /// A restart or a deletion may have replaced this run: what it says then is stale.
     fn is_current(&self) -> bool {
         self.agents
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&self.thread_id)
             .is_some_and(|run| run.id == self.run_id)
     }
@@ -1254,8 +1207,7 @@ impl StatusWorker {
                 Some(AgentSignal::SessionGone) => {
                     let run = self
                         .agents
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
+                        .lock_recover()
                         .get(&self.thread_id)
                         .filter(|run| run.id == self.run_id)
                         .cloned();

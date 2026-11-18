@@ -5,6 +5,7 @@
 use crate::checkpoint;
 use crate::git::{run, run_with_env};
 use crate::{Error, Result};
+use oxide_provider::diag;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -265,6 +266,6 @@ fn checkout(cwd: &Path, source: &str, paths: &[&str]) -> Result<()> {
         }
         Ok(())
     })();
-    let _ = std::fs::remove_file(&index);
+    diag::best_effort("remove_file", std::fs::remove_file(&index));
     result
 }

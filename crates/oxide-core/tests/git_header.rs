@@ -2,8 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, FETCH_INTERVAL, PermissionMode, ProjectSummary};
 use oxide_provider::{FakeProvider, ProviderEvent};
 use std::path::{Path, PathBuf};
@@ -302,7 +304,7 @@ fn picker_is_disabled_with_a_reason_while_a_thread_turn_is_working() {
     let fake = FakeProvider::default();
     let sender = fake.sender();
     fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });

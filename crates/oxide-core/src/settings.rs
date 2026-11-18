@@ -2,6 +2,8 @@
 //! The file is validated on every load; an invalid file leaves the last valid
 //! Settings in effect and reports field-level errors alongside them.
 
+use oxide_provider::diag;
+use oxide_provider::sync::LockExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -324,7 +326,7 @@ impl SettingsStore {
                 std::thread::spawn(move || {
                     std::thread::sleep(RELOAD_DEBOUNCE);
                     pending.store(false, Ordering::SeqCst);
-                    let _ = store.reload();
+                    diag::best_effort("reload", store.reload());
                 });
             })
             .map_err(|e| watch_error(home, e))?;
@@ -336,14 +338,11 @@ impl SettingsStore {
     }
 
     pub(crate) fn get(&self) -> SettingsState {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.state.lock_recover().clone()
     }
 
     pub(crate) fn subscribe(&self, f: Subscriber) {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(f);
+        self.subscribers.lock_recover().push(f);
     }
 
     pub(crate) fn save(&self, settings: &Settings) -> Result<()> {
@@ -368,7 +367,7 @@ impl SettingsStore {
             source,
         })?;
         let next = {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock_recover();
             let next = match parse(&text) {
                 Ok(settings) => SettingsState {
                     settings,
@@ -385,12 +384,7 @@ impl SettingsStore {
             *state = next.clone();
             next
         };
-        for f in self
-            .subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-        {
+        for f in self.subscribers.lock_recover().iter() {
             f(&next);
         }
         Ok(())

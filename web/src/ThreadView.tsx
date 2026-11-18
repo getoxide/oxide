@@ -1,9 +1,10 @@
+import { guardedStorage } from "./storage";
 import { errorMessage } from "./errors";
 import { hasOpenDialog, isTypingTarget } from "./keyboardScope";
 import { Skeleton } from "./Skeleton";
 import { LruCache } from "./lru";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { attachFile, Channel } from "./ipc";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -134,16 +135,6 @@ interface Outgoing {
 
 /** How a file offered as an Attachment fares once Core has looked at it. */
 type Stored = { attachment: Attachment } | { error: string };
-
-async function readBytes(file: File): Promise<Uint8Array> {
-  if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(file);
-  });
-}
 
 /** Octicon names: lock = Ask, shield = Auto-edit, open lock = Full access. */
 export type PermissionIcon = "lock" | "shield-check" | "unlock";
@@ -418,11 +409,7 @@ export function ThreadView({
         label: file.name || "pasted image",
         store: async (): Promise<Stored> => {
           try {
-            const bytes = await readBytes(file);
-            const attachment = await invoke<Attachment>("attach_bytes", bytes, {
-              headers: { "x-oxide-name": encodeURIComponent(file.name) },
-            });
-            return { attachment };
+            return { attachment: await attachFile(file) };
           } catch (error) {
             return { error: errorMessage(error, "The file could not be attached.") };
           }
@@ -495,7 +482,7 @@ export function ThreadView({
     void (async () => {
       const s = await commands.getSettings();
       if (!active) return;
-      const saved = loadDraftModel(localStorage, projectId);
+      const saved = loadDraftModel(guardedStorage, projectId);
       const defProvider = saved?.provider ?? s.settings.defaultProvider;
       setDraftProvider(defProvider);
       const provSettings = s.settings.providers[defProvider as keyof typeof s.settings.providers];
@@ -897,7 +884,7 @@ export function ThreadView({
     } else {
       setDraftModel(newModel);
       setDraftEffort(newEffort);
-      saveDraftModel(localStorage, projectId, { provider: newProvider, model: newModel, effort: newEffort });
+      saveDraftModel(guardedStorage, projectId, { provider: newProvider, model: newModel, effort: newEffort });
     }
   };
 

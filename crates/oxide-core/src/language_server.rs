@@ -3,16 +3,19 @@ use crate::{Error, Result};
 use crossbeam_channel::{Receiver, bounded};
 use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, read_bounded_line};
 use oxide_provider::command::find_in;
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, release_job, spawn_in_own_group,
     terminate_group,
 };
+use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -224,11 +227,11 @@ struct Session {
 }
 impl Session {
     fn stop(&self) {
-        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let mut child = self.child.lock_recover();
         terminate_group(self.pid, SHUTDOWN_GRACE, || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
-        let _ = child.wait();
+        diag::best_effort("wait", child.wait());
         release_job(self.pid);
         self.registry.unregister(self.pid);
     }
@@ -240,7 +243,7 @@ impl LanguageServers {
         language: &str,
         config: LanguageServerConfig,
     ) -> Result<()> {
-        let _lock = self.install_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = self.install_lock.lock_recover();
         configure(home, language, config)
     }
     pub fn install(
@@ -250,7 +253,7 @@ impl LanguageServers {
         progress: impl Fn(&str),
     ) -> Result<LanguageTool> {
         definition(language)?;
-        let _lock = self.install_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = self.install_lock.lock_recover();
         crate::language_install::install(home, language, &progress)?;
         tools(home)
             .into_iter()
@@ -275,7 +278,7 @@ impl LanguageServers {
                 tool.name
             ))
         })?;
-        let mut command = Command::new(&executable);
+        let mut command = oxide_provider::command::resolved_command(&executable);
         command
             .args(tool.config.args)
             .current_dir(root)
@@ -297,7 +300,7 @@ impl LanguageServers {
         let (Some(input), Some(output), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
-            let _ = child.kill();
+            diag::best_effort("kill", child.kill());
             registry.unregister(pid);
             return Err(failure("language server pipes were not available"));
         };
@@ -317,7 +320,7 @@ impl LanguageServers {
                     return;
                 }
             }
-            let _ = sender.send(
+            sender.tell(
                 serde_json::json!({"jsonrpc":"2.0", "method":"$/oxide/serverExited", "params":{}})
                     .to_string(),
             );
@@ -330,13 +333,10 @@ impl LanguageServers {
                 if errors.send(serde_json::json!({"jsonrpc":"2.0", "method":"window/logMessage", "params":{"type":4,"message":line.chars().take(2000).collect::<String>()}}).to_string()).is_err() { break; }
             }
             // A line over the cap ends the log feed; keep emptying the pipe so the server never blocks.
-            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+            diag::best_effort("copy", std::io::copy(&mut stderr, &mut std::io::sink()));
         });
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, session);
+        self.sessions.lock_recover().insert(id, session);
         Ok((
             LanguageServerSummary {
                 id,
@@ -369,12 +369,11 @@ impl LanguageServers {
         serde_json::from_str::<serde_json::Value>(message).map_err(failure)?;
         let session = self
             .sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&id)
             .cloned()
             .ok_or_else(|| failure("Language server stopped."))?;
-        let mut input = session.input.lock().unwrap_or_else(|e| e.into_inner());
+        let mut input = session.input.lock_recover();
         write!(
             input,
             "Content-Length: {}\r\n\r\n{}",
@@ -385,18 +384,13 @@ impl LanguageServers {
         .map_err(failure)
     }
     pub fn stop(&self, id: u32) {
-        if let Some(session) = self
-            .sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&id)
-        {
+        if let Some(session) = self.sessions.lock_recover().remove(&id) {
             session.stop();
         }
     }
     pub fn stop_root(&self, root: &Path) {
         let sessions: Vec<_> = {
-            let mut active = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            let mut active = self.sessions.lock_recover();
             let ids: Vec<_> = active
                 .iter()
                 .filter(|(_, session)| session.root.starts_with(root))
@@ -413,8 +407,7 @@ impl LanguageServers {
     pub fn shutdown(&self) {
         let sessions: Vec<_> = self
             .sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .drain()
             .map(|(_, s)| s)
             .collect();

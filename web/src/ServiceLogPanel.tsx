@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Channel } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { Channel, listenTo } from "./ipc";
+
 import { LinkExternalIcon, SquareFillIcon, SyncIcon, TrashIcon } from "@primer/octicons-react";
 import { commands, type ProjectService, type ProjectServiceConflict, type ProjectServiceLogLine } from "./bindings";
 import { PROJECT_SERVICES_CHANGED } from "./ProjectServices";
@@ -156,17 +156,14 @@ function ServiceLogView({ projectId, serviceId, checkout, visible, onServiceChan
   // signal; the panel stays readable after the service stops.
   useEffect(() => {
     let active = true;
-    let unlisten: (() => void) | undefined;
-    void listen<number>(PROJECT_SERVICES_CHANGED, (event) => {
-      if (event.payload !== projectId) return;
+    // A failure to listen is dropped: the log stream already reports an unreachable Core.
+    const stop = listenTo<number>(PROJECT_SERVICES_CHANGED, (changed) => {
+      if (changed !== projectId) return;
       void commands.projectService(serviceId).then((result) => {
         if (active && result.status === "ok" && result.data) setService(result.data);
       }).catch(() => {});
-    }).then((stop) => {
-      if (active) unlisten = stop;
-      else stop?.();
-    }).catch(() => { /* The log stream already reports an unreachable Core. */ });
-    return () => { active = false; unlisten?.(); };
+    });
+    return () => { active = false; stop(); };
   }, [projectId, serviceId]);
 
   useEffect(() => {

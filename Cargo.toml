@@ -23,6 +23,9 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 undocumented_unsafe_blocks = "deny"
+# A discarded Result is a failure nobody sees. Use `diag::best_effort`, `SenderExt::tell` or `?`.
+let_underscore_must_use = "deny"
+unused_result_ok = "deny"
 
 [workspace.dependencies]
 base64 = "0.23.1"

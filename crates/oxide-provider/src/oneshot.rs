@@ -166,7 +166,7 @@ pub fn run_one_shot(
         .map_err(|e| ProviderError::StartFailed(format!("failed to start `{program}`: {e}")))?;
     let pgid = child.id() as i32;
     if let Err(error) = process::attach_child_to_job(&mut child) {
-        let _ = child.kill();
+        crate::diag::best_effort("kill", child.kill());
         return Err(ProviderError::StartFailed(format!(
             "failed to contain `{program}`: {error}"
         )));
@@ -182,11 +182,14 @@ pub fn run_one_shot(
     let writer = std::thread::spawn(move || {
         let mut stdin = stdin;
         // The CLI may exit before reading everything; that surfaces through its exit status.
-        let _ = stdin.write_all(prompt.as_bytes());
+        crate::diag::best_effort("write the prompt", stdin.write_all(prompt.as_bytes()));
     });
     let reader = std::thread::spawn(move || {
         let mut out = Vec::new();
-        let _ = stdout.take(MAX_OUTPUT_BYTES).read_to_end(&mut out);
+        crate::diag::best_effort(
+            "read the reply",
+            stdout.take(MAX_OUTPUT_BYTES).read_to_end(&mut out),
+        );
         out
     });
     let stderr_tail = process::drain_stderr(stderr);
@@ -207,10 +210,10 @@ pub fn run_one_shot(
     };
     // Whatever the outcome, nothing of the run may outlive it.
     process::terminate_group(pgid, Duration::from_secs(2), || {
-        let _ = child.try_wait();
+        crate::diag::best_effort("try_wait", child.try_wait());
     });
-    let _ = child.wait();
-    let _ = writer.join();
+    crate::diag::best_effort("wait", child.wait());
+    crate::diag::joined("prompt writer", writer.join());
     let output = reader.join().unwrap_or_default();
     let stderr_tail = stderr_tail.join().ok().flatten();
     if let Some(registry) = registry {

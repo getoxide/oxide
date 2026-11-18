@@ -2,6 +2,8 @@
 //! every Thread of a Provider feeds and reads the same snapshot. Reports are merged window by
 //! window and the latest snapshot is persisted so the ring has a value after a restart.
 
+use oxide_provider::diag;
+use oxide_provider::sync::LockExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -154,11 +156,7 @@ impl UsageHub {
 
     pub(crate) fn get(&self, provider: &str) -> Option<UsageLimits> {
         let provider = canonical(provider);
-        self.limits
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(provider)
-            .cloned()
+        self.limits.lock_recover().get(provider).cloned()
     }
 
     /// The current snapshot and a channel of the snapshots that follow.
@@ -173,10 +171,9 @@ impl UsageHub {
         let (tx, rx) = crossbeam_channel::unbounded();
         // Registering under the limits lock keeps a concurrent report from slipping between
         // the snapshot and the subscription.
-        let limits = self.limits.lock().unwrap_or_else(|e| e.into_inner());
+        let limits = self.limits.lock_recover();
         self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .push((provider.to_string(), tx));
         (limits.get(provider).cloned(), rx)
     }
@@ -188,15 +185,14 @@ impl UsageHub {
         }
         let provider = canonical(provider);
         let snapshot = {
-            let mut limits = self.limits.lock().unwrap_or_else(|e| e.into_inner());
+            let mut limits = self.limits.lock_recover();
             let entry = limits.entry(provider.to_string()).or_default();
             entry.merge(windows, now_unix());
             entry.clone()
         };
         self.persist(provider, &snapshot);
         self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .retain(|(p, tx)| p != provider || tx.send(snapshot.clone()).is_ok());
     }
 
@@ -204,14 +200,17 @@ impl UsageHub {
         let Ok(value) = serde_json::to_string(snapshot) else {
             return;
         };
-        let _ = crate::db::with_conn(&self.db_path, &self.conn, |conn| {
-            conn.execute(
-                "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+        diag::best_effort(
+            "with_conn",
+            crate::db::with_conn(&self.db_path, &self.conn, |conn| {
+                conn.execute(
+                    "INSERT INTO app_state (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                [state_key(provider), value],
-            )?;
-            Ok(())
-        });
+                    [state_key(provider), value],
+                )?;
+                Ok(())
+            }),
+        );
     }
 }
 

@@ -19,7 +19,7 @@
 // The socket is Unix-only for now; elsewhere only the chaining and the launch recipe remain.
 #![cfg_attr(not(unix), allow(dead_code))]
 
-use crate::{Error, Result};
+use crate::{Error, LockExt as _, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -73,10 +73,7 @@ fn accept(bytes: &[u8], tokens: &Mutex<HashMap<String, u32>>) -> Option<(u32, St
     if !crate::agent_launch::is_uuid(&report.session_id) {
         return None;
     }
-    let thread = *tokens
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&report.token)?;
+    let thread = *tokens.lock_recover().get(&report.token)?;
     match report.status {
         Status::TurnComplete | Status::Session => Some((thread, report.session_id)),
     }
@@ -224,11 +221,11 @@ pub fn run_status_line(
     use std::io::Read;
     let mut child = user_command.and_then(|command| {
         let mut shell = if cfg!(windows) {
-            let mut c = std::process::Command::new("cmd");
+            let mut c = oxide_provider::command::os_command("cmd");
             c.arg("/C");
             c
         } else {
-            let mut c = std::process::Command::new("sh");
+            let mut c = oxide_provider::command::os_command("sh");
             c.arg("-c");
             c
         };
@@ -249,7 +246,7 @@ pub fn run_status_line(
             let input = input.to_vec();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let _ = stdin.write_all(&input);
+                crate::diag::best_effort("status line input", stdin.write_all(&input));
             })
         });
 
@@ -258,7 +255,10 @@ pub fn run_status_line(
         && let Some(conversation) = parsed.conversation_id.filter(|id| !id.is_empty())
         && let (Some(socket), Some(token)) = (env(SOCKET_ENV), env(TOKEN_ENV))
     {
-        let _ = send_report(Path::new(&socket), &token, &conversation, Status::Session);
+        crate::diag::best_effort(
+            "report the session",
+            send_report(Path::new(&socket), &token, &conversation, Status::Session),
+        );
     }
 
     let Some(mut child) = child else {
@@ -266,12 +266,15 @@ pub fn run_status_line(
     };
     let mut shown = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        let _ = stdout.take(MAX_STATUS_OUTPUT_BYTES).read_to_end(&mut shown);
+        crate::diag::best_effort(
+            "read the status line",
+            stdout.take(MAX_STATUS_OUTPUT_BYTES).read_to_end(&mut shown),
+        );
     }
-    let _ = out.write_all(&shown);
-    let _ = out.flush();
+    crate::diag::best_effort("print the status line", out.write_all(&shown));
+    crate::diag::best_effort("print the status line", out.flush());
     if let Some(writer) = writer {
-        let _ = writer.join();
+        crate::diag::joined("status line input", writer.join());
     }
     child
         .wait()
@@ -303,9 +306,12 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
         let mut input = Vec::new();
         {
             use std::io::Read;
-            let _ = std::io::stdin()
-                .take(MAX_STATUS_INPUT_BYTES + 1)
-                .read_to_end(&mut input);
+            crate::diag::best_effort(
+                "read the status line input",
+                std::io::stdin()
+                    .take(MAX_STATUS_INPUT_BYTES + 1)
+                    .read_to_end(&mut input),
+            );
         }
         return run_status_line(
             rest.first().map(String::as_str),
@@ -326,7 +332,8 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
     };
 
     let child = user.split_first().and_then(|(program, args)| {
-        std::process::Command::new(program)
+        // The user's own `notify` command, run unchanged as Codex would run it (ADR-0016).
+        oxide_provider::command::resolved_command(program)
             .args(args)
             .arg(payload)
             .env_remove(SOCKET_ENV)
@@ -342,11 +349,14 @@ pub fn run_reporter(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> i3
         && let Some(session_id) = parsed.thread_id
         && let (Some(socket), Some(token)) = (env(SOCKET_ENV), env(TOKEN_ENV))
     {
-        let _ = send_report(
-            Path::new(&socket),
-            &token,
-            &session_id,
-            Status::TurnComplete,
+        crate::diag::best_effort(
+            "report the session",
+            send_report(
+                Path::new(&socket),
+                &token,
+                &session_id,
+                Status::TurnComplete,
+            ),
         );
     }
 
@@ -410,7 +420,7 @@ impl ReporterServer {
     /// A new token for the Thread's launch; the Thread's earlier token stops working.
     pub(crate) fn register(&self, thread_id: u32) -> Result<String> {
         let token = random_token()?;
-        let mut tokens = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tokens = self.tokens.lock_recover();
         tokens.retain(|_, id| *id != thread_id);
         tokens.insert(token.clone(), thread_id);
         Ok(token)
@@ -418,10 +428,7 @@ impl ReporterServer {
 
     /// Stops accepting the Thread's token (its agent ended for good).
     pub(crate) fn revoke(&self, thread_id: u32) {
-        self.tokens
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, id| *id != thread_id);
+        self.tokens.lock_recover().retain(|_, id| *id != thread_id);
     }
 }
 
@@ -483,7 +490,9 @@ mod imp {
             // One socket per Oxide process, so a second instance never takes over (or deletes)
             // the first one's.
             let path = dir.join(format!("{SOCKET}-{}", std::process::id()));
-            let _ = std::fs::remove_file(&path);
+            if std::fs::symlink_metadata(&path).is_ok() {
+                std::fs::remove_file(&path).map_err(io)?;
+            }
             let listener = UnixListener::bind(&path).map_err(io)?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(io)?;
             let stop = Arc::new(AtomicBool::new(false));
@@ -506,14 +515,23 @@ mod imp {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::SeqCst);
             // Wakes the blocked accept so the thread ends.
-            let _ = UnixStream::connect(&self.path);
-            let _ = std::fs::remove_file(&self.path);
+            crate::diag::best_effort("wake the reporter socket", UnixStream::connect(&self.path));
+            crate::diag::best_effort(
+                "remove the reporter socket",
+                std::fs::remove_file(&self.path),
+            );
         }
     }
 
     fn serve(mut stream: UnixStream, tokens: &Mutex<HashMap<String, u32>>, on_report: &OnReport) {
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+        crate::diag::best_effort(
+            "reporter read timeout",
+            stream.set_read_timeout(Some(Duration::from_secs(1))),
+        );
+        crate::diag::best_effort(
+            "reporter write timeout",
+            stream.set_write_timeout(Some(Duration::from_secs(1))),
+        );
         let mut bytes = Vec::new();
         // One byte over the limit tells an oversized message from one that fits.
         let read = (&stream)
@@ -526,7 +544,7 @@ mod imp {
             }
             None => b"refused\n",
         };
-        let _ = stream.write_all(reply);
+        crate::diag::best_effort("reporter reply", stream.write_all(reply));
     }
 }
 
@@ -557,6 +575,7 @@ mod imp {
 #[cfg(unix)]
 mod tests {
     use super::*;
+    use crate::diag::SenderExt as _;
     use std::io::{Read, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixStream;
@@ -577,7 +596,7 @@ mod tests {
         let server = ReporterServer::start(
             dir.path(),
             Arc::new(move |thread, session| {
-                let _ = tx.lock().unwrap().send((thread, session.to_string()));
+                tx.lock_recover().tell((thread, session.to_string()));
             }),
         )
         .unwrap();
@@ -590,11 +609,11 @@ mod tests {
 
     fn talk(f: &Fixture, bytes: &[u8]) -> String {
         let mut stream = UnixStream::connect(f.server.socket_path()).unwrap();
-        let _ = stream.write_all(bytes);
+        crate::diag::best_effort("write", stream.write_all(bytes));
         // An oversized message makes the server answer and hang up before the end is written.
-        let _ = stream.shutdown(std::net::Shutdown::Write);
+        crate::diag::best_effort("shutdown", stream.shutdown(std::net::Shutdown::Write));
         let mut reply = String::new();
-        let _ = stream.read_to_string(&mut reply);
+        crate::diag::best_effort("read", stream.read_to_string(&mut reply));
         reply
     }
 

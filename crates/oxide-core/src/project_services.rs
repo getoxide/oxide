@@ -5,15 +5,18 @@
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, is_line_too_long};
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::process::{
     ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, spawn_in_own_group, terminate_group,
 };
+use oxide_provider::sync::LockExt as _;
 use oxide_provider::time::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufReader, Read};
 use std::net::TcpListener;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -127,15 +130,12 @@ struct EventHub {
 impl EventHub {
     fn subscribe(&self) -> Receiver<ProjectServiceEvent> {
         let (sender, receiver) = bounded(EVENT_BUFFER);
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(sender);
+        self.subscribers.lock_recover().push(sender);
         receiver
     }
 
     fn deliver(&self, event: &ProjectServiceEvent) {
-        let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut subscribers = self.subscribers.lock_recover();
         subscribers.retain(|sender| sender.try_send(event.clone()).is_ok());
     }
 }
@@ -162,16 +162,12 @@ struct Service {
 
 impl Service {
     fn summary(&self) -> ProjectService {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .summary
-            .clone()
+        self.state.lock_recover().summary.clone()
     }
 
     fn record_line(&self, stream: ProjectServiceStream, text: String) {
         let event = {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock_recover();
             let line = ProjectServiceLogLine {
                 seq: state.next_seq,
                 stream,
@@ -219,7 +215,7 @@ impl Service {
     /// for the supervisor to reap it. Safe to call more than once.
     fn stop(&self) {
         let pid = {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock_recover();
             if state.summary.status != ProjectServiceStatus::Running {
                 return;
             }
@@ -229,7 +225,7 @@ impl Service {
         if pid > 0 {
             terminate_group(pid as i32, SHUTDOWN_GRACE, || {});
         }
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock_recover();
         let deadline = Instant::now() + SHUTDOWN_GRACE + Duration::from_secs(5);
         while !state.reaped {
             let now = Instant::now();
@@ -275,12 +271,7 @@ impl ProjectServices {
     }
 
     fn get(&self, id: u32) -> Option<Arc<Service>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .services
-            .get(&id)
-            .cloned()
+        self.inner.lock_recover().services.get(&id).cloned()
     }
 
     pub fn start(
@@ -333,8 +324,7 @@ impl ProjectServices {
             events: Arc::clone(&self.events),
         });
         self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .services
             .insert(id, Arc::clone(&service));
 
@@ -358,12 +348,11 @@ impl ProjectServices {
     pub fn list(&self, project_id: u32) -> Vec<ProjectService> {
         let mut services: Vec<_> = self
             .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .services
             .values()
             .filter(|service| {
-                let state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+                let state = service.state.lock_recover();
                 state.summary.project_id == project_id
                     && state.summary.status == ProjectServiceStatus::Running
             })
@@ -408,8 +397,7 @@ impl ProjectServices {
     fn live_service_on_port(&self, port: u16, excluding: Option<u32>) -> Option<ProjectService> {
         let services: Vec<_> = self
             .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .services
             .values()
             .cloned()
@@ -433,7 +421,7 @@ impl ProjectServices {
             .ok_or_else(|| Error::ProjectService(format!("unknown Project Service {id}")))?;
         let (sender, receiver) = bounded(LOG_VIEW_BUFFER);
         let backlog = {
-            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = service.state.lock_recover();
             state.log_subscribers.push(sender);
             state.logs.iter().cloned().collect()
         };
@@ -453,19 +441,10 @@ impl ProjectServices {
     pub fn stop_project(&self, project_id: u32) {
         let services: Vec<_> = self
             .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .services
             .values()
-            .filter(|service| {
-                service
-                    .state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .summary
-                    .project_id
-                    == project_id
-            })
+            .filter(|service| service.state.lock_recover().summary.project_id == project_id)
             .cloned()
             .collect();
         std::thread::scope(|scope| {
@@ -481,7 +460,7 @@ impl ProjectServices {
             .ok_or_else(|| Error::ProjectService(format!("unknown Project Service {id}")))?;
         service.stop();
         let port = {
-            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = service.state.lock_recover();
             state.logs.clear();
             state.reaped = false;
             state.stop_requested = false;
@@ -500,17 +479,17 @@ impl ProjectServices {
         {
             // Leave it stopped: the caller can switch to the incumbent or choose another port.
             // It never bound the port this time, so it must not advertise the one it asked for.
-            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = service.state.lock_recover();
             state.summary.port = None;
             state.summary.url = None;
             return Ok(ProjectServiceStartOutcome::Conflict(conflict));
         }
         {
-            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = service.state.lock_recover();
             state.summary.status = ProjectServiceStatus::Running;
         }
         if let Err(error) = launch(&service) {
-            let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = service.state.lock_recover();
             state.summary.status = ProjectServiceStatus::Failed;
             state.reaped = true;
             drop(state);
@@ -530,12 +509,7 @@ impl ProjectServices {
         let service = self
             .get(id)
             .ok_or_else(|| Error::ProjectService(format!("unknown Project Service {id}")))?;
-        service
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .logs
-            .clear();
+        service.state.lock_recover().logs.clear();
         Ok(())
     }
 
@@ -543,8 +517,7 @@ impl ProjectServices {
     pub fn shutdown(&self) {
         let services: Vec<_> = self
             .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .services
             .values()
             .cloned()
@@ -557,13 +530,7 @@ impl ProjectServices {
     }
 
     fn remove(&self, id: u32) {
-        if let Some(service) = self
-            .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .services
-            .remove(&id)
-        {
+        if let Some(service) = self.inner.lock_recover().services.remove(&id) {
             service.emit(ProjectServiceEventKind::Removed);
         }
     }
@@ -590,7 +557,7 @@ fn port_available(port: u16) -> bool {
 
 fn launch(service: &Arc<Service>) -> Result<()> {
     let summary = service.summary();
-    let mut command = Command::new(shell());
+    let mut command = oxide_provider::command::resolved_command(shell());
     #[cfg(unix)]
     command.args(["-lc", &summary.command]);
     #[cfg(windows)]
@@ -609,15 +576,15 @@ fn launch(service: &Arc<Service>) -> Result<()> {
     })?;
     let pid = child.id();
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
+        diag::best_effort("kill", child.kill());
+        diag::best_effort("wait", child.wait());
         return Err(Error::ProjectService(
             "Project Service output was not captured".into(),
         ));
     };
     if let Err(error) = attach_child_to_job(&mut child) {
-        let _ = child.kill();
-        let _ = child.wait();
+        diag::best_effort("kill", child.kill());
+        diag::best_effort("wait", child.wait());
         return Err(Error::ProjectService(format!(
             "Could not contain Project Service `{}`: {error}",
             summary.command
@@ -627,7 +594,7 @@ fn launch(service: &Arc<Service>) -> Result<()> {
         .registry
         .register(pid as i32, &shell().to_string_lossy());
     {
-        let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = service.state.lock_recover();
         state.summary.pid = pid;
         state.summary.exit_code = None;
         state.reaped = false;
@@ -690,15 +657,15 @@ fn spawn_reader(
             }
         }
         // Keep emptying the pipe so the service never blocks on it, without keeping anything.
-        let _ = std::io::copy(&mut reader, &mut std::io::sink());
-        let _ = drained.send(());
+        diag::best_effort("copy", std::io::copy(&mut reader, &mut std::io::sink()));
+        drained.tell(());
     });
 }
 
 fn supervise(service: &Arc<Service>, mut child: Child, drained: &Receiver<()>) {
     let status = child.wait().ok();
     let early = {
-        let state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = service.state.lock_recover();
         !state.announced
     };
     let pid = service.summary().pid;
@@ -719,7 +686,7 @@ fn supervise(service: &Arc<Service>, mut child: Child, drained: &Receiver<()>) {
         }
     }
     let announced = {
-        let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = service.state.lock_recover();
         let stopped = state.stop_requested;
         let success = status.as_ref().is_some_and(|status| status.success());
         state.summary.status = if stopped || success {
@@ -740,7 +707,7 @@ fn supervise(service: &Arc<Service>, mut child: Child, drained: &Receiver<()>) {
 /// Waits out the startup window, returning an error if the process exited inside it.
 fn wait_for_startup(service: &Arc<Service>) -> Result<()> {
     let deadline = Instant::now() + EARLY_FAILURE_GRACE;
-    let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = service.state.lock_recover();
     while !state.reaped {
         let now = Instant::now();
         if now >= deadline {
@@ -760,7 +727,7 @@ fn wait_for_startup(service: &Arc<Service>) -> Result<()> {
 }
 
 fn startup_error(service: &Arc<Service>) -> Error {
-    let state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+    let state = service.state.lock_recover();
     let code = state
         .summary
         .exit_code

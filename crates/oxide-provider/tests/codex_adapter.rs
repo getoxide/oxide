@@ -9,6 +9,10 @@ use oxide_provider::Provider;
 #[cfg(unix)]
 use oxide_provider::codex::CodexProvider;
 #[cfg(unix)]
+use oxide_provider::diag;
+#[cfg(unix)]
+use oxide_provider::diag::SenderExt as _;
+#[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -289,7 +293,7 @@ fn server_initiated_approval_answered_while_client_request_in_flight_no_deadlock
     // Prompt sends "deadlock_test". The fake server delays replying to turn/start and emits approval request
     std::thread::spawn(move || {
         let res = provider_clone.send_prompt("deadlock_test");
-        let _ = tx_start_done.send(res);
+        tx_start_done.tell(res);
     });
 
     // We should receive ApprovalRequested on rx while turn/start is in flight
@@ -413,7 +417,7 @@ fn codex_provider_handles_interrupt() {
     // Send interrupt_test prompt in background
     let mut provider_clone = provider.clone();
     std::thread::spawn(move || {
-        let _ = provider_clone.send_prompt("interrupt_test");
+        diag::best_effort("send_prompt", provider_clone.send_prompt("interrupt_test"));
     });
 
     // Wait for TurnStarted
@@ -856,7 +860,7 @@ fn a_line_over_the_cap_ends_the_session_with_an_error() {
             permission_mode: PermissionMode::AutoEdit,
         })
         .unwrap();
-    let _ = provider.send_prompt("oversized_test");
+    diag::best_effort("send_prompt", provider.send_prompt("oversized_test"));
 
     let mut errored = false;
     loop {

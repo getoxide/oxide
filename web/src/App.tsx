@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, u
 import { invalidateQueries } from "./queryCache";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ContextMenu } from "./ContextMenu";
-import { listen } from "@tauri-apps/api/event";
+import { listenTo } from "./ipc";
 import { commands, type CustomAgent, type PermissionMode, type Project, type Thread, type ThreadStatus, type ProjectServiceConflict } from "./bindings";
 import { ModelEffortPicker } from "./ModelEffortPicker";
 import { cachedCatalogs, detectProviders, installedCache } from "./modelCatalogCache";
@@ -703,11 +703,10 @@ export function App() {
 
   // The native menu follows the same creation path as the sidebar and shortcut.
   useEffect(() => {
-    const unlisten = listen("new-thread", () => {
+    return listenTo<null>("new-thread", () => {
       setShowSettings(false);
       void startNewThread();
     });
-    return () => { void unlisten.then((fn) => fn()); };
   }, [startNewThread]);
 
   const openProject = useCallback((project: Project) => {
@@ -993,21 +992,18 @@ export function App() {
 
   // Listen for low-rate thread status changes from backend
   useEffect(() => {
-    const unlisten = listen<{ threadId: number; status: ThreadStatus }>(
+    return listenTo<{ threadId: number; status: ThreadStatus }>(
       "thread-status-changed",
-      (event) => {
+      (changed) => {
         mapLoadedProjectThreads((list) =>
-          list.some((t) => t.id === event.payload.threadId && t.status !== event.payload.status)
+          list.some((t) => t.id === changed.threadId && t.status !== changed.status)
             ? list.map((t) =>
-                t.id === event.payload.threadId ? { ...t, status: event.payload.status } : t
+                t.id === changed.threadId ? { ...t, status: changed.status } : t
               )
             : list,
         );
       }
     );
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
   }, [mapLoadedProjectThreads]);
 
   // When selected project changes, fetch its threads

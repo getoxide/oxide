@@ -4,6 +4,7 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+use oxide_core::diag::SenderExt as _;
 use std::time::{Duration, Instant};
 
 use oxide_core::{Core, PermissionMode, UsageLimits, UsageStatus};
@@ -29,12 +30,12 @@ fn reporting(windows: Vec<UsageWindow>) -> FakeProvider {
         let prompt = prompt.to_string();
         let windows = windows.clone();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::UsageLimits { windows });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::UsageLimits { windows });
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

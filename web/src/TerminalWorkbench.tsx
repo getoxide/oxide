@@ -1,3 +1,4 @@
+import { readJson, storageKeys, writeJson } from "./storage";
 import {
   useCallback,
   useEffect,
@@ -5,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { TerminalIcon, XIcon, SquareFillIcon } from "@primer/octicons-react";
 import {
   TerminalCommandBlock,
@@ -76,21 +77,15 @@ async function startProjectService(
 }
 
 function loadHistory(key: string): CommandHistory[] {
-  try {
-    const value: unknown = JSON.parse(
-      localStorage.getItem(`oxide:terminal-history:${key}`) ?? "[]",
-    );
-    return Array.isArray(value)
-      ? value
-          .filter(
-            (v): v is CommandHistory =>
-              typeof v?.command === "string" && typeof v?.at === "number",
-          )
-          .slice(-300)
-      : [];
-  } catch {
-    return [];
-  }
+  const value = readJson(storageKeys.terminalHistory(key));
+  return Array.isArray(value)
+    ? value
+        .filter(
+          (v): v is CommandHistory =>
+            typeof v?.command === "string" && typeof v?.at === "number",
+        )
+        .slice(-300)
+    : [];
 }
 
 export function TerminalWorkbench({
@@ -259,14 +254,7 @@ export function TerminalWorkbench({
   }, [projectId, threadId, generation]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        `oxide:terminal-history:${contextKey}`,
-        JSON.stringify(history),
-      );
-    } catch {
-      /* History still works for this session. */
-    }
+    writeJson(storageKeys.terminalHistory(contextKey), history);
   }, [history, contextKey]);
   useEffect(() => {
     if (visible && following.current)

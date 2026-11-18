@@ -4,6 +4,7 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, ItemKind, PermissionMode, ThreadEvent, ThreadStatus, TurnStatus};
 use oxide_provider::{ApprovalDecision, ApprovalKind, FakeProvider, ProviderEvent};
 use tempfile::tempdir;
@@ -26,11 +27,11 @@ fn core_runs_approval_end_to_end_and_persists_in_transcript() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ApprovalRequested {
+            s.tell(ProviderEvent::ApprovalRequested {
                 id: "appr-1".into(),
                 kind: ApprovalKind::Command,
                 summary: "Run `cargo test`".into(),
@@ -44,13 +45,13 @@ fn core_runs_approval_end_to_end_and_persists_in_transcript() {
         assert_eq!(id, "appr-1");
         assert_eq!(decision, ApprovalDecision::Allow);
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::ItemStarted {
+            s.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 parent_item_index: None,
                 category: None,
             });
-            let _ = s.send(ProviderEvent::ItemCompleted {
+            s.tell(ProviderEvent::ItemCompleted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 content: "Executed command with approval".into(),
@@ -58,7 +59,7 @@ fn core_runs_approval_end_to_end_and_persists_in_transcript() {
                 category: None,
                 command: None,
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -145,11 +146,11 @@ fn unanswered_approval_waits_indefinitely_and_resolves_when_interrupted() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ApprovalRequested {
+            s.tell(ProviderEvent::ApprovalRequested {
                 id: "appr-wait".into(),
                 kind: ApprovalKind::FileChange,
                 summary: "Modify src/lib.rs".into(),
@@ -251,11 +252,11 @@ fn core_runs_approval_deny_end_to_end() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ApprovalRequested {
+            s.tell(ProviderEvent::ApprovalRequested {
                 id: "appr-deny-1".into(),
                 kind: ApprovalKind::Command,
                 summary: "Dangerous command".into(),
@@ -269,13 +270,13 @@ fn core_runs_approval_deny_end_to_end() {
         assert_eq!(id, "appr-deny-1");
         assert_eq!(decision, ApprovalDecision::Deny);
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::ItemStarted {
+            s.tell(ProviderEvent::ItemStarted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 parent_item_index: None,
                 category: None,
             });
-            let _ = s.send(ProviderEvent::ItemCompleted {
+            s.tell(ProviderEvent::ItemCompleted {
                 item_index: 0,
                 kind: ItemKind::AgentMessage,
                 content: "Action was denied".into(),
@@ -283,7 +284,7 @@ fn core_runs_approval_deny_end_to_end() {
                 category: None,
                 command: None,
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -344,18 +345,18 @@ fn unanswered_approval_resolves_when_turn_completes() {
         let s = sender.clone();
         let prompt = prompt.to_string();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
-            let _ = s.send(ProviderEvent::ApprovalRequested {
+            s.tell(ProviderEvent::ApprovalRequested {
                 id: "appr-turn-end".into(),
                 kind: ApprovalKind::Tool,
                 summary: "Tool call".into(),
                 options: vec![],
             });
             // Complete turn without waiting for approval
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

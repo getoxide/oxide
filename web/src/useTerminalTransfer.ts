@@ -1,21 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { attachFile } from "./ipc";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Attachment } from "./bindings";
 
 /** Literal paths, never executable shell fragments. PowerShell and POSIX differ on apostrophes. */
 export function terminalPaths(paths: string[], windows = /Windows/i.test(navigator.userAgent)): string {
   return paths.map((path) => `'${path.replaceAll("'", windows ? "''" : "'\\''")}'`).join(" ") + " ";
-}
-
-async function bytesOf(file: File): Promise<Uint8Array> {
-  if (file.arrayBuffer) return new Uint8Array(await file.arrayBuffer());
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(file);
-  });
 }
 
 /** Native Windows file drops bypass DOM drop events in Tauri. Paste images become local files. */
@@ -42,10 +31,7 @@ export function useTerminalTransfer(host: RefObject<HTMLElement | null>, visible
           const paths: string[] = [];
           for (const file of files) {
             if (file.size > 25 * 1024 * 1024) throw new Error("Files can be up to 25 MB.");
-            const attachment = await invoke<Attachment>("attach_bytes", await bytesOf(file), {
-              headers: { "x-oxide-name": encodeURIComponent(file.name) },
-            });
-            paths.push(attachment.path);
+            paths.push((await attachFile(file)).path);
           }
           if (active) latest.current(terminalPaths(paths));
         } catch (cause) {

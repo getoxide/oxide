@@ -11,6 +11,7 @@ use crate::worktree::{free_name, slugify};
 use crate::{Core, Error, Result};
 use oxide_provider::ProviderError;
 use oxide_provider::oneshot::{self, OneShotRequest};
+use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -308,7 +309,7 @@ impl Core {
         }
 
         let (root, project_name) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let (path, name): (String, String) = db.query_row(
                 "SELECT path, name FROM projects WHERE id = ?1",
                 [request.project_id],
@@ -457,7 +458,7 @@ impl Core {
         let issue_text = if let Some(explicit) = request.issue.filter(|s| !s.trim().is_empty()) {
             explicit
         } else if let Some(tid) = request.thread_id {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let issue_row: Option<(Option<u32>, Option<String>, Option<String>)> = db
                 .query_row(
                     "SELECT issue_number, issue_title, issue_url FROM threads WHERE id = ?1",
@@ -484,7 +485,7 @@ impl Core {
             self.create_detached_worktree(&root, &project_name, &commit_ish, "blind-review")?;
 
         let inserted = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "INSERT INTO blind_reviews (thread_id, provider, scope, status, worktree)
                  VALUES (?1, ?2, ?3, 'running', ?4)",
@@ -529,21 +530,14 @@ impl Core {
 
     /// Replaces how one-shot Provider runs are launched.
     pub fn set_one_shot_runner(&self, runner: OneShotRunner) {
-        *self
-            .one_shot_runner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = runner;
+        *self.one_shot_runner.lock_recover() = runner;
     }
 
     /// Runs a prepared Blind review to its end: launches the Provider once in the throwaway
     /// worktree, records its closing message as findings (or the failure), and removes the
     /// worktree. Blocks until the Provider is done.
     pub fn execute_blind_review(&self, prepared: PreparedBlindReview) -> Result<BlindReviewRun> {
-        let runner = self
-            .one_shot_runner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let runner = self.one_shot_runner.lock_recover().clone();
         let mut request = OneShotRequest::new(
             prepared.run.provider.clone(),
             prepared.worktree.clone(),
@@ -555,7 +549,7 @@ impl Core {
         self.remove_detached_worktree(&prepared.root, &prepared.worktree);
 
         let mut run = prepared.run;
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let tx = crate::db::write_transaction(&db)?;
         match outcome {
             Ok(message) => {
@@ -593,11 +587,14 @@ impl Core {
     /// Marks a Blind review that could not be recorded as failed, so it never stays `running`.
     /// The message is stored without URL credentials.
     pub fn fail_blind_review(&self, id: u32, message: &str) {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = db.execute(
-            "UPDATE blind_reviews SET status = 'failed', error = ?2, worktree = NULL
-             WHERE id = ?1 AND status = 'running'",
-            rusqlite::params![id, crate::redact::redact_url_credentials(message)],
+        let db = self.db.lock_recover();
+        crate::diag::best_effort(
+            "fail_blind_review",
+            db.execute(
+                "UPDATE blind_reviews SET status = 'failed', error = ?2, worktree = NULL
+                 WHERE id = ?1 AND status = 'running'",
+                rusqlite::params![id, crate::redact::redact_url_credentials(message)],
+            ),
         );
     }
 
@@ -609,7 +606,7 @@ impl Core {
 
     /// The Blind reviews of a Thread, oldest first.
     pub fn blind_review_runs(&self, thread_id: u32) -> Result<Vec<BlindReviewRun>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut stmt = db.prepare(
             "SELECT id, thread_id, provider, scope, status, error FROM blind_reviews
              WHERE thread_id = ?1 ORDER BY id",
@@ -631,20 +628,23 @@ impl Core {
 
     /// Removes a review's throwaway worktree. Best effort: a leftover worktree is only clutter.
     fn remove_detached_worktree(&self, root: &Path, worktree: &Path) {
-        let _ = self.git.mutate(root, || {
-            git::run(
-                root,
-                &["worktree", "remove", "--force", &worktree.to_string_lossy()],
-            )
-            .map(drop)
-        });
+        crate::diag::best_effort(
+            "remove the review worktree",
+            self.git.mutate(root, || {
+                git::run(
+                    root,
+                    &["worktree", "remove", "--force", &worktree.to_string_lossy()],
+                )
+                .map(drop)
+            }),
+        );
     }
 
     /// A review that was running when Oxide quit never finished: report it as failed and remove
     /// its worktree.
     pub(crate) fn recover_interrupted_blind_reviews(&self) {
         let stale: Vec<(u32, Option<String>, Option<String>)> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let Ok(mut stmt) = db.prepare(
                 "SELECT r.id, r.worktree, p.path FROM blind_reviews r
                  LEFT JOIN threads t ON t.id = r.thread_id
@@ -662,12 +662,15 @@ impl Core {
             if let (Some(worktree), Some(root)) = (worktree, root) {
                 self.remove_detached_worktree(Path::new(&root), Path::new(&worktree));
             }
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = db.execute(
-                "UPDATE blind_reviews
-                 SET status = 'failed', error = 'Oxide quit before the review finished', worktree = NULL
-                 WHERE id = ?1",
-                [id],
+            let db = self.db.lock_recover();
+            crate::diag::best_effort(
+                "recover_interrupted_blind_reviews",
+                db.execute(
+                    "UPDATE blind_reviews
+                     SET status = 'failed', error = 'Oxide quit before the review finished', worktree = NULL
+                     WHERE id = ?1",
+                    [id],
+                ),
             );
         }
     }
@@ -675,7 +678,7 @@ impl Core {
     /// The findings of every Blind review of `thread_id`. They were parsed once when the review
     /// finished, and keep every reply, including one that cannot be parsed, as plain text.
     pub fn list_blind_review_findings(&self, thread_id: u32) -> Result<Vec<BlindReviewFinding>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut stmt = db.prepare(
             "SELECT f.id, r.id, r.provider, f.path, f.side, f.line, f.code, f.body,
                     f.anchored, f.decision
@@ -708,7 +711,7 @@ impl Core {
     /// no line to attach to. Keeping twice returns the same draft.
     pub fn keep_blind_review_finding(&self, id: u32) -> Result<Option<LineComment>> {
         let (reviewed, scope, provider, path, side, line, code, body, anchored) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT r.thread_id, r.scope, r.provider, f.path, f.side, f.line, f.code, f.body,
                         f.anchored
@@ -733,7 +736,7 @@ impl Core {
             )?
         };
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "UPDATE blind_review_findings SET decision = 'kept' WHERE id = ?1",
                 [id],
@@ -745,7 +748,7 @@ impl Core {
             return Ok(None);
         };
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let existing = db.query_row(
                 "SELECT id, scope, path, side, line, code, body, provider FROM line_comments
                  WHERE finding_id = ?1",
@@ -802,7 +805,7 @@ impl Core {
 
     /// Dismisses one finding: it never reaches the Thread, and a draft it already made is removed.
     pub fn dismiss_blind_review_finding(&self, id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE blind_review_findings SET decision = 'dismissed' WHERE id = ?1",
             [id],

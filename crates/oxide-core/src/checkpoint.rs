@@ -6,6 +6,7 @@
 
 use crate::Result;
 use crate::git::{run, run_with_env};
+use oxide_provider::diag;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -26,31 +27,37 @@ fn ref_name(thread_id: u32, turn_index: u32, phase: Phase) -> String {
 /// Records a Checkpoint of the working tree. Best effort: a directory that is
 /// not a Git checkout simply has none.
 pub(crate) fn take(cwd: &Path, thread_id: u32, turn_index: u32, phase: Phase) {
-    let _ = snapshot(cwd).and_then(|commit| {
-        run(
-            cwd,
-            &[
-                "update-ref",
-                &ref_name(thread_id, turn_index, phase),
-                &commit,
-            ],
-        )
-    });
+    diag::best_effort(
+        "snapshot",
+        snapshot(cwd).and_then(|commit| {
+            run(
+                cwd,
+                &[
+                    "update-ref",
+                    &ref_name(thread_id, turn_index, phase),
+                    &commit,
+                ],
+            )
+        }),
+    );
 }
 
 /// Records the Checkpoint of a Thread's starting state, the one Restore can always go back to.
 /// Best effort, like [`take`].
 pub(crate) fn take_thread_start(cwd: &Path, thread_id: u32) {
-    let _ = snapshot(cwd).and_then(|commit| {
-        run(
-            cwd,
-            &[
-                "update-ref",
-                &format!("refs/oxide/checkpoints/{thread_id}/thread-start"),
-                &commit,
-            ],
-        )
-    });
+    diag::best_effort(
+        "thread-start checkpoint",
+        snapshot(cwd).and_then(|commit| {
+            run(
+                cwd,
+                &[
+                    "update-ref",
+                    &format!("refs/oxide/checkpoints/{thread_id}/thread-start"),
+                    &commit,
+                ],
+            )
+        }),
+    );
 }
 
 /// Whether the Thread has its starting-state Checkpoint.
@@ -73,7 +80,7 @@ pub(crate) fn forget(cwd: &Path, thread_id: u32) {
         return;
     };
     for name in refs.lines().filter(|l| !l.is_empty()) {
-        let _ = run(cwd, &["update-ref", "-d", name]);
+        diag::best_effort("run", run(cwd, &["update-ref", "-d", name]));
     }
 }
 
@@ -130,7 +137,7 @@ pub(crate) fn turn_revs(
 pub(crate) fn snapshot(cwd: &Path) -> Result<String> {
     let index = temp_index(cwd, "oxide-checkpoint")?;
     let result = commit_through(cwd, &index.to_string_lossy());
-    let _ = std::fs::remove_file(&index);
+    diag::best_effort("remove_file", std::fs::remove_file(&index));
     result
 }
 
@@ -138,7 +145,7 @@ pub(crate) fn snapshot(cwd: &Path) -> Result<String> {
 pub(crate) fn working_tree(cwd: &Path) -> Result<String> {
     let index = temp_index(cwd, "oxide-tree")?;
     let result = tree_through(cwd, &index.to_string_lossy());
-    let _ = std::fs::remove_file(&index);
+    diag::best_effort("remove_file", std::fs::remove_file(&index));
     result
 }
 

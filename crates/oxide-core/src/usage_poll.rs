@@ -2,6 +2,8 @@
 //! Turn. The endpoints are undocumented and best-effort: a failure leaves the last snapshot alone.
 //! See `docs/research/usage-quota-tracking.md`.
 
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
@@ -65,7 +67,7 @@ fn claude_token(user_home: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(dir.join(".credentials.json")).ok();
     #[cfg(target_os = "macos")]
     let raw = raw.or_else(|| {
-        let out = std::process::Command::new(oxide_provider::command::os_tool("security"))
+        let out = oxide_provider::command::os_command("security")
             .args([
                 "find-generic-password",
                 "-s",
@@ -327,15 +329,18 @@ fn fetch_agy() -> Result<Vec<UsageWindow>, String> {
             pgid,
             oxide_provider::process::SHUTDOWN_GRACE,
             || {
-                let _ = child.try_wait();
+                diag::best_effort("try_wait", child.try_wait());
             },
         );
-        let _ = child.wait();
+        diag::best_effort("wait", child.wait());
         "no stdout"
     })?;
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
-        let _ = std::io::Read::read_to_string(&mut stdout, &mut s);
+        diag::best_effort(
+            "read_to_string",
+            std::io::Read::read_to_string(&mut stdout, &mut s),
+        );
         s
     });
     let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
@@ -353,10 +358,10 @@ fn fetch_agy() -> Result<Vec<UsageWindow>, String> {
                     pgid,
                     oxide_provider::process::SHUTDOWN_GRACE,
                     || {
-                        let _ = child.try_wait();
+                        diag::best_effort("try_wait", child.try_wait());
                     },
                 );
-                let _ = child.wait();
+                diag::best_effort("wait", child.wait());
                 return Err("agy /usage timed out".into());
             }
         }
@@ -377,9 +382,9 @@ pub(crate) struct PollerHandle {
 
 impl PollerHandle {
     pub(crate) fn stop(&mut self) {
-        let _ = self.stop_tx.send(());
+        self.stop_tx.tell(());
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            diag::joined("join", h.join());
         }
     }
 }
@@ -450,7 +455,7 @@ mod tests {
                     sock.set_nonblocking(false).unwrap();
                     let mut buf = [0u8; 4096];
                     let n = sock.read(&mut buf).unwrap_or(0);
-                    let _ = sock.write_all(response.as_bytes());
+                    diag::best_effort("write_all", sock.write_all(response.as_bytes()));
                     return Some(String::from_utf8_lossy(&buf[..n]).into_owned());
                 }
                 if std::time::Instant::now() > deadline {

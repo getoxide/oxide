@@ -1,12 +1,12 @@
 //! User-local language support, downloaded only after an explicit Install action.
 use crate::language_pins as pins;
 use crate::{Error, LanguageServerConfig, Result};
+use oxide_provider::diag;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
@@ -176,7 +176,7 @@ fn download(
     }
     drop(file);
     if !hex(&hash.finalize()).eq_ignore_ascii_case(expected) {
-        let _ = std::fs::remove_file(destination);
+        diag::best_effort("remove_file", std::fs::remove_file(destination));
         return Err(error(
             "The downloaded file failed checksum verification. Nothing was installed. Set a custom executable in Language tools.",
         ));
@@ -193,7 +193,7 @@ fn reusable_install(destination: &Path, executable_name: &str, expected: &str) -
     let matching = find_executable(destination, executable_name, 5)
         .filter(|binary| file_matches(binary, expected));
     if matching.is_none() {
-        let _ = std::fs::remove_dir_all(destination);
+        diag::best_effort("remove_dir_all", std::fs::remove_dir_all(destination));
     }
     matching
 }
@@ -224,7 +224,7 @@ fn gunzip_limited(archive: &Path, destination: &Path, limit: u64) -> Result<()> 
     match copied {
         Ok(n) if n <= limit => Ok(()),
         outcome => {
-            let _ = std::fs::remove_file(destination);
+            diag::best_effort("remove_file", std::fs::remove_file(destination));
             match outcome {
                 Ok(_) => Err(error(
                     "Unpacked language server is larger than the supported limit.",
@@ -390,7 +390,7 @@ fn install_npm(
     } else {
         "lib/node_modules/npm/bin/npm-cli.js"
     });
-    let mut command = Command::new(&managed_node);
+    let mut command = oxide_provider::command::resolved_command(&managed_node);
     command.arg(npm);
     // Run inside the prefix: npm resolves the project from the working directory.
     command.args(NPM_ARGUMENTS).current_dir(&prefix);
@@ -420,7 +420,7 @@ fn managed_node_is_pinned(node_root: &Path, managed_node: &Path, expected: &str)
     if file_matches(managed_node, expected) {
         return true;
     }
-    let _ = std::fs::remove_dir_all(node_root);
+    diag::best_effort("remove_dir_all", std::fs::remove_dir_all(node_root));
     false
 }
 
@@ -579,13 +579,16 @@ mod tests {
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut request = [0; 1024];
-                let _ = stream.read(&mut request);
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
+                diag::best_effort("read", stream.read(&mut request));
+                diag::best_effort(
+                    "write",
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    ),
                 );
-                let _ = stream.write_all(body);
+                diag::best_effort("write_all", stream.write_all(body));
             }
         });
         format!("http://127.0.0.1:{port}/asset")

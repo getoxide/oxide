@@ -4,6 +4,7 @@
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, PermissionMode, ThreadEvent, TurnStatus};
 use oxide_provider::{FakeProvider, Provider, ProviderEvent};
 use tempfile::tempdir;
@@ -93,11 +94,11 @@ fn mid_thread_model_switch_gating() {
     fake.on_prompt(move |_prompt| {
         let s = sender.clone();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt: "turn 0".into(),
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });
@@ -161,11 +162,11 @@ fn turn_records_model_and_effort_used() {
     fake.on_prompt(move |_prompt| {
         let s = sender.clone();
         std::thread::spawn(move || {
-            let _ = s.send(ProviderEvent::TurnStarted {
+            s.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt: "ok".into(),
             });
-            let _ = s.send(ProviderEvent::TurnCompleted {
+            s.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

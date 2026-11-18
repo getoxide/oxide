@@ -2,8 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+use oxide_core::diag;
 use oxide_core::{Core, LanguageServerConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -103,7 +105,10 @@ fn drain_terminal(core: &Arc<Core>, terminal_id: u32) -> Drained {
                     continue;
                 };
                 for _ in 0..chunk.windows(4).filter(|w| *w == b"\x1b[6n").count() {
-                    let _ = core.write_terminal(terminal_id, b"\x1b[1;1R");
+                    diag::best_effort(
+                        "write_terminal",
+                        core.write_terminal(terminal_id, b"\x1b[1;1R"),
+                    );
                 }
                 bytes.lock().unwrap().extend(chunk);
             }
@@ -143,7 +148,7 @@ impl Drop for Drained {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            diag::joined("join", reader.join());
         }
     }
 }

@@ -2,7 +2,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 #![cfg(unix)]
 //! Codex in a Terminal Thread (ADR-0017): launch flags, status from OSC 7501 without a query,

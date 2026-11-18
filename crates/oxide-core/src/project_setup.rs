@@ -3,6 +3,7 @@
 
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result, git};
+use oxide_provider::diag;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,7 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf> {
     let dest = fresh_folder(parent, name)?;
     fs::create_dir(&dest).map_err(io(&dest))?;
     if let Err(e) = git::run(&dest, &["init", "-q"]) {
-        let _ = fs::remove_dir_all(&dest);
+        diag::best_effort("remove_dir_all", fs::remove_dir_all(&dest));
         return Err(e);
     }
     Ok(dest)

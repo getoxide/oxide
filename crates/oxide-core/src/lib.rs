@@ -43,6 +43,10 @@ mod terminal_completion;
 pub use terminal_completion::{TerminalCompletion, TerminalMatch};
 pub mod thread;
 pub use oxide_provider::claude::ClaudeCustomizations;
+/// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
+pub use oxide_provider::diag;
+/// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
+pub use oxide_provider::sync::{LockExt, RwLockExt};
 mod thread_actor;
 mod usage;
 mod usage_poll;
@@ -323,25 +327,19 @@ impl Core {
 
     /// Replaces the clock idle reaping reads. Call before the first Thread is used.
     pub fn set_clock(&self, clock: Arc<dyn Clock>) {
-        *self.clock.lock().unwrap_or_else(|e| e.into_inner()) = clock;
+        *self.clock.lock_recover() = clock;
     }
 
     /// Shuts every Provider and terminal down, escalating SIGTERM to SIGKILL, and returns once
     /// their processes are gone. Safe to call more than once; also runs when Core is dropped.
     pub fn shutdown(&self) {
-        if let Some(mut poller) = self
-            .usage_poller
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(mut poller) = self.usage_poller.lock_recover().take() {
             poller.stop();
         }
         self.language_servers.shutdown();
         let actors: Vec<_> = self
             .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .drain()
             .map(|(_, actor)| actor)
             .collect();
@@ -353,8 +351,7 @@ impl Core {
         });
         let terminals: Vec<_> = self
             .terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .drain()
             .map(|(_, session)| session)
             .collect();
@@ -400,13 +397,12 @@ impl Core {
     pub fn quit(&self) {
         let actors: Vec<_> = self
             .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .values()
             .cloned()
             .collect();
         for actor in &actors {
-            let _ = actor.interrupt();
+            diag::best_effort("interrupt", actor.interrupt());
         }
         // The Providers report the interruption asynchronously; give them a moment to.
         let deadline = std::time::Instant::now() + QUIT_INTERRUPT_GRACE;
@@ -420,7 +416,7 @@ impl Core {
     /// Opening a Project this way also lists it in the sidebar.
     pub fn remember_selection(&self, project_id: u32, thread_id: Option<u32>) -> Result<()> {
         self.set_project_open(project_id, true)?;
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "INSERT INTO app_state (key, value) VALUES ('selection', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -431,7 +427,7 @@ impl Core {
 
     /// The Project and Thread last remembered, if they still exist.
     pub fn last_selection(&self) -> Result<Option<Selection>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let stored: Option<String> = db
             .query_row(
                 "SELECT value FROM app_state WHERE key = 'selection'",
@@ -492,7 +488,7 @@ impl Core {
     /// recently added first.
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
         let rows: Vec<ProjectRow> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let mut stmt = db.prepare(
                 "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects ORDER BY id DESC",
             )?;
@@ -509,7 +505,7 @@ impl Core {
         let roots = discovery::default_roots(&self.user_home);
         let found = discovery::find_repositories(&roots);
         {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let tx = db::write_transaction(&db)?;
             for path in &found {
                 let name = path
@@ -546,7 +542,7 @@ impl Core {
             .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
         let path = canonical.to_string_lossy();
         let id = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.execute(
                 "INSERT OR IGNORE INTO projects (name, path) VALUES (?1, ?2)",
                 (&name, &path),
@@ -605,7 +601,7 @@ impl Core {
     /// Records that the user did something in the Project (a prompt, a terminal command, Pull or
     /// Push), which lets Oxide fetch its remote on its own from then on.
     pub fn mark_project_acted_upon(&self, project_id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE projects SET acted_upon = 1 WHERE id = ?1 AND acted_upon = 0",
             [project_id],
@@ -615,7 +611,7 @@ impl Core {
 
     /// Whether the user has acted in the Project, so that automatic fetch is on.
     pub fn project_acted_upon(&self, project_id: u32) -> Result<bool> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(db.query_row(
             "SELECT acted_upon FROM projects WHERE id = ?1",
             [project_id],
@@ -624,7 +620,7 @@ impl Core {
     }
 
     fn mark_thread_project_acted_upon(&self, thread_id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE projects SET acted_upon = 1
              WHERE id = (SELECT project_id FROM threads WHERE id = ?1)",
@@ -642,7 +638,7 @@ impl Core {
 
     fn project(&self, id: u32) -> Result<ProjectSummary> {
         let row = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT id, name, path, hidden, opened_at IS NOT NULL FROM projects WHERE id = ?1",
                 [id],
@@ -655,7 +651,7 @@ impl Core {
     /// Lists the Project in the sidebar, or takes it out; it stays known either way, so
     /// the Project palette still finds it. Opening keeps the time it was first opened.
     pub fn set_project_open(&self, id: u32, open: bool) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         if open {
             db.execute(
                 "UPDATE projects SET hidden = 0,
@@ -674,7 +670,7 @@ impl Core {
     /// Whether chat Threads of this Project stay in the main checkout instead of
     /// each getting its own worktree on its first prompt. Defaults to false.
     pub(crate) fn project_threads_in_main_checkout(&self, project_id: u32) -> Result<bool> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(db.query_row(
             "SELECT threads_in_main_checkout FROM projects WHERE id = ?1",
             [project_id],
@@ -772,7 +768,7 @@ impl Core {
         permission_mode: PermissionMode,
         continued_from: Option<u32>,
     ) -> Result<ThreadSummary> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "INSERT INTO threads (project_id, provider, model, effort, permission_mode, status, continued_from) VALUES (?1, ?2, ?3, ?4, ?5, 'completed', ?6)",
             rusqlite::params![project_id, provider, model, effort, permission_mode.as_str(), continued_from],
@@ -785,7 +781,7 @@ impl Core {
     }
 
     pub fn set_thread_provider(&self, thread_id: u32, provider: &str) -> Result<ThreadSummary> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let (turn_count, status_str): (u32, String) = db.query_row(
             "SELECT (SELECT COUNT(*) FROM turns WHERE thread_id = ?1), status FROM threads WHERE id = ?1",
             [thread_id],
@@ -803,10 +799,7 @@ impl Core {
             "UPDATE threads SET provider = ?1, model = ?2, effort = ?3, permission_mode = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?5",
             rusqlite::params![provider, def_model, def_effort, def_perm.as_str(), thread_id],
         )?;
-        self.thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id);
+        self.thread_actors.lock_recover().remove(&thread_id);
         let thread = self.get_thread_by_id(&db, thread_id)?;
         drop(db);
         self.board.publish(thread_id);
@@ -848,18 +841,14 @@ impl Core {
     /// starts a fresh conversation inside the same Thread.
     pub fn clear_thread(&self, thread_id: u32) -> Result<ThreadSummary> {
         let (_project_id, root, _branch, _worktree) = self.thread_checkouts(thread_id)?;
-        let actor = self
-            .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id);
+        let actor = self.thread_actors.lock_recover().remove(&thread_id);
         if let Some(actor) = actor {
             actor.shutdown();
         }
-        let _ = self.storage.get_snapshot(thread_id, 0);
+        diag::best_effort("get_snapshot", self.storage.get_snapshot(thread_id, 0));
 
         let (summary, attachments) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let attachments = Self::collect_thread_attachments(&db, thread_id)?;
             let tx = db::write_transaction(&db)?;
             Self::clear_thread_history_tx(&tx, thread_id)?;
@@ -895,10 +884,10 @@ impl Core {
         checkpoint_root: &Path,
     ) -> Result<()> {
         // The storage actor may still hold writes for this Thread: let them land first.
-        let _ = self.storage.get_snapshot(thread_id, 0);
+        diag::best_effort("get_snapshot", self.storage.get_snapshot(thread_id, 0));
 
         let (project_id, attachments) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let project_id: u32 = db.query_row(
                 "SELECT project_id FROM threads WHERE id = ?1",
                 [thread_id],
@@ -995,8 +984,7 @@ impl Core {
                     ));
                 if let Some(models) = models.filter(|m| !m.is_empty()) {
                     self.model_catalogs
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
+                        .lock_recover()
                         .insert(provider.to_string(), models);
                 }
                 det
@@ -1017,7 +1005,7 @@ impl Core {
             },
         };
         if det.available || det.installed {
-            let _ = self.get_model_catalog(provider, false);
+            diag::best_effort("get_model_catalog", self.get_model_catalog(provider, false));
         }
         det
     }
@@ -1048,10 +1036,7 @@ impl Core {
 
     pub fn get_model_catalog(&self, provider: &str, refresh: bool) -> Result<Vec<ModelInfo>> {
         if !refresh {
-            let cache = self
-                .model_catalogs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let cache = self.model_catalogs.lock_recover();
             if let Some(models) = cache.get(provider) {
                 return Ok(models.clone());
             }
@@ -1080,15 +1065,14 @@ impl Core {
         // next call tries again.
         if !models.is_empty() {
             self.model_catalogs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .insert(provider.to_string(), models.clone());
         }
         Ok(models)
     }
 
     pub fn get_favourite_models(&self) -> Result<Vec<String>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let res: std::result::Result<String, rusqlite::Error> = db.query_row(
             "SELECT value FROM app_state WHERE key = 'favourite_models'",
             [],
@@ -1102,7 +1086,7 @@ impl Core {
     }
 
     pub fn set_favourite_models(&self, favourites: &[String]) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let json_str =
             serde_json::to_string(favourites).map_err(|e| Error::Provider(e.to_string()))?;
         db.execute(
@@ -1124,7 +1108,7 @@ impl Core {
     }
 
     pub fn list_threads(&self, project_id: u32) -> Result<Vec<ThreadSummary>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut stmt = db.prepare(&format!(
             "SELECT {} FROM threads WHERE project_id = ?1 ORDER BY id DESC",
             thread::THREAD_COLUMNS
@@ -1146,18 +1130,13 @@ impl Core {
     }
 
     pub fn rename_thread(&self, thread_id: u32, title: &str) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE threads SET title = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2",
             rusqlite::params![title, thread_id],
         )?;
         drop(db);
-        if let Some(actor) = self
-            .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&thread_id)
-        {
+        if let Some(actor) = self.thread_actors.lock_recover().get(&thread_id) {
             actor.rename(title.to_string());
         }
         self.board.publish(thread_id);
@@ -1166,20 +1145,19 @@ impl Core {
 
     pub fn register_fake_provider(&self, thread_id: u32, provider: impl ProviderTrait) {
         self.fake_providers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .insert(thread_id, Box::new(provider));
     }
 
     pub fn get_or_create_thread_actor(&self, thread_id: u32) -> Result<ThreadActorHandle> {
-        let mut actors = self.thread_actors.lock().unwrap_or_else(|e| e.into_inner());
+        let mut actors = self.thread_actors.lock_recover();
         if let Some(actor) = actors.get(&thread_id) {
             return Ok(actor.clone());
         }
 
         let snapshot = self.storage.get_snapshot(thread_id, 0)?;
         let (project_id, project_path) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let row: (u32, String) = db.query_row(
                 "SELECT p.id, COALESCE(t.worktree_path, p.path) FROM threads t JOIN projects p ON p.id = t.project_id WHERE t.id = ?1",
                 [thread_id],
@@ -1188,38 +1166,34 @@ impl Core {
             (row.0, PathBuf::from(row.1))
         };
 
-        let provider: Box<dyn ProviderTrait> = if let Some(p) = self
-            .fake_providers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&thread_id)
-        {
-            p
-        } else if snapshot.thread.provider == "claude" {
-            if !self.detect_provider("claude").installed {
-                return Err(Error::Provider("Claude Code is not installed".to_string()));
-            }
-            let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
-            claude.set_registry(Arc::clone(&self.processes));
-            claude.set_user_customizations(self.settings().settings.claude_customizations);
-            Box::new(claude)
-        } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
-            if !self.detect_provider(&snapshot.thread.provider).installed {
-                return Err(Error::Provider(
-                    "Antigravity CLI is not installed".to_string(),
-                ));
-            }
-            let mut agy = oxide_provider::agy::AgyProvider::new();
-            agy.set_registry(Arc::clone(&self.processes));
-            Box::new(agy)
-        } else if snapshot.thread.provider == "codex" {
-            if !self.detect_provider("codex").installed {
-                return Err(Error::Provider("Codex is not installed".to_string()));
-            }
-            Box::new(oxide_provider::codex::CodexProvider::new())
-        } else {
-            Box::new(oxide_provider::FakeProvider::scripted())
-        };
+        let provider: Box<dyn ProviderTrait> =
+            if let Some(p) = self.fake_providers.lock_recover().remove(&thread_id) {
+                p
+            } else if snapshot.thread.provider == "claude" {
+                if !self.detect_provider("claude").installed {
+                    return Err(Error::Provider("Claude Code is not installed".to_string()));
+                }
+                let mut claude = oxide_provider::claude::ClaudeCodeProvider::new();
+                claude.set_registry(Arc::clone(&self.processes));
+                claude.set_user_customizations(self.settings().settings.claude_customizations);
+                Box::new(claude)
+            } else if matches!(snapshot.thread.provider.as_str(), "agy" | "antigravity") {
+                if !self.detect_provider(&snapshot.thread.provider).installed {
+                    return Err(Error::Provider(
+                        "Antigravity CLI is not installed".to_string(),
+                    ));
+                }
+                let mut agy = oxide_provider::agy::AgyProvider::new();
+                agy.set_registry(Arc::clone(&self.processes));
+                Box::new(agy)
+            } else if snapshot.thread.provider == "codex" {
+                if !self.detect_provider("codex").installed {
+                    return Err(Error::Provider("Codex is not installed".to_string()));
+                }
+                Box::new(oxide_provider::codex::CodexProvider::new())
+            } else {
+                Box::new(oxide_provider::FakeProvider::scripted())
+            };
 
         let mut provider = provider;
         provider.allow_attachments_dir(&self.attachments_dir());
@@ -1230,7 +1204,7 @@ impl Core {
             provider,
             self.storage.clone(),
             real_time,
-            self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            self.clock.lock_recover().clone(),
             usage::ActorServices {
                 activity: Arc::clone(&self.activity),
                 usage: Arc::clone(&self.usage),
@@ -1293,12 +1267,7 @@ impl Core {
 
         let key = serde_json::to_string(&(provider, format!("{customizations:?}"), &working_dir))
             .map_err(|e| Error::Provider(e.to_string()))?;
-        let cached = self
-            .slash_catalogs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&key)
-            .cloned();
+        let cached = self.slash_catalogs.lock_recover().get(&key).cloned();
         if !refresh {
             return Ok(cached
                 .map(|catalog| {
@@ -1333,10 +1302,7 @@ impl Core {
             Ok(commands) => {
                 let catalog = slash_catalog::merge(commands);
                 let bytes = {
-                    let mut catalogs = self
-                        .slash_catalogs
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
+                    let mut catalogs = self.slash_catalogs.lock_recover();
                     catalogs.insert(key, catalog.clone());
                     serde_json::to_vec(&*catalogs).map_err(|e| Error::Provider(e.to_string()))?
                 };
@@ -1381,7 +1347,7 @@ impl Core {
     /// Removes stored Attachments a day old or more that no Turn refers to.
     fn remove_abandoned_attachments(&self) {
         let referenced: std::collections::HashSet<String> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let Ok(mut stmt) = db.prepare("SELECT segments, attachments FROM turns") else {
                 return;
             };
@@ -1422,7 +1388,7 @@ impl Core {
     /// Starts polling provider usage limits in the background (Claude, Codex, Antigravity).
     /// Safe to call multiple times (only one poller is spawned).
     pub fn start_usage_poller(&self) {
-        let mut poller = self.usage_poller.lock().unwrap_or_else(|e| e.into_inner());
+        let mut poller = self.usage_poller.lock_recover();
         if poller.is_some() {
             return;
         }
@@ -1488,14 +1454,8 @@ impl Core {
             blocks,
         )?);
         let summary = session.summary.clone();
-        self.terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, session);
-        self.terminal_projects
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, project_id);
+        self.terminals.lock_recover().insert(id, session);
+        self.terminal_projects.lock_recover().insert(id, project_id);
         Ok(summary)
     }
 
@@ -1562,7 +1522,7 @@ impl Core {
         ))
     }
     pub fn set_editor_dirty(&self, id: String, dirty: bool) {
-        let mut editors = self.dirty_editors.lock().unwrap_or_else(|e| e.into_inner());
+        let mut editors = self.dirty_editors.lock_recover();
         if dirty {
             editors.insert(id);
         } else {
@@ -1570,10 +1530,7 @@ impl Core {
         }
     }
     pub fn dirty_editor_count(&self) -> u32 {
-        self.dirty_editors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len() as u32
+        self.dirty_editors.lock_recover().len() as u32
     }
 
     pub fn configure_language_server(
@@ -1793,7 +1750,7 @@ impl Core {
         undone: bool,
     ) -> Result<()> {
         let (turn_id, item_index) = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             let turn_id: u32 = db.query_row(
                 "SELECT id FROM turns WHERE thread_id = ?1 ORDER BY turn_index DESC LIMIT 1",
                 [thread_id],
@@ -1824,7 +1781,7 @@ impl Core {
     fn restore_refused(&self, thread_id: u32, target: &GitTarget) -> Result<()> {
         // Taken before the database lock: launching an agent holds this one, then the database.
         let live_agents = self.live_agent_ids();
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let status: String = db.query_row(
             "SELECT status FROM threads WHERE id = ?1",
             [thread_id],
@@ -1863,7 +1820,7 @@ impl Core {
         safety_ref: &str,
         files: &[RestoreFile],
     ) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let files = serde_json::to_string(files).unwrap_or_else(|_| "[]".into());
         db.execute(
             "INSERT INTO restores (thread_id, turn_index, safety_ref, files) VALUES (?1, ?2, ?3, ?4)",
@@ -1874,7 +1831,7 @@ impl Core {
 
     /// The Thread's latest restore that has not been undone yet.
     fn latest_restore(&self, thread_id: u32) -> Result<Option<restore::RestoreRecord>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let row = rusqlite::OptionalExtension::optional(db.query_row(
             "SELECT turn_index, safety_ref, files FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1",
             [thread_id],
@@ -1898,7 +1855,7 @@ impl Core {
 
     /// Marks the Thread's latest restore as undone.
     fn mark_restore_undone(&self, thread_id: u32) -> Result<()> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         db.execute(
             "UPDATE restores SET undone_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = (SELECT id FROM restores WHERE thread_id = ?1 AND undone_at IS NULL ORDER BY id DESC LIMIT 1)",
             [thread_id],
@@ -1909,7 +1866,7 @@ impl Core {
     /// The checkout a Thread's files live in: its worktree, or the Project's main one.
     fn thread_target(&self, thread_id: u32) -> Result<GitTarget> {
         let project_id = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             db.query_row(
                 "SELECT project_id FROM threads WHERE id = ?1",
                 [thread_id],
@@ -1975,8 +1932,10 @@ impl Core {
         let checkout = self.main_checkout(project_id)?;
         let fetched = self.git.fetch(&checkout, now)?;
         if fetched {
-            let _ =
-                review_ledger::detect_reverts_and_follow_ups(&checkout, project_id, &self.ledger);
+            diag::best_effort(
+                "detect reverts and follow-ups",
+                review_ledger::detect_reverts_and_follow_ups(&checkout, project_id, &self.ledger),
+            );
         }
         Ok(fetched)
     }
@@ -2263,7 +2222,10 @@ impl Core {
             return;
         };
         if let Ok(Some(thread_id)) = self.ledger.thread_of_branch(project_id, &head) {
-            let _ = self.ledger.record_merge(thread_id, number, &merged_at);
+            diag::best_effort(
+                "record_merge",
+                self.ledger.record_merge(thread_id, number, &merged_at),
+            );
         }
     }
 
@@ -2355,7 +2317,7 @@ impl Core {
     /// running Turn would change its files. Board Threads have worktrees of their own, so only
     /// a Turn in that same worktree blocks them.
     fn checkout_blocked_reason(&self, target: &GitTarget) -> Result<Option<String>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let threads = threads_in_checkout(&db, target.project_id, target.worktree.as_deref())?;
         Ok(threads
             .iter()
@@ -2379,7 +2341,7 @@ impl Core {
             });
         };
         let row: Option<(Option<u32>, Option<String>, String)> = {
-            let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+            let db = self.db.lock_recover();
             rusqlite::OptionalExtension::optional(db.query_row(
                 "SELECT t.id, t.worktree_path, p.path
                  FROM projects p
@@ -2414,7 +2376,7 @@ impl Core {
 
     /// Every checkout of an open Project: its folder and the worktrees of its Threads.
     fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
         for path in projects.query_map([], |r| r.get::<_, String>(0))? {
@@ -2430,7 +2392,7 @@ impl Core {
     }
 
     pub fn checkout_path(&self, project_id: u32, thread_id: Option<u32>) -> Result<String> {
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let db = self.db.lock_recover();
         Ok(match thread_id {
             Some(thread_id) => db.query_row(
                 "SELECT COALESCE(t.worktree_path, p.path) FROM projects p JOIN threads t ON t.project_id = p.id WHERE p.id = ?1 AND t.id = ?2",
@@ -2461,21 +2423,14 @@ impl Core {
     }
 
     fn mark_terminal_project_acted_upon(&self, terminal_id: u32) -> Result<()> {
-        let first = self
-            .acted_terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(terminal_id);
+        let first = self.acted_terminals.lock_recover().insert(terminal_id);
         if !first {
             return Ok(());
         }
         let result = self.mark_terminal_project_in_db(terminal_id);
         if result.is_err() {
             // Not written: the next keystroke tries again.
-            self.acted_terminals
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&terminal_id);
+            self.acted_terminals.lock_recover().remove(&terminal_id);
         }
         result
     }
@@ -2483,8 +2438,7 @@ impl Core {
     fn mark_terminal_project_in_db(&self, terminal_id: u32) -> Result<()> {
         let project = self
             .terminal_projects
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&terminal_id)
             .copied();
         match project {
@@ -2512,18 +2466,11 @@ impl Core {
     pub fn close_terminal(&self, terminal_id: u32) -> Result<()> {
         let session = self
             .terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .remove(&terminal_id)
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {terminal_id}")))?;
-        self.terminal_projects
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&terminal_id);
-        self.acted_terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&terminal_id);
+        self.terminal_projects.lock_recover().remove(&terminal_id);
+        self.acted_terminals.lock_recover().remove(&terminal_id);
         session.close();
         Ok(())
     }
@@ -2602,20 +2549,14 @@ impl Core {
 
     fn terminal(&self, id: u32) -> Result<Arc<TerminalSession>> {
         self.terminals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .get(&id)
             .cloned()
             .ok_or_else(|| Error::Terminal(format!("unknown terminal {id}")))
     }
 
     pub fn tick_thread(&self, thread_id: u32) {
-        if let Some(actor) = self
-            .thread_actors
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&thread_id)
-        {
+        if let Some(actor) = self.thread_actors.lock_recover().get(&thread_id) {
             actor.tick();
         }
     }

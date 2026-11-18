@@ -3,7 +3,10 @@
 use crate::bounded_lines::{
     BoundedLines, PROTOCOL_LINE_CAP, is_line_too_long, protocol_overflow_message,
 };
+use crate::diag;
+use crate::diag::SenderExt as _;
 use crate::process::{self, ProcessRegistry, SHUTDOWN_GRACE};
+use crate::sync::LockExt as _;
 use crate::{
     ActivityCategory, ApprovalDecision, ApprovalKind, Attachment, AttachmentKind, CommandOutcome,
     CommandRecord, Detection, ItemKind, ModelInfo, PermissionMode, PromptSegment, Provider,
@@ -228,7 +231,7 @@ impl ClaudeCodeProvider {
                 if value["type"] == "control_response"
                     && value["response"]["request_id"] == INITIALIZE_REQUEST_ID
                 {
-                    let _ = tx.send(value["response"].clone());
+                    tx.tell(value["response"].clone());
                     return;
                 }
             }
@@ -241,9 +244,9 @@ impl ClaudeCodeProvider {
 
         drop(stdin);
         process::terminate_group(pgid, SHUTDOWN_GRACE, || {
-            let _ = child.try_wait();
+            diag::best_effort("try_wait", child.try_wait());
         });
-        let _ = child.wait();
+        diag::best_effort("wait", child.wait());
 
         let reply = reply.ok_or_else(|| {
             ProviderError::CommandFailed("Claude Code did not answer the initialize request".into())
@@ -333,11 +336,11 @@ impl ClaudeCodeProvider {
             registry.register(child.id() as i32, &self.command);
         }
         let pgid = child.id() as i32;
-        *self.child_stdin.lock().unwrap_or_else(|e| e.into_inner()) = Some(stdin);
-        *self.child_process.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+        *self.child_stdin.lock_recover() = Some(stdin);
+        *self.child_process.lock_recover() = Some(child);
 
         let (tx, rx) = crossbeam_channel::unbounded();
-        *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
+        *self.event_sender.lock_recover() = Some(tx.clone());
 
         let active_turn_clone = Arc::clone(&self.active_turn);
         let capabilities_clone = Arc::clone(&self.capabilities);
@@ -358,17 +361,13 @@ impl ClaudeCodeProvider {
                     Err(error) => {
                         if is_line_too_long(&error) {
                             // The stream is unusable from here: fail the Turn, stop the process.
-                            let _ = tx.send(ProviderEvent::Error {
+                            tx.tell(ProviderEvent::Error {
                                 message: protocol_overflow_message(),
                                 code: None,
                                 retrying: false,
                             });
-                            if let Some(turn) = active_turn_clone
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .take()
-                            {
-                                let _ = tx.send(ProviderEvent::TurnCompleted {
+                            if let Some(turn) = active_turn_clone.lock_recover().take() {
+                                tx.tell(ProviderEvent::TurnCompleted {
                                     turn_index: turn.index,
                                     status: TurnStatus::Error,
                                 });
@@ -393,7 +392,7 @@ impl ClaudeCodeProvider {
                                     if let Some(session_id) =
                                         val.get("session_id").and_then(|v| v.as_str())
                                     {
-                                        let _ = tx.send(ProviderEvent::SessionInfo {
+                                        tx.tell(ProviderEvent::SessionInfo {
                                             session_id: session_id.to_string(),
                                         });
                                     }
@@ -402,23 +401,19 @@ impl ClaudeCodeProvider {
                                         .and_then(|v| v.as_str())
                                         .is_some_and(|m| m.contains("haiku"))
                                     {
-                                        capabilities_clone
-                                            .lock()
-                                            .unwrap_or_else(|e| e.into_inner())
-                                            .supports_reasoning = false;
+                                        capabilities_clone.lock_recover().supports_reasoning =
+                                            false;
                                     }
                                     if let Some(reasoning) = val
                                         .get("capabilities")
                                         .and_then(|c| c.get("supports_reasoning"))
                                         .and_then(|v| v.as_bool())
                                     {
-                                        capabilities_clone
-                                            .lock()
-                                            .unwrap_or_else(|e| e.into_inner())
-                                            .supports_reasoning = reasoning;
+                                        capabilities_clone.lock_recover().supports_reasoning =
+                                            reasoning;
                                     }
                                 } else {
-                                    let _ = tx.send(ProviderEvent::Unknown { raw: line.clone() });
+                                    tx.tell(ProviderEvent::Unknown { raw: line.clone() });
                                 }
                             }
                             "stream_event" => {
@@ -468,7 +463,7 @@ impl ClaudeCodeProvider {
                                                     .insert(index, (name, String::new(), tool_id));
                                             }
                                             accumulated_items.insert(index, (kind, String::new()));
-                                            let _ = tx.send(ProviderEvent::ItemStarted {
+                                            tx.tell(ProviderEvent::ItemStarted {
                                                 item_index: index,
                                                 kind,
                                                 parent_item_index: None,
@@ -521,13 +516,13 @@ impl ClaudeCodeProvider {
                                                     {
                                                         item.1.push_str(text);
                                                     }
-                                                    let _ = tx.send(ProviderEvent::ItemDelta {
+                                                    tx.tell(ProviderEvent::ItemDelta {
                                                         item_index: index,
                                                         delta: text.to_string(),
                                                     });
                                                 }
                                             } else {
-                                                let _ = tx.send(ProviderEvent::Unknown {
+                                                tx.tell(ProviderEvent::Unknown {
                                                     raw: line.clone(),
                                                 });
                                             }
@@ -557,12 +552,10 @@ impl ClaudeCodeProvider {
                                                     if let Some(command) = record.line.as_deref()
                                                         && is_background_command(command)
                                                     {
-                                                        let _ = tx.send(
-                                                            ProviderEvent::CommandRequested {
-                                                                item_index: index,
-                                                                command: command.to_string(),
-                                                            },
-                                                        );
+                                                        tx.tell(ProviderEvent::CommandRequested {
+                                                            item_index: index,
+                                                            command: command.to_string(),
+                                                        });
                                                     }
                                                     let pending = PendingCommand {
                                                         item_index: index,
@@ -575,7 +568,7 @@ impl ClaudeCodeProvider {
                                                     // `tool_result` that follows; completion waits
                                                     // for it so no outcome is guessed. The line is
                                                     // known now, so the live Activity can show it.
-                                                    let _ = tx.send(ProviderEvent::ItemDelta {
+                                                    tx.tell(ProviderEvent::ItemDelta {
                                                         item_index: index,
                                                         delta: content.clone(),
                                                     });
@@ -583,7 +576,7 @@ impl ClaudeCodeProvider {
                                                         pending_commands.insert(tool_id, pending);
                                                         continue;
                                                     }
-                                                    let _ = tx.send(ProviderEvent::ItemCompleted {
+                                                    tx.tell(ProviderEvent::ItemCompleted {
                                                         item_index: index,
                                                         kind,
                                                         content,
@@ -594,7 +587,7 @@ impl ClaudeCodeProvider {
                                                     continue;
                                                 }
                                             }
-                                            let _ = tx.send(ProviderEvent::ItemCompleted {
+                                            tx.tell(ProviderEvent::ItemCompleted {
                                                 item_index: index,
                                                 kind,
                                                 content,
@@ -604,12 +597,11 @@ impl ClaudeCodeProvider {
                                             });
                                         }
                                         _ => {
-                                            let _ = tx
-                                                .send(ProviderEvent::Unknown { raw: line.clone() });
+                                            tx.tell(ProviderEvent::Unknown { raw: line.clone() });
                                         }
                                     }
                                 } else {
-                                    let _ = tx.send(ProviderEvent::Unknown { raw: line.clone() });
+                                    tx.tell(ProviderEvent::Unknown { raw: line.clone() });
                                 }
                             }
                             "assistant" => {
@@ -639,13 +631,13 @@ impl ClaudeCodeProvider {
                                 }
                                 let item_index = SLASH_OUTPUT_INDEX_BASE + slash_outputs;
                                 slash_outputs += 1;
-                                let _ = tx.send(ProviderEvent::ItemStarted {
+                                tx.tell(ProviderEvent::ItemStarted {
                                     item_index,
                                     kind: ItemKind::SlashCommandOutput,
                                     parent_item_index: None,
                                     category: None,
                                 });
-                                let _ = tx.send(ProviderEvent::ItemCompleted {
+                                tx.tell(ProviderEvent::ItemCompleted {
                                     item_index,
                                     kind: ItemKind::SlashCommandOutput,
                                     content,
@@ -682,7 +674,7 @@ impl ClaudeCodeProvider {
                                                 Some(false) => CommandOutcome::Succeeded,
                                                 None => CommandOutcome::Unknown,
                                             };
-                                        let _ = tx.send(ProviderEvent::ItemCompleted {
+                                        tx.tell(ProviderEvent::ItemCompleted {
                                             item_index: pending.item_index,
                                             kind: pending.kind,
                                             content: pending.content,
@@ -695,13 +687,13 @@ impl ClaudeCodeProvider {
                                 }
                                 // An ordinary user message is not part of the Provider protocol.
                                 if outcomes == 0 {
-                                    let _ = tx.send(ProviderEvent::Unknown { raw: line.clone() });
+                                    tx.tell(ProviderEvent::Unknown { raw: line.clone() });
                                 }
                             }
                             "rate_limit_event" => {
                                 // Per-Model and overage windows are not shown.
                                 if let Some(event) = parse_rate_limit_event(&val) {
-                                    let _ = tx.send(event);
+                                    tx.tell(event);
                                 }
                             }
                             "approval_request" => {
@@ -733,7 +725,7 @@ impl ClaudeCodeProvider {
                                     })
                                     .unwrap_or_default();
 
-                                let _ = tx.send(ProviderEvent::ApprovalRequested {
+                                tx.tell(ProviderEvent::ApprovalRequested {
                                     id,
                                     kind,
                                     summary,
@@ -749,11 +741,7 @@ impl ClaudeCodeProvider {
                                     .unwrap_or(false);
 
                                 flush_pending_commands(&tx, &mut pending_commands);
-                                let Some(turn) = active_turn_clone
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .take()
-                                else {
+                                let Some(turn) = active_turn_clone.lock_recover().take() else {
                                     continue;
                                 };
                                 let status = if turn.interrupted || subtype == "interrupted" {
@@ -764,18 +752,18 @@ impl ClaudeCodeProvider {
                                     TurnStatus::Completed
                                 };
 
-                                let _ = tx.send(ProviderEvent::TurnCompleted {
+                                tx.tell(ProviderEvent::TurnCompleted {
                                     turn_index: turn.index,
                                     status,
                                 });
                             }
                             _ => {
-                                let _ = tx.send(ProviderEvent::Unknown { raw: line.clone() });
+                                tx.tell(ProviderEvent::Unknown { raw: line.clone() });
                             }
                         }
                     }
                     Err(_) => {
-                        let _ = tx.send(ProviderEvent::Unknown { raw: line });
+                        tx.tell(ProviderEvent::Unknown { raw: line });
                     }
                 }
             }
@@ -787,7 +775,7 @@ impl ClaudeCodeProvider {
     }
 
     fn write_to_stdin(&self, json_val: &serde_json::Value) -> Result<(), ProviderError> {
-        let mut stdin_guard = self.child_stdin.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stdin_guard = self.child_stdin.lock_recover();
         if let Some(ref mut stdin) = *stdin_guard {
             let data = json_val.to_string();
             stdin.write_all(data.as_bytes()).map_err(|e| {
@@ -828,7 +816,7 @@ fn flush_pending_commands(
     let mut remaining: Vec<_> = pending.drain().map(|(_, item)| item).collect();
     remaining.sort_by_key(|item| item.item_index);
     for item in remaining {
-        let _ = tx.send(ProviderEvent::ItemCompleted {
+        tx.tell(ProviderEvent::ItemCompleted {
             item_index: item.item_index,
             kind: item.kind,
             content: item.content,
@@ -1102,14 +1090,14 @@ impl Provider for ClaudeCodeProvider {
     ) -> Result<(), ProviderError> {
         let content = build_content(segments)?;
         let turn_index = self.turn_counter.fetch_add(1, Ordering::SeqCst);
-        *self.active_turn.lock().unwrap_or_else(|e| e.into_inner()) = Some(ActiveTurn {
+        *self.active_turn.lock_recover() = Some(ActiveTurn {
             index: turn_index,
             interrupted: false,
         });
 
         // Emit TurnStarted event
-        if let Some(ref sender) = *self.event_sender.lock().unwrap_or_else(|e| e.into_inner()) {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+        if let Some(ref sender) = *self.event_sender.lock_recover() {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index,
                 prompt: render_prompt(segments),
             });
@@ -1130,7 +1118,7 @@ impl Provider for ClaudeCodeProvider {
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
-        let mut active = self.active_turn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut active = self.active_turn.lock_recover();
         let Some(turn) = active.as_mut() else {
             return Ok(());
         };
@@ -1219,41 +1207,27 @@ impl Provider for ClaudeCodeProvider {
 
     fn shutdown(&mut self) -> Result<(), ProviderError> {
         // Drop child stdin to signal EOF
-        self.child_stdin
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.child_stdin.lock_recover().take();
 
         // Then SIGTERM the whole group, SIGKILL after the grace period.
-        if let Some(mut child) = self
-            .child_process
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(mut child) = self.child_process.lock_recover().take() {
             let pgid = child.id() as i32;
             process::terminate_group(pgid, SHUTDOWN_GRACE, || {
-                let _ = child.try_wait();
+                diag::best_effort("try_wait", child.try_wait());
             });
-            let _ = child.wait();
+            diag::best_effort("wait", child.wait());
             if let Some(registry) = &self.registry {
                 registry.unregister(pgid);
             }
         }
 
         // Drop event sender
-        self.event_sender
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.event_sender.lock_recover().take();
         Ok(())
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
-        self.capabilities
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.capabilities.lock_recover().clone()
     }
 }
 

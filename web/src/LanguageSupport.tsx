@@ -1,5 +1,6 @@
+import { readText, storageKeys, writeText } from "./storage";
 import { useEffect, useState } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import {
   CodeIcon,
   DownloadIcon,
@@ -73,15 +74,9 @@ export function LanguageSupportNotice({
   onConfigure: () => void;
 }) {
   const [tool, setTool] = useState<LanguageTool | null>(null);
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return (
-        localStorage.getItem(`oxide:language-dismissed:${language}`) === "true"
-      );
-    } catch {
-      return false;
-    }
-  });
+  const [dismissed, setDismissed] = useState(
+    () => readText(storageKeys.languageDismissed(language)) === "true",
+  );
   useEffect(() => {
     let active = true;
     const refresh = () => {
@@ -126,14 +121,8 @@ export function LanguageSupportNotice({
         aria-label="Set up language support later"
         onClick={() => {
           setDismissed(true);
-          try {
-            localStorage.setItem(
-              `oxide:language-dismissed:${language}`,
-              "true",
-            );
-          } catch {
-            /* Dismiss for this view. */
-          }
+          // Dismissed for this view even when storage refuses the write.
+          writeText(storageKeys.languageDismissed(language), "true");
         }}
       >
         <XIcon size={14} />

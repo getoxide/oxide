@@ -2,9 +2,11 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 use crossbeam_channel::Receiver;
+use oxide_core::diag::SenderExt as _;
 use oxide_core::{
     CommentSide, Core, PermissionMode, SequencedThreadEvent, ThreadEvent, ThreadStatus,
 };
@@ -64,14 +66,14 @@ fn fixture() -> Fixture {
         seen.lock().unwrap().push(prompt.to_string());
         let (sender, gate, prompt) = (sender.clone(), gate.clone(), prompt.to_string());
         std::thread::spawn(move || {
-            let _ = sender.send(ProviderEvent::TurnStarted {
+            sender.tell(ProviderEvent::TurnStarted {
                 turn_index: 0,
                 prompt,
             });
             while !*gate.lock().unwrap() {
                 std::thread::sleep(Duration::from_millis(5));
             }
-            let _ = sender.send(ProviderEvent::TurnCompleted {
+            sender.tell(ProviderEvent::TurnCompleted {
                 turn_index: 0,
                 status: TurnStatus::Completed,
             });

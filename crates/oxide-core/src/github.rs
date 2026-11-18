@@ -7,6 +7,7 @@ use crate::line_comments::CommentSide;
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
 use oxide_provider::command::find_in;
+use oxide_provider::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -323,21 +324,13 @@ pub struct Gh {
 
 impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
-        *self.search_path.lock().unwrap_or_else(|e| e.into_inner()) = dirs;
-        *self.ready_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        self.default_branches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        *self.search_path.lock_recover() = dirs;
+        *self.ready_at.lock_recover() = None;
+        self.default_branches.lock_recover().clear();
     }
 
     fn path_var(&self) -> OsString {
-        let dirs = match self
-            .search_path
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
+        let dirs = match self.search_path.lock_recover().clone() {
             Some(dirs) => dirs,
             None => {
                 let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
@@ -371,11 +364,7 @@ impl Gh {
         #[cfg(windows)]
         let mut child_path = path.clone();
         #[cfg(windows)]
-        if self
-            .search_path
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
+        if self.search_path.lock_recover().is_some()
             && let Some(inherited_path) = std::env::var_os("PATH")
         {
             // The test shim is found through the explicit search path, but its .cmd launcher
@@ -395,6 +384,10 @@ impl Gh {
         }
         #[cfg(not(windows))]
         let child_path = path.clone();
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the gh runner: the one hardened Command::new for gh (ADR-0016)"
+        )]
         let mut command = Command::new(
             find_in(
                 &path,
@@ -462,12 +455,12 @@ impl Gh {
     /// Whether `gh` can be used, and if not, what to tell the user.
     fn availability(&self, cwd: &Path) -> (GithubAvailability, Option<String>) {
         let fresh = |at: &Option<Instant>| at.is_some_and(|at| at.elapsed() < CACHE_TTL);
-        if fresh(&self.ready_at.lock().unwrap_or_else(|e| e.into_inner())) {
+        if fresh(&self.ready_at.lock_recover()) {
             return (GithubAvailability::Ready, None);
         }
         match self.run(cwd, &["auth", "status"]) {
             Ok(_) => {
-                *self.ready_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+                *self.ready_at.lock_recover() = Some(Instant::now());
                 (GithubAvailability::Ready, None)
             }
             Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
@@ -483,11 +476,7 @@ impl Gh {
     }
 
     fn default_branch(&self, cwd: &Path) -> Result<String> {
-        if let Some((at, branch)) = self
-            .default_branches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(cwd)
+        if let Some((at, branch)) = self.default_branches.lock_recover().get(cwd)
             && at.elapsed() < CACHE_TTL
         {
             return Ok(branch.clone());
@@ -499,8 +488,7 @@ impl Gh {
             .map(str::to_string)
             .ok_or_else(|| Error::Github("GitHub did not report a default branch.".into()))?;
         self.default_branches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .lock_recover()
             .insert(cwd.to_path_buf(), (Instant::now(), branch.clone()));
         Ok(branch)
     }

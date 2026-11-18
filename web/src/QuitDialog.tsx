@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenTo } from "./ipc";
 import { commands } from "./bindings";
 import { quitPrompt } from "./quitPrompt";
 import { saveAllEditors } from "./editorSaves";
@@ -12,18 +12,14 @@ export function QuitDialog() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
-    const unlisten = listen<number>("editor-quit-requested", (event) => { setUnsaved(event.payload); setSaveError(null); });
-    return () => { void unlisten.then((fn) => fn()); };
+    return listenTo<number>("editor-quit-requested", (count) => { setUnsaved(count); setSaveError(null); });
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<number>("quit-requested", (event) => {
+    return listenTo<number>("quit-requested", (count) => {
       setDontAskAgain(false);
-      setRunning(event.payload);
+      setRunning(count);
     });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
   }, []);
 
   useEffect(() => {

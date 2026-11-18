@@ -1,3 +1,4 @@
+use oxide_provider::sync::LockExt as _;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -22,11 +23,7 @@ impl DetectionCache {
         provider: &str,
         detect: impl FnOnce() -> Detection,
     ) -> Detection {
-        if let Some((at, det)) = self
-            .entries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(provider)
+        if let Some((at, det)) = self.entries.lock_recover().get(provider)
             && at.elapsed() < TTL
         {
             return det.clone();
@@ -34,8 +31,7 @@ impl DetectionCache {
         let det = detect();
         if det.available {
             self.entries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .lock_recover()
                 .insert(provider.to_string(), (Instant::now(), det.clone()));
         }
         det
@@ -89,8 +85,8 @@ mod tests {
     fn a_poisoned_cache_lock_does_not_cascade_into_later_detections() {
         let cache = std::sync::Arc::new(DetectionCache::default());
         let poisoner = std::sync::Arc::clone(&cache);
-        let _ = std::thread::spawn(move || {
-            let _guard = poisoner.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let _detached = std::thread::spawn(move || {
+            let _guard = poisoner.entries.lock_recover();
             panic!("poison the cache lock");
         })
         .join();

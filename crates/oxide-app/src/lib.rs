@@ -6,6 +6,7 @@ mod conversions;
 mod shell_path;
 mod system;
 mod updates;
+use oxide_core::diag;
 use updates::{app_update_status, check_app_update, install_app_update};
 
 use std::sync::Arc;
@@ -1461,7 +1462,7 @@ async fn install_language_support(
     let core = Arc::clone(&core);
     let tool = tauri::async_runtime::spawn_blocking(move || {
         core.install_language_support(&language, |message| {
-            let _ = on_progress.send(message.to_owned());
+            diag::best_effort("progress", on_progress.send(message.to_owned()));
         })
     })
     .await
@@ -3351,9 +3352,12 @@ fn subscribe_thread(
         while let Ok(evt) = rx.recv() {
             let app_evt: SequencedThreadEvent = evt.into();
             if let ThreadEvent::ThreadStatusChanged { status } = app_evt.event {
-                let _ = app.emit(
-                    THREAD_STATUS_CHANGED,
-                    ThreadStatusChangedPayload { thread_id, status },
+                diag::best_effort(
+                    "emit",
+                    app.emit(
+                        THREAD_STATUS_CHANGED,
+                        ThreadStatusChangedPayload { thread_id, status },
+                    ),
                 );
             }
             if on_event.send(app_evt).is_err() {
@@ -3541,7 +3545,10 @@ fn confirm_quit(
 ) -> Result<(), AppError> {
     if dont_ask_again {
         // A failed save must not trap the user in the dialog.
-        let _ = core.disable_quit_confirmation();
+        diag::best_effort(
+            "disable_quit_confirmation",
+            core.disable_quit_confirmation(),
+        );
     }
     app.exit(0);
     Ok(())
@@ -3550,9 +3557,9 @@ fn confirm_quit(
 /// Brings the window back from hidden (Dock icon, ⌘N) and focuses it.
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        diag::best_effort("show", window.show());
+        diag::best_effort("unminimize", window.unminimize());
+        diag::best_effort("set_focus", window.set_focus());
     }
 }
 
@@ -3805,7 +3812,7 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == "new-thread" {
                 show_main_window(app);
-                let _ = app.emit(NEW_THREAD, ());
+                diag::best_effort("emit", app.emit(NEW_THREAD, ()));
             }
         })
         .on_window_event(|window, event| {
@@ -3819,7 +3826,7 @@ pub fn run() {
                         // macOS keeps running when the window closes because the Dock icon can reopen it.
                         CloseAction::Hide => {
                             api.prevent_close();
-                            let _ = window.hide();
+                            diag::best_effort("hide", window.hide());
                             if let Some(core) = app.try_state::<Arc<Core>>() {
                                 core.set_window_active(false);
                             }
@@ -3864,11 +3871,17 @@ pub fn run() {
             let service_handle = handle.clone();
             std::thread::spawn(move || {
                 while let Ok(event) = service_events.recv() {
-                    let _ = service_handle.emit(PROJECT_SERVICES_CHANGED, event.project_id);
+                    diag::best_effort(
+                        "emit",
+                        service_handle.emit(PROJECT_SERVICES_CHANGED, event.project_id),
+                    );
                 }
             });
             core.subscribe_settings(move |state| {
-                let _ = handle.emit(SETTINGS_CHANGED, SettingsState::from(state));
+                diag::best_effort(
+                    "emit",
+                    handle.emit(SETTINGS_CHANGED, SettingsState::from(state)),
+                );
             });
             core.set_system(Arc::new(system::HostSystem::new(app.handle().clone())));
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
@@ -3881,7 +3894,7 @@ pub fn run() {
             }
             app.manage(Arc::new(core));
             use tauri_plugin_notification::NotificationExt;
-            let _ = app.notification().request_permission();
+            diag::best_effort("notification", app.notification().request_permission());
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -3953,10 +3966,10 @@ fn emit_quit_prompt(app: &tauri::AppHandle, prompt: QuitPrompt) {
     show_main_window(app);
     match prompt {
         QuitPrompt::DirtyEditors(count) => {
-            let _ = app.emit("editor-quit-requested", count);
+            diag::best_effort("emit", app.emit("editor-quit-requested", count));
         }
         QuitPrompt::RunningThreads(count) => {
-            let _ = app.emit(QUIT_REQUESTED, count);
+            diag::best_effort("emit", app.emit(QUIT_REQUESTED, count));
         }
     }
 }

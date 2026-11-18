@@ -1,17 +1,18 @@
 use crate::agent_launch::{REPLAY_CAPACITY, ReplayBuffer};
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, bounded, unbounded};
+use oxide_provider::diag;
+use oxide_provider::diag::SenderExt as _;
 use oxide_provider::process::ProcessRegistry;
 #[cfg(unix)]
 use oxide_provider::process::{SHUTDOWN_GRACE, signal_group, signal_process, terminate_group};
+use oxide_provider::sync::LockExt as _;
 #[cfg(unix)]
 use portable_pty::MasterPty;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -191,7 +192,7 @@ impl TerminalSession {
             Err(error) => {
                 #[cfg(unix)]
                 if let Some(path) = &shell_init {
-                    let _ = std::fs::remove_file(path);
+                    diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
                 return Err(Error::Terminal(format!("start terminal shell: {error}")));
             }
@@ -199,18 +200,18 @@ impl TerminalSession {
         let pid = match require_pid(child.process_id()) {
             Ok(pid) => pid,
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                diag::best_effort("kill", child.kill());
+                diag::best_effort("wait", child.wait());
                 #[cfg(unix)]
                 if let Some(path) = &shell_init {
-                    let _ = std::fs::remove_file(path);
+                    diag::best_effort("remove_file", std::fs::remove_file(path));
                 }
                 return Err(error);
             }
         };
         if let Err(error) = oxide_provider::process::attach_running_to_job(pid) {
-            let _ = child.kill();
-            let _ = child.wait();
+            diag::best_effort("kill", child.kill());
+            diag::best_effort("wait", child.wait());
             return Err(Error::Terminal(format!(
                 "contain terminal shell process: {error}"
             )));
@@ -293,19 +294,22 @@ impl TerminalSession {
                             let result = write_terminal_input(&mut writer, &input, pid);
                             result
                         };
-                        let _ = reply.send(result);
+                        reply.tell(result);
                     }
                     SessionCommand::Resize(size, reply) => {
                         let result = master.resize(size).map_err(|error| error.to_string());
-                        let _ = reply.send(result);
+                        reply.tell(result);
                     }
                     SessionCommand::Close(reply) => {
                         #[cfg(unix)]
                         {
                             // Interactive shells ignore SIGTERM but hang up on SIGHUP.
-                            let _ = signal_group(process_group, libc::SIGHUP);
+                            diag::best_effort(
+                                "signal_group",
+                                signal_group(process_group, libc::SIGHUP),
+                            );
                             terminate_group(process_group, SHUTDOWN_GRACE, || {
-                                let _ = child.try_wait();
+                                diag::best_effort("try_wait", child.try_wait());
                             });
                             // Anything that moved to its own process group but stayed in the session.
                             kill_session_processes(process_group);
@@ -314,12 +318,12 @@ impl TerminalSession {
                         #[cfg(not(unix))]
                         {
                             let _ = (&registry, &shell);
-                            let _ = child.kill();
+                            diag::best_effort("kill", child.kill());
                         }
                         let status = child.wait();
                         #[cfg(unix)]
                         if let Some(path) = shell_init {
-                            let _ = std::fs::remove_file(path);
+                            diag::best_effort("remove_file", std::fs::remove_file(path));
                         }
                         if agent {
                             finish_agent(
@@ -328,7 +332,7 @@ impl TerminalSession {
                                 on_exit.as_deref(),
                             );
                         }
-                        let _ = reply.send(());
+                        reply.tell(());
                         break;
                     }
                 }
@@ -354,37 +358,31 @@ impl TerminalSession {
         let Some(replay) = &self.replay else {
             return (Vec::new(), self.subscribe());
         };
-        let replay = replay.lock().unwrap_or_else(|e| e.into_inner());
+        let replay = replay.lock_recover();
         let snapshot = replay.snapshot();
         // One view at a time: the one that was showing this Thread is gone, and ending its feed
         // ends the thread that pumps it.
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        self.subscribers.lock_recover().clear();
         let feed = self.subscribe();
         (snapshot, feed)
     }
 
     /// Whether the process has ended, and if so whether it succeeded.
     pub fn exit_success(&self) -> Option<bool> {
-        *self.exit.lock().unwrap_or_else(|e| e.into_inner())
+        *self.exit.lock_recover()
     }
 
     /// Asks the program to draw its screen again by resizing one column narrower and back; a
     /// program only redraws when the size changes, and the replay holds the old screen.
     pub fn nudge_redraw(&self) -> Result<()> {
-        let (rows, cols) = *self.size.lock().unwrap_or_else(|e| e.into_inner());
+        let (rows, cols) = *self.size.lock_recover();
         self.resize_raw(rows, cols.saturating_sub(1).max(1))?;
         self.resize_raw(rows, cols)
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<u8>> {
         let (tx, rx) = bounded(VIEW_BUFFER);
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(tx);
+        self.subscribers.lock_recover().push(tx);
         rx
     }
 
@@ -401,7 +399,7 @@ impl TerminalSession {
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
         self.resize_raw(rows, cols)?;
-        *self.size.lock().unwrap_or_else(|e| e.into_inner()) = (rows, cols);
+        *self.size.lock_recover() = (rows, cols);
         Ok(())
     }
 
@@ -427,7 +425,7 @@ impl TerminalSession {
     pub fn close(&self) {
         let (reply, result) = bounded(1);
         if self.commands.send(SessionCommand::Close(reply)).is_ok() {
-            let _ = result.recv();
+            diag::best_effort("recv", result.recv());
         }
     }
 }
@@ -518,7 +516,7 @@ fn write_terminal_input(
 
 #[cfg(unix)]
 fn interrupt_session_processes(session_id: i32) -> bool {
-    let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+    let Ok(output) = oxide_provider::command::os_command("ps")
         .args(["-A", "-o", "pid="])
         .output()
     else {
@@ -538,7 +536,7 @@ fn interrupt_session_processes(session_id: i32) -> bool {
 
 #[cfg(unix)]
 fn kill_session_processes(session_id: i32) {
-    if let Ok(output) = Command::new(oxide_provider::command::os_tool("ps"))
+    if let Ok(output) = oxide_provider::command::os_command("ps")
         .args(["-A", "-o", "pid="])
         .output()
     {
@@ -546,11 +544,11 @@ fn kill_session_processes(session_id: i32) {
             if let Ok(pid) = line.trim().parse::<i32>()
                 && session_of(pid) == Some(session_id)
             {
-                let _ = signal_process(pid, libc::SIGKILL);
+                diag::best_effort("signal_process", signal_process(pid, libc::SIGKILL));
             }
         }
     }
-    let _ = signal_group(session_id, libc::SIGKILL);
+    diag::best_effort("signal_group", signal_group(session_id, libc::SIGKILL));
 }
 
 /// The session id of `pid`, or `None` when it is gone or not a real process id.
@@ -663,7 +661,7 @@ const VIEW_BUFFER: usize = 1024;
 /// soon as its buffer is full. Such a view has already missed output it can never
 /// render, so it is dropped instead: its receiver ends and its reader stops.
 fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: &[u8]) {
-    let mut subscribers = subscribers.lock().unwrap_or_else(|e| e.into_inner());
+    let mut subscribers = subscribers.lock_recover();
     subscribers.retain(|sender| match sender.try_send(chunk.to_vec()) {
         Ok(()) => true,
         Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
@@ -687,14 +685,14 @@ fn read_output(
                     if !answer.is_empty() {
                         // Nobody waits for the write's outcome: a program that is gone needs no answer.
                         let (reply, _) = bounded(1);
-                        let _ = answers.send(SessionCommand::Write(answer, reply));
+                        answers.tell(SessionCommand::Write(answer, reply));
                     }
                 }
                 match replay {
                     // Record and deliver under the replay lock, so a view attaching meanwhile gets
                     // each chunk exactly once, either in the replay or in its feed.
                     Some(replay) => {
-                        let mut replay = replay.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut replay = replay.lock_recover();
                         replay.push(&buffer[..count]);
                         deliver(subscribers, &buffer[..count]);
                     }
@@ -718,7 +716,7 @@ fn finish_agent(
     on_exit: Option<&(dyn Fn(bool) + Send)>,
 ) {
     let first = {
-        let mut exit = exit.lock().unwrap_or_else(|e| e.into_inner());
+        let mut exit = exit.lock_recover();
         let first = exit.is_none();
         if first {
             *exit = Some(success);

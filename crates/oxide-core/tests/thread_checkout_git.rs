@@ -4,9 +4,11 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    reason = "integration tests: a failed unwrap or panic is a test failure"
+    clippy::disallowed_methods,
+    reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
 
+use oxide_core::diag::SenderExt as _;
 use oxide_core::thread::ThreadStatus;
 use oxide_core::{Core, DispatchRequest, PermissionMode, ProjectSummary, ThreadSummary};
 use oxide_provider::{FakeProvider, ProviderEvent};
@@ -217,7 +219,7 @@ fn a_running_turn_only_blocks_branch_actions_in_its_own_checkout() {
     let fake = FakeProvider::default();
     let sender = fake.sender();
     fake.on_prompt(move |prompt| {
-        let _ = sender.send(ProviderEvent::TurnStarted {
+        sender.tell(ProviderEvent::TurnStarted {
             turn_index: 0,
             prompt: prompt.to_string(),
         });

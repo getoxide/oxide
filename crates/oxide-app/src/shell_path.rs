@@ -5,6 +5,7 @@
 //! are not found even though they work in a terminal. At startup the app asks the user's login
 //! shell for its `PATH` and merges it into its own.
 
+use oxide_core::diag;
 use std::path::Path;
 
 /// Directories where these CLIs are usually installed, in case the login shell can't be read.
@@ -52,12 +53,12 @@ pub fn inherit_login_shell_path() {
 
 fn login_shell_path() -> Option<String> {
     use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     use std::time::{Duration, Instant};
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     // `-i` too: many people set their PATH in `.zshrc`, not only in `.zprofile`.
-    let mut child = Command::new(shell)
+    let mut child = oxide_core::desktop_tools::resolved_command(shell)
         .args(["-ilc", &format!("printf '{MARKER}%s{MARKER}' \"$PATH\"")])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -67,7 +68,7 @@ fn login_shell_path() -> Option<String> {
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut out = String::new();
-        let _ = stdout.read_to_string(&mut out);
+        diag::best_effort("read_to_string", stdout.read_to_string(&mut out));
         out
     });
 
@@ -80,8 +81,8 @@ fn login_shell_path() -> Option<String> {
                 std::thread::sleep(Duration::from_millis(20));
             }
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
+                diag::best_effort("kill", child.kill());
+                diag::best_effort("wait", child.wait());
                 return None;
             }
         }

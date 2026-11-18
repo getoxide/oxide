@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Channel } from "@tauri-apps/api/core";
+import { Channel } from "./ipc";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SquareFillIcon, SyncIcon } from "@primer/octicons-react";
