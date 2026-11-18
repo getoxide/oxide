@@ -520,8 +520,7 @@ impl Gh {
     }
 }
 
-const PR_FIELDS: &str =
-    "number,title,url,state,isDraft,baseRefName,headRefName,isCrossRepository,author,createdAt,mergedAt";
+const PR_FIELDS: &str = "number,title,url,state,isDraft,baseRefName,headRefName,isCrossRepository,author,createdAt,mergedAt";
 
 /// Most pull requests the list shows.
 const MAX_LISTED: &str = "100";
