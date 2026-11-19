@@ -219,6 +219,7 @@ html.macos .header,
 
 /* ── Sidebar ──────────────────────────────────────────────── */
 .sidebar { width: 100%; height: 100%; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg2); min-height: 0; }
+.sidebar[hidden] { display: none; }
 .sidebar-actions { display: flex; gap: 8px; padding: var(--space-3); }
 .sidebar-actions .btn { gap: 4px; }
 .sidebar-scroll { flex: 1; overflow: auto; padding-bottom: 8px; }
