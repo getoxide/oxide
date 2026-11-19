@@ -211,8 +211,8 @@ impl Core {
         Ok(())
     }
 
-    /// The Project last remembered, if it still exists. The stored value may carry a Thread id
-    /// from an older Oxide; it is ignored.
+    /// The Project last remembered, if it still exists. The stored value may be a pair written
+    /// by an older Oxide; only its Project is read.
     pub fn last_selection(&self) -> Result<Option<u32>> {
         let db = self.db.lock_recover();
         let stored: Option<String> = db

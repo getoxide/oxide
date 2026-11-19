@@ -1,7 +1,7 @@
 //! The `PATH` of a macOS app launched from the Dock or Finder.
 //!
-//! launchd hands such an app `/usr/bin:/bin:/usr/sbin:/sbin`, so the Provider CLIs (`claude`,
-//! `codex`, `agy`) and `gh`, which live in `~/.local/bin`, Homebrew or a Node version manager,
+//! launchd hands such an app `/usr/bin:/bin:/usr/sbin:/sbin`, so `git`, `gh` and the tools the
+//! user runs in a terminal, which live in `~/.local/bin`, Homebrew or a Node version manager,
 //! are not found even though they work in a terminal. At startup the app asks the user's login
 //! shell for its `PATH` and merges it into its own.
 

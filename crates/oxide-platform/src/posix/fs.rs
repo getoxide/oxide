@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 /// Present in the home once the full walk of [`prepare_private_home`] has run.
 const WALKED_MARKER: &str = ".private-v1";
 
-/// Top-level folders the walk never enters: other people's checkouts and installed tools.
-/// Their modes belong to Git and to the tools (`node_modules` binaries need their group and
-/// other bits), not to Oxide.
+/// Top-level folders the walk never enters: the checkouts that older versions of Oxide made and
+/// installed tools. Their modes belong to Git and to the tools (`node_modules` binaries need
+/// their group and other bits), not to Oxide.
 const NOT_OURS: [&str; 2] = ["worktrees", "tools"];
 
 /// Creates `home` (and missing parents) and makes it `0700`. The first time it runs in a home

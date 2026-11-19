@@ -6,7 +6,7 @@
 //! - [`best_effort`]: the step may fail without stopping the caller (reaping a child, an event to
 //!   a window that closed, a cleanup). The failure is written to stderr with its call site.
 //! - [`SenderExt::tell`]: a message to an actor or reader that may already be gone. A closed
-//!   channel is the normal end of a Thread or a window, so nothing is logged.
+//!   channel is the normal end of a terminal or a window, so nothing is logged.
 //!
 //! If the failure matters, return it with `?` instead. `clippy::let_underscore_must_use` and
 //! `clippy::unused_result_ok` are denied in the workspace, so a bare `let _ =` does not compile.

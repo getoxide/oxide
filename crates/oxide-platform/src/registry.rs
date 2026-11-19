@@ -30,7 +30,7 @@ struct Entry {
 ///
 /// Opening it loads what a previous run left behind as *stale*; [`reap_stale`](Self::reap_stale)
 /// kills the stale groups whose leader still runs the expected executable. Writes are
-/// best-effort: failing to record a group must never stop a Provider from starting.
+/// best-effort: failing to record a group must never stop a shell from starting.
 pub struct ProcessRegistry {
     path: PathBuf,
     state: Mutex<RegistryState>,

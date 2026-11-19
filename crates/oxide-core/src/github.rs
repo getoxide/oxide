@@ -52,7 +52,7 @@ pub struct PullRequest {
     pub created_at: String,
 }
 
-/// Where a pull request stands, as a Board card shows it.
+/// Where a pull request stands, as a pull request row shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PullRequestPhase {

@@ -100,7 +100,7 @@ pub fn process_identity(_pid: i32) -> Option<ProcessIdentity> {
 }
 
 /// Whether `pid` leads its own process group and its command line starts with `executable`
-/// (directly, or as the script of an interpreter such as `node claude`).
+/// (directly, or as the script of an interpreter such as `node server.js`).
 pub fn leader_runs(pid: i32, executable: &str, _identity: Option<&ProcessIdentity>) -> bool {
     // SAFETY: `getpgid` takes a plain integer, touches no memory and only reports an error.
     if pid <= 0 || unsafe { libc::getpgid(pid) } != pid {

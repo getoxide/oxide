@@ -110,7 +110,7 @@ fn adopt_legacy(conn: &Connection) -> Result<()> {
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
 /// a deferred transaction that reads first and writes later reads a snapshot another
-/// connection (the app's own, the board's, the review ledger's) is free to replace,
+/// connection (another one of the app's own) is free to replace,
 /// and then fails to upgrade with `SQLITE_BUSY_SNAPSHOT` — an error the busy timeout
 /// does not retry, so the write is simply lost.
 pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {

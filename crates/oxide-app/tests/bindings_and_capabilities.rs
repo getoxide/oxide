@@ -10,7 +10,7 @@ fn bindings_are_up_to_date() {
     oxide_app_lib::export_bindings().unwrap();
     let ts = std::fs::read_to_string(oxide_app_lib::BINDINGS_PATH).unwrap();
     assert!(ts.contains("listProjects") && ts.contains("startBlockTerminal"));
-    // Oxide no longer knows about agents or Threads (ADR-0018): none of it may be exported.
+    // Oxide is Projects and plain Terminals (ADR-0018): none of it may be exported.
     for gone in [
         "createThread",
         "subscribeThread",
