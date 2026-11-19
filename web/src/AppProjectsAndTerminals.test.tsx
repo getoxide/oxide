@@ -452,6 +452,30 @@ it("focuses the back control when the Files view opens, and the Project's Files 
   expect(focused()).toBe(all('[aria-label="Open Files"]')[1]);
 });
 
+it("keeps focus on the pressed button when a half is maximized or restored", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await press(label("Maximize Code"));
+  expect(focused()).toBe(label("Restore Terminal and Code"));
+  await press(label("Restore Terminal and Code"));
+  expect(focused()).toBe(label("Maximize Code"));
+  await press(label("Maximize Terminal"));
+  expect(focused()).toBe(label("Restore Terminal and Code"));
+});
+
+it("orders the tab stops sidebar, Terminal half, Code half, dock", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Back to Terminals"));
+  const follows = (a: Element | null, b: Element | null) => Boolean(a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(follows(q('nav[aria-label="Projects"]'), q(".centre-terminal-half"))).toBe(true);
+  expect(follows(q(".centre-terminal-half"), q(".centre-code-half"))).toBe(true);
+  expect(follows(q(".centre-code-half"), q('aside[aria-label="Tools panel"]'))).toBe(true);
+  await click(all('[aria-label="Open Files"]')[0]);
+  expect(follows(label("Back to Terminals"), q(".files-panel"))).toBe(true);
+  expect(follows(q(".files-panel"), q(".centre-terminal-half"))).toBe(true);
+});
+
 it("moves focus into the Code half when a file opens, with or without Terminals", async () => {
   await click(label("New terminal in Project Alpha"));
   await openFile();
