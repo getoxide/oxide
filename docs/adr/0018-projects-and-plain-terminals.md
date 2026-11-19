@@ -14,11 +14,11 @@ Oxide had grown into an agent workbench: Threads, Agent terminals, Providers, th
 - **Editor.** The Code workspace stays, as the place where Files opens a file, with its language servers and their install prompts. It replaces the centre while a file is open, with a button back to the Terminals. Their custom paths in Settings go.
 - **Project Services go.** A server simply runs in its Terminal.
 - **No shortcuts, empty Settings.** Every custom keyboard shortcut goes; the operating system's own keys and the terminal's own keys keep working. The Settings tab stays and opens on an empty page. Emptying Settings removes in-app updates: the Updates page was the only place that checked for and installed updates, so until Settings are rebuilt users update by downloading the installer. Where Issues or Pull request need `gh`, they keep their own set-up and sign-in prompt.
-- **Backend.** Every command, background task, stored table, setting and process that only served a removed feature is deleted. `oxide-provider` keeps its name but only holds the process, locking and diagnostics primitives of ADR-0016.
+- **Backend.** Every command, background task, stored table, setting and process that only served a removed feature is deleted. The process, locking and diagnostics primitives of ADR-0016 live in `oxide-platform`; the `oxide-provider` crate that held them is gone.
 
 ## Upgrade
 
-A migration, run after the usual backup `oxide.db.bak-<version>`, drops every table that only served Threads, Providers, Checkpoints, worktrees, the Review ledger or Blind review, drops the Project columns of the removed features and drops every stored setting except the last selected Project. Projects stay open and listed. Existing worktree folders and branches stay on disk untouched: nothing outside Oxide's own storage is deleted. Old settings files are no longer read, so they load without errors.
+The storage schema starts again from one baseline that describes only today's tables (`projects` and `app_state`). On first launch, a database written by an older version is backed up as `oxide.db.bak-<version>` and then brought to that baseline: every table that only served Threads, Providers, Checkpoints, worktrees, the Review ledger or Blind review is dropped, the Project columns of the removed features are dropped, and every stored setting except the last selected Project is dropped. Projects stay open and listed. Existing worktree folders and branches stay on disk untouched: nothing outside Oxide's own storage is deleted. Old settings files are no longer read, so they load without errors.
 
 ## Consequences
 

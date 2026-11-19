@@ -1,5 +1,7 @@
 # Remove the Diff Surface and the Verification Dossier
 
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): Threads, Checkpoints, Blind review and the Terminal Surface are gone too, and the dock holds Files, Issues and Pull request.
+
 Oxide no longer has a Diff Surface, a Verification Dossier or the attention bell. The right dock holds four Surfaces: Files, Terminal, Pull request and Issues. (ADR-0018 later removed the Terminal Surface, leaving three.)
 
 ## Background and problem
