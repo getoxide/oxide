@@ -27,7 +27,7 @@ import { ProjectPalette } from "./projects/ProjectPalette";
 import { SettingsView } from "./settings/SettingsView";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import {
-  centreSplit, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, splitMode, visibleMode,
+  NARROW_CENTRE, centreSplit, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, shownHalf, splitMode, visibleMode,
   type Half, type ProjectLayouts,
 } from "./shared/splitLayout";
 import { readJson, storageKeys, writeJson } from "./shared/storage";
@@ -89,6 +89,11 @@ export function App() {
   const [layouts, setLayouts] = useState<ProjectLayouts>(() => parseLayouts(readJson(storageKeys.splitLayouts)));
   const [dragDivider, setDragDivider] = useState<number | null>(null);
   useEffect(() => { writeJson(storageKeys.splitLayouts, layouts); }, [layouts]);
+  // The half each Project chose last (Code after opening a file, Terminal after choosing a Terminal).
+  const [lastHalf, setLastHalf] = useState<Record<number, Half>>({});
+  const chooseHalf = useCallback((projectId: number, half: Half) => {
+    setLastHalf((previous) => previous[projectId] === half ? previous : { ...previous, [projectId]: half });
+  }, []);
   const centreRef = useRef<HTMLDivElement>(null);
   const centreSize = useElementSize(centreRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   // The Project and terminal of the last session: `undefined` until read, `null` once applied.
@@ -165,11 +170,12 @@ export function App() {
 
   const newTerminal = useCallback((project: Project) => {
     setLayouts((previous) => restoreSplit(previous, project.id));
+    chooseHalf(project.id, "terminal");
     setShowSettings(false);
     setFilesProjectId(null);
     setSelectedId(project.id);
     setTerminals((previous) => openTerminal(previous, project.id));
-  }, []);
+  }, [chooseHalf]);
 
   const closeProject = useCallback(async (projectId: number): Promise<string | null> => {
     const closed = await commands.setProjectOpen(projectId, false);
@@ -197,6 +203,7 @@ export function App() {
     setCodeProjects((previous) => previous.includes(selected.id) ? previous : [...previous, selected.id]);
     setCodeShown((previous) => ({ ...previous, [selected.id]: true }));
     setLayouts((previous) => restoreSplit(previous, selected.id));
+    chooseHalf(selected.id, "code");
     setShowSettings(false);
   };
 
@@ -228,10 +235,13 @@ export function App() {
   const hasTerminals = projectTerminals.tabs.length > 0;
   const projectLayout = layoutOf(layouts, selected?.id ?? -1);
   const bothHalves = splitMode({ terminals: hasTerminals, code: selected !== null && codeShown[selected.id] === true });
-  const mode = visibleMode(bothHalves, projectLayout.maximized);
+  const narrow = centreSize.width < NARROW_CENTRE;
+  const forced = shownHalf(centreSize.width, projectLayout.maximized, lastHalf[selected?.id ?? -1] ?? "terminal");
+  const mode = visibleMode(bothHalves, forced);
   const split = centreSplit(centreSize.width, dragDivider ?? projectLayout.divider);
   const halfButton = (half: Half) => {
     if (!selected || bothHalves !== "split" || mode !== "split" && mode !== half) return null;
+    if (narrow && projectLayout.maximized === null) return null;
     const maximized = projectLayout.maximized === half;
     const name = half === "terminal" ? "Terminal" : "Code";
     const text = maximized ? "Restore Terminal and Code" : `Maximize ${name}`;
@@ -315,6 +325,7 @@ export function App() {
               setFilesProjectId(null);
               setSelectedId(project.id);
               setLayouts((previous) => restoreSplit(previous, project.id));
+              chooseHalf(project.id, "terminal");
               setTerminals((previous) => selectTerminal(previous, project.id, tabId));
             }}
             onRenameTerminal={(project, tabId, name) => setTerminals((previous) => renameTerminal(previous, project.id, tabId, name))}

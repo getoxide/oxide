@@ -59,6 +59,17 @@ export function visibleMode(mode: SplitMode, maximized: Half | null): SplitMode 
   return mode === "split" && maximized !== null ? maximized : mode;
 }
 
+/** Below this centre width two halves of `HALF_MIN` no longer fit. */
+export const NARROW_CENTRE = 2 * HALF_MIN;
+
+/**
+ * The half to force to full width: the maximized one, else (in a narrow centre) the one chosen last.
+ * Narrowing reuses the maximize mechanism, so `null` means both halves may show.
+ */
+export function shownHalf(width: number, maximized: Half | null, last: Half): Half | null {
+  return maximized ?? (width < NARROW_CENTRE ? last : null);
+}
+
 /** Layouts read back from storage (`unknown`): malformed entries are dropped or defaulted. */
 export function parseLayouts(value: unknown): ProjectLayouts {
   const layouts: ProjectLayouts = {};

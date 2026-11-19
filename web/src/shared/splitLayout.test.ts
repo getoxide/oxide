@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centreSplit, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, splitMode, visibleMode } from "./splitLayout";
+import { centreSplit, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, shownHalf, splitMode, visibleMode } from "./splitLayout";
 
 describe("per-Project layout", () => {
   it("starts every Project with the 50/50 split and nothing maximized", () => {
@@ -57,4 +57,18 @@ it("keeps the preferred width within 360 px per half", () => {
 it("cannot be dragged when the centre is too narrow for two halves", () => {
   const narrow = centreSplit(600, null);
   expect(narrow.max).toBeLessThanOrEqual(narrow.min);
+});
+
+describe("narrow centre", () => {
+  it("keeps the split from 720 px up and shows only the last chosen half below it", () => {
+    expect(shownHalf(720, null, "code")).toBeNull();
+    expect(shownHalf(719, null, "code")).toBe("code");
+    expect(shownHalf(500, null, "terminal")).toBe("terminal");
+    expect(shownHalf(1000, null, "terminal")).toBeNull();
+  });
+
+  it("lets a maximized half win at any width", () => {
+    expect(shownHalf(1000, "code", "terminal")).toBe("code");
+    expect(shownHalf(500, "terminal", "code")).toBe("terminal");
+  });
 });

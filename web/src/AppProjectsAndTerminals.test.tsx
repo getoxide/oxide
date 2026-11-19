@@ -33,7 +33,12 @@ vi.mock("./editor/CodeWorkbench", () => ({
   },
 }));
 
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
+const observers: { element: Element; callback: ResizeObserverCallback }[] = [];
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class {
+  constructor(private callback: ResizeObserverCallback) {}
+  observe(element: Element) { observers.push({ element, callback: this.callback }); }
+  disconnect() {}
+} });
 
 let host: HTMLDivElement;
 let root: Root;
@@ -387,4 +392,51 @@ it("never calls the commands of removed features", () => {
   for (const gone of ["list_threads", "create_thread", "get_settings", "detect_provider", "subscribe_board", "subscribe_usage_limits"]) {
     expect(names).not.toContain(gone);
   }
+});
+
+const setCentreWidth = (width: number) => act(async () => {
+  for (const { element, callback } of observers) {
+    if (element.classList.contains("centre-workbench") && element.isConnected) {
+      callback([{ contentRect: { width, height: 600 } } as ResizeObserverEntry], {} as ResizeObserver);
+    }
+  }
+});
+
+it("shows only the last chosen half below 720 px and restores the split above it", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const terminal = q(".terminal-stub");
+  const code = q(".code-stub");
+  await setCentreWidth(719);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  expect(q(".terminal-stub")).toBe(terminal);
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q(".code-stub")).toBe(code);
+  await openFile();
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  await setCentreWidth(720);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(false);
+});
+
+it("restores the split at the remembered divider when widened, unless a half is maximized", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await nudgeDivider();
+  const moved = dividerNow();
+  await setCentreWidth(600);
+  expect(dividerNow()).toBeUndefined();
+  await setCentreWidth(1000);
+  expect(dividerNow()).not.toBeUndefined();
+  await click(label("Maximize Code"));
+  await setCentreWidth(600);
+  await setCentreWidth(1000);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  await click(label("Restore Terminal and Code"));
+  expect(Number(dividerNow())).toBeGreaterThan(0);
+  expect(moved).toBeDefined();
 });
