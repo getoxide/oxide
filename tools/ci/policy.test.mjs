@@ -272,7 +272,7 @@ describe("releaseNotes", () => {
       { subject: "feat(settings): new storage (#234)", body: "BREAKING CHANGE: old settings are not migrated." },
     ], identity);
     assert.deepEqual(section(notes, "Breaking changes"), [
-      "- **core:** rename the Turn API ([#233](https://github.com/cavallinilorenzo/oxide/pull/233))",
+      "- **core:** rename the Project API ([#233](https://github.com/cavallinilorenzo/oxide/pull/233))",
       "- **settings:** new storage ([#234](https://github.com/cavallinilorenzo/oxide/pull/234))",
     ]);
     assert.deepEqual(section(notes, "Features"), ["- **chat:** render Markdown in agent messages ([#215](https://github.com/cavallinilorenzo/oxide/pull/215))"]);
