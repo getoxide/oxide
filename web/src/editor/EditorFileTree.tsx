@@ -14,7 +14,6 @@ export const EditorFileTree = memo(function EditorFileTree({
   onOpen,
   onKeep,
   revision,
-  collapseToken,
   empty,
 }: {
   projectId: number;
@@ -24,8 +23,6 @@ export const EditorFileTree = memo(function EditorFileTree({
   /** Double click: keeps the file open. */
   onKeep?: (path: string) => void;
   revision: number;
-  /** A new value folds every directory back to the checkout root. */
-  collapseToken?: number;
   /** Rendered in place of the tree when the checkout root holds no entries. */
   empty?: React.ReactNode;
 }) {
@@ -61,12 +58,6 @@ export const EditorFileTree = memo(function EditorFileTree({
   }, [revision, projectId]);
   // The selected file's folders open so it is visible in the list.
   const [revealed, setRevealed] = useState<string | null>(null);
-  // A new token folds everything; a later selection may unfold its own path again.
-  const [foldedAt, setFoldedAt] = useState(collapseToken);
-  if (collapseToken !== foldedAt) {
-    setFoldedAt(collapseToken);
-    setExpanded(new Set([""]));
-  }
   if (selected !== revealed) {
     setRevealed(selected);
     const parts = (selected ?? "").split("/").slice(0, -1);
