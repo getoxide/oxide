@@ -36,15 +36,15 @@ pull_request ──► CI ─ changes ─┬─ web ─────────�
 push main / release/** ──► CI, every lane forced on (incl. every bundle) ──► gate on that commit
 
 tag vX.Y.Z  (immutable once pushed)
-   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64), signed ─► publish DRAFT
+   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64) ─► publish DRAFT
                                                                                     (dmg, exe, AppImage, deb, rpm, notes, checksums; metadata/SBOM as run artifact)
-Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (publishes `latest.json` on `updater` branch)
+Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (checksums and attestations)
 
 daily  ──► Advisories (RustSec + pnpm audit) ──► one tracking issue per ecosystem on failure
 weekly ──► Dependabot ──► auto-merge low-risk / `manual-review`
 ```
 
-Every decision the pipeline makes (which lanes a change needs, whether the gate passes, whether a PR title is valid, whether a tag matches the versions, the release notes, the Dependabot verdict, the contents of `latest.json`) is a pure function in [`tools/ci/policy.mjs`](../tools/ci/policy.mjs) with tests in `policy.test.mjs`. The workflows only gather inputs and act on the answers through [`tools/ci/cli.mjs`](../tools/ci/cli.mjs). YAML can't be unit-tested, so logic doesn't live there. To change a decision, change it test-first in `policy.test.mjs`.
+Every decision the pipeline makes (which lanes a change needs, whether the gate passes, whether a PR title is valid, whether a tag matches the versions, the release notes, the Dependabot verdict, the Downloads table) is a pure function in [`tools/ci/policy.mjs`](../tools/ci/policy.mjs) with tests in `policy.test.mjs`. The workflows only gather inputs and act on the answers through [`tools/ci/cli.mjs`](../tools/ci/cli.mjs). YAML can't be unit-tested, so logic doesn't live there. To change a decision, change it test-first in `policy.test.mjs`.
 
 ## Roles and how they are enforced
 
@@ -52,14 +52,14 @@ Every decision the pipeline makes (which lanes a change needs, whether the gate 
 
 | Control | What it does |
 | --- | --- |
-| `release` environment | Required reviewers are exactly the two Release Managers. The signing secrets are readable only by jobs of this environment, so no release is built, and no key is touched, until one of them approves. Deployment refs are limited to `v*` tags, so a workflow edited on a branch can't request the secrets. |
+| `release` environment | Required reviewers are exactly the two Release Managers. Any signing secret would be readable only by jobs of this environment, so no release is built, and no key is touched, until one of them approves. Deployment refs are limited to `v*` tags, so a workflow edited on a branch can't request the secrets. |
 | `release tags` ruleset | `refs/tags/v*` can't be updated or deleted by anyone but the repository admin. Creation stays open to write collaborators. |
 | `main protection` ruleset | PR required, required check `gate`, squash only, no force-push, no deletion. The same for `release/**`. |
 | `verify` job | Refuses a tag that isn't on `main` or `release/*`, doesn't match the three manifests, or whose commit has no green `gate`. |
 | Draft releases | The pipeline never publishes. A Release Manager reads the draft and clicks Publish. |
 | Immutable releases | A published release's tag and assets can't change. |
 
-**Why the tag ruleset can't limit who creates a tag.** Oxide lives in a personal repository: there is only the owner (admin) and collaborators (write), no Maintain role, and ruleset bypass lists take roles, not users. So tag creation can't be restricted to exactly two people. The `release` environment is the binding control: a tag pushed by anyone else just waits for approval that never comes. Moving to an organization would add a Maintain role, but it changes the repository URL that the updater feed hardcodes. Revisit if more collaborators get write access.
+**Why the tag ruleset can't limit who creates a tag.** Oxide lives in a personal repository: there is only the owner (admin) and collaborators (write), no Maintain role, and ruleset bypass lists take roles, not users. So tag creation can't be restricted to exactly two people. The `release` environment is the binding control: a tag pushed by anyone else just waits for approval that never comes. Moving to an organization would add a Maintain role. Revisit if more collaborators get write access.
 
 **Why self-approval is allowed.** With two Release Managers, strict four-eyes would block every release while one is away. The approval is still a deliberate second act: the approver sees `verify`'s result before the keys unlock.
 
@@ -154,7 +154,7 @@ disk usage" for cache maintenance and output locations. CI keeps its existing
 | `supplyChain` | any manifest or lockfile, `web/pnpm-workspace.yaml`, `deny.toml` |
 | `automation` | `.github/`, `tools/` |
 
-Docs, research and UI-review screenshots match no lane, so a docs-only PR runs `changes`, `pr-title` and `gate` only. The exception is `docs/licenses/`, which is bundled as app resources and turns on `bundle`.
+Docs and the assets folder (icon masters and palette) match no lane, so a docs-only PR runs `changes`, `pr-title` and `gate` only. The exception is `docs/licenses/`, which is bundled as app resources and turns on `bundle`.
 
 ## Test layers
 
@@ -167,7 +167,7 @@ Docs, research and UI-review screenshots match no lane, so a docs-only PR runs `
 | Tooling tests | Every pipeline decision | `automation` |
 | App bundles | `tauri build` succeeds with the real config, icons, resources and embedded frontend | every `bundle (...)` job |
 | Live language installs (`#[ignore]`) | The language-support downloads still work | A Release Manager's machine, before publishing. Never in CI: they need network |
-| UI review scripts | Visual review with screenshots | By hand during UI work. Not a gate |
+| UI regression script (`web/scripts/terminal-regression.cjs`) | The terminal layout in a real window, with a screenshot written to `web/test-results/` (ignored by Git) | By hand during UI work. Not a gate |
 
 nextest runs each test in its own process with the settings in [`.config/nextest.toml`](../.config/nextest.toml): a hard per-test timeout of 5 minutes, one retry (a pass on retry is reported as flaky, not hidden), JUnit output, and a `process-heavy` test group capped at 2 threads for the suites that spawn child processes and PTYs (the Provider adapters, the terminal tests, `thread_checkout_git` and the whole `workbench` binary, whose shell-completion test drives a shell under a 5 s budget), which time out under full parallelism.
 
@@ -176,12 +176,11 @@ nextest runs each test in its own process with the settings in [`.config/nextest
 ### `build.yml` (shared build)
 
 - **What:** the one place installers are built. Inputs: `platform` (`macos-aarch64`, `windows-x64`, `windows-aarch64`, `linux-x64` or `linux-aarch64`) and `release`.
-  - `release: false` (CI): unsigned, caches allowed, no updater signatures.
-  - `release: true`: no caches at all, frozen installs, `TAURI_SIGNING_PRIVATE_KEY` signs the macOS `.dmg` via `tauri signer sign`, and the Windows NSIS installers and the Linux AppImages via `tauri.updater.conf.json`. It fails if that key is missing. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
+  - `release: false` (CI): unsigned, caches allowed.
+  - `release: true`: no caches at all, frozen installs. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
 - **Why:** PR bundles and release bundles come from one definition, so what `main` proves is what ships. It declares the `release` environment itself, because a job that calls a reusable workflow can't name one, and the approval must guard the job that reads the secrets.
-- **Bundles:** macOS `app,dmg`; Windows `nsis` only (the updater's Windows package is the NSIS setup); Linux `appimage,deb,rpm` (the updater's Linux package is the AppImage; the `.deb` and `.rpm` are not self-updating and carry no `.sig`).
+- **Bundles:** macOS `app,dmg`; Windows `nsis` only; Linux `appimage,deb,rpm`. Oxide has no in-app updater, so no build produces updater packages or signatures.
 - **Runners:** Windows on Arm builds natively on `windows-11-arm`, and Linux on `ubuntu-22.04` and `ubuntu-22.04-arm`: an AppImage or `.deb` links the glibc it was built against, so the oldest supported image keeps it running on older distributions. Move to `ubuntu-24.04*` only when 22.04 is retired.
-- **Updater keys:** `darwin-aarch64`, `windows-x86_64`, `windows-aarch64`, `linux-x86_64`, `linux-aarch64`, matched by file name in `tools/ci/policy.mjs`.
 - **Local:** `node tools/check.mjs` builds an unsigned bundle for your OS. Signed builds are never made locally.
 
 ### `release.yml` (Release)
@@ -190,9 +189,9 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 1. **`verify`**, **`audit-rust`** and **`audit-js`** (parallel, read-only). `audit-rust` runs `cargo deny --locked check advisories` and `audit-js` runs `pnpm --dir web audit --prod --audit-level high`; `build` needs all three. *Why:* a daily scan only finds an advisory within a day, and nothing else stopped a tag from shipping one; failing here means no signing secret is unlocked and nothing is built. A high advisory with no fix blocks the release until it is resolved. `verify`: the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
 2. **`build`** (all five platforms in parallel, `release: true`) waits for approval of the `release` environment.
-3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names and the updater signature stays valid, because it signs the content) for the release, attests build provenance for them, writes `latest.json`, `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
+3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names) for the release, attests build provenance for them, writes `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
-**Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push the signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
+**Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push any signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
 
 **Why no "prepare release" workflow that opens the bump PR:** a PR made with `GITHUB_TOKEN` triggers no workflows, so its `gate` would never run. Avoiding that needs an extra credential just to save one local command.
 
@@ -202,8 +201,8 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `verify-release.yml` (Verify release)
 
-- **What:** when a release is published, re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact, runs `gh attestation verify` on each file, and, for a stable release, checks every URL in `latest.json` resolves, publishes `latest.json` to the `updater` branch (`raw.githubusercontent.com/getoxide/oxide/updater/latest.json`) and verifies it serves this version.
-- **Why:** the updater feed is the one thing that, once broken, affects every installed app, and keeping `latest.json`, `.sig`s, checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
+- **What:** when a release is published, re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact and runs `gh attestation verify` on each file.
+- **Why:** it checks what users will actually download, and keeping the checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
 - **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
 
@@ -243,21 +242,20 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
    cargo test -p oxide-core --test language_install_live -- --ignored
    ```
 
-6. **Publish.** Edit the notes, then click Publish. The release becomes immutable and, if stable, the updater feed goes live.
+6. **Publish.** Edit the notes, then click Publish. The release becomes immutable.
 7. **Watch** the *Verify release* run. If it opens an issue, roll forward.
 
-**Rehearsal.** Tag `vX.Y.Z-rc.1` after the bump merged. It produces a draft pre-release that the updater feed ignores (`releases/latest` skips drafts and pre-releases). Afterwards the admin deletes the draft and the tag (deleting a tag needs the bypass).
+**Rehearsal.** Tag `vX.Y.Z-rc.1` after the bump merged. It produces a draft pre-release (`releases/latest` skips drafts and pre-releases). Afterwards the admin deletes the draft and the tag (deleting a tag needs the bypass).
 
-**Rollback is rolling forward.** Published releases are immutable and installed apps only update forward. Never try to edit one under pressure: publish `vX.Y.Z+1`. While Oxide is pre-1.0, a minor bump may break and a patch bump only fixes.
+**Rollback is rolling forward.** Published releases are immutable and users only move forward. Never try to edit one under pressure: publish `vX.Y.Z+1`. While Oxide is pre-1.0, a minor bump may break and a patch bump only fixes.
 
 ## Secrets and the fork/PR threat model
 
-- **Signing secrets exist only in the `release` environment:** `TAURI_SIGNING_PRIVATE_KEY` (and `_PASSWORD`). They are readable only by a job for a `v*` tag after a Release Manager approves.
+- **Signing secrets, if any are ever added, exist only in the `release` environment** (today none are set). They are readable only by a job for a `v*` tag after a Release Manager approves.
 - **The Apple secrets are intentionally absent.** Oxide does not join the Apple Developer Program ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY` and `APPLE_API_PRIVATE_KEY` must not be set. If they ever exist, the Apple step in `build.yml` signs and notarizes with no other change; rehearse on an `-rc` tag before relying on it.
-- **The updater key** is the root of trust for every installed app: apps accept only packages signed by it, and the matching public key is in `crates/oxide-app/tauri.conf.json`. Keep an encrypted offline backup. If it is lost, installed apps can never be updated again. Never commit it or replace the public key casually.
 - **Fork PRs** run on `pull_request` with a read-only token and no secrets. Actions settings require approval for first-time contributors.
 - **No `pull_request_target` workflow checks out PR code.** Untrusted code never gets a write token.
-- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes `latest.json` to the `updater` branch and failure issues, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
+- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes failure issues, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
 - **Checkouts don't persist credentials,** so later steps can't push with the token.
 - **Third-party actions are pinned to a full commit SHA** with a version comment, so a moved tag can't inject code. Dependabot keeps the pins current.
 - **Release builds are clean:** no cache is restored or saved, so a poisoned cache can't reach a shipped binary.

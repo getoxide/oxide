@@ -26,10 +26,6 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-<p align="center">
-  <img alt="Oxide: a terminal in the centre, the open Projects and their terminals on the left and the Project's files, issues and pull requests on the right" src="assets/screenshots/oxide-thread.png" width="900" />
-</p>
-
 <!-- The invisible site markers in this README delimit content that the Oxide website
      (getoxide/website) extracts during its content sync. Do not remove or rename a marker. -->
 
@@ -60,7 +56,7 @@ Oxide does not know about agents. A terminal is a plain shell that Oxide does no
 
 - **Issues.** List, read and create GitHub Issues for the Project, through the [GitHub CLI](https://cli.github.com).
 - **Pull requests.** List, read, create, review and merge pull requests, or turn on auto-merge while checks run.
-- **Files.** Browse the Project's folder and open a file in the built-in editor: Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
+- **Files.** Browse the Project's folder in the right dock and open a file in the Code workspace, the built-in editor that takes the centre in place of the terminals: Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
 
 <!-- /site:features -->
 
@@ -133,9 +129,16 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 flowchart LR
   UI["React webview<br/>(web/)"] -- "typed Tauri commands" --> App["oxide-app<br/>thin Tauri shell"]
   App --> Core["oxide-core<br/>Projects, terminals,<br/>Git, GitHub, LSP"]
-  Core --> Prims["oxide-provider<br/>process, lock and<br/>diagnostics primitives"]
+  App --> Platform["oxide-platform<br/>OS-specific code, process,<br/>lock and diagnostics primitives"]
+  Core --> Platform
   Core --> Tools["git · gh · language servers"]
 ```
+
+- `crates/oxide-platform`: the only crate with OS-specific code, plus the process, lock and diagnostics primitives ([ADR-0019](docs/adr/0019-platform-layer.md)).
+- `crates/oxide-core`: Projects, SQLite storage, terminals and their shells, files, Git, GitHub and language servers. It knows nothing about Tauri.
+- `crates/oxide-app`: the thin Tauri shell that exposes Core to the webview.
+- `web/`: the React frontend, grouped by area under `web/src` (`projects`, `terminal`, `editor`, `issues`, `pull-requests`, `settings`, `shared`, `styles`).
+- `assets/`: the app icon masters and the palette ([assets/README.md](assets/README.md)).
 
 - **Core owns files and processes.** The webview gets no filesystem or shell permission. Every action goes through a typed Tauri command generated with [tauri-specta](https://github.com/specta-rs/tauri-specta), and every shell is a process Core owns ([ADR-0016](docs/adr/0016-security-boundaries.md)).
 - **A terminal is a plain shell.** Oxide does not interpret what runs in it ([ADR-0018](docs/adr/0018-projects-and-plain-terminals.md)).

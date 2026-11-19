@@ -10,7 +10,7 @@ Key facts:
 
 - Repository: https://github.com/getoxide/oxide
 - License: MIT. Status: pre-release (version 0.x). Downloads: https://github.com/getoxide/oxide/releases
-- Stack: Rust core (`crates/oxide-core`), process and locking primitives (`crates/oxide-provider`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage.
+- Stack: Rust core (`crates/oxide-core`), platform layer and process primitives (`crates/oxide-platform`), thin Tauri shell (`crates/oxide-app`), React/TypeScript webview (`web/`), Monaco editor, xterm terminal, SQLite storage.
 - Requirements: `git`; optionally the GitHub CLI `gh`.
 
 ## Docs
