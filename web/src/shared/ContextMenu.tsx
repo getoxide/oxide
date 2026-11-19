@@ -11,7 +11,7 @@ export interface ContextMenuActions {
   openSettings: () => void;
 }
 
-interface Entry {
+export interface Entry {
   label: string;
   hint?: string;
   run: () => void;
@@ -23,6 +23,13 @@ interface Opening {
   y: number;
   selection: string;
   editable: boolean;
+  /** Entries a component asked to show first, e.g. a Project row's actions. */
+  extra: Entry[];
+}
+
+/** Lets a component put its own entries at the top of the right-click menu for that click. */
+export function showContextMenu(event: { clientX: number; clientY: number }, entries: Entry[]) {
+  window.dispatchEvent(new CustomEvent("oxide:context-menu", { detail: { x: event.clientX, y: event.clientY, entries } }));
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -38,6 +45,8 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
   const close = useCallback(() => { setOpening(null); setAt(null); }, []);
 
   useEffect(() => {
+    let extra: Entry[] = [];
+    const onEntries = (event: Event) => { extra = (event as CustomEvent<{ entries: Entry[] }>).detail.entries; };
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault();
       setOpening({
@@ -45,10 +54,16 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
         y: event.clientY,
         selection: window.getSelection()?.toString() ?? "",
         editable: isEditable(event.target),
+        extra,
       });
+      extra = [];
     };
+    window.addEventListener("oxide:context-menu", onEntries);
     window.addEventListener("contextmenu", onContextMenu);
-    return () => window.removeEventListener("contextmenu", onContextMenu);
+    return () => {
+      window.removeEventListener("oxide:context-menu", onEntries);
+      window.removeEventListener("contextmenu", onContextMenu);
+    };
   }, []);
 
   useEffect(() => {
@@ -100,7 +115,7 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
     : opening.selection
       ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => runEditCommand("copy") }]
       : [];
-  const app: Entry[] = [
+  const app: Entry[] = opening.extra.length > 0 ? [] : [
     { label: "Open a Project…", run: actions.openProject },
     { label: "Settings", run: actions.openSettings },
   ];
@@ -129,7 +144,8 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
       style={{ left: at?.left ?? opening.x, top: at?.top ?? opening.y, visibility: at ? "visible" : "hidden" }}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {edit.length > 0 && <>{renderGroup(edit)}<div className="context-menu-sep" role="separator" /></>}
+      {renderGroup(opening.extra)}
+      {edit.length > 0 && <>{opening.extra.length > 0 && <div className="context-menu-sep" role="separator" />}{renderGroup(edit)}{app.length > 0 && <div className="context-menu-sep" role="separator" />}</>}
       {renderGroup(app)}
     </div>
   );

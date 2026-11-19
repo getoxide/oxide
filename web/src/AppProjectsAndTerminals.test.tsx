@@ -88,6 +88,22 @@ const all = (selector: string) => Array.from(host.querySelectorAll<HTMLElement>(
 const click = (element: Element | null) => act(async () => (element as HTMLElement).click());
 const label = (name: string) => q<HTMLButtonElement>(`[aria-label="${name}"]`);
 const terminalNames = (project: string) => all(`[aria-label="Terminals of ${project}"] .terminal-item-title`).map((node) => node.textContent);
+const rowOf = (project: string) => all(".project-row").find((row) => row.textContent?.includes(project))!;
+/** Right-clicks a Project row and picks an entry of the menu that opens. */
+const fromMenu = async (project: string, entry: string) => {
+  await act(async () => { rowOf(project).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 })); });
+  const item = all('[role="menuitem"]').find((node) => node.textContent === entry);
+  expect(item, `menu entry ${entry}`).toBeDefined();
+  await click(item!);
+};
+const newTerminal = (project: string) => fromMenu(project, "New terminal");
+const removeProject = (project: string) => fromMenu(project, "Remove project");
+/** The Files button sits on the selected Project's row only: select the Project first, then press it. */
+const filesButton = async (index: number) => {
+  if (all(".project")[index].getAttribute("aria-current") !== "true") await click(all(".project")[index]);
+  return label("Open Files")!;
+};
+const openFiles = async (index: number) => click(await filesButton(index));
 const visibleTerminals = () => all(".terminal-stub").filter((node) => node.dataset.visible === "true");
 
 it("lists the open Projects with their terminals and nothing else", () => {
@@ -109,9 +125,9 @@ it("offers New terminal in an empty centre and opens a shell in that Project", a
 });
 
 it("opens several terminals in the same Project and switches without unmounting any", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
   expect(terminalNames("Project Alpha")).toEqual(["Terminal 1", "Terminal 2", "Terminal 3"]);
   const before = all(".terminal-stub");
   expect(before).toHaveLength(3);
@@ -124,8 +140,8 @@ it("opens several terminals in the same Project and switches without unmounting 
 });
 
 it("keeps each Project's terminals apart and shows the selected one", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Beta"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Beta");
   expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["2:1"]);
   await click(all(".project")[0]);
   expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["1:1"]);
@@ -133,7 +149,7 @@ it("keeps each Project's terminals apart and shows the selected one", async () =
 });
 
 it("renames a terminal by double-clicking it", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   const row = q<HTMLElement>('[aria-label="Terminals of Project Alpha"] .terminal-item')!;
   await act(async () => { row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); });
   const input = q<HTMLInputElement>('input[aria-label="Rename Terminal 1"]')!;
@@ -146,8 +162,8 @@ it("renames a terminal by double-clicking it", async () => {
 });
 
 it("closes a terminal from the sidebar and unmounts its shell", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
   await click(label("Close Terminal 2"));
   expect(terminalNames("Project Alpha")).toEqual(["Terminal 1"]);
   expect(all(".terminal-stub")).toHaveLength(1);
@@ -155,9 +171,9 @@ it("closes a terminal from the sidebar and unmounts its shell", async () => {
 });
 
 it("closing a Project ends its terminals and asks Core to keep it known but closed", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Beta"));
-  await click(label("Close Project Alpha"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Beta");
+  await removeProject("Project Alpha");
   expect(calls.some((call) => call.command === "set_project_open" && JSON.stringify(call.args) === JSON.stringify({ id: 1, open: false }))).toBe(true);
   expect(all(".terminal-stub").map((node) => node.dataset.project)).toEqual(["2"]);
 });
@@ -186,7 +202,7 @@ it("describes the empty dock without naming Files", async () => {
 
 it("opens the Files view of a Project from its row and goes back to the Terminals", async () => {
   expect(all(".files-panel")).toHaveLength(0);
-  await click(all('[aria-label="Open Files"]')[1]);
+  await openFiles(1);
   expect(all(".files-panel").map((node) => node.dataset.project)).toEqual(["2"]);
   expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(true);
   const back = label("Back to Terminals")!;
@@ -203,15 +219,15 @@ it("disables the Files button of a Project whose folder is missing", async () =>
   try {
     root = createRoot(host);
     await act(async () => root.render(<App />));
-    const buttons = all('[aria-label="Open Files"]') as HTMLButtonElement[];
-    expect(buttons.map((button) => button.disabled)).toEqual([false, true]);
+    expect((label("Open Files") as HTMLButtonElement).disabled).toBe(false);
+    expect((await filesButton(1) as HTMLButtonElement).disabled).toBe(true);
   } finally {
     projects[1].missing = false;
   }
 });
 
 it("opens a file from the Files view in the Code workspace on double click", async () => {
-  await click(all('[aria-label="Open Files"]')[0]);
+  await openFiles(0);
   await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   expect(q<HTMLElement>(".code-stub")?.dataset.visible).toBe("true");
@@ -219,14 +235,14 @@ it("opens a file from the Files view in the Code workspace on double click", asy
 });
 
 const openFile = async (index = 0) => {
-  await click(all('[aria-label="Open Files"]')[index]);
+  await openFiles(index);
   await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
 };
 const codeVisible = (index = 0) => all(".code-stub")[index]?.dataset.visible === "true";
 
 it("splits the centre into Terminal and Code when a file opens, and closes the Code half with the last file", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
   await openFile();
   expect(codeVisible()).toBe(true);
@@ -240,8 +256,8 @@ it("splits the centre into Terminal and Code when a file opens, and closes the C
 });
 
 it("keeps the open file when switching Terminals and removes Back to terminals", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
   await openFile();
   expect(host.textContent).not.toContain("Back to terminals");
   await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
@@ -255,7 +271,7 @@ it("shows the Code workspace full width without Terminals, then splits when a Te
   expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
   expect(host.textContent).not.toContain("No terminal open");
   expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).toBeNull();
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
   expect(codeVisible()).toBe(true);
   expect(visibleTerminals()).toHaveLength(1);
@@ -263,7 +279,7 @@ it("shows the Code workspace full width without Terminals, then splits when a Te
 });
 
 it("keeps each Project's Code workspace mounted when moving between Projects", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile(0);
   const stub = all(".code-stub")[0];
   await click(all(".project")[1]);
@@ -274,7 +290,7 @@ it("keeps each Project's Code workspace mounted when moving between Projects", a
 });
 
 it("resets the divider to 50/50 on double click", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   const divider = q<HTMLElement>('[role="separator"][aria-label="Resize Terminal and Code"]')!;
   const before = divider.getAttribute("aria-valuenow");
@@ -286,7 +302,7 @@ it("resets the divider to 50/50 on double click", async () => {
 });
 
 it("maximizes a half without unmounting the other, and restores the split", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   const terminal = q(".terminal-stub");
   const code = q(".code-stub");
@@ -305,7 +321,7 @@ it("maximizes a half without unmounting the other, and restores the split", asyn
 });
 
 it("offers no maximize button while only one half exists", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   expect(label("Maximize Terminal")).toBeNull();
   expect(label("Maximize Code")).toBeNull();
 });
@@ -316,14 +332,14 @@ const nudgeDivider = () => act(async () => {
 });
 
 it("gives each Project its own divider and maximized half, restored when it is selected again", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile(0);
   const alphaDefault = dividerNow();
   await nudgeDivider();
   const alphaMoved = dividerNow();
   expect(alphaMoved).not.toBe(alphaDefault);
   await click(label("Maximize Code"));
-  await click(label("New terminal in Project Beta"));
+  await newTerminal("Project Beta");
   expect(label("Maximize Code")).toBeNull();
   expect(visibleTerminals().map((node) => node.dataset.project)).toEqual(["2"]);
   await click(all(".project")[0]);
@@ -334,7 +350,7 @@ it("gives each Project its own divider and maximized half, restored when it is s
 });
 
 it("keeps the divider and the maximized half across a reload, but not the open files", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile(0);
   await nudgeDivider();
   const moved = dividerNow();
@@ -343,15 +359,15 @@ it("keeps the divider and the maximized half across a reload, but not the open f
   root = createRoot(host);
   await act(async () => root.render(<App />));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   expect(all(".code-stub")).toHaveLength(0);
   await openFile(0);
   expect(dividerNow()).toBe(moved);
 });
 
 it("restores the split when the hidden half is chosen explicitly", async () => {
-  await click(label("New terminal in Project Alpha"));
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
   await openFile();
   await click(label("Maximize Code"));
   await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
@@ -365,22 +381,44 @@ it("restores the split when the hidden half is chosen explicitly", async () => {
 });
 
 it("leaves the Files view when another route selects a Project", async () => {
-  await click(all('[aria-label="Open Files"]')[0]);
+  await openFiles(0);
   expect(all(".files-panel")).toHaveLength(1);
-  await click(label("New terminal in Project Beta"));
+  await newTerminal("Project Beta");
   expect(all(".files-panel")).toHaveLength(0);
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
 });
 
-it("selects a Project by its name and collapses it only by its chevron", async () => {
-  await click(all(".project")[1]);
-  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
-  await click(all(".project")[1]);
-  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
-  await click(label("Collapse Project Beta"));
-  expect(label("Expand Project Beta")?.getAttribute("aria-expanded")).toBe("false");
-  await click(label("Expand Project Beta"));
-  expect(label("Collapse Project Beta")).not.toBeNull();
+it("selects a Project by its name and collapses it by clicking the selected name again", async () => {
+  const beta = () => all(".project")[1];
+  const listed = () => q('[aria-label="Terminals of Project Beta"]');
+  await click(beta());
+  expect(beta().getAttribute("aria-current")).toBe("true");
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
+  await click(beta());
+  expect(beta().getAttribute("aria-expanded")).toBe("false");
+  await click(beta());
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
+  expect(listed()).not.toBeNull();
+});
+
+it("shows no chevron, add or close buttons on a Project row, only its Files button when selected", () => {
+  expect(all(".project-chevron")).toHaveLength(0);
+  expect(label("Close Project Alpha")).toBeNull();
+  expect(label("New terminal in Project Alpha")).toBeNull();
+  expect(all('[aria-label="Open Files"]')).toHaveLength(1);
+  expect(rowOf("Project Alpha").querySelector('[aria-label="Open Files"]')).not.toBeNull();
+});
+
+it("shows a collapsed Project's terminal count and keeps its icon dim", async () => {
+  await newTerminal("Project Alpha");
+  await click(all(".project")[0]);
+  expect(all(".project")[0].classList.contains("open")).toBe(false);
+  expect(rowOf("Project Alpha").querySelector(".project-count")?.textContent).toBe("1");
+});
+
+it("offers New terminal, Open Files and Remove project on a Project row's menu, in place of the app entries", async () => {
+  await act(async () => { rowOf("Project Beta").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["New terminal", "Open Files", "Remove project"]);
 });
 
 it("opens Settings on an empty page", async () => {
@@ -392,7 +430,7 @@ it("opens Settings on an empty page", async () => {
 });
 
 it("does nothing when a former Oxide shortcut is pressed", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   const before = host.innerHTML;
   const callCount = calls.length;
   for (const init of [
@@ -423,7 +461,7 @@ const setCentreWidth = (width: number) => act(async () => {
 });
 
 it("shows only the last chosen half below 720 px and restores the split above it", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   const terminal = q(".terminal-stub");
   const code = q(".code-stub");
@@ -444,7 +482,7 @@ it("shows only the last chosen half below 720 px and restores the split above it
 });
 
 it("restores the split at the remembered divider when widened, unless a half is maximized", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   await nudgeDivider();
   const moved = dividerNow();
@@ -466,14 +504,14 @@ const press = (element: Element | null) => act(async () => { (element as HTMLEle
 const focused = () => document.activeElement;
 
 it("focuses the back control when the Files view opens, and the Project's Files button when going back", async () => {
-  await press(all('[aria-label="Open Files"]')[1]);
+  await press(await filesButton(1));
   expect(focused()).toBe(label("Back to Terminals"));
   await press(label("Back to Terminals"));
-  expect(focused()).toBe(all('[aria-label="Open Files"]')[1]);
+  expect(focused()).toBe(label("Open Files"));
 });
 
 it("keeps focus on the pressed button when a half is maximized or restored", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   await press(label("Maximize Code"));
   expect(focused()).toBe(label("Restore Terminal and Code"));
@@ -484,29 +522,29 @@ it("keeps focus on the pressed button when a half is maximized or restored", asy
 });
 
 it("orders the tab stops sidebar, Terminal half, Code half, dock", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   await click(label("Back to Terminals"));
   const follows = (a: Element | null, b: Element | null) => Boolean(a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING);
   expect(follows(q('nav[aria-label="Projects"]'), q(".centre-terminal-half"))).toBe(true);
   expect(follows(q(".centre-terminal-half"), q(".centre-code-half"))).toBe(true);
   expect(follows(q(".centre-code-half"), q('aside[aria-label="Tools panel"]'))).toBe(true);
-  await click(all('[aria-label="Open Files"]')[0]);
+  await openFiles(0);
   expect(follows(label("Back to Terminals"), q(".files-panel"))).toBe(true);
   expect(follows(q(".files-panel"), q(".centre-terminal-half"))).toBe(true);
 });
 
 it("moves focus into the Code half when a file opens, with or without Terminals", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   expect(q(".centre-code-half")!.contains(focused())).toBe(true);
-  await click(label("Close Project Alpha"));
+  await removeProject("Project Alpha");
   await openFile(0);
   expect(q(".centre-code-half")!.contains(focused())).toBe(true);
 });
 
 it("leaves no empty Code half when the requested file fails to open", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   failingOpens.current = true;
   await openFile();
   expect(codeVisible()).toBe(false);
@@ -515,18 +553,19 @@ it("leaves no empty Code half when the requested file fails to open", async () =
 });
 
 it("forgets a closed Project's split layout", async () => {
-  await click(label("New terminal in Project Alpha"));
+  await newTerminal("Project Alpha");
   await openFile();
   await click(label("Maximize Terminal"));
   expect(Object.keys(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!))).toEqual(["1"]);
   await click(label("Back to Terminals"));
-  await click(label("Close Project Alpha"));
+  await removeProject("Project Alpha");
   expect(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!)).toEqual({});
 });
 
-it("expands a collapsed Project when its name is clicked", async () => {
-  await click(label("Collapse Project Beta"));
-  expect(label("Expand Project Beta")).not.toBeNull();
+it("expands a collapsed Project when a terminal is opened in it from the menu", async () => {
   await click(all(".project")[1]);
-  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
+  await click(all(".project")[1]);
+  expect(all(".project")[1].getAttribute("aria-expanded")).toBe("false");
+  await newTerminal("Project Beta");
+  expect(all(".project")[1].getAttribute("aria-expanded")).toBe("true");
 });
