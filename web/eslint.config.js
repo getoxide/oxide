@@ -28,7 +28,7 @@ export default defineConfig(
     // The webview reaches the Core through one door. `commands.*` from ./bindings is typed and
     // generated; ./ipc.ts owns the rest (raw-body commands, events, streams).
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/**/*.test.{ts,tsx}", "src/bindings.ts", "src/ipc.ts"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/bindings.ts", "src/shared/ipc.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -53,7 +53,7 @@ export default defineConfig(
     // Persisted UI state has one guarded door: reads are `unknown` and never throw, writes never
     // fail the caller, and keys are listed in one place.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/**/*.test.{ts,tsx}", "src/storage.ts"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/shared/storage.ts"],
     rules: {
       "no-restricted-globals": [
         "error",

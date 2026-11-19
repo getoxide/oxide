@@ -1,13 +1,13 @@
 // Browser-only IPC adapter: all shell commands/output/resize events use the real Rust PTY.
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { TerminalWorkbench } from "../src/TerminalWorkbench";
-import "../src/styles.css";
-import "../src/workbench.css";
-import "../src/appearance.css";
-import "../src/interactions.css";
-import { applyAppearance } from "../src/appearance";
-import { Skeleton } from "../src/Skeleton";
+import { TerminalWorkbench } from "../src/terminal/TerminalWorkbench";
+import "../src/styles/styles.css";
+import "../src/styles/workbench.css";
+import "../src/styles/appearance.css";
+import "../src/styles/interactions.css";
+import { applyAppearance } from "../src/shared/appearance";
+import { Skeleton } from "../src/shared/Skeleton";
 applyAppearance();
 declare global {
   interface Window {

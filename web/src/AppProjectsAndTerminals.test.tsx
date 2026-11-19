@@ -3,18 +3,18 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
-import { clearQueryCache } from "./queryCache";
+import { clearQueryCache } from "./shared/queryCache";
 import { App } from "./App";
 
-vi.mock("./QuitDialog", () => ({ QuitDialog: () => null }));
-vi.mock("./TerminalWorkbench", () => ({
+vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
+vi.mock("./terminal/TerminalWorkbench", () => ({
   TerminalWorkbench: ({ projectId, contextKey, visible }: { projectId: number; contextKey: string; visible: boolean }) => (
     <div className="terminal-stub" data-project={projectId} data-context={contextKey} data-visible={String(visible)} />
   ),
 }));
-vi.mock("./PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
-vi.mock("./IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
-vi.mock("./FilesPanel", () => ({ FilesPanel: () => <div className="files-panel">Files content</div> }));
+vi.mock("./pull-requests/PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
+vi.mock("./issues/IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
+vi.mock("./editor/FilesPanel", () => ({ FilesPanel: () => <div className="files-panel">Files content</div> }));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 

@@ -15,36 +15,36 @@ import {
   type Icon,
 } from "@primer/octicons-react";
 import { commands, type Project } from "./bindings";
-import { Skeleton } from "./Skeleton";
-import { ContextMenu } from "./ContextMenu";
-import { Collapsible } from "./Collapsible";
-import { LinkConfirmDialog } from "./LinkConfirmDialog";
-import { QuitDialog } from "./QuitDialog";
-import { ProjectPalette } from "./ProjectPalette";
-import { SettingsView } from "./SettingsView";
-import { ResizeHandle } from "./ResizeHandle";
-import { workspaceLayout } from "./panelLayout";
-import { useElementSize, usePanelSize } from "./usePanelSize";
-import { readablePath } from "./headerLines";
-import { sidebarProjects } from "./projectList";
-import { runEditCommand, type EditCommand } from "./editCommand";
-import { TerminalWorkbench } from "./TerminalWorkbench";
+import { Skeleton } from "./shared/Skeleton";
+import { ContextMenu } from "./shared/ContextMenu";
+import { Collapsible } from "./shared/Collapsible";
+import { LinkConfirmDialog } from "./shared/LinkConfirmDialog";
+import { QuitDialog } from "./shared/QuitDialog";
+import { ProjectPalette } from "./projects/ProjectPalette";
+import { SettingsView } from "./settings/SettingsView";
+import { ResizeHandle } from "./shared/ResizeHandle";
+import { workspaceLayout } from "./shared/panelLayout";
+import { useElementSize, usePanelSize } from "./shared/usePanelSize";
+import { readablePath } from "./terminal/headerLines";
+import { sidebarProjects } from "./projects/projectList";
+import { runEditCommand, type EditCommand } from "./terminal/editCommand";
+import { TerminalWorkbench } from "./terminal/TerminalWorkbench";
 import {
   closeProjectTerminals, closeTerminal, openTerminal, renameTerminal, selectTerminal, setRunning,
   emptyTerminals, type TerminalsByProject,
-} from "./terminalTabs";
-import type { CodeOpenRequest } from "./codeOpen";
+} from "./terminal/terminalTabs";
+import type { CodeOpenRequest } from "./editor/codeOpen";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
 const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
 
-const CodeWorkbench = lazy(() => import("./CodeWorkbench").then((module) => ({ default: module.CodeWorkbench })));
-const FilesPanel = lazy(() => import("./FilesPanel").then((module) => ({ default: module.FilesPanel })));
+const CodeWorkbench = lazy(() => import("./editor/CodeWorkbench").then((module) => ({ default: module.CodeWorkbench })));
+const FilesPanel = lazy(() => import("./editor/FilesPanel").then((module) => ({ default: module.FilesPanel })));
 const PullRequestPanel = lazy(() =>
-  import("./PullRequestPanel").then((module) => ({ default: module.PullRequestPanel })),
+  import("./pull-requests/PullRequestPanel").then((module) => ({ default: module.PullRequestPanel })),
 );
 const IssuesSurface = lazy(() =>
-  import("./IssuesSurface").then((module) => ({ default: module.IssuesSurface })),
+  import("./issues/IssuesSurface").then((module) => ({ default: module.IssuesSurface })),
 );
 
 const TOOL_TABS: { name: string; Icon: Icon }[] = [

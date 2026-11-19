@@ -1,13 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { highlighter } from "./highlighter";
-import "./fonts.css";
-import "./styles.css";
-import "./workbench.css";
-import "./appearance.css";
-import "./interactions.css";
-import { applyAppearance } from "./appearance";
+import { highlighter } from "./shared/highlighter";
+import "./styles/fonts.css";
+import "./styles/styles.css";
+import "./styles/workbench.css";
+import "./styles/appearance.css";
+import "./styles/interactions.css";
+import { applyAppearance } from "./shared/appearance";
 applyAppearance();
 
 // Start the highlight worker now so common grammars are compiled before the
