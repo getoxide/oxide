@@ -29,7 +29,7 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   return `${Math.floor(s / unit[0])}${unit[1]}`;
 }
 
-/** "now", "5m", "3h", "yesterday", "4d", then a short date: how long ago a Thread last moved. */
+/** "now", "5m", "3h", "yesterday", "4d", then a short date: how long ago something happened. */
 export function relativeAge(iso: string, now: Date = new Date()): string {
   const parsed = parseElapsedMs(iso, now.getTime());
   if (!parsed) return "";

@@ -24,7 +24,7 @@ const projects = [
   { id: 2, name: "uni", path: "/code/uni", hidden: false, open: false, missing: false },
 ];
 
-it("starts a Thread in the clicked Project rather than the keyboard-highlighted Project", () => {
+it("picks the clicked Project rather than the keyboard-highlighted Project", () => {
   const onPickProject = vi.fn();
   const onClose = vi.fn();
   act(() => root.render(<ProjectPalette projects={projects} defaultParent="/code"

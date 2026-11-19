@@ -25,10 +25,10 @@ describe("middleEllipsis", () => {
   });
 
   it("cuts a long path in the middle, keeping both ends", () => {
-    const cut = middleEllipsis("~/Developer/project/oxide/.claude/worktrees/feat+147-thread-header-banner", 40);
+    const cut = middleEllipsis("~/Developer/project/oxide/.claude/checkouts/feat+147-header-banner", 40);
     expect(cut).toHaveLength(40);
     expect(cut.startsWith("~/Developer/")).toBe(true);
-    expect(cut.endsWith("thread-header-banner")).toBe(true);
+    expect(cut.endsWith("147-header-banner")).toBe(true);
     expect(cut).toContain("…");
   });
 });

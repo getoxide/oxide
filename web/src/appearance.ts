@@ -11,8 +11,8 @@ export interface ThemePack {
   themes: ThemeVariant[];
 }
 export interface Appearance {
-  fonts: { ui: string; chat: string; code: string; terminal: string };
-  typography?: Record<"ui" | "chat" | "code" | "terminal", { size: number; weight: number }>;
+  fonts: { ui: string; code: string; terminal: string };
+  typography?: Record<"ui" | "code" | "terminal", { size: number; weight: number }>;
   themeJson: string;
   themeName: string;
 }
@@ -157,8 +157,8 @@ export const BUNDLED_FONTS = [
   { label: "JetBrains Mono (bundled)", value: MONO },
 ];
 export const DEFAULT_APPEARANCE: Appearance = {
-  fonts: { ui: SYSTEM, chat: SYSTEM, code: MONO, terminal: MONO },
-  typography: { ui: { size: 13, weight: 400 }, chat: { size: 14, weight: 400 }, code: { size: 13, weight: 400 }, terminal: { size: 13, weight: 400 } },
+  fonts: { ui: SYSTEM, code: MONO, terminal: MONO },
+  typography: { ui: { size: 13, weight: 400 }, code: { size: 13, weight: 400 }, terminal: { size: 13, weight: 400 } },
   themeJson: JSON.stringify(
     {
       name: "Oxide",
@@ -221,12 +221,6 @@ const LIGHT: Record<string, string> = {
 };
 const LIGHT_ONLY_TOKENS: Record<string, string> = {
   "--acc-pressed": "#0757B5",
-  "--diff-added-bg": "#15703C1F",
-  "--diff-removed-bg": "#C4281F1F",
-  "--attention-approval-bg": "#F7EBCB",
-  "--attention-input-bg": "#DCE9F9",
-  "--attention-error-bg": "#F9DEDC",
-  "--attention-interrupted-bg": "#E9E8E4",
 };
 const TITANIUM_LIGHT_TERMINAL: Record<string, string> = {
   "terminal.background": "#FBFBFA",

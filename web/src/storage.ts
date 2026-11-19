@@ -12,8 +12,6 @@
 
 export const storageKeys = {
   appearance: "oxide:appearance:v1",
-  effortVocabulary: "oxide:effort-vocabulary",
-  modelPickerTab: "oxide:model-picker-tab",
   panelSize: (panel: string) => `oxide.layout.${panel}`,
   codeTabs: (context: string) => `oxide:code-tabs:${context}`,
   terminalHistory: (context: string) => `oxide:terminal-history:${context}`,

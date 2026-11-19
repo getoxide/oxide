@@ -27,7 +27,4 @@
 @media (prefers-reduced-motion: reduce) {
   .skeleton-shapes { animation: none; opacity: .7; }
 }
-
-/* Virtualized Turns measure their placeholder rather than letting it overlap the next row. */
-.turn-placeholder:has(.skeleton) { height: auto; min-height: 144px; }
 .skeleton-detail, .skeleton-form { min-height: 0; overflow: auto; }

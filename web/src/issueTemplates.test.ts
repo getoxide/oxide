@@ -18,10 +18,10 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: provider
+    id: browser
     attributes:
-      label: Provider
-      options: [Claude Code, Codex]
+      label: Browser
+      options: [Firefox, Safari]
     validations:
       required: true
   - type: textarea
@@ -70,7 +70,7 @@ it("composes the description the way the web does", () => {
   expect(formBody(form, answers)).toBe(
     [
       "### Version\n\nv1.2.0",
-      "### Provider\n\nClaude Code",
+      "### Browser\n\nFirefox",
       "### Logs\n\n```text\nboom\n```",
       "### Checks\n\n- [x] I searched first\n- [ ] I can help fix it",
     ].join("\n\n"),

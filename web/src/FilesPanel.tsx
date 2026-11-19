@@ -5,7 +5,7 @@ import { EditorFileTree } from "./EditorFileTree";
 
 interface FilesPanelProps {
   projectId: number;
-  /** Changes after checkout mutations (commits, checkouts, Turns), so the tree refetches. */
+  /** Changes after checkout mutations (commits, checkouts, terminal commands), so the tree refetches. */
   revision: number;
   /** Opens the file in the Project's central Code workspace. */
   onOpenFile: (path: string) => void;

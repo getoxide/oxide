@@ -21,10 +21,10 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: provider
+    id: browser
     attributes:
-      label: Provider
-      options: [Claude Code, Codex]
+      label: Browser
+      options: [Firefox, Safari]
 `;
 const config = "blank_issues_enabled: false\ncontact_links:\n  - name: Security\n    url: https://example.com/s\n    about: Report privately\n";
 
@@ -92,7 +92,7 @@ it("creates an issue from a template with its fields, answers and the labels tha
   expect(commands.createIssue).toHaveBeenCalledWith(
     1,
     "Crash",
-    "### Version\n\nv1.0\n\n### Provider\n\nClaude Code",
+    "### Version\n\nv1.0\n\n### Browser\n\nFirefox",
     [],
     ["bug"],
   );

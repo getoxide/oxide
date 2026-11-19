@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { workspaceLayout } from "./panelLayout";
 
-it("reserves a readable Thread with both panels visible at every supported width", () => {
+it("reserves a readable centre column with both panels visible at every supported width", () => {
   for (const width of [1064, 1280, 1920]) {
     for (const sidebar of [null, 160, 208, 400, 9000]) {
       for (const tools of [null, 496, 800, 9000]) {
@@ -36,7 +36,7 @@ it("does not reserve hidden Tools space in Settings or a focused workspace", () 
   expect(workspaceLayout(1064, preferred, true).sidebar.value).toBe(208);
 });
 
-it("collapses the sidebar before the Thread shrinks below 360px at the minimum window", () => {
+it("collapses the sidebar before the centre column shrinks below 360px at the minimum window", () => {
   const fit = workspaceLayout(900, { sidebar: 300, tools: 700 }, true);
   expect(fit.sidebarVisible).toBe(false);
   expect(fit.toolsVisible).toBe(true);

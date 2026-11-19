@@ -44,7 +44,5 @@ describe("guarded storage", () => {
     expect(storageKeys.codeTabs("p1")).toBe("oxide:code-tabs:p1");
     expect(storageKeys.terminalHistory("p1")).toBe("oxide:terminal-history:p1");
     expect(storageKeys.languageDismissed("rust")).toBe("oxide:language-dismissed:rust");
-    expect(storageKeys.effortVocabulary).toBe("oxide:effort-vocabulary");
-    expect(storageKeys.modelPickerTab).toBe("oxide:model-picker-tab");
   });
 });

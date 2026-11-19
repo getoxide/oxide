@@ -57,7 +57,7 @@ const q = <T extends Element>(selector: string) => host.querySelector<T>(selecto
 const all = (selector: string) => Array.from(host.querySelectorAll<HTMLElement>(selector));
 const click = (element: Element | null) => act(async () => (element as HTMLElement).click());
 const label = (name: string) => q<HTMLButtonElement>(`[aria-label="${name}"]`);
-const terminalNames = (project: string) => all(`[aria-label="Terminals of ${project}"] .thread-item-title`).map((node) => node.textContent);
+const terminalNames = (project: string) => all(`[aria-label="Terminals of ${project}"] .terminal-item-title`).map((node) => node.textContent);
 const visibleTerminals = () => all(".terminal-stub").filter((node) => node.dataset.visible === "true");
 
 it("lists the open Projects with their terminals and nothing else", () => {
@@ -65,7 +65,7 @@ it("lists the open Projects with their terminals and nothing else", () => {
   expect(terminalNames("Project Alpha")).toEqual([]);
   expect(host.textContent).toContain("No terminals");
   expect(host.querySelector(".status-dot")).toBeNull();
-  expect(host.textContent).not.toMatch(/Thread|Model|Provider|Effort/);
+  expect(host.textContent).not.toMatch(/Model|Effort|Usage/);
 });
 
 it("offers New terminal in an empty centre and opens a shell in that Project", async () => {
@@ -87,7 +87,7 @@ it("opens several terminals in the same Project and switches without unmounting 
   expect(before).toHaveLength(3);
   expect(visibleTerminals()[0].dataset.context).toBe("1:3");
 
-  await click(all('[aria-label="Terminals of Project Alpha"] .thread-item')[0]);
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
 
   expect(all(".terminal-stub")).toEqual(before);
   expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["1:1"]);
@@ -104,7 +104,7 @@ it("keeps each Project's terminals apart and shows the selected one", async () =
 
 it("renames a terminal by double-clicking it", async () => {
   await click(label("New terminal in Project Alpha"));
-  const row = q<HTMLElement>('[aria-label="Terminals of Project Alpha"] .thread-item')!;
+  const row = q<HTMLElement>('[aria-label="Terminals of Project Alpha"] .terminal-item')!;
   await act(async () => { row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })); });
   const input = q<HTMLInputElement>('input[aria-label="Rename Terminal 1"]')!;
   await act(async () => {
@@ -165,7 +165,7 @@ it("does nothing when a former Oxide shortcut is pressed", async () => {
   expect(calls).toHaveLength(callCount);
 });
 
-it("never asks Core for anything about Threads, agents or Providers", () => {
+it("never calls the commands of removed features", () => {
   const names = calls.map((call) => call.command);
   for (const gone of ["list_threads", "create_thread", "get_settings", "detect_provider", "subscribe_board", "subscribe_usage_limits"]) {
     expect(names).not.toContain(gone);

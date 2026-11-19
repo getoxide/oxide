@@ -49,13 +49,7 @@ it("gives a light theme without colours the Titanium Light chrome, focus ring an
     expect(rootStyle().getPropertyValue(variable), key).toBe(kitLight[key]);
   expect(rootStyle().getPropertyValue("--gh-blue")).toBe("var(--acc)");
   expect(kitTokens.color.light["focus.ring"]).toBe(kitLight.accent);
-  expect(rootStyle().getPropertyValue("--attention-approval-bg")).toBe(kitTokens.color.light["attention.approval.background"]);
-  expect(rootStyle().getPropertyValue("--attention-input-bg")).toBe(kitTokens.color.light["attention.input.background"]);
-  expect(rootStyle().getPropertyValue("--attention-error-bg")).toBe(kitTokens.color.light["attention.error.background"]);
-  expect(rootStyle().getPropertyValue("--attention-interrupted-bg")).toBe(kitTokens.color.light["attention.interrupted.background"]);
   expect(rootStyle().getPropertyValue("--acc-pressed")).toBe(kitTokens.color.light["accent.pressed"]);
-  expect(rootStyle().getPropertyValue("--diff-added-bg")).toBe(kitTokens.color.light["diff.added.background"]);
-  expect(rootStyle().getPropertyValue("--diff-removed-bg")).toBe(kitTokens.color.light["diff.removed.background"]);
   const { theme } = terminalAppearance();
   expect(theme).toMatchObject(terminalColors(kitLight));
   expect(theme.foreground).toBe(kitLight["terminal.foreground"]);
@@ -63,15 +57,9 @@ it("gives a light theme without colours the Titanium Light chrome, focus ring an
   expect(theme.selectionBackground).toBe(kitLight["terminal.selection.background"]);
 });
 
-it("drops the light attention surfaces again when returning to a dark theme", () => {
-  saveAppearance(singleTheme("light"));
-  saveAppearance(structuredClone(DEFAULT_APPEARANCE));
-  expect(rootStyle().getPropertyValue("--attention-approval-bg")).toBe("");
-});
-
 it("falls back to Titanium Dark for a theme saved before the rebrand", async () => {
   const saved = {
-    fonts: { ui: "-apple-system, sans-serif", chat: "Arial", code: "Menlo", terminal: "Menlo" },
+    fonts: { ui: "-apple-system, sans-serif", code: "Menlo", terminal: "Menlo" },
     themeJson: JSON.stringify({ name: "Oxide", themes: [{ name: "Oxide Dark", appearance: "dark", style: {} }] }),
     themeName: "Oxide Dark",
   };
@@ -89,7 +77,7 @@ it("moves the previous default font stacks to the bundled families and leaves ch
   const previousUi = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
   const previousMono = '"Cascadia Code", "SFMono-Regular", Consolas, Menlo, monospace';
   localStorage.setItem("oxide:appearance:v1", JSON.stringify({
-    fonts: { ui: previousUi, chat: "Georgia", code: previousMono, terminal: previousMono },
+    fonts: { ui: previousUi, code: previousMono, terminal: "Menlo" },
     themeJson: DEFAULT_APPEARANCE.themeJson,
     themeName: DEFAULT_APPEARANCE.themeName,
   }));
@@ -97,9 +85,8 @@ it("moves the previous default font stacks to the bundled families and leaves ch
   const fresh = await import("./appearance");
   expect(fresh.getAppearance().fonts).toEqual({
     ui: DEFAULT_APPEARANCE.fonts.ui,
-    chat: "Georgia",
     code: DEFAULT_APPEARANCE.fonts.code,
-    terminal: DEFAULT_APPEARANCE.fonts.terminal,
+    terminal: "Menlo",
   });
 });
 
@@ -136,12 +123,11 @@ it("imports both variants of the Titanium theme pack", () => {
 });
 
 it("defaults to the bundled families with system fallbacks and keeps the documented sizes", () => {
-  const { ui, chat, code, terminal } = DEFAULT_APPEARANCE.fonts;
-  for (const stack of [ui, chat]) expect(stack).toMatch(/^Inter, .*sans-serif$/);
+  const { ui, code, terminal } = DEFAULT_APPEARANCE.fonts;
+  for (const stack of [ui]) expect(stack).toMatch(/^Inter, .*sans-serif$/);
   for (const stack of [code, terminal]) expect(stack).toMatch(/^"JetBrains Mono", .*monospace$/);
   expect(DEFAULT_APPEARANCE.typography).toEqual({
     ui: { size: 13, weight: 400 },
-    chat: { size: 14, weight: 400 },
     code: { size: 13, weight: 400 },
     terminal: { size: 13, weight: 400 },
   });
@@ -170,7 +156,6 @@ it("applies a selected JSON theme across UI and terminal and persists separate f
     themeName: "Paper",
     fonts: {
       ui: "Inter",
-      chat: "Arial",
       code: "Consolas",
       terminal: "Cascadia Code",
     },
@@ -184,8 +169,8 @@ it("applies a selected JSON theme across UI and terminal and persists separate f
   expect(terminalAppearance().theme.background).toBe("#eeeeee");
   expect(activeTheme().appearance).toBe("light");
   expect(
-    JSON.parse(localStorage.getItem("oxide:appearance:v1")!).fonts.chat,
-  ).toBe("Arial");
+    JSON.parse(localStorage.getItem("oxide:appearance:v1")!).fonts.terminal,
+  ).toBe("Cascadia Code");
 });
 it("rejects malformed or unsafe theme values and keeps the previous appearance", () => {
   const before = getAppearance();
@@ -227,10 +212,10 @@ it("applies size and weight to each area and preserves legacy appearance setting
   expect(terminalAppearance()).toMatchObject({ fontSize: 13, fontWeight: 400 });
   const typography = structuredClone(DEFAULT_APPEARANCE.typography!);
   typography.terminal = { size: 18, weight: 700 };
-  typography.chat = { size: 16, weight: 500 };
+  typography.code = { size: 16, weight: 500 };
   saveAppearance({ ...old, typography });
   expect(terminalAppearance()).toMatchObject({ fontSize: 18, fontWeight: 700 });
-  expect(document.documentElement.style.getPropertyValue("--font-chat-size")).toBe("16px");
+  expect(document.documentElement.style.getPropertyValue("--font-code-size")).toBe("16px");
   expect(() => saveAppearance({ ...old, typography: { ...typography, ui: { size: 200, weight: 400 } } })).toThrow(/Font sizes/);
   expect(terminalAppearance().fontSize).toBe(18);
 });

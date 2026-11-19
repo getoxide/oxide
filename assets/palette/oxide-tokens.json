@@ -63,12 +63,6 @@
       "accent.pressed": "#1A5DBB",
       "focus.ring": "#58A6FF",
       "control.background": "#2C2C2E",
-      "diff.added.background": "#5FCB8F24",
-      "diff.removed.background": "#F27A7224",
-      "attention.approval.background": "#3A2F14",
-      "attention.input.background": "#1E2A3C",
-      "attention.error.background": "#3D2220",
-      "attention.interrupted.background": "#2C2C2E",
       "syntax": {
         "comment": {
           "color": "#9A9892",
@@ -150,12 +144,6 @@
       "accent.pressed": "#0757B5",
       "focus.ring": "#0969DA",
       "control.background": "#F2F1EE",
-      "diff.added.background": "#15703C1F",
-      "diff.removed.background": "#C4281F1F",
-      "attention.approval.background": "#F7EBCB",
-      "attention.input.background": "#DCE9F9",
-      "attention.error.background": "#F9DEDC",
-      "attention.interrupted.background": "#E9E8E4",
       "syntax": {
         "comment": {
           "color": "#62615C",
