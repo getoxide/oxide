@@ -155,7 +155,6 @@ jobs:
       - name: Assemble the deliverables
         run: |
           mkdir release metadata
-          node tools/ci/cli.mjs update-manifest staged "$TAG" "$GITHUB_REPOSITORY" metadata/latest.json
           find staged -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} release/ \;
           gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" --jq .sbom > "metadata/Oxide_${TAG#v}.spdx.json"
           (cd release && sha256sum -- * > ../metadata/SHA256SUMS.txt)

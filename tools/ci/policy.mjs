@@ -301,65 +301,6 @@ export function dependabotDecision(updatedDependencies) {
   return { decision: "auto", reason: "every update is a patch, or a minor of a package at 1.0 or later" };
 }
 
-// The Tauri updater platform key for each signed updater package.
-// The AppImage is the Linux updater package; the .deb and .rpm are not self-updating.
-const UPDATER_PACKAGES = [
-  ["darwin-aarch64", /_macos_arm64\.dmg$/],
-  ["windows-x86_64", /_windows_x64\.exe$/],
-  ["windows-aarch64", /_windows_arm64\.exe$/],
-  ["linux-x86_64", /_linux_x64\.AppImage$/],
-  ["linux-aarch64", /_linux_arm64\.AppImage$/],
-];
-
-/**
- * The `latest.json` feed the native updater reads. `signatures` maps each
- * updater package name to the contents of its `.sig` file.
- */
-export function updateManifest(artifactNames, signatures, { repository, tag, date }) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(String(repository ?? ""))) throw new Error(`Invalid repository "${repository ?? ""}": expected owner/name.`);
-  if (!TAG.test(String(tag ?? ""))) throw new Error(`Invalid tag "${tag ?? ""}": expected vX.Y.Z or vX.Y.Z-rc.N.`);
-  const platforms = {};
-  for (const [platform, pattern] of UPDATER_PACKAGES) {
-    const packages = artifactNames.filter((name) => pattern.test(name));
-    if (packages.length === 0) continue;
-    if (packages.length > 1) throw new Error(`${platform}: expected exactly one updater package, found ${packages.join(", ")}.`);
-    const [name] = packages;
-    if (!(name in signatures)) throw new Error(`Missing signature for ${name}.`);
-    const signature = String(signatures[name]).trim();
-    if (!signature) throw new Error(`Empty signature for ${name}.`);
-    platforms[platform] = { signature, url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(name)}` };
-  }
-  if (Object.keys(platforms).length === 0) throw new Error("No updater packages found (.dmg, .exe or .AppImage).");
-  const version = tag.slice(1);
-  return {
-    version,
-    notes: `Oxide ${version}\nRelease notes: https://github.com/${repository}/releases/tag/${tag}`,
-    pub_date: date,
-    platforms,
-  };
-}
-
-/**
- * Whether the feed the updater reads (`releases/latest/download/latest.json`)
- * serves the version just published, with a signature and URL per platform.
- * `urls` are what the caller still has to resolve.
- */
-export function checkUpdateFeed(feed, tag) {
-  const fail = (message) => ({ ok: false, message, urls: [] });
-  if (!feed || typeof feed !== "object") return fail("The update feed is not a JSON object.");
-  const version = String(tag).replace(/^v/, "");
-  if (feed.version !== version) return fail(`The update feed serves version ${feed.version ?? "(none)"}, not ${version}.`);
-  const platforms = Object.entries(feed.platforms ?? {});
-  if (platforms.length === 0) return fail("The update feed lists no platforms.");
-  const urls = [];
-  for (const [platform, entry] of platforms) {
-    if (!String(entry?.signature ?? "").trim()) return fail(`The update feed has an empty signature for ${platform}.`);
-    if (!String(entry?.url ?? "").trim()) return fail(`The update feed has no URL for ${platform}.`);
-    urls.push(entry.url);
-  }
-  return { ok: true, message: `The update feed serves ${tag} for ${platforms.map(([platform]) => platform).join(", ")}.`, urls };
-}
-
 // Node platform names and how the plan names them.
 const OS_NAMES = { darwin: "macOS", win32: "Windows", linux: "Linux" };
 const EVERY_OS = Object.keys(OS_NAMES);

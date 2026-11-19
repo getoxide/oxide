@@ -2,7 +2,7 @@ name: Build
 
 # The one place Oxide's installers are built. CI calls it with `release: false`
 # (unsigned, caches allowed) to prove packaging works; Release calls it with
-# `release: true` (no caches, signed updater packages) on a tag.
+# `release: true` (no caches) on a tag.
 #
 # The `release` environment is declared here, not by the callers: a job that
 # calls a reusable workflow cannot name an environment, and the environment's
@@ -15,7 +15,7 @@ on:
         type: string
         required: true
       release:
-        description: Build for publication (signed updater packages, no caches)
+        description: Build for publication (no caches)
         type: boolean
         default: false
     outputs:
@@ -65,17 +65,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Require the updater signing key
-        if: inputs.release
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        # Without the key Tauri would build unsigned updater packages that no installed app accepts.
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing from the 'release' environment. A release without a signed updater package would break updates for every installed app."
-            exit 1
-          fi
 
       - uses: ./.github/actions/setup-rust
         with:
@@ -134,41 +123,19 @@ jobs:
 
       - name: Build the macOS bundles
         if: inputs.platform == 'macos-aarch64'
-        env:
-          RELEASE: ${{ inputs.release }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          web/node_modules/.bin/tauri build --ci --bundles app,dmg -- --locked
-          if [ "$RELEASE" = "true" ]; then
-            version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
-            web/node_modules/.bin/tauri signer sign --app-version "$version" "target/release/bundle/dmg/Oxide_${version}_aarch64.dmg"
-          fi
+        run: web/node_modules/.bin/tauri build --ci --bundles app,dmg -- --locked
 
       - name: Build the Windows installer
         if: startsWith(inputs.platform, 'windows-')
-        env:
-          RELEASE: ${{ inputs.release }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          extra=()
-          if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
-          web/node_modules/.bin/tauri.cmd build --ci --bundles nsis "${extra[@]}" -- --locked
+        run: web/node_modules/.bin/tauri.cmd build --ci --bundles nsis -- --locked
 
       - name: Build the Linux bundles
         if: startsWith(inputs.platform, 'linux-')
         env:
-          RELEASE: ${{ inputs.release }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # The runner has no FUSE for linuxdeploy, and its bundled `strip` can't read newer ELF sections.
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
-        run: |
-          extra=()
-          if [ "$RELEASE" = "true" ]; then extra=(--config crates/oxide-app/tauri.updater.conf.json); fi
-          web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm "${extra[@]}" -- --locked
+        run: web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm -- --locked
 
       - name: Name the artifact
         id: name
@@ -183,17 +150,15 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           SIGNED: ${{ steps.apple.outputs.signed }}
           NOTARIZED: ${{ steps.apple.outputs.notarized }}
-        # Each deliverable gets the name users and latest.json see: Oxide_<version>_<os>_<arch>.<ext>.
-        # Renaming keeps the updater signature valid, because it signs the content, not the name.
+        # Each deliverable gets the name users see: Oxide_<version>_<os>_<arch>.<ext>.
         run: |
           version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
           bundle=target/release/bundle
           mkdir -p staged
-          # stage <source> <os_arch>: copy one installer, and its .sig when it has one, under its release name.
+          # stage <source> <os_arch>: copy one installer under its release name.
           stage() {
             local ext="${1##*.}"
             cp "$1" "staged/Oxide_${version}_$2.${ext}"
-            if [ -f "$1.sig" ]; then cp "$1.sig" "staged/Oxide_${version}_$2.${ext}.sig"; fi
           }
           case "$PLATFORM" in
             macos-aarch64)
@@ -203,7 +168,7 @@ jobs:
               elif [ "$SIGNED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate but not notarized; Gatekeeper may ask for confirmation on first launch."
               else
-                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`). Updates installed through Oxide are unaffected."
+                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`)."
               fi
               ;;
             windows-x64|windows-aarch64)
@@ -214,18 +179,16 @@ jobs:
               ;;
             linux-x64|linux-aarch64)
               arch=x64; if [ "$PLATFORM" = "linux-aarch64" ]; then arch=arm64; fi
-              # Exactly one AppImage (the updater package, with its .sig), one .deb and one .rpm per architecture.
-              for pattern in "appimage/*.AppImage" "appimage/*.AppImage.sig" "deb/*.deb" "rpm/*.rpm"; do
+              # Exactly one AppImage, one .deb and one .rpm per architecture.
+              for pattern in "appimage/*.AppImage" "deb/*.deb" "rpm/*.rpm"; do
                 mapfile -t matches < <(compgen -G "$bundle/$pattern" || true)
                 if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
                   echo "::error::Expected exactly one $pattern in $bundle, found: ${matches[*]}"
                   exit 1
                 fi
-                # The .sig is only checked here: `stage` copies it along with its installer.
-                case "$pattern" in *.sig) continue ;; esac
                 stage "${matches[0]}" "linux_${arch}"
               done
-              notice="The Linux builds are not signed with a distribution key. The AppImage updates itself through Oxide; the .deb and .rpm do not, so install a newer package to update. Verify the download against the release checksums or attestation."
+              notice="The Linux builds are not signed with a distribution key. Install a newer package to update. Verify the download against the release checksums or attestation."
               ;;
           esac
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"

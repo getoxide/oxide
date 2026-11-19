@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  bumpVersion, checkPrTitle, checkUpdateFeed, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
-  ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes, updateManifest,
+  bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
+  ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -357,99 +357,6 @@ describe("dependabotDecision", () => {
   test("an empty or unreadable list needs review", () => {
     assert.equal(dependabotDecision([]).decision, "manual");
     assert.equal(dependabotDecision(undefined).decision, "manual");
-  });
-});
-
-describe("checkUpdateFeed", () => {
-  const feed = (overrides = {}) => ({
-    version: "1.2.3",
-    platforms: { "darwin-aarch64": { signature: "sig", url: "https://example.test/a" }, "windows-x86_64": { signature: "sig", url: "https://example.test/b" } },
-    ...overrides,
-  });
-
-  test("a feed for the published version with signed platforms passes and lists the URLs to resolve", () => {
-    const result = checkUpdateFeed(feed(), "v1.2.3");
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.urls, ["https://example.test/a", "https://example.test/b"]);
-  });
-
-  test("a feed that still serves another version fails", () => {
-    const result = checkUpdateFeed(feed({ version: "1.2.2" }), "v1.2.3");
-    assert.equal(result.ok, false);
-    assert.match(result.message, /1\.2\.2.*1\.2\.3/);
-  });
-
-  test("an empty signature or a missing URL fails and names the platform", () => {
-    const empty = checkUpdateFeed(feed({ platforms: { "darwin-aarch64": { signature: " ", url: "https://example.test/a" } } }), "v1.2.3");
-    assert.match(empty.message, /signature for darwin-aarch64/);
-    const noUrl = checkUpdateFeed(feed({ platforms: { "windows-x86_64": { signature: "sig" } } }), "v1.2.3");
-    assert.match(noUrl.message, /URL for windows-x86_64/);
-  });
-
-  test("a feed without platforms or that is not an object fails", () => {
-    assert.equal(checkUpdateFeed(feed({ platforms: {} }), "v1.2.3").ok, false);
-    assert.equal(checkUpdateFeed(undefined, "v1.2.3").ok, false);
-  });
-});
-
-describe("updateManifest", () => {
-  const release = { repository: "getoxide/oxide", tag: "v1.2.3", date: "2026-10-29T00:00:00Z" };
-  const artifacts = ["Oxide_1.2.3_macos_arm64.dmg", "Oxide_1.2.3_macos_arm64.dmg.sig", "Oxide_1.2.3_windows_x64.exe", "Oxide_1.2.3_windows_x64.exe.sig"];
-  const signatures = { "Oxide_1.2.3_macos_arm64.dmg": "mac-signature\n", "Oxide_1.2.3_windows_x64.exe": "windows-signature" };
-
-  test("one signed package per platform produces the updater feed", () => {
-    assert.deepEqual(updateManifest(artifacts, signatures, release), {
-      version: "1.2.3",
-      notes: "Oxide 1.2.3\nRelease notes: https://github.com/getoxide/oxide/releases/tag/v1.2.3",
-      pub_date: "2026-10-29T00:00:00Z",
-      platforms: {
-        "darwin-aarch64": {
-          signature: "mac-signature",
-          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_macos_arm64.dmg",
-        },
-        "windows-x86_64": {
-          signature: "windows-signature",
-          url: "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_windows_x64.exe",
-        },
-      },
-    });
-  });
-
-  test("a missing or empty signature fails", () => {
-    assert.throws(() => updateManifest(artifacts, { "Oxide_1.2.3_windows_x64.exe": "windows-signature" }, release), /Missing signature for Oxide_1\.2\.3_macos_arm64\.dmg/);
-    assert.throws(() => updateManifest(artifacts, { ...signatures, "Oxide_1.2.3_windows_x64.exe": " \n" }, release), /Empty signature for Oxide_1\.2\.3_windows_x64\.exe/);
-  });
-
-  test("a duplicate package or no package fails", () => {
-    assert.throws(() => updateManifest([...artifacts, "Oxide_1.2.2_windows_x64.exe"], signatures, release), /windows-x86_64: expected exactly one/);
-    assert.throws(() => updateManifest(["Oxide_1.2.3_aarch64.app.tar.gz", "SHA256SUMS.txt"], {}, release), /No updater packages/);
-  });
-
-  test("an invalid tag or repository fails", () => {
-    assert.throws(() => updateManifest(artifacts, signatures, { ...release, tag: "1.2.3" }), /tag/);
-    assert.throws(() => updateManifest(artifacts, signatures, { ...release, repository: "oxide" }), /repository/);
-  });
-
-  test("a release-candidate tag is accepted", () => {
-    assert.equal(updateManifest(artifacts, signatures, { ...release, tag: "v1.2.3-rc.1" }).version, "1.2.3-rc.1");
-  });
-
-  test("Windows ARM and both Linux architectures get their own platform key", () => {
-    const names = [
-      "Oxide_1.2.3_windows_arm64.exe", "Oxide_1.2.3_linux_x64.AppImage", "Oxide_1.2.3_linux_arm64.AppImage",
-      "Oxide_1.2.3_linux_x64.deb", "Oxide_1.2.3_linux_x64.rpm", "Oxide_1.2.3_linux_arm64.deb", "Oxide_1.2.3_linux_arm64.rpm",
-    ];
-    const signed = Object.fromEntries(names.map((name) => [name, `${name}-signature`]));
-    const { platforms } = updateManifest(names, signed, release);
-    assert.deepEqual(Object.keys(platforms), ["windows-aarch64", "linux-x86_64", "linux-aarch64"]);
-    assert.equal(platforms["windows-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_windows_arm64.exe");
-    assert.equal(platforms["linux-x86_64"].signature, "Oxide_1.2.3_linux_x64.AppImage-signature");
-    assert.equal(platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v1.2.3/Oxide_1.2.3_linux_arm64.AppImage");
-  });
-
-  test("a release can ship one platform", () => {
-    const macOnly = updateManifest(["Oxide_1.2.3_macos_arm64.dmg"], { "Oxide_1.2.3_macos_arm64.dmg": "mac-signature" }, release);
-    assert.deepEqual(Object.keys(macOnly.platforms), ["darwin-aarch64"]);
   });
 });
 
