@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, us
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   FileIcon,
+  ScreenFullIcon,
+  ScreenNormalIcon,
   FileDirectoryIcon,
   GearIcon,
   GitPullRequestIcon,
@@ -24,7 +26,11 @@ import { QuitDialog } from "./shared/QuitDialog";
 import { ProjectPalette } from "./projects/ProjectPalette";
 import { SettingsView } from "./settings/SettingsView";
 import { ResizeHandle } from "./shared/ResizeHandle";
-import { centreSplit, splitMode } from "./shared/splitLayout";
+import {
+  centreSplit, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, splitMode, visibleMode,
+  type Half, type ProjectLayouts,
+} from "./shared/splitLayout";
+import { readJson, storageKeys, writeJson } from "./shared/storage";
 import { workspaceLayout } from "./shared/panelLayout";
 import { useElementSize, usePanelSize } from "./shared/usePanelSize";
 import { readablePath } from "./terminal/headerLines";
@@ -79,7 +85,10 @@ export function App() {
   const bodySize = useElementSize(bodyRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   const sidebarSize = usePanelSize("sidebar");
   const toolsSize = usePanelSize("tools");
-  const splitSize = usePanelSize("split");
+  // Divider and maximized half per Project, kept in the webview like the other panel sizes.
+  const [layouts, setLayouts] = useState<ProjectLayouts>(() => parseLayouts(readJson(storageKeys.splitLayouts)));
+  const [dragDivider, setDragDivider] = useState<number | null>(null);
+  useEffect(() => { writeJson(storageKeys.splitLayouts, layouts); }, [layouts]);
   const centreRef = useRef<HTMLDivElement>(null);
   const centreSize = useElementSize(centreRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   // The Project and terminal of the last session: `undefined` until read, `null` once applied.
@@ -155,6 +164,7 @@ export function App() {
   }, [selectProject]);
 
   const newTerminal = useCallback((project: Project) => {
+    setLayouts((previous) => restoreSplit(previous, project.id));
     setShowSettings(false);
     setFilesProjectId(null);
     setSelectedId(project.id);
@@ -186,6 +196,7 @@ export function App() {
     setCodeRequest({ id: ++codeSequence.current, path, projectId: selected.id });
     setCodeProjects((previous) => previous.includes(selected.id) ? previous : [...previous, selected.id]);
     setCodeShown((previous) => ({ ...previous, [selected.id]: true }));
+    setLayouts((previous) => restoreSplit(previous, selected.id));
     setShowSettings(false);
   };
 
@@ -215,8 +226,23 @@ export function App() {
 
   const centreHidden = showSettings;
   const hasTerminals = projectTerminals.tabs.length > 0;
-  const mode = splitMode({ terminals: hasTerminals, code: selected !== null && codeShown[selected.id] === true });
-  const split = centreSplit(centreSize.width, splitSize.preferred);
+  const projectLayout = layoutOf(layouts, selected?.id ?? -1);
+  const bothHalves = splitMode({ terminals: hasTerminals, code: selected !== null && codeShown[selected.id] === true });
+  const mode = visibleMode(bothHalves, projectLayout.maximized);
+  const split = centreSplit(centreSize.width, dragDivider ?? projectLayout.divider);
+  const halfButton = (half: Half) => {
+    if (!selected || bothHalves !== "split" || mode !== "split" && mode !== half) return null;
+    const maximized = projectLayout.maximized === half;
+    const name = half === "terminal" ? "Terminal" : "Code";
+    const text = maximized ? "Restore Terminal and Code" : `Maximize ${name}`;
+    const projectId = selected.id;
+    return (
+      <button className="icon-btn sm half-toggle" aria-label={text} title={text}
+        onClick={() => setLayouts((previous) => maximized ? restoreSplit(previous, projectId) : maximizeHalf(previous, projectId, half))}>
+        {maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}
+      </button>
+    );
+  };
   const projectsWithTerminals = Object.entries(terminals).filter(([, state]) => state.tabs.length > 0);
 
   return (
@@ -288,6 +314,7 @@ export function App() {
               setShowSettings(false);
               setFilesProjectId(null);
               setSelectedId(project.id);
+              setLayouts((previous) => restoreSplit(previous, project.id));
               setTerminals((previous) => selectTerminal(previous, project.id, tabId));
             }}
             onRenameTerminal={(project, tabId, name) => setTerminals((previous) => renameTerminal(previous, project.id, tabId, name))}
@@ -303,6 +330,7 @@ export function App() {
           <div className="centre-workbench" hidden={centreHidden} ref={centreRef}
             style={{ "--terminal-half": `${split.value}px` } as CSSProperties}>
             <div className="centre-half centre-terminal-half" id="centre-terminal-half" hidden={mode === "code"}>
+              {halfButton("terminal")}
               {/* Every terminal stays mounted while hidden, so scrollback and running processes survive switching. */}
               {projectsWithTerminals.map(([id, state]) => state.tabs.map((tab) => {
                 const projectId = Number(id);
@@ -343,9 +371,13 @@ export function App() {
               )}
             </div>
             <div className="centre-half centre-code-half" hidden={mode === "terminal"}>
-              {mode === "split" && (
+              {halfButton("code")}
+              {mode === "split" && selected && (
                 <ResizeHandle label="Resize Terminal and Code" controls="centre-terminal-half" axis="x" edge="start"
-                  {...split} onResize={splitSize.resize} onCommit={splitSize.commit} onReset={splitSize.reset} onCancel={splitSize.cancel} />
+                  {...split} onResize={setDragDivider}
+                  onCommit={(value) => { setDragDivider(null); setLayouts((previous) => setDivider(previous, selected.id, value)); }}
+                  onReset={() => { setDragDivider(null); setLayouts((previous) => setDivider(previous, selected.id, null)); }}
+                  onCancel={() => setDragDivider(null)} />
               )}
               {codeProjects.map((projectId) => {
                 const project = projects?.find((candidate) => candidate.id === projectId);

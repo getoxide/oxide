@@ -13,6 +13,7 @@
 export const storageKeys = {
   appearance: "oxide:appearance:v1",
   panelSize: (panel: string) => `oxide.layout.${panel}`,
+  splitLayouts: "oxide:split-layouts:v1",
   codeTabs: (context: string) => `oxide:code-tabs:${context}`,
   terminalHistory: (context: string) => `oxide:terminal-history:${context}`,
   languageDismissed: (language: string) => `oxide:language-dismissed:${language}`,

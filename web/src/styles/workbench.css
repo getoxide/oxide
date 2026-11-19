@@ -14,6 +14,7 @@
   min-height: 0;
 }
 .centre-half[hidden] { display: none; }
+.half-toggle { position: absolute; top: 6px; right: 8px; z-index: 11; }
 /* With both halves showing, the Terminal keeps the divider's width and the Code half takes the rest. */
 .centre-terminal-half:has(+ .centre-code-half:not([hidden])):not([hidden]) { flex: 0 0 var(--terminal-half); }
 .centre-code-half > .resize-handle { z-index: 10; }

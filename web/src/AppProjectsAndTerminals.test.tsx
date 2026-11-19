@@ -46,6 +46,7 @@ const projects = [
 beforeEach(async () => {
   Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
   clearQueryCache();
+  localStorage.clear();
   calls = [];
   host = document.createElement("div");
   document.body.append(host);
@@ -257,6 +258,46 @@ it("resets the divider to 50/50 on double click", async () => {
   await act(async () => { divider.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
   expect(divider.getAttribute("aria-valuenow")).toBe(before);
   expect(Number(divider.getAttribute("aria-valuemin"))).toBe(360);
+});
+
+it("maximizes a half without unmounting the other, and restores the split", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const terminal = q(".terminal-stub");
+  const code = q(".code-stub");
+  await click(label("Maximize Code"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  expect(q(".terminal-stub")).toBe(terminal);
+  expect(label("Maximize Code")).toBeNull();
+  await click(label("Restore Terminal and Code"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(visibleTerminals()).toHaveLength(1);
+  await click(label("Maximize Terminal"));
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(q(".code-stub")).toBe(code);
+  expect(codeVisible()).toBe(false);
+});
+
+it("offers no maximize button while only one half exists", async () => {
+  await click(label("New terminal in Project Alpha"));
+  expect(label("Maximize Terminal")).toBeNull();
+  expect(label("Maximize Code")).toBeNull();
+});
+
+it("restores the split when the hidden half is chosen explicitly", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Maximize Code"));
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(codeVisible()).toBe(true);
+  await click(label("Maximize Terminal"));
+  expect(codeVisible()).toBe(false);
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
 });
 
 it("leaves the Files view when another route selects a Project", async () => {
