@@ -107,7 +107,7 @@ pub struct Core {
 impl Core {
     /// Opens Oxide's home directory (creating it if needed) and its database.
     pub fn open(home: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_with_migrations(home, MIGRATIONS)
+        Self::open_home(home, None)
     }
 
     /// Like [`Core::open`], with project discovery and `~` paths relative to `user_home`
@@ -122,13 +122,23 @@ impl Core {
     }
 
     pub fn open_with_migrations(home: impl Into<PathBuf>, migrations: &[&str]) -> Result<Self> {
+        Self::open_home(home, Some(migrations))
+    }
+
+    /// `migrations` is `None` for the app's own schema, which also adopts databases written by
+    /// older versions.
+    fn open_home(home: impl Into<PathBuf>, migrations: Option<&[&str]>) -> Result<Self> {
         let home = home.into();
         private::prepare_home(&home).map_err(|source| Error::Io {
             path: home.clone(),
             source,
         })?;
         git_command::set_home(&home);
-        let db = db::open(&home.join(DB_FILE), migrations)?;
+        let db_path = home.join(DB_FILE);
+        let db = match migrations {
+            Some(migrations) => db::open(&db_path, migrations)?,
+            None => db::open_app(&db_path)?,
+        };
         // A crashed run leaves its shell groups behind.
         let processes = Arc::new(ProcessRegistry::open(home.join(PROCESSES_FILE)));
         processes.reap_stale();
