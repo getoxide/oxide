@@ -13,7 +13,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: What would you like Oxide to do? Use the terms in GLOSSARY.md (Project, Thread, Provider…) where they fit.
+      description: What would you like Oxide to do? Use the terms in GLOSSARY.md (Project, Terminal, Surface…) where they fit.
     validations:
       required: true
   - type: textarea

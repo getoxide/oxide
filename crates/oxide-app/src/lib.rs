@@ -291,7 +291,7 @@ pub struct FileContent {
     pub binary: bool,
 }
 
-/// Lists one directory of a Thread's checkout (`""` is the root), minus
+/// Lists one directory of a Project (`""` is the root), minus
 /// `.git` and gitignored entries.
 #[tauri::command]
 #[specta::specta]
@@ -310,7 +310,7 @@ async fn list_dir(
         .map_err(AppError::from)
 }
 
-/// Reads a file of a Thread's checkout, capped at 1 MiB.
+/// Reads a file of a Project, capped at 1 MiB.
 #[tauri::command]
 #[specta::specta]
 async fn read_file(
@@ -1314,7 +1314,7 @@ pub fn export_bindings() -> Result<(), String> {
 }
 
 pub fn run() {
-    // Before anything spawns a thread or a Provider CLI: a Dock launch has a bare PATH.
+    // Before anything spawns a thread or a shell: a Dock launch has a bare PATH.
     if cfg!(target_os = "macos") {
         shell_path::inherit_login_shell_path();
     }
@@ -1390,7 +1390,7 @@ pub fn run() {
         // The Dock icon was clicked while the window was hidden.
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => show_main_window(app),
-        // ⌘Q / close-before-destroy: ask first when dirty editors or running Threads exist,
+        // ⌘Q / close-before-destroy: ask first when dirty editors or running Terminals exist,
         // but never prevent exit after the main window has already been destroyed.
         tauri::RunEvent::ExitRequested {
             code: None, api, ..

@@ -48,8 +48,8 @@ definitions, references, rename and formatting where the server supports them.
 Problems shows errors and warnings in open files and jumps to their locations.
 
 - The **Find file** button finds a file by name in the Project.
-- Ctrl+S / âŒ˜S: save; Ctrl+Shift+S / âŒ˜Shift+S: save all.
-- Ctrl+F / âŒ˜F and Ctrl+H / âŒ˜H: Monaco's Find and Replace.
+- Ctrl+S / ⌘S: save; Ctrl+Shift+S / ⌘Shift+S: save all.
+- Ctrl+F / ⌘F and Ctrl+H / ⌘H: Monaco's Find and Replace.
 - F12: definition; Shift+F12: references; F2: rename, when supported by LSP.
 
 The editor handles complete UTF-8 text files up to 1 MiB. Larger and binary files
@@ -123,4 +123,4 @@ node web/scripts/terminal-regression.cjs
 Set `OXIDE_PLAYWRIGHT_PATH` to an existing Playwright module installation when it
 is not on Node's module path. `OXIDE_TEST_URL` overrides the default dev server
 (`http://127.0.0.1:1420`). The test checks stable full-screen geometry, real shell
-completion, Right-arrow history completion and the Up history picker.
+completion, Right-arrow history completion and the Up history picker, and writes a screenshot to `web/test-results/terminal-regression/` (ignored by Git; `OXIDE_TEST_OUTPUT` changes the folder).

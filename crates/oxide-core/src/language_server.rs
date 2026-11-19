@@ -1,15 +1,14 @@
 //! Local language servers. Core owns process lifetime and stdio framing; the editor owns LSP.
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, bounded};
-use oxide_provider::bounded_lines::{BoundedLines, LOG_LINE_CAP, read_bounded_line};
-use oxide_provider::command::find_in;
-use oxide_provider::diag;
-use oxide_provider::diag::SenderExt as _;
-use oxide_provider::process::{
-    ProcessRegistry, SHUTDOWN_GRACE, attach_child_to_job, release_job, spawn_in_own_group,
-    terminate_group,
-};
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::bounded_lines::{BoundedLines, LOG_LINE_CAP, read_bounded_line};
+use oxide_platform::child::attach_child_to_job;
+use oxide_platform::command::find_in;
+use oxide_platform::diag;
+use oxide_platform::diag::SenderExt as _;
+use oxide_platform::process::{release_job, spawn_in_own_group, terminate_group};
+use oxide_platform::registry::{ProcessRegistry, SHUTDOWN_GRACE};
+use oxide_platform::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -268,7 +267,7 @@ impl LanguageServers {
                 tool.name
             ))
         })?;
-        let mut command = oxide_provider::command::resolved_command(&executable);
+        let mut command = oxide_platform::command::resolved_command(&executable);
         command
             .args(tool.config.args)
             .current_dir(root)
@@ -546,7 +545,7 @@ mod tests {
         }
         let mut reader = BufReader::new(Endless(0));
         let error = read_message(&mut reader).unwrap_err();
-        assert!(oxide_provider::bounded_lines::is_line_too_long(&error));
+        assert!(oxide_platform::bounded_lines::is_line_too_long(&error));
     }
     #[test]
     fn rejects_unbounded_messages_and_invalid_utf8() {

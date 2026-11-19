@@ -2,7 +2,7 @@
 use crate::language_pins as pins;
 use crate::language_server::LanguageServerConfig;
 use crate::{Error, Result};
-use oxide_provider::diag;
+use oxide_platform::diag;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -391,14 +391,14 @@ fn install_npm(
     } else {
         "lib/node_modules/npm/bin/npm-cli.js"
     });
-    let mut command = oxide_provider::command::resolved_command(&managed_node);
+    let mut command = oxide_platform::command::resolved_command(&managed_node);
     command.arg(npm);
     // Run inside the prefix: npm resolves the project from the working directory.
     command.args(NPM_ARGUMENTS).current_dir(&prefix);
     let mut paths = vec![node_root.clone(), node_root.join("bin")];
     paths.extend(std::env::split_paths(&path));
     command.env("PATH", std::env::join_paths(paths).map_err(error)?);
-    let output = oxide_provider::process::output_in_own_group(&mut command).map_err(error)?;
+    let output = oxide_platform::child::output_in_own_group(&mut command).map_err(error)?;
     if !output.status.success() {
         return Err(error(format!(
             "Language package installation failed: {}",

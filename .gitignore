@@ -12,3 +12,6 @@ dist
 
 # Don't include Claude Code scheduled task lock
 .claude/scheduled_tasks.lock
+
+# Output of the UI regression script (web/scripts/terminal-regression.cjs)
+/web/test-results

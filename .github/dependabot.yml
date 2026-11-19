@@ -28,8 +28,6 @@ updates:
       semver-minor-days: 7
       semver-major-days: 14
     open-pull-requests-limit: 5
-    exclude-paths:
-      - "references/**"
     labels: [dependencies, rust]
     commit-message:
       prefix: chore(deps)
@@ -126,6 +124,3 @@ updates:
     labels: [dependencies, rust]
     commit-message:
       prefix: chore(deps)
-
-  # `references/` gitlinks are research snapshots: the gitsubmodule ecosystem
-  # is deliberately not configured.

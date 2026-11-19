@@ -6,449 +6,111 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use crate::error::{Error, Result};
 
 /// Forward-only migrations. Index `i` upgrades `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[
-    "
+///
+/// The first one is the whole schema of a fresh install. Add a migration after it for every
+/// later change; never edit one that has shipped.
+///
+/// It sets `application_id` to 1331185988 ("OXID"). A database written before the baseline
+/// existed has 0 there, which is how [`open_app`] recognises it and calls [`adopt_legacy`].
+pub const MIGRATIONS: &[&str] = &["
+    PRAGMA application_id = 1331185988;
     CREATE TABLE projects (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         path TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-",
-    "
-    ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
-",
-    "
-    CREATE TABLE threads (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL REFERENCES projects(id),
-        provider TEXT NOT NULL,
-        provider_session_id TEXT,
-        model TEXT,
-        effort TEXT,
-        permission_mode TEXT NOT NULL,
-        status TEXT NOT NULL,
-        archived INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        -- Hidden from the Project palette by the user.
+        hidden INTEGER NOT NULL DEFAULT 0,
+        -- When the user opened it into the sidebar; NULL for a Project a scan only found.
+        opened_at TEXT,
+        -- Whether the user has acted in it; Oxide fetches its remote in the background only then.
+        acted_upon INTEGER NOT NULL DEFAULT 0
     );
-
-    CREATE TABLE turns (
-        id INTEGER PRIMARY KEY,
-        thread_id INTEGER NOT NULL REFERENCES threads(id),
-        turn_index INTEGER NOT NULL,
-        prompt TEXT NOT NULL,
-        status TEXT NOT NULL,
-        started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        completed_at TEXT
-    );
-
-    CREATE TABLE items (
-        id INTEGER PRIMARY KEY,
-        turn_id INTEGER NOT NULL REFERENCES turns(id),
-        item_index INTEGER NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-",
-    "
-    CREATE TABLE approvals (
-        id INTEGER PRIMARY KEY,
-        turn_id INTEGER NOT NULL REFERENCES turns(id),
-        approval_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        options TEXT NOT NULL DEFAULT '[]',
-        decision TEXT,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        decided_at TEXT
-    );
-",
-    "
-    CREATE TABLE unknown_events (
-        id INTEGER PRIMARY KEY,
-        turn_id INTEGER NOT NULL REFERENCES turns(id),
-        raw TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-",
-    "
-    ALTER TABLE items ADD COLUMN parent_item_index INTEGER;
-    ALTER TABLE turns ADD COLUMN model TEXT;
-    ALTER TABLE turns ADD COLUMN effort TEXT;
-    ALTER TABLE turns ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]';
-",
-    "
-    ALTER TABLE turns ADD COLUMN error_message TEXT;
-    ALTER TABLE turns ADD COLUMN stderr_tail TEXT;
-",
-    // Transcript paging reads Turns by position and Items by Turn.
-    "
-    CREATE INDEX turns_by_thread ON turns(thread_id, id);
-    CREATE INDEX items_by_turn ON items(turn_id, item_index);
-",
-    // Small app-level facts, such as the Project last open.
-    "
+    -- Small app-level facts, such as the Project last open (key `selection`).
     CREATE TABLE app_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
-",
-    // A Thread whose Provider session is gone, and the Thread that continues it.
-    "
-    ALTER TABLE threads ADD COLUMN session_lost INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE threads ADD COLUMN continued_from INTEGER REFERENCES threads(id);
-",
-    "
-    ALTER TABLE threads ADD COLUMN title TEXT;
-",
-    // Board Threads: a worktree of their own, and the output of the Project's Setup command
-    // that ran in it. The Setup command itself lives with the Project, never in its repository.
-    "
-    ALTER TABLE threads ADD COLUMN branch TEXT;
-    ALTER TABLE threads ADD COLUMN worktree_path TEXT;
-    ALTER TABLE threads ADD COLUMN setup_output TEXT;
-    ALTER TABLE projects ADD COLUMN setup_command TEXT;
-",
-    // The GitHub issue a Board Thread was started from.
-    "
-    ALTER TABLE threads ADD COLUMN issue_number INTEGER;
-",
-    // Open Projects: the ones the user opened, listed in the sidebar. A scan only makes
-    // Projects known (findable in the Project palette); Projects with Threads start open.
-    "
-    ALTER TABLE projects ADD COLUMN opened_at TEXT;
-    UPDATE projects SET opened_at = created_at
-        WHERE id IN (SELECT DISTINCT project_id FROM threads);
-",
-    // Threads are deleted, not archived: a finished Thread leaves nothing behind in the sidebar
-    // or the context of the next one. Threads archived before this reappear in the list.
-    "
-    ALTER TABLE threads DROP COLUMN archived;
-",
-    // The macro category of a tool-call Item; NULL for other Items and for Items stored before.
-    "
-    ALTER TABLE items ADD COLUMN category TEXT;
-",
-    // A Turn's prompt as segments: text and Attachments in order. NULL for Turns stored before,
-    // whose Attachments are the paths in `attachments`.
-    "
-    ALTER TABLE turns ADD COLUMN segments TEXT;
-",
-    // The Review ledger (ADR-0010): one row per merged pull request of a Thread. Identifiers,
-    // Provider, Model and timestamps only, no Transcript text and no foreign key, so a row
-    // outlives its Thread.
-    "
-    CREATE TABLE review_ledger (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        thread_id INTEGER NOT NULL,
-        pull_request INTEGER NOT NULL,
-        provider TEXT NOT NULL,
-        model TEXT,
-        turn_completed_at INTEGER NOT NULL,
-        merged_at INTEGER NOT NULL,
-        UNIQUE (project_id, pull_request)
-    );
-",
-    // Line comments: drafts on a Diff line, kept per Thread until sent.
-    "
-    CREATE TABLE line_comments (
-        id INTEGER PRIMARY KEY,
-        thread_id INTEGER NOT NULL REFERENCES threads(id),
-        scope TEXT NOT NULL,
-        path TEXT NOT NULL,
-        side TEXT NOT NULL,
-        line INTEGER NOT NULL,
-        code TEXT NOT NULL,
-        body TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX line_comments_by_thread ON line_comments(thread_id, id);
-",
-    // A per-Project choice: keep chat Threads in the main checkout instead of
-    // giving each one its own worktree on its first prompt. Default off, so new
-    // chat Threads work in their own worktree like Board Threads do.
-    "
-    ALTER TABLE projects ADD COLUMN threads_in_main_checkout INTEGER NOT NULL DEFAULT 0;
-",
-    // Line comments drafted on a pull request's Diff, kept per Project and pull request until one
-    // review is submitted. They belong to no checkout, so reviewing never needs one.
-    "
-    CREATE TABLE pull_request_line_comments (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        pull_request INTEGER NOT NULL,
-        path TEXT NOT NULL,
-        side TEXT NOT NULL,
-        line INTEGER NOT NULL,
-        code TEXT NOT NULL,
-        body TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX pull_request_line_comments_by_pr
-        ON pull_request_line_comments(project_id, pull_request, id);
-",
-    // What a Provider reported about a command an Item ran, and the permission mode a Turn
-    // started in. NULL on Items and Turns stored before command evidence existed: their outcome
-    // reads as unknown, and their Turn's permission mode as not recorded.
-    "
-    ALTER TABLE items ADD COLUMN command_line TEXT;
-    ALTER TABLE items ADD COLUMN command_outcome TEXT;
-    ALTER TABLE items ADD COLUMN command_exit_code INTEGER;
-    ALTER TABLE turns ADD COLUMN permission_mode TEXT;
-",
-    // A restore: a Thread's files put back to before a Turn, and the Checkpoint
-    // that undoes it (ADR-0011).
-    "
-    CREATE TABLE restores (
-        id INTEGER PRIMARY KEY,
-        thread_id INTEGER NOT NULL REFERENCES threads(id),
-        turn_index INTEGER NOT NULL,
-        safety_ref TEXT NOT NULL,
-        files TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        undone_at TEXT
-    );
-    CREATE INDEX restores_by_thread ON restores(thread_id, id);
-",
-    // What the agent is told on the next prompt of a Thread whose files were restored.
-    "
-    ALTER TABLE threads ADD COLUMN restore_notice TEXT;
-",
-    // A Project's own Verification commands: a JSON array of command lines that count as checks
-    // beside the built-in patterns. Kept with the Project, never in its repository.
-    "
-    ALTER TABLE projects ADD COLUMN verification_commands TEXT NOT NULL DEFAULT '[]';
-",
-    // The labels of the GitHub issue a Board Thread was started from, so a Review round can
-    // describe its kind of work without asking GitHub again. Names only, never issue text.
-    "
-    ALTER TABLE threads ADD COLUMN issue_labels TEXT NOT NULL DEFAULT '[]';
-",
-    // The Review ledger's review rounds (ADR-0010): one row per send of Line comments or
-    // reviewer comments, with Provider, Model, kind of work and counts, never Transcript text
-    // and no foreign key, so a row outlives its Thread.
-    "
-    CREATE TABLE review_rounds (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        thread_id INTEGER NOT NULL,
-        provider TEXT NOT NULL,
-        model TEXT,
-        languages TEXT NOT NULL DEFAULT '[]',
-        size_band TEXT NOT NULL,
-        issue_labels TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX review_rounds_by_project ON review_rounds(project_id, id);
-",
-    // The title and link of the GitHub issue a Board Thread was started from, so its Dossier can
-    // show what was asked without asking GitHub again.
-    "
-    ALTER TABLE threads ADD COLUMN issue_title TEXT;
-    ALTER TABLE threads ADD COLUMN issue_url TEXT;
-",
-    // A Project's own sensitive paths for the Dossier's risk signals, as glob patterns. The
-    // built-in CI, dependency manifest and migration patterns are matched beside these.
-    "
-    ALTER TABLE projects ADD COLUMN sensitive_paths TEXT NOT NULL DEFAULT '[]';
-",
-    // The branch HEAD when a Turn started and when it ended, so the Dossier can tell the commits
-    // the Turn produced from those it did not. NULL for Turns stored before this.
-    "
-    ALTER TABLE turns ADD COLUMN head_before TEXT;
-    ALTER TABLE turns ADD COLUMN head_after TEXT;
-",
-    // Reverts and candidate follow-up fixes for tracked merged pull requests (ADR-0010, #342).
-    // Stored without Transcript text, outliving Threads.
-    "
-    CREATE TABLE review_reverts (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        pull_request INTEGER NOT NULL,
-        commit_sha TEXT NOT NULL,
-        commit_subject TEXT NOT NULL,
-        committed_at INTEGER NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        UNIQUE (project_id, pull_request, commit_sha)
-    );
-    CREATE INDEX review_reverts_by_project ON review_reverts(project_id, id);
+"];
 
-    CREATE TABLE review_follow_ups (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        pull_request INTEGER NOT NULL,
-        commit_sha TEXT NOT NULL,
-        commit_subject TEXT NOT NULL,
-        committed_at INTEGER NOT NULL,
-        co_modified_files TEXT NOT NULL DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'candidate',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        UNIQUE (project_id, pull_request, commit_sha)
+/// Brings a database written before the baseline schema existed to the baseline, in place,
+/// keeping its Projects and the remembered selection. Everything else it holds belonged to
+/// features Oxide no longer has (ADR-0018). The caller has written a backup first.
+///
+/// Works for any older version: it copies the columns the old `projects` table has and uses the
+/// column's default for the ones it lacks.
+fn adopt_legacy(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let has_table = |name: &str| -> Result<bool> {
+        Ok(tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |row| row.get(0),
+        )?)
+    };
+    let mut columns = Vec::new();
+    {
+        let mut statement = tx.prepare("SELECT name FROM pragma_table_info('projects')")?;
+        for name in statement.query_map([], |row| row.get::<_, String>(0))? {
+            columns.push(name?);
+        }
+    }
+    let copy = |column: &str, fallback: &str| {
+        if columns.iter().any(|c| c == column) {
+            column.to_owned()
+        } else {
+            fallback.to_owned()
+        }
+    };
+    // A Project listed before `opened_at` existed was already open.
+    let (hidden, opened_at, acted_upon) = (
+        copy("hidden", "0"),
+        copy("opened_at", "created_at"),
+        copy("acted_upon", "0"),
     );
-    CREATE INDEX review_follow_ups_by_project ON review_follow_ups(project_id, id);
-",
-    // Recurring feedback turned into rule suggestions (#343): the text of Line comments sent to a
-    // Thread, grouped per Project by normalized word similarity. Kept apart from the Review
-    // ledger, which still holds no comment text (ADR-0010).
-    "
-    CREATE TABLE rule_suggestions (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'open',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        decided_at TEXT
-    );
-    CREATE INDEX rule_suggestions_by_project ON rule_suggestions(project_id, id);
+    let had_state = has_table("app_state")?;
+    let mut other_tables = Vec::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+             AND name NOT IN ('projects', 'app_state')",
+        )?;
+        for name in statement.query_map([], |row| row.get::<_, String>(0))? {
+            other_tables.push(name?);
+        }
+    }
 
-    CREATE TABLE rule_suggestion_comments (
-        id INTEGER PRIMARY KEY,
-        suggestion_id INTEGER NOT NULL REFERENCES rule_suggestions(id),
-        thread_id INTEGER NOT NULL,
-        body TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX rule_suggestion_comments_by_suggestion
-        ON rule_suggestion_comments(suggestion_id, id);
-",
-    // Blind review (#337): marks Threads created as Blind reviews.
-    "
-    ALTER TABLE threads ADD COLUMN blind_review INTEGER NOT NULL DEFAULT 0;
-",
-    // Blind review findings (#338): the review Thread, the Thread it reviewed, the reviewing
-    // Provider and the Diff scope it saw; then each finding, anchored to a line of the reviewed
-    // Diff or kept as plain text, with the reviewer's keep or dismiss decision. Kept findings
-    // become Line comment drafts on the reviewed Thread.
-    "
-    ALTER TABLE threads ADD COLUMN blind_review_of INTEGER REFERENCES threads(id);
-
-    CREATE TABLE blind_reviews (
-        id INTEGER PRIMARY KEY,
-        thread_id INTEGER REFERENCES threads(id),
-        review_thread_id INTEGER NOT NULL UNIQUE REFERENCES threads(id),
-        provider TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX blind_reviews_by_thread ON blind_reviews(thread_id, id);
-
-    CREATE TABLE blind_review_findings (
-        id INTEGER PRIMARY KEY,
-        review_id INTEGER NOT NULL REFERENCES blind_reviews(id),
-        path TEXT,
-        side TEXT,
-        line INTEGER,
-        code TEXT NOT NULL DEFAULT '',
-        body TEXT NOT NULL,
-        anchored INTEGER NOT NULL DEFAULT 0,
-        decision TEXT NOT NULL DEFAULT 'pending',
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    );
-    CREATE INDEX blind_review_findings_by_review ON blind_review_findings(review_id, id);
-
-    ALTER TABLE line_comments ADD COLUMN provider TEXT;
-    ALTER TABLE line_comments ADD COLUMN finding_id INTEGER
-        REFERENCES blind_review_findings(id) ON DELETE SET NULL;
-    CREATE UNIQUE INDEX line_comments_by_finding ON line_comments(finding_id)
-        WHERE finding_id IS NOT NULL;
-",
-    // The Verification Dossier and the Diff Surface's pull request review drafts are gone: drop
-    // what only they used.
-    "
-    ALTER TABLE projects DROP COLUMN sensitive_paths;
-    ALTER TABLE turns DROP COLUMN head_before;
-    ALTER TABLE turns DROP COLUMN head_after;
-    DROP INDEX pull_request_line_comments_by_pr;
-    DROP TABLE pull_request_line_comments;
-    DELETE FROM app_state WHERE key LIKE 'dossier_options:%';
-",
-    // Verification commands were only used by the removed Verification Dossier.
-    "
-    ALTER TABLE projects DROP COLUMN verification_commands;
-",
-    // Oxide fetches a Project's remote on its own only once the user has acted in it, so that
-    // a folder obtained from elsewhere is not contacted before then. Existing Projects start
-    // unacted: the first prompt, terminal command, Pull or Push sets it.
-    "
-    ALTER TABLE projects ADD COLUMN acted_upon INTEGER NOT NULL DEFAULT 0;
-",
-    // A Project that already has Threads was acted upon before the flag existed: keep its
-    // background fetch running instead of silently stopping it for existing users.
-    "
-    UPDATE projects SET acted_upon = 1
-    WHERE EXISTS (SELECT 1 FROM threads WHERE threads.project_id = projects.id);
-",
-    // Blind review is a one-shot headless run, not a Thread: a review has no review Thread any
-    // more, and records whether it is running, finished or failed and where its throwaway
-    // worktree is. The table is rebuilt to make `review_thread_id` optional (old reviews keep
-    // theirs); foreign keys are deferred so the findings that point at it survive the rebuild.
-    "
-    PRAGMA defer_foreign_keys = ON;
-    CREATE TABLE blind_reviews_old AS SELECT * FROM blind_reviews;
-    DROP TABLE blind_reviews;
-    CREATE TABLE blind_reviews (
-        id INTEGER PRIMARY KEY,
-        thread_id INTEGER REFERENCES threads(id),
-        review_thread_id INTEGER UNIQUE REFERENCES threads(id),
-        provider TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        status TEXT NOT NULL DEFAULT 'finished',
-        error TEXT,
-        worktree TEXT
-    );
-    -- A row that already pointed at a missing Thread is dropped, not carried over: it would fail
-    -- the foreign-key check and with it the whole database open.
-    INSERT INTO blind_reviews (id, thread_id, review_thread_id, provider, scope, created_at)
-        SELECT id, thread_id,
-               CASE WHEN review_thread_id IN (SELECT id FROM threads) THEN review_thread_id END,
-               provider, scope, created_at
-        FROM blind_reviews_old
-        WHERE thread_id IS NULL OR thread_id IN (SELECT id FROM threads);
-    UPDATE line_comments SET finding_id = NULL
-        WHERE finding_id IN (SELECT id FROM blind_review_findings
-                             WHERE review_id NOT IN (SELECT id FROM blind_reviews));
-    DELETE FROM blind_review_findings WHERE review_id NOT IN (SELECT id FROM blind_reviews);
-    DROP TABLE blind_reviews_old;
-    CREATE INDEX blind_reviews_by_thread ON blind_reviews(thread_id, id);
-",
-    // A Thread whose centre is an Agent terminal running the Provider's own CLI (ADR-0017).
-    // Its Provider session id is `provider_session_id`, assigned by Oxide at launch.
-    "
-    ALTER TABLE threads ADD COLUMN terminal INTEGER NOT NULL DEFAULT 0;
-",
-    // Oxide is Projects and plain terminals (ADR-0018): everything that only served Threads,
-    // Providers, Checkpoints, worktrees, the Review ledger or Blind review goes. The backup
-    // `oxide.db.bak-<version>` is written first by `migrate`. Worktree folders and branches on
-    // disk are not touched.
-    "
-    DROP TABLE IF EXISTS blind_review_findings;
-    DROP TABLE IF EXISTS blind_reviews;
-    DROP TABLE IF EXISTS blind_reviews_old;
-    DROP TABLE IF EXISTS rule_suggestion_comments;
-    DROP TABLE IF EXISTS rule_suggestions;
-    DROP TABLE IF EXISTS review_follow_ups;
-    DROP TABLE IF EXISTS review_reverts;
-    DROP TABLE IF EXISTS review_rounds;
-    DROP TABLE IF EXISTS review_ledger;
-    DROP TABLE IF EXISTS line_comments;
-    DROP TABLE IF EXISTS restores;
-    DROP TABLE IF EXISTS unknown_events;
-    DROP TABLE IF EXISTS approvals;
-    DROP TABLE IF EXISTS items;
-    DROP TABLE IF EXISTS turns;
-    DROP TABLE IF EXISTS threads;
-    ALTER TABLE projects DROP COLUMN setup_command;
-    ALTER TABLE projects DROP COLUMN threads_in_main_checkout;
-    DELETE FROM app_state WHERE key <> 'selection';
-",
-];
+    tx.execute_batch(
+        "PRAGMA defer_foreign_keys = ON; ALTER TABLE projects RENAME TO legacy_projects;",
+    )?;
+    if had_state {
+        tx.execute_batch("ALTER TABLE app_state RENAME TO legacy_app_state;")?;
+    }
+    for table in &other_tables {
+        tx.execute_batch(&format!("DROP TABLE IF EXISTS \"{table}\";"))?;
+    }
+    tx.execute_batch(MIGRATIONS[0])?;
+    tx.execute_batch(&format!(
+        "INSERT INTO projects (id, name, path, created_at, hidden, opened_at, acted_upon)
+             SELECT id, name, path, created_at, {hidden}, {opened_at}, {acted_upon}
+             FROM legacy_projects;
+         DROP TABLE legacy_projects;"
+    ))?;
+    if had_state {
+        tx.execute_batch(
+            "INSERT INTO app_state (key, value)
+                 SELECT key, value FROM legacy_app_state WHERE key = 'selection';
+             DROP TABLE legacy_app_state;",
+        )?;
+    }
+    tx.pragma_update(None, "user_version", 1)?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Starts a transaction that will write. `IMMEDIATE` takes the write lock up front:
 /// a deferred transaction that reads first and writes later reads a snapshot another
-/// connection (the app's own, the board's, the review ledger's) is free to replace,
+/// connection (another one of the app's own) is free to replace,
 /// and then fails to upgrade with `SQLITE_BUSY_SNAPSHOT` — an error the busy timeout
 /// does not retry, so the write is simply lost.
 pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
@@ -458,10 +120,29 @@ pub(crate) fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
 /// Opens the database at `path` (WAL) and applies pending `migrations`, writing
 /// `<path>.bak-<version>` first, where `<version>` is the version being migrated away from.
 pub fn open(path: &Path, migrations: &[&str]) -> Result<Connection> {
+    let conn = connect(path)?;
+    migrate(&conn, path, migrations)?;
+    Ok(conn)
+}
+
+/// Like [`open`] with [`MIGRATIONS`], and first brings a database written before the baseline
+/// schema existed (any older Oxide, up to v0.0.4 and its successors) to the baseline.
+pub fn open_app(path: &Path) -> Result<Connection> {
+    let conn = connect(path)?;
+    let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let application_id: u32 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    if version > 0 && application_id == 0 {
+        backup(&conn, path, version)?;
+        adopt_legacy(&conn)?;
+    }
+    migrate(&conn, path, MIGRATIONS)?;
+    Ok(conn)
+}
+
+fn connect(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    migrate(&conn, path, migrations)?;
     Ok(conn)
 }
 
@@ -501,41 +182,147 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[test]
-    fn migrating_keeps_fetch_on_for_projects_with_threads_and_off_for_the_rest() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("oxide.db");
-        let step = MIGRATIONS
-            .iter()
-            .position(|m| m.contains("UPDATE projects SET acted_upon = 1"))
-            .unwrap();
-        let before = &MIGRATIONS[..step];
-        let old = open(&path, before).unwrap();
-        old.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
-            .unwrap();
-        old.execute("INSERT INTO projects (name, path) VALUES ('q', '/q')", [])
-            .unwrap();
-        old.execute(
-            "INSERT INTO threads (project_id, provider, permission_mode, status) \
-             SELECT id, 'fake', 'ask', 'idle' FROM projects WHERE path = '/p'",
-            [],
+    /// A database as an older Oxide left it: Projects plus the tables of removed features.
+    fn legacy_database(path: &Path, with_state: bool) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE projects (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+                 created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00.000Z',
+                 hidden INTEGER NOT NULL DEFAULT 0, opened_at TEXT,
+                 acted_upon INTEGER NOT NULL DEFAULT 0, setup_command TEXT,
+                 threads_in_main_checkout INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE threads (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id));
+             CREATE TABLE turns (id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL REFERENCES threads(id));
+             INSERT INTO projects (id, name, path, hidden, opened_at, acted_upon, setup_command)
+                 VALUES (1, 'p', '/p', 1, '2026-02-02T00:00:00.000Z', 1, 'make');
+             INSERT INTO projects (id, name, path) VALUES (2, 'q', '/q');
+             INSERT INTO threads (id, project_id) VALUES (1, 1);
+             INSERT INTO turns (id, thread_id) VALUES (1, 1);",
         )
         .unwrap();
-        drop(old);
+        if with_state {
+            conn.execute_batch(
+                "CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO app_state VALUES ('selection', '1'), ('last_scan', 'x');",
+            )
+            .unwrap();
+        }
+        conn.pragma_update(None, "user_version", 41).unwrap();
+    }
 
-        let migrated = open(&path, MIGRATIONS).unwrap();
+    fn schema(conn: &Connection) -> Vec<(String, String)> {
+        let mut statement = conn
+            .prepare("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")
+            .unwrap();
+        statement
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect()
+    }
 
-        let acted = |project: &str| -> i64 {
-            migrated
-                .query_row(
-                    "SELECT acted_upon FROM projects WHERE path = ?1",
-                    [project],
-                    |r| r.get(0),
-                )
-                .unwrap()
+    #[test]
+    fn an_older_database_keeps_its_projects_and_ends_with_the_fresh_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        legacy_database(&path, true);
+
+        let migrated = open_app(&path).unwrap();
+
+        let fresh_dir = tempfile::tempdir().unwrap();
+        let fresh = open_app(&fresh_dir.path().join("oxide.db")).unwrap();
+        let tables = |conn: &Connection| -> Vec<String> {
+            schema(conn).into_iter().map(|(name, _)| name).collect()
         };
-        assert_eq!(acted("/p"), 1, "a Project with a Thread was acted upon");
-        assert_eq!(acted("/q"), 0, "an untouched Project stays unacted");
+        assert_eq!(tables(&migrated), tables(&fresh));
+        let columns = |conn: &Connection| -> Vec<String> {
+            let mut statement = conn
+                .prepare("SELECT name FROM pragma_table_info('projects')")
+                .unwrap();
+            statement
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(columns(&migrated), columns(&fresh));
+        let rows: Vec<(i64, String, i64, Option<String>, i64)> = {
+            let mut statement = migrated
+                .prepare("SELECT id, path, hidden, opened_at, acted_upon FROM projects ORDER BY id")
+                .unwrap();
+            statement
+                .query_map([], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    1,
+                    "/p".into(),
+                    1,
+                    Some("2026-02-02T00:00:00.000Z".into()),
+                    1
+                ),
+                (2, "/q".into(), 0, None, 0),
+            ]
+        );
+        let state: Vec<String> = {
+            let mut statement = migrated.prepare("SELECT key FROM app_state").unwrap();
+            statement
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(state, vec!["selection".to_owned()]);
+        let version: u32 = migrated
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, MIGRATIONS.len() as u32);
+        assert!(directory.path().join("oxide.db.bak-41").exists());
+    }
+
+    #[test]
+    fn a_database_from_before_the_selection_table_still_opens() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        legacy_database(&path, false);
+
+        let migrated = open_app(&path).unwrap();
+
+        let count: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        migrated
+            .execute(
+                "INSERT INTO app_state (key, value) VALUES ('selection', '2')",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn reopening_an_adopted_database_changes_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oxide.db");
+        legacy_database(&path, true);
+        drop(open_app(&path).unwrap());
+
+        let again = open_app(&path).unwrap();
+
+        let count: i64 = again
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        assert!(!directory.path().join("oxide.db.bak-1").exists());
     }
 
     #[test]

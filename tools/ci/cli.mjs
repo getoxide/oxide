@@ -9,8 +9,6 @@
 //   node tools/ci/cli.mjs release-notes <tag> [<previous-tag>]
 //   node tools/ci/cli.mjs downloads <dir>               prints the Downloads table for the installers in <dir>
 //   node tools/ci/cli.mjs dependabot                    env DEPENDENCIES_JSON
-//   node tools/ci/cli.mjs update-manifest <dir> <tag> [<owner/repo>] [<out-file>]
-//   node tools/ci/cli.mjs update-feed <latest.json> <tag>  prints the URLs the feed points at
 //   node tools/ci/cli.mjs bump <version>                writes the three manifests and Cargo.lock
 //
 // Untrusted values (titles, file lists) arrive through files and environment
@@ -20,8 +18,8 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, checkUpdateFeed, dependabotDecision, evaluateGate, lanesFor,
-  downloadsSection, previousReleaseTag, releaseNotes, updateManifest,
+  bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
+  downloadsSection, previousReleaseTag, releaseNotes,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -93,19 +91,6 @@ const commands = {
     const { decision, reason } = dependabotDecision(dependencies);
     console.log(`${decision}: ${reason}`);
     output({ decision, reason });
-  },
-  "update-manifest"([directory = "release-artifacts", tag, repository = "getoxide/oxide", outFile = join(directory, "latest.json")]) {
-    const names = readdirSync(directory);
-    const signatures = Object.fromEntries(names.filter((name) => name.endsWith(".sig"))
-      .map((name) => [name.slice(0, -".sig".length), readFileSync(join(directory, name), "utf8")]));
-    const feed = updateManifest(names, signatures, { repository, tag, date: new Date().toISOString() });
-    writeFileSync(outFile, `${JSON.stringify(feed, null, 2)}\n`);
-    console.log(`Wrote ${outFile} for ${Object.keys(feed.platforms).join(", ")}.`);
-  },
-  "update-feed"([file, tag]) {
-    const result = checkUpdateFeed(JSON.parse(readFileSync(file, "utf8")), tag);
-    report(result);
-    for (const url of result.urls) console.log(url);
   },
   bump([version]) {
     const current = Object.fromEntries(Object.entries(MANIFESTS).map(([key, path]) => [key, read(path)]));

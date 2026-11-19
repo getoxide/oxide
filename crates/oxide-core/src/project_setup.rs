@@ -3,7 +3,7 @@
 
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result, git};
-use oxide_provider::diag;
+use oxide_platform::diag;
 use std::fs;
 use std::path::{Path, PathBuf};
 

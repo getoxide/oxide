@@ -58,7 +58,7 @@ fn an_existing_loose_home_is_tightened_at_startup() {
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
-    let nested = home.join("attachments").join("7");
+    let nested = home.join("notes").join("7");
     fs::create_dir_all(&nested).unwrap();
     let pasted = nested.join("shot.png");
     fs::write(&pasted, "x").unwrap();
@@ -89,32 +89,32 @@ fn an_existing_loose_home_is_tightened_at_startup() {
 }
 
 #[test]
-fn the_walk_runs_once_and_never_enters_worktrees_or_tools() {
+fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
-    let worktree_file = home.join("worktrees/proj/feature/src/lib.rs");
+    let checkout_file = home.join("worktrees/proj/feature/src/lib.rs");
     let tool_file = home.join("tools/node/bin/node");
-    for file in [&worktree_file, &tool_file] {
+    for file in [&checkout_file, &tool_file] {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(file, "x").unwrap();
         fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(file.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let attachment_dir = home.join("attachments/1");
-    fs::create_dir_all(&attachment_dir).unwrap();
-    fs::set_permissions(&attachment_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    let notes_dir = home.join("notes/1");
+    fs::create_dir_all(&notes_dir).unwrap();
+    fs::set_permissions(&notes_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
     // The marker exists from the first open: nothing below the home is walked again.
     drop(Core::open(&home).unwrap());
-    assert_eq!(mode(&attachment_dir), 0o755, "the walk ran a second time");
+    assert_eq!(mode(&notes_dir), 0o755, "the walk ran a second time");
 
-    // A home without the marker is walked, but worktrees and tools are left as they are.
+    // A home without the marker is walked, but old checkouts and tools are left as they are.
     fs::remove_file(home.join(".private-v1")).unwrap();
     drop(Core::open(&home).unwrap());
-    assert_eq!(mode(&attachment_dir), 0o700);
-    assert_eq!(mode(&worktree_file), 0o755);
-    assert_eq!(mode(worktree_file.parent().unwrap()), 0o755);
+    assert_eq!(mode(&notes_dir), 0o700);
+    assert_eq!(mode(&checkout_file), 0o755);
+    assert_eq!(mode(checkout_file.parent().unwrap()), 0o755);
     assert_eq!(mode(&tool_file), 0o755);
     assert_eq!(mode(tool_file.parent().unwrap()), 0o755);
 }
@@ -126,7 +126,7 @@ fn a_path_that_refuses_a_change_does_not_stop_the_start() {
     drop(Core::open(&home).unwrap());
     // A dangling symlink and a directory without read permission are not Oxide's to fix.
     std::os::unix::fs::symlink("/nonexistent/target", home.join("dangling")).unwrap();
-    let locked = home.join("attachments/locked");
+    let locked = home.join("notes/locked");
     fs::create_dir_all(&locked).unwrap();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     fs::remove_file(home.join(".private-v1")).unwrap();

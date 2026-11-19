@@ -33,14 +33,17 @@ fn saves_complete_files_but_never_overwrites_a_stale_buffer() {
         std::fs::read_to_string(&path).unwrap(),
         "print('after')\r\n"
     );
-    std::fs::write(&path, "agent's changes").unwrap();
+    std::fs::write(&path, "changes made elsewhere").unwrap();
     assert!(
         core.write_file(id, "main.py", "print('after')\r\n", "my changes")
             .unwrap_err()
             .to_string()
             .contains("changed on disk")
     );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent's changes");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "changes made elsewhere"
+    );
     assert!(core.write_file(id, "../outside", "", "no").is_err());
 }
 

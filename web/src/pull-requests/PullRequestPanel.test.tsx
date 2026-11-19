@@ -1,0 +1,228 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { commands, type PullRequestDetail_Serialize } from "../bindings";
+import { PullRequestPanel, REFRESH_INTERVAL_MS } from "./PullRequestPanel";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+let host: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  clearQueryCache();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  vi.spyOn(commands, "listPullRequests").mockResolvedValue({ status: "ok", data: [] });
+});
+afterEach(async () => {
+  await act(() => root.unmount());
+  host.remove();
+  vi.restoreAllMocks();
+});
+
+const render = () =>
+  act(async () =>
+    root.render(<PullRequestPanel projectId={1} refreshKey={0} onChanged={() => {}} />),
+  );
+const listCalls = () => vi.mocked(commands.listPullRequests).mock.calls.length;
+
+it("shows the open pull requests without a branch tab or a manual reload button", async () => {
+  await render();
+  expect(host.querySelector('[role="tablist"]')).toBeNull();
+  expect(host.querySelector('section[aria-label="Pull requests"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Reload from GitHub"]')).toBeNull();
+});
+
+it("shows an empty pull request list on the shared Surface empty layout, with its primary action", async () => {
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "", body: "", base: "main", head: "topic" } });
+  vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
+  await render();
+
+  const empty = host.querySelector<HTMLElement>(".pr-empty")!;
+  expect(empty).not.toBeNull();
+  expect(empty.classList.contains("surface-empty")).toBe(true);
+  // It sits directly in the Surface's scroll region as its only content, so it can fill and centre
+  // the available height; the list is not rendered beside it.
+  const scroll = empty.parentElement!;
+  expect(scroll.classList.contains("pr-scroll")).toBe(true);
+  expect(scroll.querySelector(".pr-list")).toBeNull();
+  expect(empty.querySelector("svg")?.getAttribute("width")).toBe("32");
+  expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No open pull requests.");
+  expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("Pull requests opened from this Project’s branches appear here.");
+
+  const create = [...empty.querySelectorAll("button")].find((b) => b.textContent?.trim() === "New pull request")!;
+  expect(create).toBeDefined();
+  expect(create.classList.contains("primary")).toBe(true);
+  await act(async () => create.click());
+  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
+});
+
+
+it("puts search and Mine in the Surface toolbar, with New pull request at the right", async () => {
+  await render();
+  const toolbar = host.querySelector(".surface-toolbar")!;
+  expect(toolbar).not.toBeNull();
+  expect(toolbar.querySelector('input[aria-label="Search pull requests"]')).not.toBeNull();
+  const mine = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Mine")!;
+  expect(mine).toBeDefined();
+  expect(mine.getAttribute("aria-pressed")).toBe("false");
+  const create = [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("New pull request"))!;
+  expect(create).toBeDefined();
+  expect(create.disabled).toBe(false);
+
+  // No branch context row: the list is repository-wide.
+  expect(host.querySelector('[aria-label="Branch actions"]')).toBeNull();
+});
+
+it("clears the pull request search with Escape and restores the unfiltered list", async () => {
+  vi.mocked(commands.listPullRequests).mockImplementation(async (_projectId, _mine, search) => ({
+    status: "ok",
+    data: search ? [] : [pr(1, "First PR")],
+  }));
+  await render();
+  expect(host.textContent).toContain("First PR");
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Search pull requests"]')!;
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    set.call(input, "parser");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(host.textContent).not.toContain("First PR");
+  expect(host.textContent).toContain("No pull requests match.");
+
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(input.value).toBe("");
+  expect(host.textContent).toContain("First PR");
+});
+
+it("opens the pull request form from New pull request", async () => {
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
+    status: "ok",
+    data: { title: "Topic", body: "", base: "main", head: "topic" },
+  });
+  vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
+  await render();
+  const create = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("New pull request"))!;
+  await act(async () => create.click());
+  expect(host.querySelector('[aria-label="Create pull request"]')).not.toBeNull();
+});
+
+it("reloads when the window regains focus", async () => {
+  await render();
+  const calls = listCalls();
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  expect(listCalls()).toBeGreaterThan(calls);
+});
+
+it("reloads periodically while visible, and not while hidden", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    let calls = listCalls();
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS));
+    expect(listCalls()).toBeGreaterThan(calls);
+    calls = listCalls();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS * 2));
+    expect(listCalls()).toBe(calls);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+const pr = (number: number, title: string) => ({
+  number,
+  title,
+  author: "alice",
+  url: "",
+  head: "feat",
+  crossRepository: false,
+  base: "main",
+  draft: false,
+  createdAt: "2026-01-01T00:00:00Z",
+});
+
+const detail = (title: string): PullRequestDetail_Serialize => ({
+  pullRequest: pr(1, title),
+  phase: "open",
+  body: "Full body from GitHub",
+  headSha: "abc123",
+  checks: [],
+  comments: [],
+  mergeState: "clean",
+  reviewDecision: null,
+  reviewers: [],
+  assignees: [],
+  labels: [],
+  additions: 0,
+  deletions: 0,
+  viewer: "me",
+  mergeMethods: ["merge"],
+  defaultMergeMethod: "merge",
+  deleteBranchOnMerge: false,
+  changedFiles: 0,
+});
+
+it("renders the previous list at once on remount without asking GitHub again while fresh", async () => {
+  vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
+  await render();
+  const calls = listCalls();
+  await act(() => root.unmount());
+  root = createRoot(host);
+  await render();
+  expect(host.textContent).toContain("First PR");
+  expect(host.textContent).not.toContain("Loading…");
+  expect(listCalls()).toBe(calls);
+});
+
+it("revalidates an older cached list in the background while it stays on screen", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
+    await render();
+    await act(() => root.unmount());
+    await act(async () => void vi.advanceTimersByTime(QUERY_STALE_MS + 1));
+    root = createRoot(host);
+    let resolve!: (r: Awaited<ReturnType<typeof commands.listPullRequests>>) => void;
+    vi.mocked(commands.listPullRequests).mockImplementation(() => new Promise((r) => (resolve = r)));
+    await render();
+    expect(host.textContent).toContain("First PR");
+    expect(host.textContent).not.toContain("Loading…");
+    expect(listCalls()).toBe(2);
+    await act(async () => resolve({ status: "ok", data: [pr(2, "Second PR")] }));
+    expect(host.textContent).toContain("Second PR");
+    expect(host.textContent).not.toContain("First PR");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows a pull request's header from the list while its detail is still loading", async () => {
+  vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "Instant header")] });
+  let resolveDetail!: (r: Awaited<ReturnType<typeof commands.pullRequestDetail>>) => void;
+  vi.spyOn(commands, "pullRequestDetail").mockReturnValue(new Promise((r) => (resolveDetail = r)));
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  // The list's summary metadata renders the hero before the detail call lands.
+  expect(host.querySelector(".pr-title")?.textContent).toContain("Instant header");
+  expect(host.querySelector(".pr-row-author")?.textContent).toContain("alice");
+  expect(host.querySelector(".skeleton")).not.toBeNull();
+
+  await act(async () => resolveDetail({ status: "ok", data: detail("From GitHub") }));
+  expect(host.querySelector(".pr-title")?.textContent).toContain("From GitHub");
+});
+
+it("keeps the list with a notice when a refresh fails", async () => {
+  vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
+  await render();
+  vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "error", error: { message: "offline" } });
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  expect(host.textContent).toContain("First PR");
+  expect(host.textContent).toContain("offline");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});

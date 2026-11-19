@@ -44,7 +44,7 @@ Local language servers provide language intelligence without an extension system
 Oxide's identity is the Braces mark, always in Titanium, on warm Titanium neutral
 surfaces. GitHub blue is for actions, focus and links and never appears in the
 logo. The interface uses Inter; the editor and terminal use JetBrains Mono
-with ligatures off. Keep the Octicons vocabulary. `assets/brand/oxide/` is the
-source of truth.
+with ligatures off. Keep the Octicons vocabulary. `assets/palette/` is the
+source of truth for the colours.
 Keep working controls compact and the primary content prominent. Use restrained
 motion, honor reduced motion, and preserve keyboard access and visible focus.

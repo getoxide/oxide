@@ -9,8 +9,7 @@ Read by `/verify`, `/judge`, `/build`, `/ship`, `/ui` and `/release`.
 - high-risk paths:
   - `.github/workflows/**`, `tools/ci/**`, `deny.toml`: CI gate, supply chain and release pipeline (read `docs/devops.md` first)
   - `crates/oxide-app/capabilities/**`, `crates/oxide-app/tauri.conf.json`: Tauri permissions and the app's security surface
-  - `crates/oxide-platform/**`: the only place with OS-specific code, `unsafe` and signals to processes; the Windows implementation can't be compiled by a Mac compiler, so run `node tools/check.mjs windows` (ADR-0016, ADR-0018)
-  - `crates/oxide-provider/**`: the process, locking and diagnostics primitives every child process goes through (ADR 0016)
+  - `crates/oxide-platform/**`: the only place with OS-specific code, `unsafe` and signals to processes, and home of the process, locking and diagnostics primitives every child process goes through; the Windows implementation can't be compiled by a Mac compiler, so run `node tools/check.mjs windows` (ADR-0016, ADR-0019)
   - `crates/oxide-core/**`: Projects, the shells Core owns, files, Git and GitHub, and the database migrations (ADR 0016, ADR 0018)
   - `Cargo.lock`, `web/pnpm-lock.yaml`: dependency changes
 

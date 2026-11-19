@@ -1,0 +1,909 @@
+.centre-workbench {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.centre-workbench[hidden],
+.code-workbench[hidden],
+.terminal-workbench[hidden],
+.header-actions button[hidden] {
+  display: none;
+}
+.centre-column {
+  container-type: inline-size;
+}
+.centre[hidden] {
+  display: none;
+}
+
+.code-workbench {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
+}
+.editor-explorer {
+  min-width: 0;
+  overflow: auto;
+  background: var(--bg2);
+  border-right: 1px solid var(--line);
+}
+.editor-explorer > header {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 12px;
+  gap: 2px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.editor-explorer > header > span {
+  flex: 1;
+}
+.editor-file-tree .files-row {
+  width: 100%;
+  gap: 6px;
+  font-size: 12px;
+}
+.editor-file-tree .files-chevron {
+  width: 12px;
+}
+.editor-file-tree [role="treeitem"] > button {
+  border-radius: 0;
+}
+.editor-new-file {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+}
+.editor-new-file input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  font-size: 12px;
+}
+.editor-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.editor-tabs {
+  min-height: 38px;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+}
+.editor-tab {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding-right: 4px;
+  border-right: 1px solid var(--line);
+  transition: background-color 120ms ease-out;
+}
+.editor-tab:hover {
+  background: var(--bg3);
+}
+.editor-tab.active {
+  background: var(--bg);
+}
+/* A quiet bottom indicator slides no further than its own tab. */
+.editor-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: transparent;
+  transition: background-color 140ms ease-out;
+}
+.editor-tab.active::after {
+  background: var(--acc2);
+}
+.editor-tab > [role="tab"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 8px 0 12px;
+  height: 38px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dim);
+}
+.editor-tab:hover > [role="tab"] {
+  color: var(--fg);
+}
+.editor-tab.active > [role="tab"] {
+  color: var(--fg-bright);
+}
+.editor-tab > .icon-btn {
+  min-width: 20px;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  margin: 0 4px 0 0;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--faint);
+  background: none;
+}
+.editor-tab > .icon-btn:hover:not(:disabled) {
+  background: var(--bg4);
+  color: var(--fg-bright);
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-tab,
+  .editor-tab::after {
+    transition: none;
+  }
+}
+.editor-tab > [role="tab"] > span:first-of-type {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--acc2);
+  flex: none;
+}
+.editor-tabs > .icon-btn {
+  align-self: center;
+  margin-right: 8px;
+  margin-left: 8px;
+}
+.editor-breadcrumb {
+  min-height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+}
+.editor-breadcrumb > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 80px;
+}
+.monaco-host {
+  position: absolute;
+  inset: 0;
+}
+.editor-welcome {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+}
+.editor-welcome > svg {
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+.editor-welcome h1 {
+  margin: 0;
+  font-size: clamp(19px, 2vw, 26px);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.editor-welcome p {
+  margin: 0 0 8px;
+  color: var(--dim);
+}
+.editor-error {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  color: var(--red);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.editor-error > span {
+  flex: 1;
+  min-width: 0;
+}
+.editor-status {
+  min-height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px;
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+.editor-status button {
+  height: 24px;
+  min-height: 24px;
+  background: none;
+  border: 0;
+  color: var(--dim);
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 400;
+}
+.editor-status > span:not(.grow) {
+  white-space: nowrap;
+}
+.editor-problems {
+  max-height: 190px;
+  overflow: auto;
+  flex: none;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.editor-problems > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  font-weight: 600;
+}
+.editor-problems > p {
+  padding: 8px 12px;
+  margin: 0;
+  color: var(--dim);
+}
+.editor-problems > button {
+  display: flex;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.editor-problems > button > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor-problems > button > code {
+  color: var(--dim);
+  font-size: 11px;
+}
+.editor-quick-open {
+  width: min(600px, 90vw);
+  padding: 10px;
+}
+.editor-quick-open > input {
+  width: 100%;
+}
+.editor-quick-results {
+  max-height: 360px;
+  overflow: auto;
+  padding-top: 8px;
+}
+.editor-quick-results > button {
+  display: flex;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.editor-quick-results > button.selected {
+  background: var(--bg4);
+}
+
+.language-tools {
+  padding: 20px;
+}
+.language-tools > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.language-tools h2 {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+.language-tools > header p {
+  color: var(--dim);
+  margin: 0;
+  font-size: 13px;
+}
+.language-tools-help {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--dim);
+  margin: 16px 0;
+}
+.language-tool {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line);
+}
+.language-tool > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.language-tool h3 {
+  font-size: 14px;
+  margin: 0;
+}
+.language-tool > header > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.language-ready {
+  color: var(--green);
+}
+.language-tool > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.language-tool input {
+  width: 100%;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.language-path {
+  overflow-wrap: anywhere;
+  color: var(--dim);
+}
+.language-tool > p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.language-tool-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 12px 0;
+}
+.language-tool-actions a {
+  font-size: 12px;
+}
+.language-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  padding: 8px;
+  margin: 10px 0;
+}
+.language-install > code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+.language-manual {
+  margin-top: 14px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.language-manual > summary {
+  cursor: pointer;
+}
+.language-download {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.language-download > .error {
+  flex-basis: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.language-support-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  flex-wrap: wrap;
+}
+.language-support-notice > svg {
+  color: var(--acc2);
+}
+.language-support-notice strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.language-support-notice p {
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin: 3px 0 0;
+}
+/* Terminal work mode: Command blocks with the restraint of the macOS Terminal. One column
+   in the terminal font, blocks split by spacing and a hairline, muted status, little chrome. */
+.terminal-workbench {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--terminal-background, var(--bg));
+}
+.workbench-terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  min-height: 36px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+}
+.workbench-terminal-header > strong {
+  flex: none;
+  font-weight: 500;
+  color: var(--fg);
+}
+.workbench-terminal-header > .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--faint);
+}
+.terminal-block-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 8px;
+}
+/* Anchor Command blocks to the bottom; margin (not justify-content) keeps overflow scrollable. */
+.terminal-block-scroll > :first-child {
+  margin-top: auto;
+}
+.terminal-command-block {
+  flex: none;
+  padding: 12px 0 10px;
+}
+.terminal-command-block + .terminal-command-block {
+  border-top: 1px solid var(--line);
+}
+.terminal-command-block > header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 6px;
+}
+.terminal-command-block > header > code {
+  min-width: 0;
+  padding: 0;
+  color: var(--fg-bright);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--font-terminal-size, 13px);
+  font-weight: var(--font-terminal-weight, 400);
+}
+.terminal-block-status {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  white-space: nowrap;
+  font: 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.terminal-block-status.error {
+  color: var(--red);
+}
+.terminal-block-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--acc2);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-block-spinner {
+    animation: none;
+  }
+}
+.terminal-truncated {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.terminal-output-clip {
+  overflow: hidden;
+}
+.terminal-block-output {
+  margin: 0;
+  min-height: 0;
+  line-height: normal;
+  font-size: 13px;
+}
+.terminal-block-output > .xterm {
+  height: 100%;
+  padding: 0;
+}
+.terminal-workbench[data-fullscreen="true"] .terminal-block-scroll {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+.terminal-workbench[data-fullscreen="true"]
+  .terminal-command-block:not(.fullscreen),
+.terminal-command-block.fullscreen > header {
+  display: none;
+}
+.terminal-command-block.fullscreen {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.terminal-shell-closed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  color: var(--dim);
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+}
+.terminal-command-composer {
+  position: relative;
+  flex: none;
+  margin: 8px 20px 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  background: transparent;
+}
+.terminal-command-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 2px 0 6px;
+}
+.terminal-prompt-symbol {
+  padding: 4px 0;
+  font: 13px/20px var(--mono);
+  color: var(--acc2);
+}
+.terminal-input-editor {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.terminal-input-editor textarea {
+  position: relative;
+  width: 100%;
+  padding: 4px 0;
+  font: 13px/20px var(--mono);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: 0;
+  resize: none;
+  min-height: 28px;
+}
+.terminal-ghost {
+  position: absolute;
+  inset: 0;
+  padding: 4px 0;
+  font: 13px/20px var(--mono);
+  white-space: pre;
+  color: var(--faint);
+  pointer-events: none;
+  overflow: hidden;
+}
+.terminal-ghost > span {
+  visibility: hidden;
+}
+/* The run button is quiet until there is a command to run. */
+.terminal-command-entry > .icon-btn {
+  min-width: 28px;
+  height: 28px;
+  color: var(--acc2);
+}
+.terminal-command-entry > .icon-btn:disabled {
+  opacity: 1;
+  color: var(--line-strong);
+  background: none;
+  border-color: transparent;
+}
+.terminal-command-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+  color: var(--dim);
+  font-size: 10.5px;
+  opacity: 0;
+}
+.terminal-command-composer:focus-within .terminal-command-hint {
+  opacity: 1;
+}
+.terminal-command-hint button {
+  font-size: 11px;
+}
+.terminal-interrupt {
+  align-self: flex-end;
+  margin: 8px 20px;
+  font-size: 12px;
+  min-height: 28px;
+}
+@container (max-width: 440px) {
+  .editor-status > span:not(.grow) {
+    display: none;
+  }
+  .workbench-terminal-header {
+    padding: 0 12px;
+  }
+  .terminal-block-scroll {
+    padding: 4px 12px 8px;
+  }
+  .terminal-command-composer {
+    margin: 8px 12px 6px;
+  }
+  .terminal-command-hint > span:last-child {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .language-support-notice {
+    animation: project-arrive 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+.terminal-input-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(760px, 100%);
+  z-index: 30;
+  background: var(--bg2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.terminal-input-menu > header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.terminal-input-menu header input {
+  background: transparent;
+  border: 0;
+  flex: 1;
+  min-width: 0;
+}
+.terminal-input-menu > [role="listbox"] {
+  max-height: min(320px, 45vh);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+.terminal-input-menu [role="option"] {
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  justify-content: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+.terminal-input-menu [role="option"][aria-selected="true"] {
+  background: var(--bg4);
+}
+.terminal-input-menu [role="option"] code {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.terminal-input-menu [role="option"] > span {
+  max-width: 40%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--dim);
+}
+.terminal-input-menu footer {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+}
+.editor-loading-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--bg);
+  pointer-events: none;
+}
+/* Presentation changes retain each tool instance. */
+.sidebar-region[hidden], .centre-column[hidden], .surface-content[hidden] { display: none; }
+.surface-content { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.surface-content > section, .surface-content > .pr-views { flex: 1; min-height: 0; }
+.surface-content > .files { flex: 1; min-height: 0; }
+.tools > .code-workbench, .tools > .terminal-workbench { flex: 1; min-height: 0; min-width: 0; }
+/* The dock's Surfaces never drop their labels: the strip scrolls sideways instead, and the utility
+   controls stay pinned outside the scroll area so Maximize/Restore and Close remain reachable. */
+.tools-tabs { flex: none; min-width: 0; gap: 0; padding: 0; }
+.tools-tab-strip {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.tools-tab-strip::-webkit-scrollbar { display: none; }
+.tools-tab-actions { display: flex; align-items: center; flex: none; gap: 2px; padding: 0 8px 0 4px; }
+.tools-tab-actions .icon-btn { flex: none; }
+.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; }
+.window.windows .header { display: flex; }
+.window.windows .header-project { flex: 1; justify-content: flex-start; }
+.header > .icon-btn { flex: none; min-width: 28px; }
+
+/* Project terminal tabs: one strip, scrolling sideways so many shells never displace the Surface tabs. */
+.terminal-tab-panel[hidden] { display: none; }
+/* The shell strip is a Surface toolbar: `.surface-toolbar` gives it the shared 36px height, `--bg2`
+   background and bottom `--line`; the tabs stretch to that height so the active underline meets the
+   border exactly like the dock's own tabs. */
+.terminal-tab-running { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--acc2); }
+/* A shell in another checkout is a hazard, not a footnote: filled warning pill and a tinted name. */
+.terminal-tab-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+
+/* Files: open-files bar, all-files menu and the compact file-list overlay. */
+.editor-tabs-bar {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+}
+.editor-tabs-bar > .editor-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  border-bottom: 0;
+  scrollbar-width: thin;
+}
+.editor-tabs-bar > .editor-tree-toggle,
+.editor-tabs-bar .editor-files-menu-wrap > .icon-btn {
+  align-self: center;
+  margin: 0 6px;
+}
+.editor-tab.preview > [role="tab"] > span:first-of-type {
+  font-style: italic;
+}
+.editor-files-menu-wrap {
+  position: relative;
+  display: flex;
+}
+.editor-files-menu {
+  position: absolute;
+  z-index: 40;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  max-width: min(360px, 90vw);
+  max-height: 60vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 8px 8px 24px #0005;
+}
+.editor-files-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+.editor-files-menu > button > span:not(.editor-dirty) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-files-menu > button.selected {
+  color: var(--fg-bright);
+}
+.editor-files-menu > hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 0;
+}
+.code-workbench.no-explorer {
+  grid-template-columns: minmax(0, 1fr);
+}
+.code-workbench.compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+.code-workbench.compact > .editor-explorer {
+  display: none;
+}
+.code-workbench.compact.tree-open > .editor-explorer {
+  display: block;
+  position: absolute;
+  z-index: 30;
+  top: 38px;
+  left: 0;
+  bottom: 0;
+  width: min(300px, 100%);
+  box-shadow: 8px 8px 24px #0005;
+}
+
+/* Back from the Code workspace to the Project's terminals. */
+.centre-back { align-self: flex-start; margin: 8px 12px; }
+.settings-view { padding: 0 20px; }
+.settings-header { display: flex; align-items: center; justify-content: space-between; }
+.settings-header h1 { margin: 16px 0; font-size: 18px; }

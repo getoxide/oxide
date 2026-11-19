@@ -31,11 +31,11 @@ export const commands = {
 	completeTerminal: (terminalId: number, line: string, cursor: number, cwd: string) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor, cwd })),
 	runTerminalBlock: (terminalId: number, command: string, token: string) => typedError<null, AppError>(__TAURI_INVOKE("run_terminal_block", { terminalId, command, token })),
 	/**
-	 *  Lists one directory of a Thread's checkout (`""` is the root), minus
+	 *  Lists one directory of a Project (`""` is the root), minus
 	 *  `.git` and gitignored entries.
 	 */
 	listDir: (projectId: number, path: string) => typedError<FileEntry[], AppError>(__TAURI_INVOKE("list_dir", { projectId, path })),
-	/**  Reads a file of a Thread's checkout, capped at 1 MiB. */
+	/**  Reads a file of a Project, capped at 1 MiB. */
 	readFile: (projectId: number, path: string) => typedError<FileContent, AppError>(__TAURI_INVOKE("read_file", { projectId, path })),
 	writeFile: (projectId: number, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),

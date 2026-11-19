@@ -2,7 +2,7 @@
 //! their own hardened builders in `oxide-core`.
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A `Command` for the OS helper `name` (`ps`, `open`, `sh`, `cmd`, ...), started by the absolute
 /// path [`os_tool`] gives it. This is how Oxide starts an OS helper: a bare name would be found
@@ -18,8 +18,7 @@ pub fn os_command(name: &str) -> std::process::Command {
 }
 
 /// A `Command` for an executable whose path Oxide already holds: a tool it installed itself, the
-/// user's login shell, a Provider shim resolved by `provider_command`, a file inside an
-/// unpacked update. The caller owns the decision that the path is the right one; for an OS
+/// user's login shell, a language server it unpacked. The caller owns the decision that the path is the right one; for an OS
 /// helper by name use [`os_command`], and for Git and gh the hardened builders (ADR-0016).
 #[allow(
     clippy::disallowed_methods,
@@ -31,7 +30,7 @@ pub fn resolved_command(executable: impl AsRef<OsStr>) -> std::process::Command 
 
 /// Where operating-system helpers (`open`, `sh`, `cmd`, ...) live. Oxide widens its own `PATH`
 /// at startup, so a directory earlier in the login shell's `PATH` could shadow these; they are
-/// therefore called by absolute path. Tools the user installs (`git`, `gh`, Provider CLIs,
+/// therefore called by absolute path. Tools the user installs (`git`, `gh`,
 /// `brew`, `winget`, `npm`) are not OS helpers and keep their `PATH` lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OsFamily {
@@ -88,6 +87,43 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
         }
         .into(),
     }
+}
+
+/// Finds a CLI in `path`. Explicit paths stay explicit; Windows command names are expanded
+/// in PATHEXT order (with the standard executable extensions when PATHEXT is absent).
+pub fn find_in(path: &OsStr, program: &OsStr, pathext: Option<&OsStr>) -> Option<PathBuf> {
+    let program = Path::new(program);
+    let candidates: Vec<PathBuf> = if !cfg!(windows) || program.extension().is_some() {
+        vec![program.to_path_buf()]
+    } else {
+        pathext
+            .unwrap_or_else(|| OsStr::new(".COM;.EXE;.BAT;.CMD"))
+            .to_string_lossy()
+            .split(';')
+            .map(str::trim)
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| {
+                let mut name = program.as_os_str().to_os_string();
+                name.push(extension);
+                PathBuf::from(name)
+            })
+            .collect()
+    };
+
+    let dirs = if program.components().count() > 1 || program.is_absolute() {
+        vec![PathBuf::new()]
+    } else {
+        std::env::split_paths(path).collect()
+    };
+    dirs.iter().find_map(|dir| {
+        candidates.iter().find_map(|candidate| {
+            let candidate = dir.join(candidate);
+            candidate
+                .is_file()
+                .then(|| std::path::absolute(candidate).ok())
+                .flatten()
+        })
+    })
 }
 
 #[cfg(test)]

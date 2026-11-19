@@ -4,7 +4,7 @@
 
 use crate::git_command::GitCommand;
 use crate::{Error, Result};
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::sync::LockExt as _;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::File;

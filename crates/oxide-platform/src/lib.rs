@@ -11,6 +11,8 @@
 //! Code outside this crate that needs a different value per OS uses the expression form
 //! (`if cfg!(windows) { .. } else { .. }`), which every OS compiles.
 
+pub mod bounded_lines;
+pub mod child;
 pub mod command;
 pub mod diag;
 mod explorer;

@@ -20,9 +20,9 @@ mod system;
 mod terminal;
 mod terminal_completion;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
-pub use oxide_provider::diag;
+pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
-pub use oxide_provider::sync::{LockExt, RwLockExt};
+pub use oxide_platform::sync::{LockExt, RwLockExt};
 pub use terminal_completion::{TerminalCompletion, TerminalMatch};
 
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -41,7 +41,7 @@ pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageT
 pub use system::System;
 pub use terminal::TerminalSummary;
 
-use oxide_provider::process::ProcessRegistry;
+use oxide_platform::registry::ProcessRegistry;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -107,7 +107,7 @@ pub struct Core {
 impl Core {
     /// Opens Oxide's home directory (creating it if needed) and its database.
     pub fn open(home: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_with_migrations(home, MIGRATIONS)
+        Self::open_home(home, None)
     }
 
     /// Like [`Core::open`], with project discovery and `~` paths relative to `user_home`
@@ -122,13 +122,23 @@ impl Core {
     }
 
     pub fn open_with_migrations(home: impl Into<PathBuf>, migrations: &[&str]) -> Result<Self> {
+        Self::open_home(home, Some(migrations))
+    }
+
+    /// `migrations` is `None` for the app's own schema, which also adopts databases written by
+    /// older versions.
+    fn open_home(home: impl Into<PathBuf>, migrations: Option<&[&str]>) -> Result<Self> {
         let home = home.into();
         private::prepare_home(&home).map_err(|source| Error::Io {
             path: home.clone(),
             source,
         })?;
         git_command::set_home(&home);
-        let db = db::open(&home.join(DB_FILE), migrations)?;
+        let db_path = home.join(DB_FILE);
+        let db = match migrations {
+            Some(migrations) => db::open(&db_path, migrations)?,
+            None => db::open_app(&db_path)?,
+        };
         // A crashed run leaves its shell groups behind.
         let processes = Arc::new(ProcessRegistry::open(home.join(PROCESSES_FILE)));
         processes.reap_stale();
@@ -201,8 +211,8 @@ impl Core {
         Ok(())
     }
 
-    /// The Project last remembered, if it still exists. The stored value may carry a Thread id
-    /// from an older Oxide; it is ignored.
+    /// The Project last remembered, if it still exists. The stored value may be a pair written
+    /// by an older Oxide; only its Project is read.
     pub fn last_selection(&self) -> Result<Option<u32>> {
         let db = self.db.lock_recover();
         let stored: Option<String> = db

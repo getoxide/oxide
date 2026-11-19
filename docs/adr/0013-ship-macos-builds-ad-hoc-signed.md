@@ -21,7 +21,7 @@ The enrollment identity — individual versus organization, which decides whose 
 
 - **The fee buys polish, not capability.** Notarization removes the first-launch dialog, but the two channels it unlocks are themselves gated on 225 stars, 30 days of repository age and 14 days after launch. Launch-day channels work with the documented steps.
 - **A recurring cost and a secret for a two-person, MIT, pre-release project.** An annual fee, an Apple account with two-factor authentication, a certificate to renew and rotate, and a key store to protect — with no revenue and no release published yet.
-- **The trust path is already elsewhere.** Users verify a download with `SHA256SUMS.txt` and the build-provenance attestation, and installed apps accept only packages signed by the updater key. Notarization would not replace any of that.
+- **The trust path is already elsewhere.** Users verify a download with `SHA256SUMS.txt` and the build-provenance attestation. Notarization would not replace either.
 - **The fallback is tested and documented.** Ad-hoc signing, the release-note notice and the README steps exist today; this decision keeps the documentation and the released artifacts consistent instead of promising a future state.
 
 ## Consequences
@@ -29,4 +29,4 @@ The enrollment identity — individual versus organization, which decides whose 
 - Every macOS user meets Gatekeeper once. The README's [Opening an unsigned build](../../README.md#opening-an-unsigned-build) section and the website's `#macos-cant-be-opened` FAQ are the support path, and they stay accurate.
 - The official Homebrew cask and Product Hunt remain unavailable for as long as this holds; the website plan's notarization gate never opens, and its "not notarized yet" copy needs a follow-up there.
 - The Apple signing step in `build.yml` runs no notarization on any release, so that path is exercised only when the decision is reversed.
-- Revisit when at least one of these is true: download volume makes first-launch friction a measurable loss; the official cask or Product Hunt becomes a priority worth 99 USD/year; an organization with a legal entity and a budget takes over publishing; or Apple makes notarization a prerequisite for the updater or for distribution.
+- Revisit when at least one of these is true: download volume makes first-launch friction a measurable loss; the official cask or Product Hunt becomes a priority worth 99 USD/year; an organization with a legal entity and a budget takes over publishing; or Apple makes notarization a prerequisite for distribution.

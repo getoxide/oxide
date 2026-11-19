@@ -147,8 +147,8 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     core.close_terminal(terminal.id).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if !oxide_provider::process::group_alive(pid as i32)
-            && !oxide_provider::process::process_alive(child_pid)
+        if !oxide_platform::process::group_alive(pid as i32)
+            && !oxide_platform::process::process_alive(child_pid)
         {
             break;
         }
@@ -323,40 +323,4 @@ mod discovery {
 
         assert_eq!(names(&f.core.rescan_projects().unwrap()), ["x"]);
     }
-}
-
-#[test]
-fn migration_28_drops_verification_commands_from_projects() {
-    let tmp = tempfile::tempdir().unwrap();
-    let drop_at = oxide_core::MIGRATIONS
-        .iter()
-        .position(|m| m.contains("DROP COLUMN verification_commands"))
-        .expect("Migration 28 must drop verification_commands");
-    drop(Core::open_with_migrations(tmp.path(), &oxide_core::MIGRATIONS[..drop_at]).unwrap());
-    let db_path = tmp.path().join("oxide.db");
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute(
-            "INSERT INTO projects (id, name, path, verification_commands) VALUES (1, 'p', '/p', '[\"cargo test\"]')",
-            [],
-        )
-        .unwrap();
-    }
-
-    let core = Core::open(tmp.path()).unwrap();
-    let projects = core.list_projects().unwrap();
-    assert_eq!(projects.len(), 1);
-    assert_eq!(projects[0].name, "p");
-
-    let conn = Connection::open(&db_path).unwrap();
-    let mut stmt = conn.prepare("PRAGMA table_info(projects)").unwrap();
-    let columns: Vec<String> = stmt
-        .query_map([], |r| r.get(1))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    assert!(
-        !columns.iter().any(|c| c == "verification_commands"),
-        "projects still has verification_commands: {columns:?}"
-    );
 }

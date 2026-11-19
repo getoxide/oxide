@@ -20,6 +20,10 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 - Branching model: trunk-based, `main` is the only long-lived branch. Never commit or push directly to it. Branch off `main` and open the Pull Request with `--base main`. Full rules in `docs/agents/git-workflow.md`.
 - Put `Closes #<id>` in the PR body: `main` is the repo's default branch, so GitHub links the PR to the issue and closes it on merge. No manual `gh issue close` needed.
 
+### Layout
+
+Rust crates: `crates/oxide-platform` (OS-specific code and the process, lock and diagnostics primitives), `crates/oxide-core` (Projects, storage, terminals, files, Git, GitHub, language servers; no Tauri) and `crates/oxide-app` (the Tauri shell). The frontend is `web/src`, grouped by area: `projects/`, `terminal/`, `editor/`, `issues/`, `pull-requests/`, `settings/`, `shared/` and `styles/`; `App.tsx`, `main.tsx` and the generated `bindings.ts` sit at its root. `assets/` holds only the app icon masters and the palette. Oxide has Projects and plain Terminals only (ADR-0018): do not reintroduce the vocabulary of the removed features (Thread, Provider, agent sessions, approvals, worktrees, Project Services).
+
 ### OS-specific code
 
 Code that needs an API existing on one OS only (`#[cfg(windows)]`, `unix`, `target_os`, `std::os::*`, `libc`, `windows-sys`, `objc2`) goes in `crates/oxide-platform`: add one function to each of `src/macos/`, `src/linux/` and `src/windows/` (or `src/posix/` for the two Unix ones) with the same signature, and call it. A value that only differs per OS (a shell name, a flag, a suffix) uses `if cfg!(windows) { .. } else { .. }` anywhere. `node tools/checks/platform-layer.mjs` (part of `node tools/check.mjs fast`) enforces it against a baseline that only shrinks. After changing `crates/oxide-platform/src/windows/`, run `node tools/check.mjs windows` on macOS or Linux. Details in [ADR-0019](docs/adr/0019-platform-layer.md).

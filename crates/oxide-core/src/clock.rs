@@ -1,4 +1,4 @@
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::sync::LockExt as _;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
