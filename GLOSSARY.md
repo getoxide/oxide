@@ -47,8 +47,12 @@ The icon on a Project row in the Terminals view, next to + and ×, labelled "Ope
 _Avoid_: Files tab, Files switch
 
 **Code workspace**:
-The Project's editor, shown in the centre beside the Terminal while a file is open: Terminal on the left, Code workspace on the right, each half with a maximize/restore button. It owns the file tabs, Monaco and the language servers; the Files view opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Maximizing or a narrow centre hides the other half without closing it. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
+The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored; maximizing or a narrow centre hides the other half without closing it. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
 _Avoid_: Editor pane, code tab, work mode
+
+**Terminal half** and **Code half**:
+The two halves of the centre, side by side, with a draggable divider. The Terminal half holds the selected Terminal; the Code half exists only while the Project has a file open, so there is never an empty half. Each Project remembers its divider and its maximized half.
+_Avoid_: Pane, panel, split view
 
 ## Settings
 

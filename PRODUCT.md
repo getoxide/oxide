@@ -23,9 +23,9 @@ Core, never to a webview filesystem or shell permission (ADR-0016).
 
 The sidebar lists the open Projects and, under each, its Terminals; a New terminal
 control on a Project opens a fresh shell in its folder. The centre of the window is
-one large Terminal: the one selected in the sidebar. The right dock holds Files,
-Issues and Pull request. Opening a file shows the Project's Code workspace in the
-centre, one click away from its Terminals. Switching Terminals, tools or Projects
+one large Terminal: the one selected in the sidebar. The right dock holds Issues
+and Pull request. A Project's Files button in the sidebar opens its Files view;
+opening a file shows the Project's Code workspace in a half beside the Terminal. Switching Terminals, tools or Projects
 keeps scrollback, running processes, open files and unsaved changes. Settings opens
 on an empty page, and Oxide has no custom keyboard shortcuts.
 

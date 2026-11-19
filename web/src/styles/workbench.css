@@ -1,9 +1,24 @@
 .centre-workbench {
   display: flex;
   flex: 1;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+}
+.centre-half {
+  position: relative;
+  display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   min-height: 0;
 }
+.centre-half[hidden] { display: none; }
+.half-toggle { position: absolute; top: 6px; right: 8px; z-index: 11; }
+/* With both halves showing, the Terminal keeps the divider's width and the Code half takes the rest. */
+.centre-terminal-half:has(+ .centre-code-half:not([hidden])):not([hidden]) { flex: 0 0 var(--terminal-half); }
+.centre-code-half > .resize-handle { z-index: 10; }
+.centre-code-half:has(> .resize-handle) { border-left: 1px solid var(--line); }
 .centre-workbench[hidden],
 .code-workbench[hidden],
 .terminal-workbench[hidden],
@@ -903,7 +918,6 @@
 }
 
 /* Back from the Code workspace to the Project's terminals. */
-.centre-back { align-self: flex-start; margin: 8px 12px; }
 .settings-view { padding: 0 20px; }
 .settings-header { display: flex; align-items: center; justify-content: space-between; }
 .settings-header h1 { margin: 16px 0; font-size: 18px; }

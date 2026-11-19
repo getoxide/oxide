@@ -16,7 +16,7 @@ export function FilesPanel(props: FilesPanelProps) {
   return <FilesExplorer key={props.projectId} {...props} />;
 }
 
-/** The Files Surface: a full-width navigator. A click selects; a double click opens Code. */
+/** The Files view: a full-width navigator. A click selects; a double click opens Code. */
 function FilesExplorer({ projectId, revision, onOpenFile }: FilesPanelProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [collapseToken, setCollapseToken] = useState(0);

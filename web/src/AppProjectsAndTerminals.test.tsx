@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./shared/queryCache";
 import { App } from "./App";
 
+const failingOpens = vi.hoisted(() => ({ current: false }));
 vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./terminal/TerminalWorkbench", () => ({
   TerminalWorkbench: ({ projectId, contextKey, visible }: { projectId: number; contextKey: string; visible: boolean }) => (
@@ -14,9 +15,36 @@ vi.mock("./terminal/TerminalWorkbench", () => ({
 }));
 vi.mock("./pull-requests/PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
 vi.mock("./issues/IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
-vi.mock("./editor/FilesPanel", () => ({ FilesPanel: () => <div className="files-panel">Files content</div> }));
+vi.mock("./editor/FilesPanel", () => ({
+  FilesPanel: ({ projectId, onOpenFile }: { projectId: number; onOpenFile: (path: string) => void }) => (
+    <div className="files-panel" data-project={projectId} onDoubleClick={() => onOpenFile("src/main.ts")}>Files content</div>
+  ),
+}));
+vi.mock("./editor/CodeWorkbench", () => ({
+  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange, onOpenFailed }: {
+    projectId: number; visible: boolean; openRequest: { path: string } | null; onOpenFilesChange?: (open: boolean) => void;
+    onOpenFailed?: () => void;
+  }) => {
+    useEffect(() => {
+      // A file that fails to load never reports an open file; the workbench says so instead.
+      if (openRequest && failingOpens.current) onOpenFailed?.();
+      else onOpenFilesChange?.(openRequest !== null);
+    }, [openRequest, onOpenFilesChange, onOpenFailed]);
+    return (
+      <div className="code-stub" data-project={projectId} data-visible={String(visible)}>
+        {openRequest?.path}
+        <button className="code-stub-close" onClick={() => onOpenFilesChange?.(false)}>close last</button>
+      </div>
+    );
+  },
+}));
 
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
+const observers: { element: Element; callback: ResizeObserverCallback }[] = [];
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class {
+  constructor(private callback: ResizeObserverCallback) {}
+  observe(element: Element) { observers.push({ element, callback: this.callback }); }
+  disconnect() {}
+} });
 
 let host: HTMLDivElement;
 let root: Root;
@@ -29,6 +57,8 @@ const projects = [
 beforeEach(async () => {
   Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
   clearQueryCache();
+  localStorage.clear();
+  failingOpens.current = false;
   calls = [];
   host = document.createElement("div");
   document.body.append(host);
@@ -132,13 +162,225 @@ it("closing a Project ends its terminals and asks Core to keep it known but clos
   expect(all(".terminal-stub").map((node) => node.dataset.project)).toEqual(["2"]);
 });
 
-it("gives the right dock exactly Files, Issues and Pull request", async () => {
+it("gives the right dock only Issues and Pull request, Issues first, without naming Files", async () => {
   await click(label("Toggle tools panel"));
-  expect(all('[role="tab"]').map((tab) => tab.getAttribute("aria-label"))).toEqual(["Files", "Issues", "Pull request"]);
+  expect(all('[role="tab"]').map((tab) => tab.getAttribute("aria-label"))).toEqual(["Issues", "Pull request"]);
+  expect(q('[role="tab"][aria-selected="true"]')?.getAttribute("aria-label")).toBe("Issues");
+  expect(host.textContent).toContain("Issues content");
+  expect(q(".files-panel")).toBeNull();
   await click(label("Pull request"));
   expect(host.textContent).toContain("PR content");
   await click(label("Issues"));
   expect(host.textContent).toContain("Issues content");
+});
+
+it("describes the empty dock without naming Files", async () => {
+  await act(async () => root.unmount());
+  mockIPC((command) => (command === "list_projects" || command === "rescan_projects" ? [] : null));
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await click(label("Toggle tools panel"));
+  expect(host.textContent).toContain("The right dock holds Issues and Pull request");
+  expect(host.textContent).not.toContain("holds Files");
+});
+
+it("opens the Files view of a Project from its row and goes back to the Terminals", async () => {
+  expect(all(".files-panel")).toHaveLength(0);
+  await click(all('[aria-label="Open Files"]')[1]);
+  expect(all(".files-panel").map((node) => node.dataset.project)).toEqual(["2"]);
+  expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(true);
+  const back = label("Back to Terminals")!;
+  expect(back.textContent).toContain("Project Beta");
+  await click(back);
+  expect(all(".files-panel")).toHaveLength(0);
+  expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(false);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+});
+
+it("disables the Files button of a Project whose folder is missing", async () => {
+  await act(async () => root.unmount());
+  projects[1].missing = true;
+  try {
+    root = createRoot(host);
+    await act(async () => root.render(<App />));
+    const buttons = all('[aria-label="Open Files"]') as HTMLButtonElement[];
+    expect(buttons.map((button) => button.disabled)).toEqual([false, true]);
+  } finally {
+    projects[1].missing = false;
+  }
+});
+
+it("opens a file from the Files view in the Code workspace on double click", async () => {
+  await click(all('[aria-label="Open Files"]')[0]);
+  await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  expect(q<HTMLElement>(".code-stub")?.dataset.visible).toBe("true");
+  expect(q(".code-stub")?.textContent).toContain("src/main.ts");
+});
+
+const openFile = async (index = 0) => {
+  await click(all('[aria-label="Open Files"]')[index]);
+  await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+};
+const codeVisible = (index = 0) => all(".code-stub")[index]?.dataset.visible === "true";
+
+it("splits the centre into Terminal and Code when a file opens, and closes the Code half with the last file", async () => {
+  await click(label("New terminal in Project Alpha"));
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q(".centre-terminal-half")?.hasAttribute("hidden")).toBe(false);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).not.toBeNull();
+  await click(q(".code-stub-close"));
+  expect(codeVisible()).toBe(false);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).toBeNull();
+  expect(visibleTerminals()).toHaveLength(1);
+});
+
+it("keeps the open file when switching Terminals and removes Back to terminals", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  expect(host.textContent).not.toContain("Back to terminals");
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["1:1"]);
+});
+
+it("shows the Code workspace full width without Terminals, then splits when a Terminal opens", async () => {
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(host.textContent).not.toContain("No terminal open");
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).toBeNull();
+  await click(label("New terminal in Project Alpha"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).not.toBeNull();
+});
+
+it("keeps each Project's Code workspace mounted when moving between Projects", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  const stub = all(".code-stub")[0];
+  await click(all(".project")[1]);
+  expect(all(".code-stub")[0]).toBe(stub);
+  expect(codeVisible()).toBe(false);
+  await click(all(".project")[0]);
+  expect(codeVisible()).toBe(true);
+});
+
+it("resets the divider to 50/50 on double click", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const divider = q<HTMLElement>('[role="separator"][aria-label="Resize Terminal and Code"]')!;
+  const before = divider.getAttribute("aria-valuenow");
+  await act(async () => { divider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })); });
+  expect(divider.getAttribute("aria-valuenow")).not.toBe(before);
+  await act(async () => { divider.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  expect(divider.getAttribute("aria-valuenow")).toBe(before);
+  expect(Number(divider.getAttribute("aria-valuemin"))).toBe(360);
+});
+
+it("maximizes a half without unmounting the other, and restores the split", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const terminal = q(".terminal-stub");
+  const code = q(".code-stub");
+  await click(label("Maximize Code"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  expect(q(".terminal-stub")).toBe(terminal);
+  expect(label("Maximize Code")).toBeNull();
+  await click(label("Restore Terminal and Code"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(visibleTerminals()).toHaveLength(1);
+  await click(label("Maximize Terminal"));
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(q(".code-stub")).toBe(code);
+  expect(codeVisible()).toBe(false);
+});
+
+it("offers no maximize button while only one half exists", async () => {
+  await click(label("New terminal in Project Alpha"));
+  expect(label("Maximize Terminal")).toBeNull();
+  expect(label("Maximize Code")).toBeNull();
+});
+
+const dividerNow = () => q('[role="separator"][aria-label="Resize Terminal and Code"]')?.getAttribute("aria-valuenow");
+const nudgeDivider = () => act(async () => {
+  q('[role="separator"][aria-label="Resize Terminal and Code"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+});
+
+it("gives each Project its own divider and maximized half, restored when it is selected again", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  const alphaDefault = dividerNow();
+  await nudgeDivider();
+  const alphaMoved = dividerNow();
+  expect(alphaMoved).not.toBe(alphaDefault);
+  await click(label("Maximize Code"));
+  await click(label("New terminal in Project Beta"));
+  expect(label("Maximize Code")).toBeNull();
+  expect(visibleTerminals().map((node) => node.dataset.project)).toEqual(["2"]);
+  await click(all(".project")[0]);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  await click(label("Restore Terminal and Code"));
+  expect(dividerNow()).toBe(alphaMoved);
+});
+
+it("keeps the divider and the maximized half across a reload, but not the open files", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  await nudgeDivider();
+  const moved = dividerNow();
+  await click(label("Maximize Terminal"));
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  await click(label("New terminal in Project Alpha"));
+  expect(all(".code-stub")).toHaveLength(0);
+  await openFile(0);
+  expect(dividerNow()).toBe(moved);
+});
+
+it("restores the split when the hidden half is chosen explicitly", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Maximize Code"));
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(codeVisible()).toBe(true);
+  await click(label("Maximize Terminal"));
+  expect(codeVisible()).toBe(false);
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+});
+
+it("leaves the Files view when another route selects a Project", async () => {
+  await click(all('[aria-label="Open Files"]')[0]);
+  expect(all(".files-panel")).toHaveLength(1);
+  await click(label("New terminal in Project Beta"));
+  expect(all(".files-panel")).toHaveLength(0);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+});
+
+it("selects a Project by its name and collapses it only by its chevron", async () => {
+  await click(all(".project")[1]);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+  await click(all(".project")[1]);
+  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
+  await click(label("Collapse Project Beta"));
+  expect(label("Expand Project Beta")?.getAttribute("aria-expanded")).toBe("false");
+  await click(label("Expand Project Beta"));
+  expect(label("Collapse Project Beta")).not.toBeNull();
 });
 
 it("opens Settings on an empty page", async () => {
@@ -170,4 +412,121 @@ it("never calls the commands of removed features", () => {
   for (const gone of ["list_threads", "create_thread", "get_settings", "detect_provider", "subscribe_board", "subscribe_usage_limits"]) {
     expect(names).not.toContain(gone);
   }
+});
+
+const setCentreWidth = (width: number) => act(async () => {
+  for (const { element, callback } of observers) {
+    if (element.classList.contains("centre-workbench") && element.isConnected) {
+      callback([{ contentRect: { width, height: 600 } } as ResizeObserverEntry], {} as ResizeObserver);
+    }
+  }
+});
+
+it("shows only the last chosen half below 720 px and restores the split above it", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const terminal = q(".terminal-stub");
+  const code = q(".code-stub");
+  await setCentreWidth(719);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  expect(q(".terminal-stub")).toBe(terminal);
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q(".code-stub")).toBe(code);
+  await openFile();
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  await setCentreWidth(720);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(false);
+});
+
+it("restores the split at the remembered divider when widened, unless a half is maximized", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await nudgeDivider();
+  const moved = dividerNow();
+  await setCentreWidth(600);
+  expect(dividerNow()).toBeUndefined();
+  await setCentreWidth(1000);
+  expect(dividerNow()).not.toBeUndefined();
+  await click(label("Maximize Code"));
+  await setCentreWidth(600);
+  await setCentreWidth(1000);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  await click(label("Restore Terminal and Code"));
+  expect(Number(dividerNow())).toBeGreaterThan(0);
+  expect(moved).toBeDefined();
+});
+
+// A real click focuses the button first; `element.click()` does not.
+const press = (element: Element | null) => act(async () => { (element as HTMLElement).focus(); (element as HTMLElement).click(); });
+const focused = () => document.activeElement;
+
+it("focuses the back control when the Files view opens, and the Project's Files button when going back", async () => {
+  await press(all('[aria-label="Open Files"]')[1]);
+  expect(focused()).toBe(label("Back to Terminals"));
+  await press(label("Back to Terminals"));
+  expect(focused()).toBe(all('[aria-label="Open Files"]')[1]);
+});
+
+it("keeps focus on the pressed button when a half is maximized or restored", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await press(label("Maximize Code"));
+  expect(focused()).toBe(label("Restore Terminal and Code"));
+  await press(label("Restore Terminal and Code"));
+  expect(focused()).toBe(label("Maximize Code"));
+  await press(label("Maximize Terminal"));
+  expect(focused()).toBe(label("Restore Terminal and Code"));
+});
+
+it("orders the tab stops sidebar, Terminal half, Code half, dock", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Back to Terminals"));
+  const follows = (a: Element | null, b: Element | null) => Boolean(a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(follows(q('nav[aria-label="Projects"]'), q(".centre-terminal-half"))).toBe(true);
+  expect(follows(q(".centre-terminal-half"), q(".centre-code-half"))).toBe(true);
+  expect(follows(q(".centre-code-half"), q('aside[aria-label="Tools panel"]'))).toBe(true);
+  await click(all('[aria-label="Open Files"]')[0]);
+  expect(follows(label("Back to Terminals"), q(".files-panel"))).toBe(true);
+  expect(follows(q(".files-panel"), q(".centre-terminal-half"))).toBe(true);
+});
+
+it("moves focus into the Code half when a file opens, with or without Terminals", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  expect(q(".centre-code-half")!.contains(focused())).toBe(true);
+  await click(label("Close Project Alpha"));
+  await openFile(0);
+  expect(q(".centre-code-half")!.contains(focused())).toBe(true);
+});
+
+it("leaves no empty Code half when the requested file fails to open", async () => {
+  await click(label("New terminal in Project Alpha"));
+  failingOpens.current = true;
+  await openFile();
+  expect(codeVisible()).toBe(false);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+});
+
+it("forgets a closed Project's split layout", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Maximize Terminal"));
+  expect(Object.keys(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!))).toEqual(["1"]);
+  await click(label("Back to Terminals"));
+  await click(label("Close Project Alpha"));
+  expect(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!)).toEqual({});
+});
+
+it("expands a collapsed Project when its name is clicked", async () => {
+  await click(label("Collapse Project Beta"));
+  expect(label("Expand Project Beta")).not.toBeNull();
+  await click(all(".project")[1]);
+  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
 });
