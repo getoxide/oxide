@@ -31,11 +31,23 @@ _Avoid_: Turn, Thread, agent message
 ## Layout
 
 **Surface**:
-One of the three tools in the right dock: Files, Issues or Pull request. Files is a navigator, not an editor: it browses the Project's folder and opens files in the **Code workspace**. Issues and Pull request are plain GitHub tools: they list, show and create issues, and list, show, create, review and merge pull requests, through `gh`, with no action that sends anything to an agent.
+One of the two tools in the right dock: Issues or Pull request. They are plain GitHub tools: they list, show and create issues, and list, show, create, review and merge pull requests, through `gh`, with no action that sends anything to an agent. Files is not a Surface: it is the **Files view** of the sidebar.
 _Avoid_: Tab, pane, widget
 
+**Terminals view**:
+The sidebar's default state: the Open Projects with their Terminals. A Project name selects it; only its chevron collapses its Terminals.
+_Avoid_: Terminals tab, Projects view
+
+**Files view**:
+The sidebar's other state: the file tree of one Project, with a Search files box and Collapse all folders, under the header "← Project name · Terminals" that returns to the Terminals view (Back to Terminals). It shows only the Project whose **Files button** opened it; a click selects a file and a double click (or Enter/Space) opens it in the **Code workspace**.
+_Avoid_: Files panel, Files Surface, explorer, navigator
+
+**Files button**:
+The icon on a Project row in the Terminals view, next to + and ×, labelled "Open Files": it selects the Project and opens its Files view. Shown on hover and focus, and always on the selected Project.
+_Avoid_: Files tab, Files switch
+
 **Code workspace**:
-The Project's editor, shown in the centre in place of its Terminals while a file is open, with a Back to terminals button. It owns the file tabs, Monaco and the language servers; the Files Surface opens files into it. Each Project keeps its own Code workspace, so moving between Projects keeps the open buffers and unsaved changes. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
+The Project's editor, shown in the centre beside the Terminal while a file is open: Terminal on the left, Code workspace on the right, each half with a maximize/restore button. It owns the file tabs, Monaco and the language servers; the Files view opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Maximizing or a narrow centre hides the other half without closing it. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
 _Avoid_: Editor pane, code tab, work mode
 
 ## Settings

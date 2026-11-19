@@ -1,5 +1,7 @@
 # Oxide is Projects and plain terminals
 
+> Amended by [ADR-0020](0020-files-in-the-sidebar-and-a-split-centre.md): the right dock holds only Issues and Pull request (Files is a sidebar view), and the Code workspace opens beside the Terminal instead of replacing it.
+
 Oxide is stripped down to its base: Projects and plain terminals. The sidebar lists the Open Projects and, under each, its Terminals; the centre of the window is one large Terminal; the right dock keeps Files, Issues and Pull request. Oxide no longer knows about agents. If the user wants one, they type `claude`, `codex` or anything else in a Terminal like any other command. This reverses most of ADR-0017 and supersedes or amends ADR-0004, ADR-0005, ADR-0009, ADR-0010, ADR-0011 and ADR-0012.
 
 ## Background
