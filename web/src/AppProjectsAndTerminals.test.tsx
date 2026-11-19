@@ -285,6 +285,45 @@ it("offers no maximize button while only one half exists", async () => {
   expect(label("Maximize Code")).toBeNull();
 });
 
+const dividerNow = () => q('[role="separator"][aria-label="Resize Terminal and Code"]')?.getAttribute("aria-valuenow");
+const nudgeDivider = () => act(async () => {
+  q('[role="separator"][aria-label="Resize Terminal and Code"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+});
+
+it("gives each Project its own divider and maximized half, restored when it is selected again", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  const alphaDefault = dividerNow();
+  await nudgeDivider();
+  const alphaMoved = dividerNow();
+  expect(alphaMoved).not.toBe(alphaDefault);
+  await click(label("Maximize Code"));
+  await click(label("New terminal in Project Beta"));
+  expect(label("Maximize Code")).toBeNull();
+  expect(visibleTerminals().map((node) => node.dataset.project)).toEqual(["2"]);
+  await click(all(".project")[0]);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(codeVisible()).toBe(true);
+  await click(label("Restore Terminal and Code"));
+  expect(dividerNow()).toBe(alphaMoved);
+});
+
+it("keeps the divider and the maximized half across a reload, but not the open files", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  await nudgeDivider();
+  const moved = dividerNow();
+  await click(label("Maximize Terminal"));
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  await click(label("New terminal in Project Alpha"));
+  expect(all(".code-stub")).toHaveLength(0);
+  await openFile(0);
+  expect(dividerNow()).toBe(moved);
+});
+
 it("restores the split when the hidden half is chosen explicitly", async () => {
   await click(label("New terminal in Project Alpha"));
   await click(label("New terminal in Project Alpha"));
