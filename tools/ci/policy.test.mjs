@@ -275,7 +275,7 @@ describe("releaseNotes", () => {
       "- **core:** rename the Project API ([#233](https://github.com/cavallinilorenzo/oxide/pull/233))",
       "- **settings:** new storage ([#234](https://github.com/cavallinilorenzo/oxide/pull/234))",
     ]);
-    assert.deepEqual(section(notes, "Features"), ["- **chat:** render Markdown in agent messages ([#215](https://github.com/cavallinilorenzo/oxide/pull/215))"]);
+    assert.deepEqual(section(notes, "Features"), ["- **terminal:** render Markdown in command blocks ([#215](https://github.com/cavallinilorenzo/oxide/pull/215))"]);
     assert.deepEqual(section(notes, "Fixes"), ["- **workbench:** terminal input ([#218](https://github.com/cavallinilorenzo/oxide/pull/218))"]);
     assert.deepEqual(section(notes, "Documentation"), ["- explain dictation ([#230](https://github.com/cavallinilorenzo/oxide/pull/230))"]);
     assert.equal(section(notes, "Dependencies").length, 2);
