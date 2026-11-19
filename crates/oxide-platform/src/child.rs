@@ -1,15 +1,8 @@
-//! Process hygiene shared by every child Oxide spawns (Provider CLIs, PTY shells): each runs in
-//! its own process group (a Job Object on Windows), shutdown escalates SIGTERM -> SIGKILL, and
-//! live groups are recorded on disk so a crashed Oxide's orphans can be killed on the next
-//! launch. The OS-specific part lives in `oxide-platform` (ADR-0019) and is re-exported here, so
-//! this is still the one place Providers and Core look.
+//! Child-process helpers that are the same on every OS, built on [`crate::process`]: each child
+//! runs in its own process group (a Job Object on Windows) so shutdown reaches its descendants.
 
 use crate::diag;
-pub use oxide_platform::process::{
-    attach_running_to_job, attach_to_job, group_alive, hide_console, interrupt_group, kill_group,
-    process_alive, release_job, spawn_in_own_group, terminate_group,
-};
-pub use oxide_platform::registry::{ProcessRegistry, SHUTDOWN_GRACE};
+use crate::process::{attach_to_job, release_job, spawn_in_own_group};
 use std::process::{Child, Command, Output, Stdio};
 
 /// Attach a suspended std child to its kill-on-close job before resuming it.

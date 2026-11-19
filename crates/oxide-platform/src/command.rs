@@ -2,7 +2,7 @@
 //! their own hardened builders in `oxide-core`.
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A `Command` for the OS helper `name` (`ps`, `open`, `sh`, `cmd`, ...), started by the absolute
 /// path [`os_tool`] gives it. This is how Oxide starts an OS helper: a bare name would be found
@@ -136,4 +136,41 @@ mod tests {
             PathBuf::from("xdg-open")
         );
     }
+}
+
+/// Finds a CLI in `path`. Explicit paths stay explicit; Windows command names are expanded
+/// in PATHEXT order (with the standard executable extensions when PATHEXT is absent).
+pub fn find_in(path: &OsStr, program: &OsStr, pathext: Option<&OsStr>) -> Option<PathBuf> {
+    let program = Path::new(program);
+    let candidates: Vec<PathBuf> = if !cfg!(windows) || program.extension().is_some() {
+        vec![program.to_path_buf()]
+    } else {
+        pathext
+            .unwrap_or_else(|| OsStr::new(".COM;.EXE;.BAT;.CMD"))
+            .to_string_lossy()
+            .split(';')
+            .map(str::trim)
+            .filter(|extension| !extension.is_empty())
+            .map(|extension| {
+                let mut name = program.as_os_str().to_os_string();
+                name.push(extension);
+                PathBuf::from(name)
+            })
+            .collect()
+    };
+
+    let dirs = if program.components().count() > 1 || program.is_absolute() {
+        vec![PathBuf::new()]
+    } else {
+        std::env::split_paths(path).collect()
+    };
+    dirs.iter().find_map(|dir| {
+        candidates.iter().find_map(|candidate| {
+            let candidate = dir.join(candidate);
+            candidate
+                .is_file()
+                .then(|| std::path::absolute(candidate).ok())
+                .flatten()
+        })
+    })
 }

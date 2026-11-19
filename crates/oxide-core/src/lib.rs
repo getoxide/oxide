@@ -20,9 +20,9 @@ mod system;
 mod terminal;
 mod terminal_completion;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
-pub use oxide_provider::diag;
+pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
-pub use oxide_provider::sync::{LockExt, RwLockExt};
+pub use oxide_platform::sync::{LockExt, RwLockExt};
 pub use terminal_completion::{TerminalCompletion, TerminalMatch};
 
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -41,7 +41,7 @@ pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageT
 pub use system::System;
 pub use terminal::TerminalSummary;
 
-use oxide_provider::process::ProcessRegistry;
+use oxide_platform::registry::ProcessRegistry;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};

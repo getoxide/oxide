@@ -1,7 +1,7 @@
 //! Finds Git repositories under the scan roots. A parallel walk with a depth
 //! limit that never descends into a repository once found.
 
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::sync::LockExt as _;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -1,6 +1,6 @@
 //! Explicit Git/GitHub CLI setup. No webview shell access.
 use crate::{Error, Result};
-use oxide_provider::command::find_in;
+use oxide_platform::command::find_in;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -33,7 +33,7 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
     )
 }
 
-pub use oxide_provider::command::{os_command, os_tool, resolved_command};
+pub use oxide_platform::command::{os_command, os_tool, resolved_command};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,7 +91,7 @@ pub fn install_developer_tool(tool: &str) -> Result<()> {
             "{manager} is unavailable. Open the official installation guide, then check again."
         ))
     })?;
-    let output = oxide_provider::process::hide_console(resolved_command(executable).args(args))
+    let output = oxide_platform::process::hide_console(resolved_command(executable).args(args))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| Error::Github(format!("Could not start installation: {e}")))?;

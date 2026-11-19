@@ -4,23 +4,12 @@
 
 use std::io::{self, BufRead, ErrorKind};
 
-/// Cap for a Provider protocol line (JSON events can carry whole file contents).
-pub const PROTOCOL_LINE_CAP: usize = 16 * 1024 * 1024;
-
 /// Cap for a log-like line: stderr, language server headers, service output.
 pub const LOG_LINE_CAP: usize = 64 * 1024;
 
 /// Whether `error` came from [`read_bounded_line`] hitting its cap.
 pub fn is_line_too_long(error: &io::Error) -> bool {
     error.kind() == ErrorKind::InvalidData && error.to_string().starts_with("line exceeds")
-}
-
-/// What a Provider adapter reports when [`read_bounded_line`] stopped its stream.
-pub fn protocol_overflow_message() -> String {
-    format!(
-        "The Provider sent a line over {} MiB, so its session was ended.",
-        PROTOCOL_LINE_CAP / (1024 * 1024)
-    )
 }
 
 /// Reads one line into `buf` (cleared first), without its trailing `\n` or `\r\n`. Returns

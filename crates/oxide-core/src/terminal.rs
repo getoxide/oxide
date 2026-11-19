@@ -1,10 +1,10 @@
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
+use oxide_platform::diag;
+use oxide_platform::diag::SenderExt as _;
+use oxide_platform::registry::{ProcessRegistry, SHUTDOWN_GRACE};
+use oxide_platform::sync::LockExt as _;
 use oxide_platform::terminal as os;
-use oxide_provider::diag;
-use oxide_provider::diag::SenderExt as _;
-use oxide_provider::process::{ProcessRegistry, SHUTDOWN_GRACE};
-use oxide_provider::sync::LockExt as _;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Serialize;
 use std::io::Read;
@@ -123,7 +123,7 @@ impl TerminalSession {
                 return Err(error);
             }
         };
-        if let Err(error) = oxide_provider::process::attach_running_to_job(pid) {
+        if let Err(error) = oxide_platform::process::attach_running_to_job(pid) {
             diag::best_effort("kill", child.kill());
             diag::best_effort("wait", child.wait());
             return Err(Error::Terminal(format!(

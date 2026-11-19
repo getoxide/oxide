@@ -5,8 +5,8 @@
 use crate::git;
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
-use oxide_provider::command::find_in;
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::command::find_in;
+use oxide_platform::sync::LockExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -367,7 +367,7 @@ impl Gh {
             )
             .ok_or(GhError::Missing)?,
         );
-        oxide_provider::process::hide_console(&mut command);
+        oxide_platform::process::hide_console(&mut command);
         // cmd.exe cannot safely carry newlines in a batch argument. gh accepts body text
         // on stdin, preserving descriptions and comments when it is installed as a shim.
         #[cfg(windows)]

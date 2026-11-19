@@ -14,7 +14,7 @@
 
 use crate::redact::redact_url_credentials;
 use crate::{Error, Result};
-use oxide_provider::sync::LockExt as _;
+use oxide_platform::sync::LockExt as _;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -136,7 +136,7 @@ impl GitCommand {
             reason = "GitCommand: the one hardened Command::new for Git (ADR-0016)"
         )]
         let mut command = Command::new(git);
-        oxide_provider::process::hide_console(&mut command)
+        oxide_platform::process::hide_console(&mut command)
             .args(self.full_args_with(&hooks, &filters))
             .current_dir(&self.cwd)
             .envs(self.env.iter().map(|(k, v)| (k, v)))
@@ -199,7 +199,7 @@ fn empty_hooks_dir() -> Result<PathBuf> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                oxide_provider::diag::best_effort(
+                oxide_platform::diag::best_effort(
                     "set_permissions",
                     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)),
                 );
@@ -230,7 +230,7 @@ fn filter_overrides(git: &Path, cwd: &Path) -> Vec<(String, String)> {
         reason = "GitCommand: the one hardened Command::new for Git (ADR-0016)"
     )]
     let mut command = Command::new(git);
-    let output = oxide_provider::process::hide_console(&mut command)
+    let output = oxide_platform::process::hide_console(&mut command)
         .args([
             "config",
             "--local",

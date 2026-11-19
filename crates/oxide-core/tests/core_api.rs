@@ -147,8 +147,8 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     core.close_terminal(terminal.id).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if !oxide_provider::process::group_alive(pid as i32)
-            && !oxide_provider::process::process_alive(child_pid)
+        if !oxide_platform::process::group_alive(pid as i32)
+            && !oxide_platform::process::process_alive(child_pid)
         {
             break;
         }
