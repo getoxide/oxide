@@ -586,7 +586,7 @@ function Sidebar({
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
                     </button>
-                    <button className={`row-action files-action${isSelected ? " selected" : ""}`} aria-label="Open Files" title="Open Files"
+                    <button className={`row-action files-action${isSelected ? " selected" : ""}`} aria-label="Open Files" title="Open Files" disabled={project.missing}
                       ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
                       onClick={() => onOpenFiles(project)}>
                       <FileIcon size={13} />

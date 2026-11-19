@@ -197,6 +197,19 @@ it("opens the Files view of a Project from its row and goes back to the Terminal
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
 });
 
+it("disables the Files button of a Project whose folder is missing", async () => {
+  await act(async () => root.unmount());
+  projects[1].missing = true;
+  try {
+    root = createRoot(host);
+    await act(async () => root.render(<App />));
+    const buttons = all('[aria-label="Open Files"]') as HTMLButtonElement[];
+    expect(buttons.map((button) => button.disabled)).toEqual([false, true]);
+  } finally {
+    projects[1].missing = false;
+  }
+});
+
 it("opens a file from the Files view in the Code workspace on double click", async () => {
   await click(all('[aria-label="Open Files"]')[0]);
   await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
