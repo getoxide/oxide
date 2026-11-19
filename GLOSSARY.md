@@ -31,12 +31,20 @@ _Avoid_: Turn, Thread, agent message
 ## Layout
 
 **Surface**:
-One of the three tools in the right dock: Files, Issues or Pull request. Files is a navigator, not an editor: it browses the Project's folder and opens files in the **Code workspace**. Issues and Pull request are plain GitHub tools: they list, show and create issues, and list, show, create, review and merge pull requests, through `gh`, with no action that sends anything to an agent.
+One of the two tools in the right dock: Issues or Pull request. They are plain GitHub tools: they list, show and create issues, and list, show, create, review and merge pull requests, through `gh`, with no action that sends anything to an agent.
 _Avoid_: Tab, pane, widget
 
 **Code workspace**:
-The Project's editor, shown in the centre in place of its Terminals while a file is open, with a Back to terminals button. It owns the file tabs, Monaco and the language servers; the Files Surface opens files into it. Each Project keeps its own Code workspace, so moving between Projects keeps the open buffers and unsaved changes. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
+The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects keeps the open buffers and unsaved changes. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
 _Avoid_: Editor pane, code tab, work mode
+
+**Terminal half** and **Code half**:
+The two halves of the centre, side by side, with a draggable divider. The Terminal half holds the selected Terminal; the Code half exists only while the Project has a file open, so there is never an empty half. Each Project remembers its divider and its maximized half.
+_Avoid_: Pane, panel, split view
+
+**Files view**:
+The sidebar view that replaces the Projects list for one Project: it browses the Project's folder and opens files in the Code half. A button at its top goes back to the Terminals. It is a navigator, not an editor.
+_Avoid_: Files Surface, file explorer
 
 ## Settings
 

@@ -2,11 +2,11 @@
 
 The centre shows the selected Terminal: a shell in the selected Project's folder
 (ADR-0018). Opening a file from the **Files** Surface shows that Project's Code
-workspace in the same central area, with a **Back to terminals** button; switching
-keeps open buffers and terminal processes alive. The Files Surface in the right
-dock is the navigator for the Project's folder, not an editor: a single click
-selects a file, and a double click (or Enter/Space on a focused row) opens it in
-the central Code workspace.
+workspace in a half beside the Terminal, with a divider and maximize/restore
+buttons; switching keeps open buffers and terminal processes alive. The Files view
+in the sidebar (opened from a Project's Files button) is the navigator for the
+Project's folder, not an editor: a single click selects a file, and a double click
+(or Enter/Space on a focused row) opens it in the Code half.
 
 ## Terminal
 
@@ -39,9 +39,9 @@ integration or Warp's AI service.
 
 ## Code
 
-The Code workspace opens files in tabs. The Files Surface navigates the checkout:
+The Code workspace opens files in tabs. The Files view navigates the checkout:
 a click selects a file and a double click (or Enter/Space on a focused row) opens
-it here, in the centre. Monaco provides syntax highlighting, automatic
+it here, in the Code half. Monaco provides syntax highlighting, automatic
 indentation, bracket pairing, folding, multiple cursors, undo/redo, Find/Replace
 and its command palette. Local LSP servers add completion, hover information,
 definitions, references, rename and formatting where the server supports them.
