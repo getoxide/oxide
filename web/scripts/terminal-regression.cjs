@@ -1,4 +1,4 @@
-// Opt-in browser regression with the actual Rust PTY. No Provider/model prompts.
+// Opt-in browser regression with the actual Rust PTY. No prompts.
 const { chromium } = require(process.env.OXIDE_PLAYWRIGHT_PATH || "playwright");
 const { spawn } = require("node:child_process");
 const readline = require("node:readline");

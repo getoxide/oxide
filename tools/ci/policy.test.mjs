@@ -265,7 +265,7 @@ describe("releaseNotes", () => {
     const notes = releaseNotes([
       { subject: "feat(terminal): render Markdown in command blocks (#215)" },
       { subject: "fix(workbench): terminal input (#218)" },
-      { subject: "docs: explain dictation (#230)" },
+      { subject: "docs: explain Project palette (#230)" },
       { subject: "chore(deps): bump serde from 1.0.1 to 1.0.2 (#231)" },
       { subject: "chore(deps-dev): bump vitest (#232)" },
       { subject: "refactor(core)!: rename the Project API (#233)" },
@@ -277,7 +277,7 @@ describe("releaseNotes", () => {
     ]);
     assert.deepEqual(section(notes, "Features"), ["- **terminal:** render Markdown in command blocks ([#215](https://github.com/cavallinilorenzo/oxide/pull/215))"]);
     assert.deepEqual(section(notes, "Fixes"), ["- **workbench:** terminal input ([#218](https://github.com/cavallinilorenzo/oxide/pull/218))"]);
-    assert.deepEqual(section(notes, "Documentation"), ["- explain dictation ([#230](https://github.com/cavallinilorenzo/oxide/pull/230))"]);
+    assert.deepEqual(section(notes, "Documentation"), ["- explain Project palette ([#230](https://github.com/cavallinilorenzo/oxide/pull/230))"]);
     assert.equal(section(notes, "Dependencies").length, 2);
     assert.ok(notes.indexOf("### Breaking changes") < notes.indexOf("### Features"));
     assert.match(notes, /compare\/v0\.1\.0\.\.\.v0\.2\.0/);
