@@ -575,6 +575,7 @@ function Sidebar({
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
                       aria-expanded={expanded}
+                      aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
                       onClick={() => {
                         if (isSelected) setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
@@ -584,7 +585,7 @@ function Sidebar({
                       <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
-                      {!expanded && state.tabs.length > 0 && <span className="project-count">{state.tabs.length}</span>}
+                      {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
                     {isSelected && (
                       <button className="row-action files-action" aria-label="Open Files" title="Open Files" disabled={project.missing}

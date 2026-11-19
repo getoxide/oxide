@@ -562,6 +562,20 @@ it("forgets a closed Project's split layout", async () => {
   expect(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!)).toEqual({});
 });
 
+it("opens a Project row's menu from the keyboard, under the focused button", async () => {
+  const button = all(".project")[1];
+  button.getBoundingClientRect = () => ({ left: 40, bottom: 90, top: 60, right: 200, width: 160, height: 30, x: 40, y: 60, toJSON: () => ({}) });
+  await act(async () => { button.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 })); });
+  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["New terminal", "Open Files", "Remove project"]);
+  expect(q<HTMLElement>(".context-menu")?.style.left).toBe("40px");
+});
+
+it("does not carry a Project row's menu entries over to the next right-click", async () => {
+  await act(async () => { rowOf("Project Beta").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+  await act(async () => { q(".sidebar-footer")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })); });
+  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["Open a Project…", "Settings"]);
+});
+
 it("expands a collapsed Project when a terminal is opened in it from the menu", async () => {
   await click(all(".project")[1]);
   await click(all(".project")[1]);

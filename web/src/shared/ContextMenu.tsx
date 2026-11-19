@@ -27,9 +27,12 @@ interface Opening {
   extra: Entry[];
 }
 
+/** Entries components attached to one `contextmenu` event; keyed by the event, so they can never outlive it. */
+const entriesByEvent = new WeakMap<Event, Entry[]>();
+
 /** Lets a component put its own entries at the top of the right-click menu for that click. */
-export function showContextMenu(event: { clientX: number; clientY: number }, entries: Entry[]) {
-  window.dispatchEvent(new CustomEvent("oxide:context-menu", { detail: { x: event.clientX, y: event.clientY, entries } }));
+export function showContextMenu(event: { nativeEvent: Event }, entries: Entry[]) {
+  entriesByEvent.set(event.nativeEvent, entries);
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -45,25 +48,21 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
   const close = useCallback(() => { setOpening(null); setAt(null); }, []);
 
   useEffect(() => {
-    let extra: Entry[] = [];
-    const onEntries = (event: Event) => { extra = (event as CustomEvent<{ entries: Entry[] }>).detail.entries; };
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault();
+      // The Menu key or Shift+F10 reports no pointer position: open the menu under the focused element.
+      const keyboard = event.clientX === 0 && event.clientY === 0 && event.target instanceof HTMLElement;
+      const box = keyboard ? (event.target as HTMLElement).getBoundingClientRect() : null;
       setOpening({
-        x: event.clientX,
-        y: event.clientY,
+        x: box ? box.left : event.clientX,
+        y: box ? box.bottom : event.clientY,
         selection: window.getSelection()?.toString() ?? "",
         editable: isEditable(event.target),
-        extra,
+        extra: entriesByEvent.get(event) ?? [],
       });
-      extra = [];
     };
-    window.addEventListener("oxide:context-menu", onEntries);
     window.addEventListener("contextmenu", onContextMenu);
-    return () => {
-      window.removeEventListener("oxide:context-menu", onEntries);
-      window.removeEventListener("contextmenu", onContextMenu);
-    };
+    return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
 
   useEffect(() => {

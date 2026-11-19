@@ -248,7 +248,6 @@ html.macos .header,
 .project-icon { color: var(--faint); }
 .project-row .project.open .project-icon { color: var(--fg-bright); }
 .project-count { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint); }
-.files-action { opacity: 1; }
 .sidebar-files { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .sidebar-files .surface-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .files-back { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--panel-bar-height); padding: 8px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--fg); font-weight: 600; text-align: left; }
@@ -270,6 +269,8 @@ html.macos .header,
   opacity: 0;
 }
 .row-action:hover:not(:disabled) { color: var(--fg); background: var(--bg4); }
+/* The Files button is always visible on the selected Project's row; other row actions show on hover. */
+.project-row .files-action { opacity: 1; }
 .terminal-row:is(:hover, :focus-within) .row-action { opacity: 1; }
 .terminal-row { display: flex; align-items: center; margin: 0 8px; border-radius: var(--radius-control); position: relative; transition: background-color var(--motion-fast) ease-out; }
 .terminal-row:hover { background: var(--bg3); }
