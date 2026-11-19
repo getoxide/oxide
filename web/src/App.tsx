@@ -13,13 +13,12 @@ import {
   SidebarExpandIcon,
   TerminalIcon,
   XIcon,
-  ChevronRightIcon,
   ArrowLeftIcon,
   type Icon,
 } from "@primer/octicons-react";
 import { commands, type Project } from "./bindings";
 import { Skeleton } from "./shared/Skeleton";
-import { ContextMenu } from "./shared/ContextMenu";
+import { ContextMenu, showContextMenu } from "./shared/ContextMenu";
 import { Collapsible } from "./shared/Collapsible";
 import { LinkConfirmDialog } from "./shared/LinkConfirmDialog";
 import { QuitDialog } from "./shared/QuitDialog";
@@ -567,39 +566,34 @@ function Sidebar({
               const expanded = !collapsed.includes(project.id);
               return (
                 <li key={project.id} className={`project-node${project.missing ? " missing" : ""}`}>
-                  <div className="project-row">
+                  <div className="project-row" onContextMenu={(event) => showContextMenu(event, [
+                    { label: "New terminal", disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
+                    { label: "Open Files", disabled: project.missing, run: () => onOpenFiles(project) },
+                    { label: "Remove project", disabled: closingProjectId === project.id, run: () => void close(project) },
+                  ])}>
                     <button
-                      className="project-chevron"
-                      aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-                      aria-expanded={expanded}
-                      onClick={() => setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id))}
-                    >
-                      <ChevronRightIcon size={12} className="disclosure-chev" />
-                    </button>
-                    <button
-                      className="project"
+                      className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
+                      aria-expanded={expanded}
+                      aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
-                      onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onSelectProject(project); }}
+                      onClick={() => {
+                        if (isSelected) setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
+                        else { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onSelectProject(project); }
+                      }}
                     >
-                      <RepoIcon size={13} />
+                      <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
+                      {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
-                    <button className={`row-action files-action${isSelected ? " selected" : ""}`} aria-label="Open Files" title="Open Files" disabled={project.missing}
-                      ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
-                      onClick={() => onOpenFiles(project)}>
-                      <FileIcon size={13} />
-                    </button>
-                    <button className="row-action" disabled={project.missing} aria-label={`New terminal in ${project.name}`}
-                      title="New terminal" onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
-                      <PlusIcon size={13} />
-                    </button>
-                    <button className="row-action" onClick={() => void close(project)} disabled={closingProjectId === project.id}
-                      aria-busy={closingProjectId === project.id} aria-label={`Close ${project.name}`}
-                      title={closingProjectId === project.id ? "Closing Project…" : "Close Project and its terminals"}>
-                      <XIcon size={13} />
-                    </button>
+                    {isSelected && (
+                      <button className="row-action files-action" aria-label="Open Files" title="Open Files" disabled={project.missing}
+                        ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
+                        onClick={() => onOpenFiles(project)}>
+                        <FileIcon size={13} />
+                      </button>
+                    )}
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>

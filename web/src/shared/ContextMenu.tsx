@@ -11,7 +11,7 @@ export interface ContextMenuActions {
   openSettings: () => void;
 }
 
-interface Entry {
+export interface Entry {
   label: string;
   hint?: string;
   run: () => void;
@@ -23,6 +23,16 @@ interface Opening {
   y: number;
   selection: string;
   editable: boolean;
+  /** Entries a component asked to show first, e.g. a Project row's actions. */
+  extra: Entry[];
+}
+
+/** Entries components attached to one `contextmenu` event; keyed by the event, so they can never outlive it. */
+const entriesByEvent = new WeakMap<Event, Entry[]>();
+
+/** Lets a component put its own entries at the top of the right-click menu for that click. */
+export function showContextMenu(event: { nativeEvent: Event }, entries: Entry[]) {
+  entriesByEvent.set(event.nativeEvent, entries);
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -40,11 +50,15 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
   useEffect(() => {
     const onContextMenu = (event: MouseEvent) => {
       event.preventDefault();
+      // The Menu key or Shift+F10 reports no pointer position: open the menu under the focused element.
+      const keyboard = event.clientX === 0 && event.clientY === 0 && event.target instanceof HTMLElement;
+      const box = keyboard ? (event.target as HTMLElement).getBoundingClientRect() : null;
       setOpening({
-        x: event.clientX,
-        y: event.clientY,
+        x: box ? box.left : event.clientX,
+        y: box ? box.bottom : event.clientY,
         selection: window.getSelection()?.toString() ?? "",
         editable: isEditable(event.target),
+        extra: entriesByEvent.get(event) ?? [],
       });
     };
     window.addEventListener("contextmenu", onContextMenu);
@@ -100,7 +114,7 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
     : opening.selection
       ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => runEditCommand("copy") }]
       : [];
-  const app: Entry[] = [
+  const app: Entry[] = opening.extra.length > 0 ? [] : [
     { label: "Open a Project…", run: actions.openProject },
     { label: "Settings", run: actions.openSettings },
   ];
@@ -129,7 +143,8 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
       style={{ left: at?.left ?? opening.x, top: at?.top ?? opening.y, visibility: at ? "visible" : "hidden" }}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {edit.length > 0 && <>{renderGroup(edit)}<div className="context-menu-sep" role="separator" /></>}
+      {renderGroup(opening.extra)}
+      {edit.length > 0 && <>{opening.extra.length > 0 && <div className="context-menu-sep" role="separator" />}{renderGroup(edit)}{app.length > 0 && <div className="context-menu-sep" role="separator" />}</>}
       {renderGroup(app)}
     </div>
   );
