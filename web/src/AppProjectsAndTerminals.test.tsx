@@ -14,7 +14,16 @@ vi.mock("./terminal/TerminalWorkbench", () => ({
 }));
 vi.mock("./pull-requests/PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
 vi.mock("./issues/IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
-vi.mock("./editor/FilesPanel", () => ({ FilesPanel: () => <div className="files-panel">Files content</div> }));
+vi.mock("./editor/FilesPanel", () => ({
+  FilesPanel: ({ projectId, onOpenFile }: { projectId: number; onOpenFile: (path: string) => void }) => (
+    <div className="files-panel" data-project={projectId} onDoubleClick={() => onOpenFile("src/main.ts")}>Files content</div>
+  ),
+}));
+vi.mock("./editor/CodeWorkbench", () => ({
+  CodeWorkbench: ({ projectId, visible, openRequest }: { projectId: number; visible: boolean; openRequest: { path: string } | null }) => (
+    <div className="code-stub" data-project={projectId} data-visible={String(visible)}>{openRequest?.path}</div>
+  ),
+}));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
 
@@ -132,13 +141,66 @@ it("closing a Project ends its terminals and asks Core to keep it known but clos
   expect(all(".terminal-stub").map((node) => node.dataset.project)).toEqual(["2"]);
 });
 
-it("gives the right dock exactly Files, Issues and Pull request", async () => {
+it("gives the right dock only Issues and Pull request, Issues first, without naming Files", async () => {
   await click(label("Toggle tools panel"));
-  expect(all('[role="tab"]').map((tab) => tab.getAttribute("aria-label"))).toEqual(["Files", "Issues", "Pull request"]);
+  expect(all('[role="tab"]').map((tab) => tab.getAttribute("aria-label"))).toEqual(["Issues", "Pull request"]);
+  expect(q('[role="tab"][aria-selected="true"]')?.getAttribute("aria-label")).toBe("Issues");
+  expect(host.textContent).toContain("Issues content");
+  expect(q(".files-panel")).toBeNull();
   await click(label("Pull request"));
   expect(host.textContent).toContain("PR content");
   await click(label("Issues"));
   expect(host.textContent).toContain("Issues content");
+});
+
+it("describes the empty dock without naming Files", async () => {
+  await act(async () => root.unmount());
+  mockIPC((command) => (command === "list_projects" || command === "rescan_projects" ? [] : null));
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await click(label("Toggle tools panel"));
+  expect(host.textContent).toContain("The right dock holds Issues and Pull request");
+  expect(host.textContent).not.toContain("holds Files");
+});
+
+it("opens the Files view of a Project from its row and goes back to the Terminals", async () => {
+  expect(all(".files-panel")).toHaveLength(0);
+  await click(all('[aria-label="Open Files"]')[1]);
+  expect(all(".files-panel").map((node) => node.dataset.project)).toEqual(["2"]);
+  expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(true);
+  const back = label("Back to Terminals")!;
+  expect(back.textContent).toContain("Project Beta");
+  await click(back);
+  expect(all(".files-panel")).toHaveLength(0);
+  expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(false);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+});
+
+it("opens a file from the Files view in the Code workspace on double click", async () => {
+  await click(all('[aria-label="Open Files"]')[0]);
+  await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  expect(q<HTMLElement>(".code-stub")?.dataset.visible).toBe("true");
+  expect(q(".code-stub")?.textContent).toBe("src/main.ts");
+});
+
+it("leaves the Files view when another route selects a Project", async () => {
+  await click(all('[aria-label="Open Files"]')[0]);
+  expect(all(".files-panel")).toHaveLength(1);
+  await click(label("New terminal in Project Beta"));
+  expect(all(".files-panel")).toHaveLength(0);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+});
+
+it("selects a Project by its name and collapses it only by its chevron", async () => {
+  await click(all(".project")[1]);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+  await click(all(".project")[1]);
+  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
+  await click(label("Collapse Project Beta"));
+  expect(label("Expand Project Beta")?.getAttribute("aria-expanded")).toBe("false");
+  await click(label("Expand Project Beta"));
+  expect(label("Collapse Project Beta")).not.toBeNull();
 });
 
 it("opens Settings on an empty page", async () => {

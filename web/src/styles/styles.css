@@ -242,6 +242,16 @@ html.macos .header,
   color: var(--dim);
   font-weight: 600;
 }
+.project-chevron { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: var(--control-sm); padding: 0 0 0 8px; background: none; border: 0; color: var(--faint); }
+.project-chevron:hover { color: var(--fg); }
+.project-row .project { padding-left: 4px; }
+.project-row .row-action.files-action.selected { opacity: 1; }
+.sidebar-files { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.sidebar-files .surface-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.files-back { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--panel-bar-height); padding: 8px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--fg); font-weight: 600; text-align: left; }
+.files-back:hover { background: var(--bg3); }
+.files-back .project-name { flex: 1; min-width: 0; }
+.files-back-target { color: var(--faint); font-weight: 400; font-size: 12px; }
 .project-row .project:hover { color: var(--fg); }
 .project-row .project[aria-current="true"] { color: var(--fg); }
 .project-name { overflow: hidden; text-overflow: ellipsis; }
