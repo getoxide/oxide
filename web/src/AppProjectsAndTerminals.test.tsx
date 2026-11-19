@@ -440,3 +440,14 @@ it("restores the split at the remembered divider when widened, unless a half is 
   expect(Number(dividerNow())).toBeGreaterThan(0);
   expect(moved).toBeDefined();
 });
+
+// A real click focuses the button first; `element.click()` does not.
+const press = (element: Element | null) => act(async () => { (element as HTMLElement).focus(); (element as HTMLElement).click(); });
+const focused = () => document.activeElement;
+
+it("focuses the back control when the Files view opens, and the Project's Files button when going back", async () => {
+  await press(all('[aria-label="Open Files"]')[1]);
+  expect(focused()).toBe(label("Back to Terminals"));
+  await press(label("Back to Terminals"));
+  expect(focused()).toBe(all('[aria-label="Open Files"]')[1]);
+});

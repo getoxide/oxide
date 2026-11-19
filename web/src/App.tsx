@@ -488,6 +488,14 @@ function Sidebar({
   const [collapsed, setCollapsed] = useState<number[]>([]);
   const [editing, setEditing] = useState<{ projectId: number; tabId: number } | null>(null);
   const [renameText, setRenameText] = useState("");
+  // Going back from the Files view returns focus to that Project's Files button, once the list is visible again.
+  const filesButtons = useRef(new Map<number, HTMLButtonElement>());
+  const returnFocusTo = useRef<number | null>(null);
+  useEffect(() => {
+    if (filesProject !== null || returnFocusTo.current === null) return;
+    filesButtons.current.get(returnFocusTo.current)?.focus();
+    returnFocusTo.current = null;
+  }, [filesProject]);
 
   const close = async (project: Project) => {
     if (closingProjectId !== null) return;
@@ -508,7 +516,8 @@ function Sidebar({
   return (<>
     {filesProject && (
       <nav className="sidebar sidebar-files" aria-label="Files">
-        <button className="files-back" aria-label="Back to Terminals" title="Back to Terminals" autoFocus onClick={onCloseFiles}>
+        <button className="files-back" aria-label="Back to Terminals" title="Back to Terminals" autoFocus
+          onClick={() => { returnFocusTo.current = filesProject.id; onCloseFiles(); }}>
           <ArrowLeftIcon size={14} />
           <RepoIcon size={13} />
           <span className="project-name">{filesProject.name}</span>
@@ -565,6 +574,7 @@ function Sidebar({
                     {project.missing && <span className="badge">missing</span>}
                   </button>
                   <button className={`row-action files-action${isSelected ? " selected" : ""}`} aria-label="Open Files" title="Open Files"
+                    ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
                     onClick={() => onOpenFiles(project)}>
                     <FileIcon size={13} />
                   </button>
