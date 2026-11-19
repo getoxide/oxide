@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
@@ -20,9 +20,17 @@ vi.mock("./editor/FilesPanel", () => ({
   ),
 }));
 vi.mock("./editor/CodeWorkbench", () => ({
-  CodeWorkbench: ({ projectId, visible, openRequest }: { projectId: number; visible: boolean; openRequest: { path: string } | null }) => (
-    <div className="code-stub" data-project={projectId} data-visible={String(visible)}>{openRequest?.path}</div>
-  ),
+  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange }: {
+    projectId: number; visible: boolean; openRequest: { path: string } | null; onOpenFilesChange?: (open: boolean) => void;
+  }) => {
+    useEffect(() => { onOpenFilesChange?.(openRequest !== null); }, [openRequest, onOpenFilesChange]);
+    return (
+      <div className="code-stub" data-project={projectId} data-visible={String(visible)}>
+        {openRequest?.path}
+        <button className="code-stub-close" onClick={() => onOpenFilesChange?.(false)}>close last</button>
+      </div>
+    );
+  },
 }));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
@@ -181,7 +189,74 @@ it("opens a file from the Files view in the Code workspace on double click", asy
   await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   expect(q<HTMLElement>(".code-stub")?.dataset.visible).toBe("true");
-  expect(q(".code-stub")?.textContent).toBe("src/main.ts");
+  expect(q(".code-stub")?.textContent).toContain("src/main.ts");
+});
+
+const openFile = async (index = 0) => {
+  await click(all('[aria-label="Open Files"]')[index]);
+  await act(async () => { q(".files-panel")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+};
+const codeVisible = (index = 0) => all(".code-stub")[index]?.dataset.visible === "true";
+
+it("splits the centre into Terminal and Code when a file opens, and closes the Code half with the last file", async () => {
+  await click(label("New terminal in Project Alpha"));
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q(".centre-terminal-half")?.hasAttribute("hidden")).toBe(false);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).not.toBeNull();
+  await click(q(".code-stub-close"));
+  expect(codeVisible()).toBe(false);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).toBeNull();
+  expect(visibleTerminals()).toHaveLength(1);
+});
+
+it("keeps the open file when switching Terminals and removes Back to terminals", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  expect(host.textContent).not.toContain("Back to terminals");
+  await click(all('[aria-label="Terminals of Project Alpha"] .terminal-item')[0]);
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["1:1"]);
+});
+
+it("shows the Code workspace full width without Terminals, then splits when a Terminal opens", async () => {
+  await openFile();
+  expect(codeVisible()).toBe(true);
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(true);
+  expect(host.textContent).not.toContain("No terminal open");
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).toBeNull();
+  await click(label("New terminal in Project Alpha"));
+  expect(q<HTMLElement>(".centre-terminal-half")?.hidden).toBe(false);
+  expect(codeVisible()).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+  expect(q('[role="separator"][aria-label="Resize Terminal and Code"]')).not.toBeNull();
+});
+
+it("keeps each Project's Code workspace mounted when moving between Projects", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile(0);
+  const stub = all(".code-stub")[0];
+  await click(all(".project")[1]);
+  expect(all(".code-stub")[0]).toBe(stub);
+  expect(codeVisible()).toBe(false);
+  await click(all(".project")[0]);
+  expect(codeVisible()).toBe(true);
+});
+
+it("resets the divider to 50/50 on double click", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  const divider = q<HTMLElement>('[role="separator"][aria-label="Resize Terminal and Code"]')!;
+  const before = divider.getAttribute("aria-valuenow");
+  await act(async () => { divider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })); });
+  expect(divider.getAttribute("aria-valuenow")).not.toBe(before);
+  await act(async () => { divider.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  expect(divider.getAttribute("aria-valuenow")).toBe(before);
+  expect(Number(divider.getAttribute("aria-valuemin"))).toBe(360);
 });
 
 it("leaves the Files view when another route selects a Project", async () => {

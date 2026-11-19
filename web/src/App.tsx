@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from "react";
+import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   FileIcon,
@@ -24,6 +24,7 @@ import { QuitDialog } from "./shared/QuitDialog";
 import { ProjectPalette } from "./projects/ProjectPalette";
 import { SettingsView } from "./settings/SettingsView";
 import { ResizeHandle } from "./shared/ResizeHandle";
+import { centreSplit, splitMode } from "./shared/splitLayout";
 import { workspaceLayout } from "./shared/panelLayout";
 import { useElementSize, usePanelSize } from "./shared/usePanelSize";
 import { readablePath } from "./terminal/headerLines";
@@ -67,7 +68,9 @@ export function App() {
   const [openError, setOpenError] = useState<string | null>(null);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { projectId: number }) | null>(null);
   const [codeProjects, setCodeProjects] = useState<number[]>([]);
-  const [showCode, setShowCode] = useState(false);
+  // Projects whose Code half is open; a Project's Code workspace stays mounted either way.
+  const [codeShown, setCodeShown] = useState<Record<number, boolean>>({});
+  const filesSeen = useRef(new Set<number>());
   // The Project whose Files view the sidebar shows; `null` is the Terminals view. Not persisted.
   const [filesProjectId, setFilesProjectId] = useState<number | null>(null);
   const codeSequence = useRef(0);
@@ -76,6 +79,9 @@ export function App() {
   const bodySize = useElementSize(bodyRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   const sidebarSize = usePanelSize("sidebar");
   const toolsSize = usePanelSize("tools");
+  const splitSize = usePanelSize("split");
+  const centreRef = useRef<HTMLDivElement>(null);
+  const centreSize = useElementSize(centreRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   // The Project and terminal of the last session: `undefined` until read, `null` once applied.
   const restore = useRef<number | null | undefined>(undefined);
 
@@ -130,7 +136,6 @@ export function App() {
   const selectProject = useCallback((project: Project) => {
     restore.current = null;
     setShowSettings(false);
-    setShowCode(false);
     setFilesProjectId(null);
     setSelectedId(project.id);
     void commands.rememberSelection(project.id);
@@ -139,11 +144,10 @@ export function App() {
   const openFiles = useCallback((project: Project) => {
     restore.current = null;
     setShowSettings(false);
-    if (project.id !== selectedId) setShowCode(false);
     setSelectedId(project.id);
     setFilesProjectId(project.id);
     void commands.rememberSelection(project.id);
-  }, [selectedId]);
+  }, []);
 
   const openProject = useCallback((project: Project) => {
     setProjects((previous) => [{ ...project, open: true, hidden: false }, ...(previous?.filter((p) => p.id !== project.id) ?? [])]);
@@ -152,7 +156,6 @@ export function App() {
 
   const newTerminal = useCallback((project: Project) => {
     setShowSettings(false);
-    setShowCode(false);
     setFilesProjectId(null);
     setSelectedId(project.id);
     setTerminals((previous) => openTerminal(previous, project.id));
@@ -164,6 +167,8 @@ export function App() {
     // Core ended the Project's terminals; dropping their state unmounts their views.
     setTerminals((previous) => closeProjectTerminals(previous, projectId));
     setCodeProjects((previous) => previous.filter((id) => id !== projectId));
+    setCodeShown((previous) => ({ ...previous, [projectId]: false }));
+    filesSeen.current.delete(projectId);
     const listed = await commands.listProjects();
     const updated = listed.status === "ok"
       ? listed.data
@@ -171,7 +176,6 @@ export function App() {
     setProjects(updated);
     if (selectedId === projectId) {
       restore.current = null;
-      setShowCode(false);
       setSelectedId(sidebarProjects(updated).find((project) => project.id !== projectId)?.id ?? null);
     }
     return listed.status === "error" ? listed.error.message : null;
@@ -181,9 +185,17 @@ export function App() {
     if (!selected) return;
     setCodeRequest({ id: ++codeSequence.current, path, projectId: selected.id });
     setCodeProjects((previous) => previous.includes(selected.id) ? previous : [...previous, selected.id]);
-    setShowCode(true);
+    setCodeShown((previous) => ({ ...previous, [selected.id]: true }));
     setShowSettings(false);
   };
+
+  // The Code workspace tells the centre whether it has files open. Its first report, before the
+  // requested file has loaded, says "none": that must not close the half it was just asked to open.
+  const reportOpenFiles = useCallback((projectId: number, open: boolean) => {
+    if (open) filesSeen.current.add(projectId);
+    else if (!filesSeen.current.delete(projectId)) return;
+    setCodeShown((previous) => previous[projectId] === open ? previous : { ...previous, [projectId]: open });
+  }, []);
 
   const selectTool = (name: string) => {
     setActiveTool(name);
@@ -202,6 +214,9 @@ export function App() {
   };
 
   const centreHidden = showSettings;
+  const hasTerminals = projectTerminals.tabs.length > 0;
+  const mode = splitMode({ terminals: hasTerminals, code: selected !== null && codeShown[selected.id] === true });
+  const split = centreSplit(centreSize.width, splitSize.preferred);
   const projectsWithTerminals = Object.entries(terminals).filter(([, state]) => state.tabs.length > 0);
 
   return (
@@ -271,7 +286,6 @@ export function App() {
             onNewTerminal={newTerminal}
             onSelectTerminal={(project, tabId) => {
               setShowSettings(false);
-              setShowCode(false);
               setFilesProjectId(null);
               setSelectedId(project.id);
               setTerminals((previous) => selectTerminal(previous, project.id, tabId));
@@ -286,67 +300,72 @@ export function App() {
         </div>
         <div className="centre-column">
           {showSettings && <SettingsView onClose={() => setShowSettings(false)} />}
-          <div className="centre-workbench" hidden={centreHidden}>
-            {selected && showCode && codeProjects.includes(selected.id) && (
-              <button className="btn centre-back" onClick={() => setShowCode(false)}>
-                <TerminalIcon size={14} /> Back to terminals
-              </button>
-            )}
-            {/* Every terminal stays mounted while hidden, so scrollback and running processes survive switching. */}
-            {projectsWithTerminals.map(([id, state]) => state.tabs.map((tab) => {
-              const projectId = Number(id);
-              const project = projects?.find((candidate) => candidate.id === projectId);
-              if (!project) return null;
-              const visible = !centreHidden && !showCode && projectId === selected?.id && tab.id === state.selectedId;
-              return (
-                <main key={`${projectId}:${tab.id}`} className="centre terminal-tab-panel" aria-label={`Terminal ${tab.name}`} hidden={!visible}>
-                  <TerminalWorkbench
-                    projectId={projectId}
-                    rootPath={project.path}
-                    contextKey={`${projectId}:${tab.id}`}
-                    visible={visible}
-                    onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
-                  />
+          <div className="centre-workbench" hidden={centreHidden} ref={centreRef}
+            style={{ "--terminal-half": `${split.value}px` } as CSSProperties}>
+            <div className="centre-half centre-terminal-half" id="centre-terminal-half" hidden={mode === "code"}>
+              {/* Every terminal stays mounted while hidden, so scrollback and running processes survive switching. */}
+              {projectsWithTerminals.map(([id, state]) => state.tabs.map((tab) => {
+                const projectId = Number(id);
+                const project = projects?.find((candidate) => candidate.id === projectId);
+                if (!project) return null;
+                const visible = !centreHidden && mode !== "code" && projectId === selected?.id && tab.id === state.selectedId;
+                return (
+                  <main key={`${projectId}:${tab.id}`} className="centre terminal-tab-panel" aria-label={`Terminal ${tab.name}`} hidden={!visible}>
+                    <TerminalWorkbench
+                      projectId={projectId}
+                      rootPath={project.path}
+                      contextKey={`${projectId}:${tab.id}`}
+                      visible={visible}
+                      onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
+                    />
+                  </main>
+                );
+              }))}
+              {!selected && (
+                <main className="centre centre-empty" aria-label="Terminal">
+                  <div className="empty-state">
+                    <RepoIcon size={24} />
+                    <p>Open a Project to begin.</p>
+                    <button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button>
+                  </div>
                 </main>
-              );
-            }))}
-            {codeProjects.map((projectId) => {
-              const project = projects?.find((candidate) => candidate.id === projectId);
-              if (!project) return null;
-              return (
-                <Suspense key={projectId} fallback={showCode && projectId === selected?.id ? <Skeleton kind="code" label="Loading Code…" /> : null}>
-                  <CodeWorkbench
-                    projectId={projectId}
-                    rootPath={project.path}
-                    contextKey={`${projectId}:main`}
-                    visible={!centreHidden && showCode && projectId === selected?.id}
-                    showExplorer={false}
-                    onChanged={() => {}}
-                    openRequest={codeRequest?.projectId === projectId ? codeRequest : null}
-                  />
-                </Suspense>
-              );
-            })}
-            {!selected && (
-              <main className="centre centre-empty" aria-label="Terminal">
-                <div className="empty-state">
-                  <RepoIcon size={24} />
-                  <p>Open a Project to begin.</p>
-                  <button className="btn primary" onClick={() => overlays.current?.openPalette()}>Open a Project</button>
-                </div>
-              </main>
-            )}
-            {selected && projectTerminals.tabs.length === 0 && !showCode && (
-              <main className="centre centre-empty" aria-label="No terminal">
-                <div className="empty-state">
-                  <TerminalIcon size={24} />
-                  <p>No terminal open in {selected.name}.</p>
-                  <button className="btn primary" disabled={selected.missing} onClick={() => newTerminal(selected)}>
-                    <PlusIcon size={14} /> New terminal
-                  </button>
-                </div>
-              </main>
-            )}
+              )}
+              {selected && !hasTerminals && mode === "terminal" && (
+                <main className="centre centre-empty" aria-label="No terminal">
+                  <div className="empty-state">
+                    <TerminalIcon size={24} />
+                    <p>No terminal open in {selected.name}.</p>
+                    <button className="btn primary" disabled={selected.missing} onClick={() => newTerminal(selected)}>
+                      <PlusIcon size={14} /> New terminal
+                    </button>
+                  </div>
+                </main>
+              )}
+            </div>
+            <div className="centre-half centre-code-half" hidden={mode === "terminal"}>
+              {mode === "split" && (
+                <ResizeHandle label="Resize Terminal and Code" controls="centre-terminal-half" axis="x" edge="start"
+                  {...split} onResize={splitSize.resize} onCommit={splitSize.commit} onReset={splitSize.reset} onCancel={splitSize.cancel} />
+              )}
+              {codeProjects.map((projectId) => {
+                const project = projects?.find((candidate) => candidate.id === projectId);
+                if (!project) return null;
+                return (
+                  <Suspense key={projectId} fallback={mode !== "terminal" && projectId === selected?.id ? <Skeleton kind="code" label="Loading Code…" /> : null}>
+                    <ProjectCode
+                      reportOpenFiles={reportOpenFiles}
+                      projectId={projectId}
+                      rootPath={project.path}
+                      contextKey={`${projectId}:main`}
+                      visible={!centreHidden && mode !== "terminal" && projectId === selected?.id}
+                      showExplorer={false}
+                      onChanged={() => {}}
+                      openRequest={codeRequest?.projectId === projectId ? codeRequest : null}
+                    />
+                  </Suspense>
+                );
+              })}
+            </div>
           </div>
         </div>
         <aside className="tools" aria-label="Tools panel" id="workspace-tools" hidden={!dockVisible}>
@@ -624,6 +643,17 @@ function WindowControls() {
     <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>{maximized ? "" : ""}</button>
     <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>{""}</button>
   </div>;
+}
+
+type ProjectCodeProps = Omit<ComponentProps<typeof CodeWorkbench>, "onOpenFilesChange"> & {
+  reportOpenFiles: (projectId: number, open: boolean) => void;
+};
+
+/** Gives one Project's Code workspace a stable report callback. */
+function ProjectCode({ reportOpenFiles, ...props }: ProjectCodeProps) {
+  const { projectId } = props;
+  const report = useCallback((open: boolean) => reportOpenFiles(projectId, open), [reportOpenFiles, projectId]);
+  return <CodeWorkbench {...props} onOpenFilesChange={report} />;
 }
 
 function WindowResizeHandles() {

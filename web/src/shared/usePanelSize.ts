@@ -1,7 +1,7 @@
 import { readJson, removeKey, storageKeys, writeJson } from "./storage";
 import { useCallback, useEffect, useState, type RefObject } from "react";
 
-export type PanelName = "sidebar" | "tools";
+export type PanelName = "sidebar" | "tools" | "split";
 
 function readSize(name: PanelName): number | null {
   const value = readJson(storageKeys.panelSize(name));
