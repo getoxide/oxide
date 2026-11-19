@@ -63,6 +63,8 @@ interface Props {
   onChanged: () => void;
   /** Reports whether any file is open, so the host can offer full-screen editing. */
   onOpenFilesChange?: (open: boolean) => void;
+  /** The requested file could not be opened (and so nothing was added). */
+  onOpenFailed?: () => void;
 }
 
 export function CodeWorkbench({
@@ -73,6 +75,7 @@ export function CodeWorkbench({
   showExplorer = true,
   onChanged,
   onOpenFilesChange,
+  onOpenFailed,
   openRequest,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -449,8 +452,9 @@ export function CodeWorkbench({
     void actions.current.openFile(openRequest.path, undefined, false).then(() => {
       const doc = records.current.get(openRequest.path);
       if (doc && requestedFile.current?.id === openRequest.id) select(doc);
+      else if (!doc && requestedFile.current?.id === openRequest.id) onOpenFailed?.();
     });
-  }, [openRequest, publish, select]);
+  }, [openRequest, publish, select, onOpenFailed]);
 
   useEffect(() => {
     if (!visible) return;

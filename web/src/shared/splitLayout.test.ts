@@ -32,6 +32,7 @@ describe("per-Project layout", () => {
   it("reads stored layouts and drops malformed entries", () => {
     expect(parseLayouts({ "1": { divider: 420, maximized: "code" }, "2": { divider: -3, maximized: "x" }, "z": {}, "3": 5 }))
       .toEqual({ 1: { divider: 420, maximized: "code" }, 2: { divider: null, maximized: null } });
+    expect(parseLayouts({ "0": {}, "-2": {}, "1.5": {}, "1e2": {}, " 4": {}, "": {}, "7": {} })).toEqual({ 7: { divider: null, maximized: null } });
     expect(parseLayouts("nope")).toEqual({});
     expect(parseLayouts(null)).toEqual({});
   });

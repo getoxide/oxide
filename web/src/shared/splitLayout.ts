@@ -50,6 +50,14 @@ export function restoreSplit(layouts: ProjectLayouts, projectId: number): Projec
   return layoutOf(layouts, projectId).maximized === null ? layouts : update(layouts, projectId, { maximized: null });
 }
 
+/** Drops a Project's remembered layout, e.g. when the Project is closed. */
+export function forgetLayout(layouts: ProjectLayouts, projectId: number): ProjectLayouts {
+  if (!(projectId in layouts)) return layouts;
+  const rest = { ...layouts };
+  delete rest[projectId];
+  return rest;
+}
+
 export function setDivider(layouts: ProjectLayouts, projectId: number, divider: number | null): ProjectLayouts {
   return update(layouts, projectId, { divider });
 }
@@ -76,7 +84,7 @@ export function parseLayouts(value: unknown): ProjectLayouts {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return layouts;
   for (const [key, entry] of Object.entries(value)) {
     const id = Number(key);
-    if (!Number.isInteger(id) || typeof entry !== "object" || entry === null) continue;
+    if (!/^\d+$/.test(key) || !Number.isSafeInteger(id) || id <= 0 || typeof entry !== "object" || entry === null) continue;
     const { divider, maximized } = entry as Record<string, unknown>;
     layouts[id] = {
       divider: typeof divider === "number" && Number.isFinite(divider) && divider > 0 ? divider : null,

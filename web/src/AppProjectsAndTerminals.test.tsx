@@ -6,6 +6,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./shared/queryCache";
 import { App } from "./App";
 
+const failingOpens = vi.hoisted(() => ({ current: false }));
 vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./terminal/TerminalWorkbench", () => ({
   TerminalWorkbench: ({ projectId, contextKey, visible }: { projectId: number; contextKey: string; visible: boolean }) => (
@@ -20,10 +21,15 @@ vi.mock("./editor/FilesPanel", () => ({
   ),
 }));
 vi.mock("./editor/CodeWorkbench", () => ({
-  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange }: {
+  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange, onOpenFailed }: {
     projectId: number; visible: boolean; openRequest: { path: string } | null; onOpenFilesChange?: (open: boolean) => void;
+    onOpenFailed?: () => void;
   }) => {
-    useEffect(() => { onOpenFilesChange?.(openRequest !== null); }, [openRequest, onOpenFilesChange]);
+    useEffect(() => {
+      // A file that fails to load never reports an open file; the workbench says so instead.
+      if (openRequest && failingOpens.current) onOpenFailed?.();
+      else onOpenFilesChange?.(openRequest !== null);
+    }, [openRequest, onOpenFilesChange, onOpenFailed]);
     return (
       <div className="code-stub" data-project={projectId} data-visible={String(visible)}>
         {openRequest?.path}
@@ -52,6 +58,7 @@ beforeEach(async () => {
   Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
   clearQueryCache();
   localStorage.clear();
+  failingOpens.current = false;
   calls = [];
   host = document.createElement("div");
   document.body.append(host);
@@ -483,4 +490,30 @@ it("moves focus into the Code half when a file opens, with or without Terminals"
   await click(label("Close Project Alpha"));
   await openFile(0);
   expect(q(".centre-code-half")!.contains(focused())).toBe(true);
+});
+
+it("leaves no empty Code half when the requested file fails to open", async () => {
+  await click(label("New terminal in Project Alpha"));
+  failingOpens.current = true;
+  await openFile();
+  expect(codeVisible()).toBe(false);
+  expect(q<HTMLElement>(".centre-code-half")?.hidden).toBe(true);
+  expect(visibleTerminals()).toHaveLength(1);
+});
+
+it("forgets a closed Project's split layout", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  await click(label("Maximize Terminal"));
+  expect(Object.keys(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!))).toEqual(["1"]);
+  await click(label("Back to Terminals"));
+  await click(label("Close Project Alpha"));
+  expect(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!)).toEqual({});
+});
+
+it("expands a collapsed Project when its name is clicked", async () => {
+  await click(label("Collapse Project Beta"));
+  expect(label("Expand Project Beta")).not.toBeNull();
+  await click(all(".project")[1]);
+  expect(label("Collapse Project Beta")?.getAttribute("aria-expanded")).toBe("true");
 });
