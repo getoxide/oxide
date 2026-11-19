@@ -1,6 +1,6 @@
 # A central Thread and one maximizable Surfaces dock
 
-> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): the centre is a Terminal and the dock holds Files, Issues and Pull request. (Earlier note: Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): the Thread's centre is its Agent terminal, not a rendered Transcript.)
+> Superseded by [ADR-0018](0018-projects-and-plain-terminals.md): the centre is a Terminal and the dock holds Files, Issues and Pull request. Amended again by [ADR-0020](0020-files-in-the-sidebar-and-a-split-centre.md): Files moves to the sidebar and the dock holds Issues and Pull request; the fitting rule below still stands. (Earlier note: Amended by [ADR-0017](0017-threads-run-the-providers-own-cli-in-an-agent-terminal.md): the Thread's centre is its Agent terminal, not a rendered Transcript.)
 
 Keep the Thread and its Transcript central, Projects and recent Threads in a
 collapsible left sidebar, and exactly one right dock for Diff, Files, Terminal,
