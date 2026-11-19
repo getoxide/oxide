@@ -346,7 +346,7 @@ html.macos .header,
 .files-search-results .files-row { padding-left: 8px; padding-right: 8px; }
 .files-tree { display: flex; flex-direction: column; overflow: auto; padding: 6px 0; border-right: 1px solid var(--line); }
 .files-tree > .editor-file-tree { min-height: 0; }
-/* Tree rows keep the Code workspace's dense default; the Files Surface adds one 32px row, a rounded
+/* Tree rows keep the Code workspace's dense default; the Files view adds one 32px row, a rounded
    hover wash and the PR/Issue list rhythm, scoped so the centre editor's tree is untouched. */
 .files-row {
   display: flex;

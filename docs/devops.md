@@ -236,7 +236,7 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 
    If `verify` refuses, its message says what to fix. A pushed tag can't be moved or deleted (only the admin can); fix forward with the next version, or have the admin delete a mistaken tag.
 4. **Approve** the `release` deployment: Actions → Release → *Review deployments*. Either Release Manager may approve.
-5. **Smoke test.** When `publish` finishes there is a **draft** release. Download its builds, open a Project, open a terminal and check Files, Issues and Pull request on each platform you can. Run the live language-install tests where the network allows:
+5. **Smoke test.** When `publish` finishes there is a **draft** release. Download its builds, open a Project, open a terminal and check Files (from the Project row), Issues and Pull request (right dock) on each platform you can. Run the live language-install tests where the network allows:
 
    ```sh
    cargo test -p oxide-core --test language_install_live -- --ignored

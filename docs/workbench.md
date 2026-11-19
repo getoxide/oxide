@@ -1,7 +1,7 @@
 # Terminal and Code
 
 The centre shows the selected Terminal: a shell in the selected Project's folder
-(ADR-0018). Opening a file from the **Files** Surface shows that Project's Code
+(ADR-0018). Opening a file from the **Files view** shows that Project's Code
 workspace in a half beside the Terminal, with a divider and maximize/restore
 buttons; switching keeps open buffers and terminal processes alive. The Files view
 in the sidebar (opened from a Project's Files button) is the navigator for the

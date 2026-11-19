@@ -56,7 +56,7 @@ Oxide does not know about agents. A terminal is a plain shell that Oxide does no
 
 - **Issues.** List, read and create GitHub Issues for the Project, through the [GitHub CLI](https://cli.github.com).
 - **Pull requests.** List, read, create, review and merge pull requests, or turn on auto-merge while checks run.
-- **Files.** Browse the Project's folder in the right dock and open a file in the Code workspace, the built-in editor that takes the centre in place of the terminals: Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
+- **Files.** Browse the Project's folder from the Files button on its sidebar row and open a file in the Code workspace, the built-in editor that opens in a half beside the terminals: Monaco with language servers for Rust, TypeScript/JavaScript, Python and C/C++, installed on first use, only when you press Install.
 
 <!-- /site:features -->
 
@@ -119,7 +119,7 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 1. Launch Oxide and click **Open a Project**: pick a folder, create one with `git init`, or clone a repository (from a URL, or one of your GitHub repositories through `gh`).
 2. Click **New terminal** on the Project. You get a shell in its folder. Run whatever you want, `claude` or `codex` included.
 3. Open as many terminals as you like and switch between them in the sidebar.
-4. Use the right dock for the Project's **Files**, **Issues** and **Pull request**.
+4. Use the Files button on the Project row for its **Files**, and the right dock for **Issues** and **Pull request**.
 
 <!-- /site:quick-start -->
 
