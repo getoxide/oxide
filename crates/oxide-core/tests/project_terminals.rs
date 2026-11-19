@@ -105,25 +105,33 @@ fn closing_a_project_ends_all_its_terminals_and_keeps_it_known() {
 }
 
 #[test]
-fn the_upgrade_drops_threads_keeps_projects_and_leaves_worktrees_on_disk() {
-    // The shell input below is POSIX, so these tests do not run on Windows.
-    if cfg!(windows) {
-        return;
-    }
+fn an_older_database_is_adopted_keeping_projects_and_leaving_folders_on_disk() {
     let tmp = tempfile::tempdir().unwrap();
-    let before_strip = oxide_core::MIGRATIONS.len() - 1;
-    drop(Core::open_with_migrations(tmp.path(), &oxide_core::MIGRATIONS[..before_strip]).unwrap());
     let worktree = tmp.path().join("worktree");
     std::fs::create_dir_all(&worktree).unwrap();
     let db = tmp.path().join("oxide.db");
+    let old_version = 40;
     {
         let conn = Connection::open(&db).unwrap();
         conn.execute_batch(&format!(
-            "INSERT INTO projects (id, name, path, opened_at) VALUES (1, 'p', '/p', '2026-01-01T00:00:00Z');
-             INSERT INTO threads (id, project_id, provider, permission_mode, status, worktree_path, branch)
-                 VALUES (7, 1, 'claude', 'ask', 'completed', '{}', 'oxide/feature');
-             INSERT INTO turns (id, thread_id, turn_index, prompt, status) VALUES (1, 7, 0, 'hi', 'completed');
-             INSERT INTO app_state (key, value) VALUES ('selection', '[1,7]'), ('favourite_models', '[]');",
+            "CREATE TABLE projects (
+                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
+                 created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
+                 hidden INTEGER NOT NULL DEFAULT 0, opened_at TEXT,
+                 acted_upon INTEGER NOT NULL DEFAULT 0, setup_command TEXT,
+                 verification_commands TEXT NOT NULL DEFAULT '[]'
+             );
+             CREATE TABLE threads (
+                 id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+                 worktree_path TEXT, branch TEXT
+             );
+             CREATE TABLE turns (id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL REFERENCES threads(id));
+             CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO projects (id, name, path, opened_at) VALUES (1, 'p', '/p', '2026-01-01T00:00:00Z');
+             INSERT INTO threads (id, project_id, worktree_path, branch) VALUES (7, 1, '{}', 'oxide/feature');
+             INSERT INTO turns (id, thread_id) VALUES (1, 7);
+             INSERT INTO app_state (key, value) VALUES ('selection', '[1,7]'), ('favourite_models', '[]');
+             PRAGMA user_version = {old_version};",
             worktree.display()
         ))
         .unwrap();
@@ -143,19 +151,20 @@ fn the_upgrade_drops_threads_keeps_projects_and_leaves_worktrees_on_disk() {
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
-    for gone in [
-        "threads",
-        "turns",
-        "items",
-        "approvals",
-        "restores",
-        "review_ledger",
-    ] {
-        assert!(
-            !tables.iter().any(|t| t == gone),
-            "{gone} still exists: {tables:?}"
-        );
-    }
+    let fresh = tempfile::tempdir().unwrap();
+    drop(Core::open(fresh.path()).unwrap());
+    let fresh_tables: Vec<String> = Connection::open(fresh.path().join("oxide.db"))
+        .unwrap()
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let (mut tables, mut fresh_tables) = (tables, fresh_tables);
+    tables.sort();
+    fresh_tables.sort();
+    assert_eq!(tables, fresh_tables, "same tables as a fresh install");
     let favourites: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM app_state WHERE key = 'favourite_models'",
@@ -165,11 +174,11 @@ fn the_upgrade_drops_threads_keeps_projects_and_leaves_worktrees_on_disk() {
         .unwrap();
     assert_eq!(favourites, 0, "settings of removed features are dropped");
     assert!(worktree.is_dir(), "a worktree folder is never deleted");
-    let backup = tmp.path().join(format!("oxide.db.bak-{before_strip}"));
+    let backup = tmp.path().join(format!("oxide.db.bak-{old_version}"));
     assert!(backup.exists(), "the old data was backed up first");
-    let old_threads: i64 = Connection::open(&backup)
+    let backed_up: i64 = Connection::open(&backup)
         .unwrap()
-        .query_row("SELECT COUNT(*) FROM threads", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM turns", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(old_threads, 1, "the backup still holds the old Threads");
+    assert_eq!(backed_up, 1, "the backup still holds the old data");
 }
