@@ -9,7 +9,7 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 const BUILD_WORKFLOW = ".github/workflows/build.yml";
 
 // Each rule names the lanes a path can affect. A path must match at least one
-// rule; `[]` marks paths that affect no lane (docs, research, screenshots).
+// rule; `[]` marks paths that affect no lane (docs, notes).
 const PATH_RULES = [
   [/^crates\//, ["rust"]],
   [/^(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml|\.cargo\/.*|\.config\/nextest\.toml)$/, ["rust"]],
@@ -25,7 +25,7 @@ const PATH_RULES = [
   [new RegExp(`^${escapeRegExp(BUILD_WORKFLOW)}$`), ["bundle"]],
   [/^(web\/pnpm-workspace\.yaml|deny\.toml)$/, ["supplyChain"]],
   [/^(\.github|tools)\//, ["automation"]],
-  [/^(docs|references|assets|\.agents|\.impeccable)\//, []],
+  [/^(docs|assets|\.agents|\.impeccable)\//, []],
   [/^[^/]+\.md$/, []],
   [/^(LICENSE|CITATION\.cff|llms\.txt|\.gitignore|\.gitmodules)$/, []],
 ];

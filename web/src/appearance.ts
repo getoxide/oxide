@@ -21,7 +21,7 @@ const SYSTEM =
   'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 const MONO =
   '"JetBrains Mono", ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, Menlo, monospace';
-// Titanium values for the editor, terminal and syntax (assets/brand/oxide/palette/oxide-titanium-theme.json).
+// Titanium values for the editor, terminal and syntax (assets/palette/oxide-titanium-theme.json).
 // Chrome colours stay in styles.css so the built-in theme keeps the focus ring and control tokens from :root.
 const TITANIUM_DARK: Record<string, unknown> = {
   "editor.background": "#1C1C1E",

@@ -13,7 +13,7 @@ const ALL_OFF = { web: false, rust: false, bundle: false, supplyChain: false, au
 
 describe("lanesFor", () => {
   test("a docs-only change turns every lane off", () => {
-    assert.deepEqual(lanesFor(["docs/workbench.md", "README.md", "docs/ui-review/main.png", "GLOSSARY.md"], "pull_request"), ALL_OFF);
+    assert.deepEqual(lanesFor(["docs/workbench.md", "README.md", "assets/README.md", "GLOSSARY.md"], "pull_request"), ALL_OFF);
   });
 
   test("repository metadata files turn every lane off", () => {
@@ -126,11 +126,11 @@ describe("evaluateGate", () => {
 describe("checkPrTitle", () => {
   test("allowed types pass with and without scope, and with the breaking marker", () => {
     for (const title of [
-      "feat(chat): render Markdown in agent messages",
+      "feat(terminal): render Markdown in command blocks",
       "fix: terminal input on Windows",
-      "research: compare Provider CLIs",
+      "research: compare terminal emulators",
       "chore(deps): bump serde from 1.0.1 to 1.0.2",
-      "refactor(core)!: rename the Turn API",
+      "refactor(core)!: rename the Project API",
       "feat!: drop the legacy settings file",
       "ci: add the gate check",
     ]) {
@@ -263,12 +263,12 @@ describe("releaseNotes", () => {
 
   test("types map to sections, and breaking changes and dependency bumps get their own", () => {
     const notes = releaseNotes([
-      { subject: "feat(chat): render Markdown in agent messages (#215)" },
+      { subject: "feat(terminal): render Markdown in command blocks (#215)" },
       { subject: "fix(workbench): terminal input (#218)" },
       { subject: "docs: explain dictation (#230)" },
       { subject: "chore(deps): bump serde from 1.0.1 to 1.0.2 (#231)" },
       { subject: "chore(deps-dev): bump vitest (#232)" },
-      { subject: "refactor(core)!: rename the Turn API (#233)" },
+      { subject: "refactor(core)!: rename the Project API (#233)" },
       { subject: "feat(settings): new storage (#234)", body: "BREAKING CHANGE: old settings are not migrated." },
     ], identity);
     assert.deepEqual(section(notes, "Breaking changes"), [

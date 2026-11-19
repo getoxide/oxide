@@ -98,7 +98,7 @@ const repository = path.resolve(__dirname, "../..");
     assert.ok(resizes.length <= 3, "Output generated a PTY resize storm");
     const output =
       process.env.OXIDE_TEST_OUTPUT ||
-      path.join(repository, "docs/ui-review/terminal-refinement");
+      path.join(repository, "web/test-results/terminal-regression");
     fs.mkdirSync(output, { recursive: true });
     await page.screenshot({ path: path.join(output, "native-fullscreen.png") });
     await input.waitFor({ state: "visible" });

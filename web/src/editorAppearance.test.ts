@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
-import kitThemeJson from "../../assets/brand/oxide/palette/oxide-titanium-theme.json?raw";
+import kitThemeJson from "../../assets/palette/oxide-titanium-theme.json?raw";
 import { DEFAULT_APPEARANCE, getAppearance, saveAppearance } from "./appearance";
 import { editorAppearance } from "./editorAppearance";
 

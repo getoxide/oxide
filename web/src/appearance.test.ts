@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import kitThemeJson from "../../assets/brand/oxide/palette/oxide-titanium-theme.json?raw";
-import kitTokensJson from "../../assets/brand/oxide/palette/oxide-tokens.json?raw";
+import kitThemeJson from "../../assets/palette/oxide-titanium-theme.json?raw";
+import kitTokensJson from "../../assets/palette/oxide-tokens.json?raw";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
   activeTheme,
