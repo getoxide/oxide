@@ -95,6 +95,9 @@ export function App() {
     setLastHalf((previous) => previous[projectId] === half ? previous : { ...previous, [projectId]: half });
   }, []);
   const centreRef = useRef<HTMLDivElement>(null);
+  const codeHalfRef = useRef<HTMLDivElement>(null);
+  // Opening a file moves focus into the Code half, after it has been shown.
+  useEffect(() => { if (codeRequest) codeHalfRef.current?.focus(); }, [codeRequest]);
   const centreSize = useElementSize(centreRef, { width: window.innerWidth, height: window.innerHeight - 44 });
   // The Project and terminal of the last session: `undefined` until read, `null` once applied.
   const restore = useRef<number | null | undefined>(undefined);
@@ -381,7 +384,7 @@ export function App() {
                 </main>
               )}
             </div>
-            <div className="centre-half centre-code-half" hidden={mode === "terminal"}>
+            <div className="centre-half centre-code-half" role="region" aria-label="Code" tabIndex={-1} ref={codeHalfRef} hidden={mode === "terminal"}>
               {halfButton("code")}
               {mode === "split" && selected && (
                 <ResizeHandle label="Resize Terminal and Code" controls="centre-terminal-half" axis="x" edge="start"

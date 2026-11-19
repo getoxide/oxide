@@ -451,3 +451,12 @@ it("focuses the back control when the Files view opens, and the Project's Files 
   await press(label("Back to Terminals"));
   expect(focused()).toBe(all('[aria-label="Open Files"]')[1]);
 });
+
+it("moves focus into the Code half when a file opens, with or without Terminals", async () => {
+  await click(label("New terminal in Project Alpha"));
+  await openFile();
+  expect(q(".centre-code-half")!.contains(focused())).toBe(true);
+  await click(label("Close Project Alpha"));
+  await openFile(0);
+  expect(q(".centre-code-half")!.contains(focused())).toBe(true);
+});
