@@ -15,6 +15,8 @@ export interface TerminalBlock {
   started: boolean;
   ended: boolean;
   truncated: boolean;
+  /** Brought back from the last session: its output is a record, its shell is gone. */
+  restored?: boolean;
 }
 interface Props {
   onPasteReady?: (paste: ((text: string) => void) | null) => void;
@@ -72,7 +74,8 @@ export function TerminalCommandBlock(props: Props) {
       viewport = 0,
       cell = 16,
       last = "",
-      interactive = false;
+      interactive = false,
+      settle = 0;
     const contentHeight = () =>
       Math.max(
         1,
@@ -105,7 +108,13 @@ export function TerminalCommandBlock(props: Props) {
         if (!initialized) {
           initialized = true;
           callbacks.current.onReady(term.rows, term.cols);
-        } else callbacks.current.onResize(term.rows, term.cols);
+        } else {
+          // xterm follows every frame of a drag; the program gets the size it settles on, not a
+          // redraw per frame (a full-screen app repaints its whole screen on each SIGWINCH).
+          clearTimeout(settle);
+          const rows = term.rows, cols = term.cols;
+          settle = window.setTimeout(() => callbacks.current.onResize(rows, cols), 120);
+        }
       }
     };
     const scheduleFit = () => {
@@ -155,6 +164,7 @@ export function TerminalCommandBlock(props: Props) {
     scheduleFit();
     return () => {
       cancelAnimationFrame(frame);
+      clearTimeout(settle);
       window.removeEventListener("oxide-appearance-changed", appearance);
       observer.disconnect();
       input.dispose();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { PanelBounds } from "./panelLayout";
 
 interface ResizeHandleProps extends PanelBounds {
@@ -22,19 +22,26 @@ export function ResizeHandle({ label, controls, axis, edge, direction = 1, value
   const pending = useRef(value);
   const frame = useRef<number | null>(null);
   const clamp = (next: number) => Math.round(Math.min(max, Math.max(min, next)));
+  // Parents pass fresh inline callbacks on every render, and a drag re-renders the parent on every
+  // frame: read them through a ref so a new identity never restarts the effects below. (When the
+  // unmount cleanup depended on `onCancel`, each frame cancelled the drag mid-way and left the
+  // whole window stuck in the resizing cursor with selection off.)
+  const callbacks = useRef({ onResize, onCommit, onCancel });
+  useLayoutEffect(() => { callbacks.current = { onResize, onCommit, onCancel }; });
 
   const finish = useCallback((cancel = false) => {
+    setDragging(false);
     const current = drag.current;
     if (!current) return;
     drag.current = null;
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     frame.current = null;
     const next = pending.current;
-    if (cancel || next === current.value) onCancel();
-    else { onResize(next); onCommit(next); }
-    setDragging(false);
+    const { onResize: resize, onCommit: commit, onCancel: cancelled } = callbacks.current;
+    if (cancel || next === current.value) cancelled();
+    else { resize(next); commit(next); }
     if (current.element.hasPointerCapture(current.pointerId)) current.element.releasePointerCapture(current.pointerId);
-  }, [onResize, onCommit, onCancel]);
+  }, []);
 
   useEffect(() => {
     if (!dragging) return;
@@ -52,8 +59,8 @@ export function ResizeHandle({ label, controls, axis, edge, direction = 1, value
 
   useEffect(() => () => {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
-    if (drag.current) { drag.current = null; onCancel(); }
-  }, [onCancel]);
+    if (drag.current) { drag.current = null; callbacks.current.onCancel(); }
+  }, []);
 
   return <div role="separator" tabIndex={max > min ? 0 : -1}
     className={`resize-handle resize-handle-${axis}`} data-edge={edge} data-dragging={dragging}
@@ -76,7 +83,7 @@ export function ResizeHandle({ label, controls, axis, edge, direction = 1, value
       pending.current = clamp(current.value + ((axis === "x" ? event.clientX : event.clientY) - current.origin) * direction);
       if (frame.current === null) frame.current = requestAnimationFrame(() => {
         frame.current = null;
-        onResize(pending.current);
+        callbacks.current.onResize(pending.current);
       });
     }}
     onPointerUp={(event) => { if (drag.current?.pointerId === event.pointerId) finish(); }}

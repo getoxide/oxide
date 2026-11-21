@@ -11,6 +11,7 @@ import {
   type ThemeVariant,
 } from "../shared/appearance";
 import { GithubSetup } from "./GithubSetup";
+import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
 type FontRole = keyof Appearance["fonts"];
 
@@ -55,6 +56,7 @@ function swatch(theme: ThemeVariant) {
 export function SettingsView({ onClose }: { onClose: () => void }) {
   const [appearance, setAppearance] = useState(getAppearance);
   const [error, setError] = useState<string | null>(null);
+  const [restoreSession, setRestore] = useState(restoreSessionEnabled);
   const themes = useMemo(() => {
     try {
       return parseThemePack(appearance.themeJson).themes;
@@ -158,6 +160,23 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
                 Restore defaults
               </button>
             </div>
+          </div>
+        </section>
+
+        <section className="settings-section" aria-labelledby="settings-session">
+          <h2 id="settings-session">Session</h2>
+          <div className="settings-card">
+            <label className="settings-item settings-toggle">
+              <span className="settings-item-label">
+                <strong>Restore Terminals and files at launch</strong>
+                <span className="settings-note">
+                  Reopens each Project&rsquo;s Terminals with their folder and recent output, and the files open in Code.
+                  Programs that were running start again from a fresh shell. Turning this off forgets the saved session.
+                </span>
+              </span>
+              <input type="checkbox" role="switch" checked={restoreSession}
+                onChange={(event) => { setRestoreSession(event.target.checked); setRestore(event.target.checked); }} />
+            </label>
           </div>
         </section>
 

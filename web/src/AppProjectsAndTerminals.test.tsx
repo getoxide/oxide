@@ -354,20 +354,52 @@ it("gives each Project its own divider and maximized half, restored when it is s
   expect(dividerNow()).toBe(alphaMoved);
 });
 
-it("keeps the divider and the maximized half across a reload, but not the open files", async () => {
+const reload = async () => {
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+};
+
+it("with session restore off, keeps the divider and the maximized half across a reload, but no Terminals or files", async () => {
+  localStorage.setItem("oxide:restore-session:v1", "false");
   await newTerminal("Project Alpha");
   await openFile(0);
   await nudgeDivider();
   const moved = dividerNow();
   await click(label("Maximize Terminal"));
-  await act(async () => root.unmount());
-  root = createRoot(host);
-  await act(async () => root.render(<App />));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  await reload();
+  expect(all(".terminal-stub")).toHaveLength(0);
   await newTerminal("Project Alpha");
   expect(all(".code-stub")).toHaveLength(0);
   await openFile(0);
   expect(dividerNow()).toBe(moved);
+});
+
+it("with session restore on, reopens the Terminals with their names and the Code workspace", async () => {
+  await newTerminal("Project Alpha");
+  await newTerminal("Project Alpha");
+  await openFile(0);
+  await reload();
+  expect(terminalNames("Project Alpha")).toEqual(["Terminal 1", "Terminal 2"]);
+  expect(visibleTerminals().map((node) => node.dataset.context)).toEqual(["1:2"]);
+  expect(all(".code-stub").map((node) => node.dataset.project)).toEqual(["1"]);
+  await newTerminal("Project Alpha");
+  expect(terminalNames("Project Alpha")).toEqual(["Terminal 1", "Terminal 2", "Terminal 3"]);
+});
+
+it("opens a Terminal in a Project at once with the + beside its name", async () => {
+  await click(label("New terminal in Project Beta"));
+  expect(terminalNames("Project Beta")).toEqual(["Terminal 1"]);
+  expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+  expect(visibleTerminals().map((node) => node.dataset.project)).toEqual(["2"]);
+});
+
+it("forgets a closed Terminal's saved blocks", async () => {
+  await newTerminal("Project Alpha");
+  localStorage.setItem("oxide:terminal-session:1:1", JSON.stringify({ cwd: null, blocks: [] }));
+  await click(label("Close Terminal 1"));
+  expect(localStorage.getItem("oxide:terminal-session:1:1")).toBeNull();
 });
 
 it("restores the split when the hidden half is chosen explicitly", async () => {
@@ -406,11 +438,11 @@ it("selects a Project by its name and collapses it by clicking the selected name
   expect(listed()).not.toBeNull();
 });
 
-it("shows no chevron, add, close or Files buttons on a Project row", () => {
+it("shows only a + beside a Project's name: no chevron, close or Files buttons", () => {
   expect(all(".project-chevron")).toHaveLength(0);
   expect(label("Close Project Alpha")).toBeNull();
-  expect(label("New terminal in Project Alpha")).toBeNull();
-  expect(rowOf("Project Alpha").querySelectorAll("button")).toHaveLength(1);
+  expect(Array.from(rowOf("Project Alpha").querySelectorAll("button")).map((button) => button.getAttribute("aria-label") ?? "project"))
+    .toEqual(["project", "New terminal in Project Alpha"]);
   expect(all('.sidebar-switch [role="tab"]').map((tab) => tab.textContent?.trim())).toEqual(["Terminals", "Files"]);
 });
 
@@ -429,7 +461,11 @@ it("offers New terminal, Open Files and Remove project on a Project row's menu, 
 it("opens Settings with Appearance and GitHub, and closes them", async () => {
   await click(q(".sidebar-footer"));
   const settings = q('main[aria-label="Settings"]')!;
-  expect(Array.from(settings.querySelectorAll("h2")).map((heading) => heading.textContent)).toEqual(["Appearance", "GitHub"]);
+  expect(Array.from(settings.querySelectorAll("h2")).map((heading) => heading.textContent)).toEqual(["Appearance", "Session", "GitHub"]);
+  const restore = settings.querySelector<HTMLInputElement>('input[role="switch"]')!;
+  expect(restore.checked).toBe(true);
+  await click(restore);
+  expect(localStorage.getItem("oxide:restore-session:v1")).toBe("false");
   expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
   await click(label("Close settings"));
   expect(q('main[aria-label="Settings"]')).toBeNull();

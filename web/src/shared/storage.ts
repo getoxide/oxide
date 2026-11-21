@@ -16,6 +16,9 @@ export const storageKeys = {
   splitLayouts: "oxide:split-layouts:v1",
   codeTabs: (context: string) => `oxide:code-tabs:${context}`,
   terminalHistory: (context: string) => `oxide:terminal-history:${context}`,
+  restoreSession: "oxide:restore-session:v1",
+  session: "oxide:session:v1",
+  terminalSession: (context: string) => `oxide:terminal-session:${context}`,
   languageDismissed: (language: string) => `oxide:language-dismissed:${language}`,
 } as const;
 
@@ -40,6 +43,20 @@ export function writeText(key: string, value: string): void {
 export function removeKey(key: string): void {
   try {
     localStorage.removeItem(key);
+  } catch {
+    /* Nothing to forget when storage is unavailable. */
+  }
+}
+
+/** Forgets every key that starts with `prefix`. */
+export function removeKeysWithPrefix(prefix: string): void {
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
   } catch {
     /* Nothing to forget when storage is unavailable. */
   }

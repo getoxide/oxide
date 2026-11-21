@@ -40,6 +40,7 @@ import {
   emptyTerminals, type TerminalsByProject,
 } from "./terminal/terminalTabs";
 import type { CodeOpenRequest } from "./editor/codeOpen";
+import { forgetTerminalSession, readSession, writeSession } from "./shared/session";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
 const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
@@ -68,10 +69,13 @@ export function App() {
   const [visitedTools, setVisitedTools] = useState<Record<string, boolean>>({});
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [terminals, setTerminals] = useState<TerminalsByProject>({});
+  // With session restore on, the Terminals, Code workspaces and halves of the last session.
+  const [session] = useState(readSession);
+  const [terminals, setTerminals] = useState<TerminalsByProject>(() => session?.terminals ?? {});
   const [openError, setOpenError] = useState<string | null>(null);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { projectId: number }) | null>(null);
-  const [codeProjects, setCodeProjects] = useState<number[]>([]);
+  // A restored Code workspace reopens its own files and then reports them, which shows the Code half.
+  const [codeProjects, setCodeProjects] = useState<number[]>(() => session?.code ?? []);
   // Projects whose Code half is open; a Project's Code workspace stays mounted either way.
   const [codeShown, setCodeShown] = useState<Record<number, boolean>>({});
   const filesSeen = useRef(new Set<number>());
@@ -88,7 +92,7 @@ export function App() {
   const [dragDivider, setDragDivider] = useState<number | null>(null);
   useEffect(() => { writeJson(storageKeys.splitLayouts, layouts); }, [layouts]);
   // The half each Project chose last (Code after opening a file, Terminal after choosing a Terminal).
-  const [lastHalf, setLastHalf] = useState<Record<number, Half>>({});
+  const [lastHalf, setLastHalf] = useState<Record<number, Half>>(() => session?.lastHalf ?? {});
   const chooseHalf = useCallback((projectId: number, half: Half) => {
     setLastHalf((previous) => previous[projectId] === half ? previous : { ...previous, [projectId]: half });
   }, []);
@@ -182,6 +186,7 @@ export function App() {
     const closed = await commands.setProjectOpen(projectId, false);
     if (closed.status === "error") return closed.error.message;
     // Core ended the Project's terminals; dropping their state unmounts their views.
+    for (const tab of terminals[projectId]?.tabs ?? []) forgetTerminalSession(`${projectId}:${tab.id}`);
     setTerminals((previous) => closeProjectTerminals(previous, projectId));
     setCodeProjects((previous) => previous.filter((id) => id !== projectId));
     setCodeShown((previous) => ({ ...previous, [projectId]: false }));
@@ -198,7 +203,12 @@ export function App() {
       setSelectedId(sidebarProjects(updated).find((project) => project.id !== projectId)?.id ?? null);
     }
     return listed.status === "error" ? listed.error.message : null;
-  }, [projects, selectedId]);
+  }, [projects, selectedId, terminals]);
+
+  // Saved on every change for the next launch; a Code workspace not yet reported counts as open.
+  useEffect(() => {
+    writeSession({ terminals, code: codeProjects.filter((id) => codeShown[id] !== false), lastHalf });
+  }, [terminals, codeProjects, codeShown, lastHalf]);
 
   const openCodeFile = (path: string) => {
     if (!selected) return;
@@ -338,7 +348,10 @@ export function App() {
               setTerminals((previous) => selectTerminal(previous, project.id, tabId));
             }}
             onRenameTerminal={(project, tabId, name) => setTerminals((previous) => renameTerminal(previous, project.id, tabId, name))}
-            onCloseTerminal={(project, tabId) => setTerminals((previous) => closeTerminal(previous, project.id, tabId))}
+            onCloseTerminal={(project, tabId) => {
+              forgetTerminalSession(`${project.id}:${tabId}`);
+              setTerminals((previous) => closeTerminal(previous, project.id, tabId));
+            }}
             onOpenPalette={() => overlays.current?.openPalette()}
             onOpenSettings={() => setShowSettings(true)}
           />
@@ -600,6 +613,11 @@ function Sidebar({
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
+                    </button>
+                    <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title="New terminal"
+                      disabled={project.missing}
+                      onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
+                      <PlusIcon size={14} />
                     </button>
                   </div>
                   <Collapsible open={expanded}>
