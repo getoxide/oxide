@@ -334,7 +334,7 @@ html.macos .header,
 .terminal-item[aria-current="true"] .terminal-item-title { font-weight: 500; }
 .terminal-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 /* Shortcut hints (shown while Ctrl/⌘ is held) float over their control and never take layout space. */
-:is(.btn, .tab, .cbtn, .icon-btn, .sidebar-footer, .terminal-item, .project-row .project) { position: relative; }
+:is(.btn, .tab, .icon-btn, .sidebar-footer, .terminal-item, .project-row .project) { position: relative; }
 .header-actions .icon-btn { position: relative; }
 .terminal-row .row-action { position: absolute; right: 4px; }
 .terminal-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
@@ -388,8 +388,6 @@ html.macos .header,
 .files.files-navigation { display: flex; flex-direction: column; overflow: hidden; }
 .files-navigation .files-tree { border: 0; flex: 1; min-height: 0; }
 /* The Files toolbar is the shared one; only its result list and the tree live below it. */
-.files-search-results { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
-.files-search-results .files-row { padding-left: 8px; padding-right: 8px; }
 .files-tree { display: flex; flex-direction: column; overflow: auto; padding: 6px 0; border-right: 1px solid var(--line); }
 .files-tree > .editor-file-tree { min-height: 0; }
 /* Tree rows keep the Code workspace's dense default; the Files view adds one 32px row, a rounded
@@ -415,7 +413,6 @@ html.macos .header,
 .files-row:hover { background: var(--bg3); }
 .files-row-selected, .files-row-selected:hover { background: var(--bg4); }
 .files-chevron { width: 12px; display: inline-flex; color: var(--faint); }
-.files-icon { display: inline-flex; color: var(--dim); }
 .files-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .files-note { padding: 4px 8px; color: var(--dim); }
 
@@ -734,27 +731,6 @@ html.macos .header,
 .palette-detail { color: var(--faint); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-action { color: var(--fg); }
 .palette-empty { color: var(--faint); }
-
-/* ── Settings ─────────────────────────────────────────────── */
-.settings {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.settings h1 { font-size: 22px; margin: 0; color: var(--fg-bright); }
-.settings h2 { font-size: 15px; margin: 0; color: var(--fg-bright); }
-.settings h3 { font-size: 14px; margin: 0; }
-.settings-header p { margin: 4px 0 0; color: var(--dim); }
-.settings-header { width: 100%; max-width: 1120px; margin-inline: auto; }
-.settings label { display: flex; min-width: 0; flex-direction: column; gap: 8px; color: var(--dim); }
-.settings input:not([type="checkbox"]), .settings select, .settings textarea { width: 100%; min-width: 0; }
-.settings input[type="checkbox"] { flex: none; margin: 0; }
-.settings .actions { display: flex; align-items: center; gap: 8px; }
-.settings .error { margin: 0; }
-.dropdown { position: relative; min-width: 0; color: var(--fg); }
 
 .tools .tab { gap: 4px; }
 
