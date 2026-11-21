@@ -1,16 +1,18 @@
 //! The interactive shell of a Terminal on Windows: PowerShell with block markers. Children are
 //! contained by Job Objects (see `process`), so there are no groups or sessions to clean up.
 
-use crate::{ShellLaunch, ShellProcess};
+use crate::{ShellLaunch, ShellProcess, diag};
 use base64::Engine;
 use portable_pty::MasterPty;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
 /// The shell to start. With `blocks`, PowerShell's real REPL with the block prompt: Ctrl+C
 /// cancels a pipeline without killing the shell.
 pub fn shell_launch(blocks: bool, _init_file: Option<&Path>) -> ShellLaunch {
+    let_children_receive_ctrl_c();
     let mut launch = ShellLaunch {
         name: "PowerShell".into(),
         program: "powershell.exe".into(),
@@ -26,6 +28,17 @@ pub fn shell_launch(blocks: bool, _init_file: Option<&Path>) -> ShellLaunch {
         ]);
     }
     launch
+}
+
+/// Clears this process's "ignore Ctrl+C" flag, so the shell started next can be interrupted.
+/// A process started in a new process group (as CI runners and test harnesses start theirs)
+/// ignores Ctrl+C, and every child inherits the flag: the Ctrl+C event ConPTY makes of the 0x03
+/// key would then reach neither PowerShell nor the program it runs.
+fn let_children_receive_ctrl_c() {
+    // SAFETY: a null handler passes no pointer; with FALSE the call only clears the flag.
+    if unsafe { SetConsoleCtrlHandler(None, 0) } == 0 {
+        diag::best_effort::<(), _>("SetConsoleCtrlHandler", Err(io::Error::last_os_error()));
+    }
 }
 
 /// What to type into the shell to run `command` as a block marked by `token`.
