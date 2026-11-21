@@ -338,7 +338,30 @@ html.macos .header,
 .header-actions .icon-btn { position: relative; }
 .terminal-row .row-action { position: absolute; right: 4px; }
 .terminal-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
-.terminal-rename-input { width: 100%; margin: 2px 0 2px 20px; padding: 3px 6px; font-size: 13px; }
+/* Renaming happens in place, like a file in the Finder: the title becomes a field of the same size
+   at the same spot, ringed in the accent, with the name selected. */
+.terminal-item-editing { display: flex; align-items: center; cursor: text; }
+.terminal-item-editing > svg { flex: none; color: var(--fg); }
+.terminal-row.renaming { background: var(--bg3); }
+.terminal-rename-input,
+.terminal-rename-input:focus {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  min-height: 20px;
+  margin: 0 0 0 -3px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--acc2) 70%, transparent);
+  color: var(--fg-bright);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.terminal-rename-input::selection { background: color-mix(in srgb, var(--acc2) 45%, transparent); }
 .sidebar-footer { flex: none; justify-content: flex-start; min-height: var(--panel-bar-height); gap: 8px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--faint); font-size: 12px; }
 .sidebar-footer:hover:not(:disabled) { color: var(--fg); border-color: var(--line); }
 .sidebar-footer[aria-current="page"] { color: var(--fg-bright); background: var(--bg3); }

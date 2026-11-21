@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useEffect } from "react";
+import { act, useEffect, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
@@ -9,8 +9,8 @@ import { App } from "./App";
 const failingOpens = vi.hoisted(() => ({ current: false }));
 vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./terminal/TerminalWorkbench", () => ({
-  TerminalWorkbench: ({ projectId, contextKey, visible }: { projectId: number; contextKey: string; visible: boolean }) => (
-    <div className="terminal-stub" data-project={projectId} data-context={contextKey} data-visible={String(visible)} />
+  TerminalWorkbench: ({ projectId, contextKey, visible, headerAction }: { projectId: number; contextKey: string; visible: boolean; headerAction?: ReactNode }) => (
+    <div className="terminal-stub" data-project={projectId} data-context={contextKey} data-visible={String(visible)}>{headerAction}</div>
   ),
 }));
 vi.mock("./pull-requests/PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
@@ -21,9 +21,9 @@ vi.mock("./editor/FilesPanel", () => ({
   ),
 }));
 vi.mock("./editor/CodeWorkbench", () => ({
-  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange, onOpenFailed }: {
+  CodeWorkbench: ({ projectId, visible, openRequest, onOpenFilesChange, onOpenFailed, headerAction }: {
     projectId: number; visible: boolean; openRequest: { path: string } | null; onOpenFilesChange?: (open: boolean) => void;
-    onOpenFailed?: () => void;
+    onOpenFailed?: () => void; headerAction?: ReactNode;
   }) => {
     useEffect(() => {
       // A file that fails to load never reports an open file; the workbench says so instead.
@@ -34,6 +34,7 @@ vi.mock("./editor/CodeWorkbench", () => ({
       <div className="code-stub" data-project={projectId} data-visible={String(visible)}>
         {openRequest?.path}
         <button className="code-stub-close" onClick={() => onOpenFilesChange?.(false)}>close last</button>
+        {headerAction}
       </div>
     );
   },

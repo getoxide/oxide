@@ -34,6 +34,7 @@ import { readablePath } from "./terminal/headerLines";
 import { sidebarProjects } from "./projects/projectList";
 import { runEditCommand, type EditCommand } from "./terminal/editCommand";
 import { TerminalWorkbench } from "./terminal/TerminalWorkbench";
+import { TerminalRow } from "./terminal/TerminalRow";
 import {
   closeProjectTerminals, closeTerminal, openTerminal, renameTerminal, selectTerminal, setRunning,
   emptyTerminals, type TerminalsByProject,
@@ -349,7 +350,6 @@ export function App() {
           <div className="centre-workbench" hidden={centreHidden} ref={centreRef}
             style={{ "--terminal-half": `${split.value}px` } as CSSProperties}>
             <div className="centre-half centre-terminal-half" id="centre-terminal-half" hidden={mode === "code"}>
-              {halfButton("terminal")}
               {/* Every terminal stays mounted while hidden, so scrollback and running processes survive switching. */}
               {projectsWithTerminals.map(([id, state]) => state.tabs.map((tab) => {
                 const projectId = Number(id);
@@ -363,6 +363,7 @@ export function App() {
                       rootPath={project.path}
                       contextKey={`${projectId}:${tab.id}`}
                       visible={visible}
+                      headerAction={visible ? halfButton("terminal") : null}
                       onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
                     />
                   </main>
@@ -390,7 +391,6 @@ export function App() {
               )}
             </div>
             <div className="centre-half centre-code-half" role="region" aria-label="Code" tabIndex={-1} ref={codeHalfRef} hidden={mode === "terminal"}>
-              {halfButton("code")}
               {mode === "split" && selected && (
                 <ResizeHandle label="Resize Terminal and Code" controls="centre-terminal-half" axis="x" edge="start"
                   {...split} onResize={setDragDivider}
@@ -413,6 +413,7 @@ export function App() {
                       showExplorer={false}
                       onChanged={() => {}}
                       openRequest={codeRequest?.projectId === projectId ? codeRequest : null}
+                      headerAction={projectId === selected?.id ? halfButton("code") : null}
                     />
                   </Suspense>
                 );
@@ -495,8 +496,6 @@ function Sidebar({
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<number[]>([]);
-  const [editing, setEditing] = useState<{ projectId: number; tabId: number } | null>(null);
-  const [renameText, setRenameText] = useState("");
   const terminalsTab = useRef<HTMLButtonElement>(null);
   const filesTab = useRef<HTMLButtonElement>(null);
   const filesOpen = filesProject !== null;
@@ -607,42 +606,11 @@ function Sidebar({
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
                       {state.tabs.length === 0 && <li className="sidebar-note">No terminals</li>}
                       {state.tabs.map((tab) => (
-                        <li key={tab.id} className="terminal-row">
-                          {editing?.projectId === project.id && editing.tabId === tab.id ? (
-                            <input
-                              className="terminal-rename-input"
-                              value={renameText}
-                              autoFocus
-                              aria-label={`Rename ${tab.name}`}
-                              onChange={(event) => setRenameText(event.target.value)}
-                              onBlur={() => { setEditing(null); onRenameTerminal(project, tab.id, renameText); }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") { setEditing(null); onRenameTerminal(project, tab.id, renameText); }
-                                if (event.key === "Escape") setEditing(null);
-                              }}
-                            />
-                          ) : (
-                            <button
-                              className="terminal-item"
-                              aria-current={!settingsOpen && isSelected && tab.id === state.selectedId}
-                              title={`${tab.name}${tab.running ? ` — running ${tab.running}` : ""}. Double-click to rename.`}
-                              onClick={() => onSelectTerminal(project, tab.id)}
-                              onDoubleClick={(event) => {
-                                event.preventDefault();
-                                setEditing({ projectId: project.id, tabId: tab.id });
-                                setRenameText(tab.name);
-                              }}
-                            >
-                              <TerminalIcon size={12} />
-                              <span className="terminal-item-title">{tab.name}</span>
-                              {tab.running && <span className="terminal-tab-running" aria-label="Command running" />}
-                            </button>
-                          )}
-                          <button className="row-action" onClick={() => onCloseTerminal(project, tab.id)}
-                            aria-label={`Close ${tab.name}`} title="Close terminal">
-                            <XIcon size={12} />
-                          </button>
-                        </li>
+                        <TerminalRow key={tab.id} name={tab.name} running={tab.running}
+                          current={!settingsOpen && isSelected && tab.id === state.selectedId}
+                          onSelect={() => onSelectTerminal(project, tab.id)}
+                          onRename={(name) => onRenameTerminal(project, tab.id, name)}
+                          onClose={() => onCloseTerminal(project, tab.id)} />
                       ))}
                     </ul>
                   </Collapsible>

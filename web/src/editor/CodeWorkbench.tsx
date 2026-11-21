@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   AlertIcon,
@@ -65,6 +66,8 @@ interface Props {
   onOpenFilesChange?: (open: boolean) => void;
   /** The requested file could not be opened (and so nothing was added). */
   onOpenFailed?: () => void;
+  /** Shown at the right end of the tab bar, where the host puts its Maximize/Restore control. */
+  headerAction?: ReactNode;
 }
 
 export function CodeWorkbench({
@@ -77,6 +80,7 @@ export function CodeWorkbench({
   onOpenFilesChange,
   onOpenFailed,
   openRequest,
+  headerAction,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -766,6 +770,7 @@ export function CodeWorkbench({
             </div>
           )}
         </div>
+        {headerAction && <div className="editor-tabs-actions">{headerAction}</div>}
         </div>
         {current && (
           <div className="editor-breadcrumb">

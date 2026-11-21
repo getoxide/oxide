@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { Channel } from "../shared/ipc";
 import { TerminalIcon, XIcon, SquareFillIcon } from "@primer/octicons-react";
@@ -27,6 +28,8 @@ interface Props {
   visible: boolean;
   /** The command a Command block is running, or `null` when the shell is idle. */
   onRunningChange?: (command: string | null) => void;
+  /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
+  headerAction?: ReactNode;
 }
 const WINDOWS = /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
@@ -50,6 +53,7 @@ export function TerminalWorkbench({
   contextKey,
   visible,
   onRunningChange,
+  headerAction,
 }: Props) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [history, setHistory] = useState<CommandHistory[]>(() =>
@@ -333,6 +337,7 @@ export function TerminalWorkbench({
         <span className="mono" title={cwd}>
           {cwd}
         </span>
+        {headerAction && <span className="workbench-terminal-actions">{headerAction}</span>}
       </header>
       <div
         className="terminal-block-scroll"

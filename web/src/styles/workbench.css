@@ -14,7 +14,11 @@
   min-height: 0;
 }
 .centre-half[hidden] { display: none; }
-.half-toggle { position: absolute; top: 6px; right: 8px; z-index: 11; }
+/* Maximize/Restore sits at the right end of each half's own header, like an editor action in VS Code. */
+.workbench-terminal-actions, .editor-tabs-actions { display: flex; align-items: center; flex: none; margin-left: auto; }
+.editor-tabs-actions { padding: 0 6px; }
+.half-toggle { color: var(--faint); border-radius: 5px; }
+.half-toggle:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
 /* With both halves showing, the Terminal keeps the divider's width and the Code half takes the rest. */
 .centre-terminal-half:has(+ .centre-code-half:not([hidden])):not([hidden]) { flex: 0 0 var(--terminal-half); }
 .centre-code-half > .resize-handle { z-index: 10; }
@@ -87,13 +91,15 @@
   min-height: 0;
 }
 .editor-tabs {
-  min-height: 38px;
+  min-height: 35px;
   display: flex;
   align-items: stretch;
   overflow-x: auto;
   background: var(--bg2);
   border-bottom: 1px solid var(--line);
 }
+/* Tabs as in VS Code: a hover that only lifts the tab a shade, the active tab in the editor's own
+   colour with a hairline of accent on top, and the close button only where it can be wanted. */
 .editor-tab {
   position: relative;
   display: flex;
@@ -101,24 +107,22 @@
   align-items: center;
   padding-right: 4px;
   border-right: 1px solid var(--line);
-  transition: background-color 120ms ease-out;
 }
 .editor-tab:hover {
-  background: var(--bg3);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
-.editor-tab.active {
+.editor-tab.active,
+.editor-tab.active:hover {
   background: var(--bg);
 }
-/* A quiet bottom indicator slides no further than its own tab. */
 .editor-tab::after {
   content: "";
   position: absolute;
+  top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
-  height: 2px;
+  height: 1px;
   background: transparent;
-  transition: background-color 140ms ease-out;
 }
 .editor-tab.active::after {
   background: var(--acc2);
@@ -130,14 +134,20 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  padding: 0 8px 0 12px;
-  height: 38px;
+  padding: 0 6px 0 12px;
+  height: 35px;
+  min-height: 35px;
   font-size: 12px;
   font-weight: 400;
-  color: var(--dim);
+  color: var(--faint);
+}
+.editor-tab > [role="tab"]:hover:not(:disabled),
+.editor-tab > [role="tab"]:active:not(:disabled) {
+  background: transparent;
+  transform: none;
 }
 .editor-tab:hover > [role="tab"] {
-  color: var(--fg);
+  color: var(--dim);
 }
 .editor-tab.active > [role="tab"] {
   color: var(--fg-bright);
@@ -150,18 +160,16 @@
   margin: 0 4px 0 0;
   padding: 0;
   border-radius: 4px;
-  color: var(--faint);
+  color: var(--dim);
   background: none;
+  visibility: hidden;
+}
+.editor-tab:is(.active, :hover, :focus-within) > .icon-btn {
+  visibility: visible;
 }
 .editor-tab > .icon-btn:hover:not(:disabled) {
-  background: var(--bg4);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg-bright);
-}
-@media (prefers-reduced-motion: reduce) {
-  .editor-tab,
-  .editor-tab::after {
-    transition: none;
-  }
 }
 .editor-tab > [role="tab"] > span:first-of-type {
   max-width: 180px;
@@ -898,3 +906,4 @@
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+.workbench-terminal-header:has(.workbench-terminal-actions) { padding-right: 10px; }
