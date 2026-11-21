@@ -116,8 +116,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     core.write_terminal(
         terminal.id,
         // `jobs -p`, not `$!`: macOS bash 3.2 runs history expansion on typed input and
-        // reports "event not found" for the `!`.
-        b"sleep 60 & echo CHILD=$(jobs -p); echo READY$((6*7))\n",
+        // reports "event not found" for the `!`. zsh prints the job's whole line, so only the
+        // pid is kept (the job number and `sleep 60` have fewer digits).
+        b"sleep 60 & echo CHILD=$(jobs -p | grep -oE '[0-9]{3,}' | head -n 1); echo READY$((6*7))\n",
     )
     .unwrap();
     let mut output = String::new();
@@ -130,10 +131,9 @@ fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_grou
     assert!(output.contains("READY42"));
     let child_pid = output
         .lines()
-        .find_map(|line| line.trim().strip_prefix("CHILD="))
-        .unwrap_or_else(|| panic!("background child pid in {output:?}"))
-        .parse::<i32>()
-        .unwrap();
+        // A line editor echoes the typed command too; only the printed line has a number.
+        .find_map(|line| line.trim().strip_prefix("CHILD=")?.parse::<i32>().ok())
+        .unwrap_or_else(|| panic!("background child pid in {output:?}"));
     core.write_terminal(terminal.id, b"read value; echo received:$value\n")
         .unwrap();
     core.write_terminal(terminal.id, b"hello\n").unwrap();

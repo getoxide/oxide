@@ -24,7 +24,6 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSD
 
 [target.'cfg(windows)'.dependencies]
 base64 = { workspace = true }
-sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",

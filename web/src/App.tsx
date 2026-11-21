@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  FileIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -13,7 +12,6 @@ import {
   SidebarExpandIcon,
   TerminalIcon,
   XIcon,
-  ArrowLeftIcon,
   type Icon,
 } from "@primer/octicons-react";
 import { commands, type Project } from "./bindings";
@@ -488,7 +486,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
 }
 
-/** The open Projects and, under each, its terminals. Nothing else lives here. */
+/** The open Projects and, under each, its terminals; or, in the Files view, the selected Project's files. */
 function Sidebar({
   projects, selected, terminals, settingsOpen, filesProject, onOpenFiles, onCloseFiles, onOpenFile,
   onSelectProject, onCloseProject, onNewTerminal,
@@ -499,14 +497,14 @@ function Sidebar({
   const [collapsed, setCollapsed] = useState<number[]>([]);
   const [editing, setEditing] = useState<{ projectId: number; tabId: number } | null>(null);
   const [renameText, setRenameText] = useState("");
-  // Going back from the Files view returns focus to that Project's Files button, once the list is visible again.
-  const filesButtons = useRef(new Map<number, HTMLButtonElement>());
-  const returnFocusTo = useRef<number | null>(null);
-  useEffect(() => {
-    if (filesProject !== null || returnFocusTo.current === null) return;
-    filesButtons.current.get(returnFocusTo.current)?.focus();
-    returnFocusTo.current = null;
-  }, [filesProject]);
+  const terminalsTab = useRef<HTMLButtonElement>(null);
+  const filesTab = useRef<HTMLButtonElement>(null);
+  const filesOpen = filesProject !== null;
+  const canOpenFiles = selected !== null && !selected.missing;
+  const showView = (files: boolean) => {
+    if (files && selected && canOpenFiles) onOpenFiles(selected);
+    if (!files) onCloseFiles();
+  };
 
   const close = async (project: Project) => {
     if (closingProjectId !== null) return;
@@ -525,16 +523,33 @@ function Sidebar({
   const shown = selected && !listed.some((project) => project.id === selected.id) ? [selected, ...listed] : listed;
 
   return (
-    <>
+    <div className="sidebar">
+      {/* The two views of the sidebar: the open Projects with their Terminals, or the selected Project's files. */}
+      <div className="sidebar-switch" role="tablist" aria-label="Sidebar view"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const files = event.key === "End" || (event.key !== "Home" && !filesOpen);
+          if (files && !canOpenFiles) return;
+          showView(files);
+          (files ? filesTab : terminalsTab).current?.focus();
+        }}>
+        <button ref={terminalsTab} role="tab" aria-selected={!filesOpen} aria-controls="sidebar-terminals" tabIndex={filesOpen ? -1 : 0}
+          onClick={() => showView(false)}>
+          <TerminalIcon size={14} /> Terminals
+        </button>
+        <button ref={filesTab} role="tab" aria-selected={filesOpen} aria-controls="sidebar-files" tabIndex={filesOpen ? 0 : -1}
+          disabled={!canOpenFiles} title={selected ? `Files of ${selected.name}` : "Select a Project to see its files"}
+          onClick={() => showView(true)}>
+          <FileDirectoryIcon size={14} /> Files
+        </button>
+      </div>
       {filesProject && (
-        <nav className="sidebar sidebar-files" aria-label="Files">
-          <button className="files-back" aria-label="Back to Terminals" title="Back to Terminals" autoFocus
-            onClick={() => { returnFocusTo.current = filesProject.id; onCloseFiles(); }}>
-            <ArrowLeftIcon size={14} />
+        <nav className="sidebar-view sidebar-files" id="sidebar-files" aria-label="Files">
+          <div className="files-heading" title={readablePath(filesProject.path)}>
             <RepoIcon size={13} />
             <span className="project-name">{filesProject.name}</span>
-            <span className="files-back-target">Terminals</span>
-          </button>
+          </div>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
               <FilesPanel key={filesProject.id} projectId={filesProject.id} revision={0} onOpenFile={onOpenFile} />
@@ -542,7 +557,7 @@ function Sidebar({
           </div>
         </nav>
       )}
-      <nav className="sidebar" aria-label="Projects" hidden={filesProject !== null}>
+      <nav className="sidebar-view" id="sidebar-terminals" aria-label="Projects" hidden={filesOpen}>
         <div className="sidebar-actions">
           <button className="btn grow" onClick={onOpenPalette} aria-label="Open a Project" title="Open a Project">
             <RepoIcon size={14} /> Open a Project
@@ -587,13 +602,6 @@ function Sidebar({
                       {project.missing && <span className="badge">missing</span>}
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
-                    {isSelected && (
-                      <button className="row-action files-action" aria-label="Open Files" title="Open Files" disabled={project.missing}
-                        ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
-                        onClick={() => onOpenFiles(project)}>
-                        <FileIcon size={13} />
-                      </button>
-                    )}
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
@@ -643,11 +651,11 @@ function Sidebar({
             })}
           </ul>
         </div>
-        <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title="Settings">
-          <GearIcon size={14} /> Settings
-        </button>
       </nav>
-    </>
+      <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title="Settings">
+        <GearIcon size={14} /> Settings
+      </button>
+    </div>
   );
 }
 

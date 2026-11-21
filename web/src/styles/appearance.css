@@ -22,7 +22,6 @@ kbd {
 :root[data-appearance="light"] .pr-label {
   color: color-mix(in srgb, var(--label) 45%, var(--fg-bright));
 }
-.terminal-block-output,
 .terminal-workbench {
   background: var(--terminal-background, var(--bg));
 }

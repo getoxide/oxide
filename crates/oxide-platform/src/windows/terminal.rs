@@ -4,16 +4,15 @@
 use crate::{ShellLaunch, ShellProcess};
 use base64::Engine;
 use portable_pty::MasterPty;
-use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// The shell to start. With `blocks`, PowerShell's real REPL with the block prompt: Ctrl+C
 /// cancels a pipeline without killing the shell.
 pub fn shell_launch(blocks: bool, _init_file: Option<&Path>) -> ShellLaunch {
     let mut launch = ShellLaunch {
+        name: "PowerShell".into(),
         program: "powershell.exe".into(),
         args: Vec::new(),
         env: Vec::new(),
@@ -56,26 +55,16 @@ pub fn session_group(_shell_pid: u32, _master: &dyn MasterPty) -> Option<i32> {
     None
 }
 
-/// Writes `input` to the shell, turning Ctrl+C (0x03) into ending the shell's children, so the
-/// REPL survives. A Ctrl+C that ends nothing is written through.
+/// Writes `input` to the shell. Ctrl+C (0x03) goes through ConPTY like any key: the console
+/// turns it into a Ctrl+C event for a program that processes input, or hands it to one that reads
+/// raw keys (and may want a second press to quit). PowerShell's REPL survives it.
 pub fn write_input(
     writer: &mut dyn Write,
     input: &[u8],
-    shell_pid: u32,
+    _shell_pid: u32,
     _master: &dyn MasterPty,
 ) -> io::Result<()> {
-    let mut start = 0;
-    for (index, byte) in input.iter().enumerate() {
-        if *byte != 0x03 {
-            continue;
-        }
-        writer.write_all(&input[start..index])?;
-        if !interrupt_shell_children(shell_pid) {
-            writer.write_all(&input[index..=index])?;
-        }
-        start = index + 1;
-    }
-    writer.write_all(&input[start..])?;
+    writer.write_all(input)?;
     writer.flush()
 }
 
@@ -86,32 +75,3 @@ pub fn close_session(_group: Option<i32>, _grace: Duration, shell: &mut dyn Shel
 
 /// Nothing outlives a Job Object.
 pub fn clean_up_session(_group: Option<i32>) {}
-
-fn interrupt_shell_children(shell_pid: u32) -> bool {
-    let shell = Pid::from_u32(shell_pid);
-    let Ok(mut system) = System::new() else {
-        return false;
-    };
-    system.refresh_processes(ProcessesToUpdate::All, true);
-
-    let mut descendants = vec![shell];
-    let mut seen = HashSet::from([shell]);
-    let mut index = 0;
-    while index < descendants.len() {
-        let parent = descendants[index];
-        index += 1;
-        for (&pid, process) in system.processes() {
-            if process.parent() == Some(parent) && seen.insert(pid) {
-                descendants.push(pid);
-            }
-        }
-    }
-
-    let mut interrupted = false;
-    for pid in descendants.into_iter().skip(1).rev() {
-        if let Some(process) = system.process(pid) {
-            interrupted |= process.kill();
-        }
-    }
-    interrupted
-}

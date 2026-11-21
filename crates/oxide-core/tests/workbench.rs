@@ -340,10 +340,11 @@ fn interrupting_a_program_keeps_the_shell_usable() {
     let rx = core.subscribe_terminal(terminal.id).unwrap();
     core.run_terminal_block(
         terminal.id,
-        "python -c \"import time; print('WAITING_FOR_INTERRUPT',flush=True); time.sleep(30)\"",
+        "python -c \"import time; print('WAITING_FOR_' + 'INTERRUPT',flush=True); time.sleep(30)\"",
         "wait",
     )
     .unwrap();
+    // The needle is only in the output, never in the typed command a line editor echoes.
     until(&core, terminal.id, &rx, "WAITING_FOR_INTERRUPT");
     core.write_terminal(terminal.id, b"\x03").unwrap();
     until(&core, terminal.id, &rx, "wait;end;");
@@ -351,5 +352,30 @@ fn interrupting_a_program_keeps_the_shell_usable() {
         .unwrap();
     let output = until(&core, terminal.id, &rx, "after;end;0;");
     assert!(output.contains("STILL_USABLE"));
+    core.close_terminal(terminal.id).unwrap();
+}
+
+/// A program that reads raw keys (a TUI that wants Ctrl+C twice before it quits) gets the
+/// Ctrl+C byte itself, not a signal that ends it.
+#[test]
+fn a_program_reading_raw_keys_receives_ctrl_c_as_a_key() {
+    // Python's raw tty mode is Unix-only; Windows hands Ctrl+C to ConPTY unchanged.
+    if cfg!(windows) {
+        return;
+    }
+    let (_temporary, core, id) = fixture();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    core.run_terminal_block(
+        terminal.id,
+        "python -c \"import sys, tty; tty.setraw(0); print('RAW_' + 'READY', flush=True); key = sys.stdin.buffer.read(1); print('KEY_' + str(ord(key)), flush=True)\"",
+        "raw",
+    )
+    .unwrap();
+    until(&core, terminal.id, &rx, "RAW_READY");
+    core.write_terminal(terminal.id, b"\x03").unwrap();
+    let output = until(&core, terminal.id, &rx, "raw;end;");
+    assert!(output.contains("KEY_3"), "{output}");
+    assert!(output.contains("raw;end;0;"), "{output}");
     core.close_terminal(terminal.id).unwrap();
 }

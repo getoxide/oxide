@@ -18,6 +18,8 @@ pub struct TerminalSummary {
     pub id: u32,
     pub pid: u32,
     pub cwd: String,
+    /// The shell the Terminal runs, as the header names it: `zsh`, `bash` or `PowerShell`.
+    pub shell: String,
 }
 
 pub struct TerminalSession {
@@ -62,8 +64,8 @@ impl TerminalSession {
         } else {
             None
         };
-        let command = shell_command(cwd, blocks, shell_init.as_deref());
-        Self::spawn(id, cwd, registry, command, shell_init, blocks)
+        let (command, shell_name) = shell_command(cwd, blocks, shell_init.as_deref());
+        Self::spawn(id, cwd, registry, command, shell_name, shell_init, blocks)
     }
 
     fn spawn(
@@ -71,6 +73,7 @@ impl TerminalSession {
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         mut command: CommandBuilder,
+        shell_name: String,
         shell_init: Option<PathBuf>,
         blocks: bool,
     ) -> Result<Self> {
@@ -107,7 +110,7 @@ impl TerminalSession {
             Ok(child) => child,
             Err(error) => {
                 if let Some(path) = &shell_init {
-                    diag::best_effort("remove_file", std::fs::remove_file(path));
+                    remove_shell_init(path);
                 }
                 return Err(Error::Terminal(format!("start terminal shell: {error}")));
             }
@@ -118,7 +121,7 @@ impl TerminalSession {
                 diag::best_effort("kill", child.kill());
                 diag::best_effort("wait", child.wait());
                 if let Some(path) = &shell_init {
-                    diag::best_effort("remove_file", std::fs::remove_file(path));
+                    remove_shell_init(path);
                 }
                 return Err(error);
             }
@@ -176,7 +179,7 @@ impl TerminalSession {
                         }
                         diag::best_effort("wait", child.wait());
                         if let Some(path) = shell_init {
-                            diag::best_effort("remove_file", std::fs::remove_file(path));
+                            remove_shell_init(&path);
                         }
                         reply.tell(());
                         break;
@@ -189,6 +192,7 @@ impl TerminalSession {
                 id,
                 pid,
                 cwd: dunce::simplified(cwd).to_string_lossy().into_owned(),
+                shell: shell_name,
             },
             commands,
             subscribers,
@@ -269,7 +273,16 @@ impl Drop for TerminalSession {
     }
 }
 
-fn shell_command(cwd: &Path, blocks: bool, shell_init: Option<&Path>) -> CommandBuilder {
+/// Removes what [`os::create_shell_init_file`] made: one rc file, or a folder of startup files.
+fn remove_shell_init(path: &Path) {
+    if path.is_dir() {
+        diag::best_effort("remove_dir_all", std::fs::remove_dir_all(path));
+    } else {
+        diag::best_effort("remove_file", std::fs::remove_file(path));
+    }
+}
+
+fn shell_command(cwd: &Path, blocks: bool, shell_init: Option<&Path>) -> (CommandBuilder, String) {
     let launch = os::shell_launch(blocks, shell_init);
     let mut command = CommandBuilder::new(launch.program);
     command.args(launch.args);
@@ -278,7 +291,9 @@ fn shell_command(cwd: &Path, blocks: bool, shell_init: Option<&Path>) -> Command
     }
     command.cwd(dunce::simplified(cwd));
     command.env("TERM", "xterm-256color");
-    command
+    // The renderer draws 24-bit colour; CLIs only use it when they are told so.
+    command.env("COLORTERM", "truecolor");
+    (command, launch.name)
 }
 
 /// How many chunks a terminal view may fall behind before the terminal gives up

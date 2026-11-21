@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { terminalAppearance } from "../shared/appearance";
+import { attachGpuRenderer } from "./gpuRenderer";
 
 export interface TerminalBlock {
   token: string;
@@ -45,16 +46,26 @@ export function TerminalCommandBlock(props: Props) {
     const toolbar = workspace.querySelector<HTMLElement>(
       ".workbench-terminal-header",
     )!;
+    // The block behind the output paints the background, so its hover and failure tints reach
+    // under the text instead of stopping at a box around it.
+    const transparent = (theme: ReturnType<typeof terminalAppearance>["theme"]) => ({ ...theme, background: "#00000000" });
+    const initial = terminalAppearance();
     const term = new Terminal({
-      ...terminalAppearance(),
+      ...initial,
+      theme: transparent(initial.theme),
+      allowTransparency: true,
       cursorBlink: true,
       cursorInactiveStyle: "none",
       scrollback: 5000,
       convertEol: false,
+      // A little air between rows; the GPU renderer still joins box and block characters across it.
+      lineHeight: 1.2,
+      rescaleOverlappingGlyphs: true,
     });
     const addon = new FitAddon();
     term.loadAddon(addon);
     term.open(element);
+    const releaseGpu = attachGpuRenderer(term);
     terminal.current = term;
     let initialized = false,
       frame = 0,
@@ -107,7 +118,7 @@ export function TerminalCommandBlock(props: Props) {
       term.options.fontFamily = options.fontFamily;
       term.options.fontSize = options.fontSize;
       term.options.fontWeight = options.fontWeight;
-      term.options.theme = options.theme;
+      term.options.theme = transparent(options.theme);
       scheduleFit();
     };
     window.addEventListener("oxide-appearance-changed", appearance);
@@ -151,6 +162,7 @@ export function TerminalCommandBlock(props: Props) {
       alternate.dispose();
       cursor.dispose();
       cursorUp.dispose();
+      releaseGpu();
       term.dispose();
       terminal.current = null;
     };
@@ -180,7 +192,7 @@ export function TerminalCommandBlock(props: Props) {
   }, [visible, active]);
   return (
     <section
-      className={`terminal-command-block${active ? " running" : ""}${active && screen ? " fullscreen" : ""}`}
+      className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
     >
       <header>

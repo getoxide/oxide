@@ -479,7 +479,9 @@
   margin: 3px 0 0;
 }
 /* Terminal work mode: Command blocks with the restraint of the macOS Terminal. One column
-   in the terminal font, blocks split by spacing and a hairline, muted status, little chrome. */
+   in the terminal font, blocks split by spacing and a hairline, muted status, little chrome.
+   Like Warp, each block is a full-width row with a rail on its left edge: the accent while it
+   runs, red once it fails, so the outcome reads at a glance while scrolling. */
 .terminal-workbench {
   flex: 1;
   min-height: 0;
@@ -518,18 +520,40 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 4px 20px 8px;
+  padding: 4px 0 8px;
 }
 /* Anchor Command blocks to the bottom; margin (not justify-content) keeps overflow scrollable. */
 .terminal-block-scroll > :first-child {
   margin-top: auto;
 }
 .terminal-command-block {
+  position: relative;
   flex: none;
-  padding: 12px 0 10px;
+  padding: 12px 20px 10px;
+  transition: background-color var(--motion-fast) ease-out;
+}
+.terminal-command-block::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 160ms ease-out;
 }
 .terminal-command-block + .terminal-command-block {
   border-top: 1px solid var(--line);
+}
+.terminal-command-block:hover {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.terminal-command-block.running::before {
+  background: var(--acc2);
+}
+.terminal-command-block.failed {
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.terminal-command-block.failed::before {
+  background: var(--red);
 }
 .terminal-command-block > header {
   display: flex;
@@ -604,6 +628,10 @@
   margin: 0;
   padding: 0;
   border: 0;
+  background: none;
+}
+.terminal-command-block.fullscreen::before {
+  display: none;
 }
 .terminal-shell-closed {
   display: flex;
@@ -617,16 +645,23 @@
 .terminal-command-composer {
   position: relative;
   flex: none;
-  margin: 8px 20px 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
+  margin: 6px 16px 10px;
   background: transparent;
 }
+/* The command field: one rounded surface that lifts when it has focus. */
 .terminal-command-entry {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 2px 0 6px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg2);
+  transition: border-color var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
+}
+.terminal-command-composer:focus-within .terminal-command-entry {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc2) 14%, transparent);
 }
 .terminal-prompt-symbol {
   padding: 4px 0;
@@ -680,7 +715,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 4px;
+  padding: 6px 4px 0;
   color: var(--dim);
   font-size: 10.5px;
   opacity: 0;
@@ -704,17 +739,21 @@
   .workbench-terminal-header {
     padding: 0 12px;
   }
-  .terminal-block-scroll {
-    padding: 4px 12px 8px;
+  .terminal-command-block {
+    padding-inline: 12px;
   }
   .terminal-command-composer {
-    margin: 8px 12px 6px;
+    margin: 6px 10px 8px;
   }
   .terminal-command-hint > span:last-child {
     display: none;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
+  /* A new Command block slides in under the last one, so a submitted command visibly lands. */
+  .terminal-command-block {
+    animation: terminal-block-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
   .language-support-notice {
     animation: project-arrive 180ms cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -918,6 +957,45 @@
 }
 
 /* Back from the Code workspace to the Project's terminals. */
-.settings-view { padding: 0 20px; }
+.settings-view { overflow: auto; padding: 0 24px 40px; }
+.settings-page { display: grid; gap: 28px; width: 100%; max-width: 760px; margin: 0 auto; }
 .settings-header { display: flex; align-items: center; justify-content: space-between; }
-.settings-header h1 { margin: 16px 0; font-size: 18px; }
+.settings-header h1 { margin: 20px 0 0; font-size: 18px; color: var(--fg-bright); }
+.settings-section { display: grid; gap: 6px; }
+.settings-section h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+.settings-section > .settings-note { margin-bottom: 6px; }
+.settings-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); overflow: hidden; }
+.settings-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 14px 16px; }
+.settings-item + .settings-item { border-top: 1px solid var(--line); }
+.settings-item > strong, .settings-item-label > strong { color: var(--fg); font-weight: 500; }
+.settings-item-stacked { flex-direction: column; align-items: stretch; }
+.settings-item-end { justify-content: flex-end; }
+.settings-item-end .error { margin: 0 auto 0 0; }
+.settings-item-label { display: grid; gap: 4px; min-width: 0; flex: 1 1 200px; }
+.settings-font-sample { overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; line-height: 1.4; }
+.settings-item-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-item-controls select { min-height: 28px; padding: 2px 8px; font-size: 12px; }
+.theme-choices { display: flex; flex-wrap: wrap; gap: 12px; }
+.theme-choice {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 152px;
+  padding: 6px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: none;
+}
+.theme-choice:hover:not(:disabled) { background: var(--bg3); border-color: var(--line-strong); }
+.theme-choice[aria-checked="true"], .theme-choice[aria-checked="true"]:hover { border-color: var(--acc2); box-shadow: 0 0 0 1px var(--acc2); }
+.theme-swatch { display: flex; align-items: flex-end; gap: 4px; height: 58px; padding: 8px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgb(128 128 128 / .3); font: 600 15px var(--mono); }
+.theme-swatch > span { margin-right: auto; }
+.theme-swatch > i { width: 10px; height: 10px; border-radius: 50%; }
+.theme-choice-name { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; color: var(--fg); font-size: 12px; font-weight: 500; }
+.theme-choice-name svg { color: var(--acc2); }
+.settings-card .github-setup { padding: 16px; }
+
+@keyframes terminal-block-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

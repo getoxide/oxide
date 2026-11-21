@@ -176,6 +176,8 @@ pub struct Terminal {
     pub id: u32,
     pub pid: u32,
     pub cwd: String,
+    /// The shell it runs, as the Terminal header names it: `zsh`, `bash` or `PowerShell`.
+    pub shell: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

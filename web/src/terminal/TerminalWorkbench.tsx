@@ -56,6 +56,8 @@ export function TerminalWorkbench({
     loadHistory(contextKey),
   );
   const [sessionId, setSessionId] = useState<number | null>(null);
+  // The shell Core started (zsh, bash or PowerShell); a generic name until it answers.
+  const [shellName, setShellName] = useState(WINDOWS ? "PowerShell" : "Shell");
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -189,6 +191,7 @@ export function TerminalWorkbench({
           return;
         }
         setSessionId(id);
+        if (result.data.shell) setShellName(result.data.shell);
         setClosed(false);
         setError(null);
         for (const text of pendingReplies) reply(text);
@@ -326,7 +329,7 @@ export function TerminalWorkbench({
     >
       <header className="workbench-terminal-header">
         <TerminalIcon size={16} />
-        <strong>{WINDOWS ? "PowerShell" : "Shell"}</strong>
+        <strong>{shellName}</strong>
         <span className="mono" title={cwd}>
           {cwd}
         </span>
