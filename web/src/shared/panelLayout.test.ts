@@ -79,3 +79,11 @@ it("gives an explicitly opened sidebar priority at compact widths without losing
   expect(wide.toolsVisible).toBe(true);
   expect(preferred).toEqual({ sidebar: 300, tools: 700 });
 });
+
+it("lets the tools panel be dragged down to 320px without changing what fits by default", () => {
+  const narrowed = workspaceLayout(1440, { sidebar: 240, tools: 320 }, true);
+  expect(narrowed.tools.min).toBe(320);
+  expect(narrowed.tools.value).toBe(320);
+  expect(workspaceLayout(1440, { sidebar: 240, tools: 200 }, true).tools.value).toBe(320);
+  expect(workspaceLayout(1440, { sidebar: 240, tools: null }, true).tools.value).toBeGreaterThanOrEqual(496);
+});

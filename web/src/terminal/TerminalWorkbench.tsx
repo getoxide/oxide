@@ -1,10 +1,12 @@
 import { readJson, storageKeys, writeJson } from "../shared/storage";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { Channel } from "../shared/ipc";
 import { TerminalIcon, XIcon, SquareFillIcon } from "@primer/octicons-react";
@@ -18,6 +20,7 @@ import { commands } from "../bindings";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
+import { changeDirectoryLine, readTerminalSession, writeTerminalSession } from "../shared/session";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -27,6 +30,8 @@ interface Props {
   visible: boolean;
   /** The command a Command block is running, or `null` when the shell is idle. */
   onRunningChange?: (command: string | null) => void;
+  /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
+  headerAction?: ReactNode;
 }
 const WINDOWS = /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
@@ -50,16 +55,34 @@ export function TerminalWorkbench({
   contextKey,
   visible,
   onRunningChange,
+  headerAction,
 }: Props) {
-  const [blocks, setBlocks] = useState<Block[]>([]);
+  // The last session's blocks and folder, when session restore is on (read once per Terminal).
+  const [restored] = useState(() => readTerminalSession(contextKey));
+  const [blocks, setBlocks] = useState<Block[]>(() =>
+    (restored?.blocks ?? []).map((block) => ({
+      ...block,
+      token: crypto.randomUUID(),
+      outputOffset: 0,
+      started: true,
+      ended: true,
+      truncated: false,
+      restored: true,
+    })),
+  );
+  // The shell's folder as an absolute path, for the next session; the header shows `cwd`.
+  const shellCwd = useRef<string | null>(restored?.cwd ?? null);
+  const restoreCwd = useRef<string | null>(restored?.cwd ?? null);
   const [history, setHistory] = useState<CommandHistory[]>(() =>
     loadHistory(contextKey),
   );
   const [sessionId, setSessionId] = useState<number | null>(null);
+  // The shell Core started (zsh, bash or PowerShell); a generic name until it answers.
+  const [shellName, setShellName] = useState(WINDOWS ? "PowerShell" : "Shell");
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const [generation, setGeneration] = useState(0);
-  const [cwd, setCwd] = useState(readablePath(rootPath));
+  const [cwd, setCwd] = useState(readablePath(restored?.cwd ?? rootPath));
   const [fullscreen, setFullscreen] = useState<string | null>(null);
   const launched = useRef(new Set<string>());
   const [running, setRunning] = useState(false);
@@ -158,7 +181,10 @@ export function TerminalWorkbench({
                   : b,
               ),
             );
-            if (event.cwd) setCwd(readablePath(event.cwd));
+            if (event.cwd) {
+              shellCwd.current = event.cwd;
+              setCwd(readablePath(event.cwd));
+            }
             setHistory((old) =>
               old.map((h, index) =>
                 index === old.length - 1
@@ -189,6 +215,13 @@ export function TerminalWorkbench({
           return;
         }
         setSessionId(id);
+        if (result.data.shell) setShellName(result.data.shell);
+        // A restored Terminal's new shell moves to the folder the old one was in, before any block.
+        if (restoreCwd.current) {
+          const line = changeDirectoryLine(restoreCwd.current, WINDOWS);
+          restoreCwd.current = null;
+          void commands.writeTerminal(id, [...new TextEncoder().encode(line)]);
+        }
         setClosed(false);
         setError(null);
         for (const text of pendingReplies) reply(text);
@@ -208,6 +241,25 @@ export function TerminalWorkbench({
   useEffect(() => {
     writeJson(storageKeys.terminalHistory(contextKey), history);
   }, [history, contextKey]);
+  // Saved for session restore a moment after output settles, and when the window goes away.
+  useEffect(() => {
+    const save = () => writeTerminalSession(contextKey, {
+      cwd: shellCwd.current,
+      blocks: blocks.filter((block) => block.started).map((block) => ({
+        command: block.command,
+        output: block.output,
+        exitCode: block.ended ? block.exitCode : null,
+        at: block.at,
+        completedAt: block.completedAt ?? Date.now(),
+      })),
+    });
+    const timer = window.setTimeout(save, 500);
+    window.addEventListener("pagehide", save);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [blocks, cwd, contextKey]);
   useEffect(() => {
     if (visible && following.current)
       bottom.current?.scrollIntoView({ block: "nearest" });
@@ -326,10 +378,11 @@ export function TerminalWorkbench({
     >
       <header className="workbench-terminal-header">
         <TerminalIcon size={16} />
-        <strong>{WINDOWS ? "PowerShell" : "Shell"}</strong>
+        <strong>{shellName}</strong>
         <span className="mono" title={cwd}>
           {cwd}
         </span>
+        {headerAction && <span className="workbench-terminal-actions">{headerAction}</span>}
       </header>
       <div
         className="terminal-block-scroll"
@@ -340,10 +393,10 @@ export function TerminalWorkbench({
             !!el && el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        {blocks.map((block) => (
+        {blocks.map((block, index) => (
+          <Fragment key={block.token}>
           <TerminalCommandBlock
             onPasteReady={onPasteReady}
-            key={block.token}
             block={block}
             active={!block.ended}
             visible={visible}
@@ -359,6 +412,12 @@ export function TerminalWorkbench({
                 void commands.resizeTerminal(sessionId, rows, cols);
             }}
           />
+          {block.restored && !blocks[index + 1]?.restored && (
+            <div className="terminal-session-divider" role="separator" aria-label="Restored from the last session">
+              <span>Restored session</span>
+            </div>
+          )}
+          </Fragment>
         ))}
         <div ref={bottom} />
       </div>
@@ -382,6 +441,7 @@ export function TerminalWorkbench({
             className="btn sm"
             onClick={() => {
               setSessionId(null);
+              shellCwd.current = null;
               setCwd(readablePath(rootPath));
               setGeneration((n) => n + 1);
             }}

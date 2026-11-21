@@ -11,11 +11,13 @@ Oxide had grown into an agent workbench: Threads, Agent terminals, Providers, th
 ## Decision
 
 - **Terminals.** A Terminal is a shell in a Project's folder, with Command blocks. Core owns one PTY process per Terminal, never the webview (ADR-0016). A Project holds many; the selected one fills the centre; the others stay mounted and keep their scrollback and running processes. A Terminal is renamed and closed from the sidebar. Closing a Project ends all its Terminals and keeps the Project known. Terminals do not survive a restart.
+  - *Amended:* with Session restore on (a Settings switch, on by default), a restart reopens the Terminals with their names, folder and last Command blocks in new shells; the processes themselves still end with Oxide.
 - **Plain shell.** Oxide does not interpret what runs in a Terminal: no launch flags, prompts, statuses or permissions. No Provider, Model, Effort, Permission mode, Custom agent, Usage limit, Turn, Checkpoint, Restore or worktree exists, and Oxide creates no worktree or `oxide/*` branch. Oxide launches no agent CLI and no headless Provider run, and never polls Provider usage.
 - **Right dock.** Files, Issues and Pull request. The Terminal Surface goes, because Terminals live in the centre. Issues and Pull request are plain GitHub tools through `gh`: no dispatch to an agent, no Fix, no Blind review, no sending comments to an agent, no checkout of a pull request into a Thread. A pull request is opened from the branch checked out in the Project's folder.
 - **Editor.** The Code workspace stays, as the place where Files opens a file, with its language servers and their install prompts. It replaces the centre while a file is open, with a button back to the Terminals. Their custom paths in Settings go.
 - **Project Services go.** A server simply runs in its Terminal.
 - **No shortcuts, empty Settings.** Every custom keyboard shortcut goes; the operating system's own keys and the terminal's own keys keep working. The Settings tab stays and opens on an empty page. Emptying Settings removes in-app updates: the Updates page was the only place that checked for and installed updates, so until Settings are rebuilt users update by downloading the installer. Where Issues or Pull request need `gh`, they keep their own set-up and sign-in prompt.
+  - *Amended:* Settings are being rebuilt one option at a time. They now hold Appearance (theme and fonts) and the GitHub tools; in-app updates are still not back.
 - **Backend.** Every command, background task, stored table, setting and process that only served a removed feature is deleted. The process, locking and diagnostics primitives of ADR-0016 live in `oxide-platform`; the `oxide-provider` crate that held them is gone.
 
 ## Upgrade

@@ -21,7 +21,7 @@ _Avoid_: Project switcher, quick open
 ## Terminals
 
 **Terminal**:
-A shell session in a Project's folder, shown in the centre of the window and listed under its Project in the sidebar. A Project holds as many as the user opens. Core owns each shell, never the webview, so switching to another Terminal and back shows the same scrollback and a still-running process keeps running. A Terminal can be renamed and closed from the sidebar. It is a plain shell that Oxide does not interpret: whatever the user runs in it, an agent CLI included, runs with no Oxide launch flags, prompts, statuses or permissions. Terminals end when the user closes them, when their Project closes or when Oxide quits; Oxide does not restore them after a restart. See ADR-0018.
+A shell session in a Project's folder, shown in the centre of the window and listed under its Project in the sidebar. A Project holds as many as the user opens; the + beside a Project's name opens one. Core owns each shell, never the webview, so switching to another Terminal and back shows the same scrollback and a still-running process keeps running. A Terminal can be renamed in place from the sidebar (double-click, Force Click or Rename on its menu, as a file in the Finder) and closed there. The shell is the user's own zsh (with their startup files, so aliases, `PATH` and plugins load as in any terminal) where zsh is their login shell, else bash; PowerShell on Windows. Ctrl+C reaches the running program as a key, so a program that asks for a second Ctrl+C before quitting gets it. It is a plain shell that Oxide does not interpret: whatever the user runs in it, an agent CLI included, runs with no Oxide launch flags, prompts, statuses or permissions. Terminals end when the user closes them, when their Project closes or when Oxide quits. With **Session restore** on, the next launch reopens them with their names, folder and recent Command blocks, in new shells. See ADR-0018.
 _Avoid_: Thread, session, console, tab, Agent terminal
 
 **Command block**:
@@ -39,12 +39,12 @@ The sidebar's default state: the Open Projects with their Terminals. A Project n
 _Avoid_: Terminals tab, Projects view
 
 **Files view**:
-The sidebar's other state: the file tree of one Project, with a Search files box and Collapse all folders, under the header "← Project name · Terminals" that returns to the Terminals view (Back to Terminals). It shows only the Project whose **Files button** opened it; a click selects a file and a double click (or Enter/Space) opens it in the **Code workspace**.
+The sidebar's other state: the file tree of the selected Project, under its name. The **Sidebar switch** opens it and returns to the Terminals view; so does Open Files on a Project row's menu. A click selects a file and a double click (or Enter/Space) opens it in the **Code workspace**.
 _Avoid_: Files panel, Files Surface, explorer, navigator
 
-**Files button**:
-The icon on a Project row in the Terminals view, next to + and ×, labelled "Open Files": it selects the Project and opens its Files view. Shown on hover and focus, and always on the selected Project.
-_Avoid_: Files tab, Files switch
+**Sidebar switch**:
+The two tabs at the top of the sidebar, Terminals and Files, that choose its view. Files shows the selected Project and is disabled while no Project is selected or its folder is missing.
+_Avoid_: Files button, Back to Terminals
 
 **Code workspace**:
 The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored; maximizing or a narrow centre hides the other half without closing it. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
@@ -57,4 +57,8 @@ _Avoid_: Pane, panel, split view
 ## Settings
 
 **Settings**:
-A tab that opens on an empty page. Every old option is gone and new ones are added deliberately, each with its own spec. Oxide has no custom keyboard shortcuts; the operating system's own keys and the terminal's own keys keep working.
+A page with Appearance (the theme and the font, weight and size of the interface, the Code editor and the Terminal, applied as soon as they are chosen) and GitHub (whether Git and the GitHub CLI are installed), and **Session restore**. New options are added deliberately. Oxide has no custom keyboard shortcuts; the operating system's own keys and the terminal's own keys keep working.
+
+**Session restore**:
+A Settings switch, on by default. Oxide then reopens what was open when it quit: each Project's Terminals (names, the folder their shell was in and their last ten Command blocks, shown above a "Restored session" line, in new shells: programs that were running are not restarted) and its Code workspace with its files. Turning it off forgets the saved session.
+_Avoid_: Workspace restore, persistence

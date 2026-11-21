@@ -42,6 +42,8 @@ use serde::{Deserialize, Serialize};
 /// command, so this crate needs no PTY library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellLaunch {
+    /// What the Terminal shows as its shell: `zsh`, `bash` or `PowerShell`.
+    pub name: String,
     pub program: std::ffi::OsString,
     pub args: Vec<std::ffi::OsString>,
     pub env: Vec<(String, String)>,

@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  FileIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -13,7 +12,6 @@ import {
   SidebarExpandIcon,
   TerminalIcon,
   XIcon,
-  ArrowLeftIcon,
   type Icon,
 } from "@primer/octicons-react";
 import { commands, type Project } from "./bindings";
@@ -36,11 +34,13 @@ import { readablePath } from "./terminal/headerLines";
 import { sidebarProjects } from "./projects/projectList";
 import { runEditCommand, type EditCommand } from "./terminal/editCommand";
 import { TerminalWorkbench } from "./terminal/TerminalWorkbench";
+import { TerminalRow } from "./terminal/TerminalRow";
 import {
   closeProjectTerminals, closeTerminal, openTerminal, renameTerminal, selectTerminal, setRunning,
   emptyTerminals, type TerminalsByProject,
 } from "./terminal/terminalTabs";
 import type { CodeOpenRequest } from "./editor/codeOpen";
+import { forgetTerminalSession, readSession, writeSession } from "./shared/session";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
 const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
@@ -69,10 +69,13 @@ export function App() {
   const [visitedTools, setVisitedTools] = useState<Record<string, boolean>>({});
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [terminals, setTerminals] = useState<TerminalsByProject>({});
+  // With session restore on, the Terminals, Code workspaces and halves of the last session.
+  const [session] = useState(readSession);
+  const [terminals, setTerminals] = useState<TerminalsByProject>(() => session?.terminals ?? {});
   const [openError, setOpenError] = useState<string | null>(null);
   const [codeRequest, setCodeRequest] = useState<(CodeOpenRequest & { projectId: number }) | null>(null);
-  const [codeProjects, setCodeProjects] = useState<number[]>([]);
+  // A restored Code workspace reopens its own files and then reports them, which shows the Code half.
+  const [codeProjects, setCodeProjects] = useState<number[]>(() => session?.code ?? []);
   // Projects whose Code half is open; a Project's Code workspace stays mounted either way.
   const [codeShown, setCodeShown] = useState<Record<number, boolean>>({});
   const filesSeen = useRef(new Set<number>());
@@ -89,7 +92,7 @@ export function App() {
   const [dragDivider, setDragDivider] = useState<number | null>(null);
   useEffect(() => { writeJson(storageKeys.splitLayouts, layouts); }, [layouts]);
   // The half each Project chose last (Code after opening a file, Terminal after choosing a Terminal).
-  const [lastHalf, setLastHalf] = useState<Record<number, Half>>({});
+  const [lastHalf, setLastHalf] = useState<Record<number, Half>>(() => session?.lastHalf ?? {});
   const chooseHalf = useCallback((projectId: number, half: Half) => {
     setLastHalf((previous) => previous[projectId] === half ? previous : { ...previous, [projectId]: half });
   }, []);
@@ -183,6 +186,7 @@ export function App() {
     const closed = await commands.setProjectOpen(projectId, false);
     if (closed.status === "error") return closed.error.message;
     // Core ended the Project's terminals; dropping their state unmounts their views.
+    for (const tab of terminals[projectId]?.tabs ?? []) forgetTerminalSession(`${projectId}:${tab.id}`);
     setTerminals((previous) => closeProjectTerminals(previous, projectId));
     setCodeProjects((previous) => previous.filter((id) => id !== projectId));
     setCodeShown((previous) => ({ ...previous, [projectId]: false }));
@@ -199,7 +203,12 @@ export function App() {
       setSelectedId(sidebarProjects(updated).find((project) => project.id !== projectId)?.id ?? null);
     }
     return listed.status === "error" ? listed.error.message : null;
-  }, [projects, selectedId]);
+  }, [projects, selectedId, terminals]);
+
+  // Saved on every change for the next launch; a Code workspace not yet reported counts as open.
+  useEffect(() => {
+    writeSession({ terminals, code: codeProjects.filter((id) => codeShown[id] !== false), lastHalf });
+  }, [terminals, codeProjects, codeShown, lastHalf]);
 
   const openCodeFile = (path: string) => {
     if (!selected) return;
@@ -339,7 +348,10 @@ export function App() {
               setTerminals((previous) => selectTerminal(previous, project.id, tabId));
             }}
             onRenameTerminal={(project, tabId, name) => setTerminals((previous) => renameTerminal(previous, project.id, tabId, name))}
-            onCloseTerminal={(project, tabId) => setTerminals((previous) => closeTerminal(previous, project.id, tabId))}
+            onCloseTerminal={(project, tabId) => {
+              forgetTerminalSession(`${project.id}:${tabId}`);
+              setTerminals((previous) => closeTerminal(previous, project.id, tabId));
+            }}
             onOpenPalette={() => overlays.current?.openPalette()}
             onOpenSettings={() => setShowSettings(true)}
           />
@@ -351,7 +363,6 @@ export function App() {
           <div className="centre-workbench" hidden={centreHidden} ref={centreRef}
             style={{ "--terminal-half": `${split.value}px` } as CSSProperties}>
             <div className="centre-half centre-terminal-half" id="centre-terminal-half" hidden={mode === "code"}>
-              {halfButton("terminal")}
               {/* Every terminal stays mounted while hidden, so scrollback and running processes survive switching. */}
               {projectsWithTerminals.map(([id, state]) => state.tabs.map((tab) => {
                 const projectId = Number(id);
@@ -365,6 +376,7 @@ export function App() {
                       rootPath={project.path}
                       contextKey={`${projectId}:${tab.id}`}
                       visible={visible}
+                      headerAction={visible ? halfButton("terminal") : null}
                       onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
                     />
                   </main>
@@ -392,7 +404,6 @@ export function App() {
               )}
             </div>
             <div className="centre-half centre-code-half" role="region" aria-label="Code" tabIndex={-1} ref={codeHalfRef} hidden={mode === "terminal"}>
-              {halfButton("code")}
               {mode === "split" && selected && (
                 <ResizeHandle label="Resize Terminal and Code" controls="centre-terminal-half" axis="x" edge="start"
                   {...split} onResize={setDragDivider}
@@ -415,6 +426,7 @@ export function App() {
                       showExplorer={false}
                       onChanged={() => {}}
                       openRequest={codeRequest?.projectId === projectId ? codeRequest : null}
+                      headerAction={projectId === selected?.id ? halfButton("code") : null}
                     />
                   </Suspense>
                 );
@@ -488,7 +500,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
 }
 
-/** The open Projects and, under each, its terminals. Nothing else lives here. */
+/** The open Projects and, under each, its terminals; or, in the Files view, the selected Project's files. */
 function Sidebar({
   projects, selected, terminals, settingsOpen, filesProject, onOpenFiles, onCloseFiles, onOpenFile,
   onSelectProject, onCloseProject, onNewTerminal,
@@ -497,16 +509,14 @@ function Sidebar({
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<number[]>([]);
-  const [editing, setEditing] = useState<{ projectId: number; tabId: number } | null>(null);
-  const [renameText, setRenameText] = useState("");
-  // Going back from the Files view returns focus to that Project's Files button, once the list is visible again.
-  const filesButtons = useRef(new Map<number, HTMLButtonElement>());
-  const returnFocusTo = useRef<number | null>(null);
-  useEffect(() => {
-    if (filesProject !== null || returnFocusTo.current === null) return;
-    filesButtons.current.get(returnFocusTo.current)?.focus();
-    returnFocusTo.current = null;
-  }, [filesProject]);
+  const terminalsTab = useRef<HTMLButtonElement>(null);
+  const filesTab = useRef<HTMLButtonElement>(null);
+  const filesOpen = filesProject !== null;
+  const canOpenFiles = selected !== null && !selected.missing;
+  const showView = (files: boolean) => {
+    if (files && selected && canOpenFiles) onOpenFiles(selected);
+    if (!files) onCloseFiles();
+  };
 
   const close = async (project: Project) => {
     if (closingProjectId !== null) return;
@@ -525,16 +535,33 @@ function Sidebar({
   const shown = selected && !listed.some((project) => project.id === selected.id) ? [selected, ...listed] : listed;
 
   return (
-    <>
+    <div className="sidebar">
+      {/* The two views of the sidebar: the open Projects with their Terminals, or the selected Project's files. */}
+      <div className="sidebar-switch" role="tablist" aria-label="Sidebar view"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const files = event.key === "End" || (event.key !== "Home" && !filesOpen);
+          if (files && !canOpenFiles) return;
+          showView(files);
+          (files ? filesTab : terminalsTab).current?.focus();
+        }}>
+        <button ref={terminalsTab} role="tab" aria-selected={!filesOpen} aria-controls="sidebar-terminals" tabIndex={filesOpen ? -1 : 0}
+          onClick={() => showView(false)}>
+          <TerminalIcon size={14} /> Terminals
+        </button>
+        <button ref={filesTab} role="tab" aria-selected={filesOpen} aria-controls="sidebar-files" tabIndex={filesOpen ? 0 : -1}
+          disabled={!canOpenFiles} title={selected ? `Files of ${selected.name}` : "Select a Project to see its files"}
+          onClick={() => showView(true)}>
+          <FileDirectoryIcon size={14} /> Files
+        </button>
+      </div>
       {filesProject && (
-        <nav className="sidebar sidebar-files" aria-label="Files">
-          <button className="files-back" aria-label="Back to Terminals" title="Back to Terminals" autoFocus
-            onClick={() => { returnFocusTo.current = filesProject.id; onCloseFiles(); }}>
-            <ArrowLeftIcon size={14} />
+        <nav className="sidebar-view sidebar-files" id="sidebar-files" aria-label="Files">
+          <div className="files-heading" title={readablePath(filesProject.path)}>
             <RepoIcon size={13} />
             <span className="project-name">{filesProject.name}</span>
-            <span className="files-back-target">Terminals</span>
-          </button>
+          </div>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
               <FilesPanel key={filesProject.id} projectId={filesProject.id} revision={0} onOpenFile={onOpenFile} />
@@ -542,7 +569,7 @@ function Sidebar({
           </div>
         </nav>
       )}
-      <nav className="sidebar" aria-label="Projects" hidden={filesProject !== null}>
+      <nav className="sidebar-view" id="sidebar-terminals" aria-label="Projects" hidden={filesOpen}>
         <div className="sidebar-actions">
           <button className="btn grow" onClick={onOpenPalette} aria-label="Open a Project" title="Open a Project">
             <RepoIcon size={14} /> Open a Project
@@ -587,54 +614,21 @@ function Sidebar({
                       {project.missing && <span className="badge">missing</span>}
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
-                    {isSelected && (
-                      <button className="row-action files-action" aria-label="Open Files" title="Open Files" disabled={project.missing}
-                        ref={(element) => { if (element) filesButtons.current.set(project.id, element); else filesButtons.current.delete(project.id); }}
-                        onClick={() => onOpenFiles(project)}>
-                        <FileIcon size={13} />
-                      </button>
-                    )}
+                    <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title="New terminal"
+                      disabled={project.missing}
+                      onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
+                      <PlusIcon size={14} />
+                    </button>
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
                       {state.tabs.length === 0 && <li className="sidebar-note">No terminals</li>}
                       {state.tabs.map((tab) => (
-                        <li key={tab.id} className="terminal-row">
-                          {editing?.projectId === project.id && editing.tabId === tab.id ? (
-                            <input
-                              className="terminal-rename-input"
-                              value={renameText}
-                              autoFocus
-                              aria-label={`Rename ${tab.name}`}
-                              onChange={(event) => setRenameText(event.target.value)}
-                              onBlur={() => { setEditing(null); onRenameTerminal(project, tab.id, renameText); }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") { setEditing(null); onRenameTerminal(project, tab.id, renameText); }
-                                if (event.key === "Escape") setEditing(null);
-                              }}
-                            />
-                          ) : (
-                            <button
-                              className="terminal-item"
-                              aria-current={!settingsOpen && isSelected && tab.id === state.selectedId}
-                              title={`${tab.name}${tab.running ? ` — running ${tab.running}` : ""}. Double-click to rename.`}
-                              onClick={() => onSelectTerminal(project, tab.id)}
-                              onDoubleClick={(event) => {
-                                event.preventDefault();
-                                setEditing({ projectId: project.id, tabId: tab.id });
-                                setRenameText(tab.name);
-                              }}
-                            >
-                              <TerminalIcon size={12} />
-                              <span className="terminal-item-title">{tab.name}</span>
-                              {tab.running && <span className="terminal-tab-running" aria-label="Command running" />}
-                            </button>
-                          )}
-                          <button className="row-action" onClick={() => onCloseTerminal(project, tab.id)}
-                            aria-label={`Close ${tab.name}`} title="Close terminal">
-                            <XIcon size={12} />
-                          </button>
-                        </li>
+                        <TerminalRow key={tab.id} name={tab.name} running={tab.running}
+                          current={!settingsOpen && isSelected && tab.id === state.selectedId}
+                          onSelect={() => onSelectTerminal(project, tab.id)}
+                          onRename={(name) => onRenameTerminal(project, tab.id, name)}
+                          onClose={() => onCloseTerminal(project, tab.id)} />
                       ))}
                     </ul>
                   </Collapsible>
@@ -643,11 +637,11 @@ function Sidebar({
             })}
           </ul>
         </div>
-        <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title="Settings">
-          <GearIcon size={14} /> Settings
-        </button>
       </nav>
-    </>
+      <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title="Settings">
+        <GearIcon size={14} /> Settings
+      </button>
+    </div>
   );
 }
 

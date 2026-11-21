@@ -22,7 +22,6 @@ kbd {
 :root[data-appearance="light"] .pr-label {
   color: color-mix(in srgb, var(--label) 45%, var(--fg-bright));
 }
-.terminal-block-output,
 .terminal-workbench {
   background: var(--terminal-background, var(--bg));
 }
@@ -42,7 +41,6 @@ kbd {
 }
 .terminal-input-editor textarea, .terminal-ghost, .terminal-prompt-symbol { font-family: var(--font-terminal, monospace); font-size: var(--font-terminal-size, 13px); font-weight: var(--font-terminal-weight, 400); line-height: 1.6; }
 .github-setup { width: 100%; padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; container-type: inline-size; }
-.settings .github-setup { padding: 20px 0; border-top: 1px solid var(--line); }
 .github-setup > header { display: flex; align-items: flex-start; gap: 12px; }
 .github-setup > header > svg { flex: none; color: var(--dim); margin-top: 2px; }
 .github-setup h3 { margin: 0; font-size: 15px; color: var(--fg-bright); }

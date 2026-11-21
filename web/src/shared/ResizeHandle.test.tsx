@@ -51,3 +51,38 @@ it("moves a bottom panel upward to increase its height and ignores unrelated arr
   press("ArrowDown", true);
   expect(commit).toHaveBeenLastCalledWith(168);
 });
+
+it("keeps dragging when the parent re-renders with new callbacks on every move, and ends cleanly", async () => {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  HTMLElement.prototype.setPointerCapture ??= () => {};
+  HTMLElement.prototype.hasPointerCapture ??= () => false;
+  const commit = vi.fn();
+  // Like the centre's divider: fresh inline callbacks, and every resize re-renders the parent.
+  function Split() {
+    const [drag, setDrag] = useState<number | null>(null);
+    const [divider, setDivider] = useState(600);
+    return <ResizeHandle label="Resize Terminal and Code" controls="terminal" axis="x" edge="start"
+      value={drag ?? divider} min={360} max={840} onResize={(value) => setDrag(value)}
+      onCommit={(value) => { setDrag(null); setDivider(value); commit(value); }} onCancel={() => setDrag(null)} onReset={() => {}} />;
+  }
+  act(() => root.render(<Split />));
+  const separator = container.querySelector<HTMLElement>("[role=separator]")!;
+  const pointer = (type: string, clientX: number) => act(async () => {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 });
+    Object.assign(event, { pointerId: 1, isPrimary: true });
+    separator.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+  await pointer("pointerdown", 800);
+  expect(separator.dataset.dragging).toBe("true");
+  await pointer("pointermove", 750);
+  expect(separator.getAttribute("aria-valuenow")).toBe("550");
+  await pointer("pointermove", 700);
+  expect(separator.getAttribute("aria-valuenow")).toBe("500");
+  await pointer("pointerup", 700);
+  expect(commit).toHaveBeenLastCalledWith(500);
+  expect(separator.dataset.dragging).toBe("false");
+  expect(document.documentElement.classList.contains("oxide-resizing-columns")).toBe(false);
+  vi.unstubAllGlobals();
+});

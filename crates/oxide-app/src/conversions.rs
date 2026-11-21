@@ -16,6 +16,7 @@ impl From<oxide_core::TerminalSummary> for Terminal {
             id: t.id,
             pid: t.pid,
             cwd: t.cwd,
+            shell: t.shell,
         }
     }
 }

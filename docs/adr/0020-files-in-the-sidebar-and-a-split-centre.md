@@ -16,6 +16,10 @@ ADR-0018 left Oxide with a Terminal in the centre and a dock of Files, Issues an
 - **Fitting.** ADR-0009's rule stands: at compact width the dock and the sidebar suspend each other. A centre narrower than 720 px (two halves of 360 px) shows only the half chosen last, reusing the maximize mechanism. The dock gets no new behaviour.
 - **Right dock.** Issues and Pull request only.
 
+## Amendment: a Sidebar switch replaces the Files button
+
+The Files button on the selected Project row read as a stray control beside the row, and the row's own fill stacked on the selected Terminal's. The sidebar now opens with a **Sidebar switch**, two tabs (Terminals and Files), and the Files view shows the selected Project. Project rows carry no fill and no buttons, so the selected Terminal is the only highlighted row. Open Files stays on a Project row's menu. This reverses the first rejected option below.
+
 ## Consequences
 
 - **Surface** now means Issues or Pull request; **Code workspace** opens beside the Terminal. `GLOSSARY.md` gains **Terminals view**, **Files view** and **Files button**.

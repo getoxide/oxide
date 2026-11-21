@@ -442,6 +442,8 @@ export type Terminal = {
 	id: number,
 	pid: number,
 	cwd: string,
+	/**  The shell it runs, as the Terminal header names it: `zsh`, `bash` or `PowerShell`. */
+	shell: string,
 };
 
 export type TerminalCompletion = {
