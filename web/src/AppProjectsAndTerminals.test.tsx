@@ -458,15 +458,17 @@ it("offers New terminal, Open Files and Remove project on a Project row's menu, 
   expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["New terminal", "Open Files", "Remove project"]);
 });
 
-it("opens Settings with Appearance and GitHub, and closes them", async () => {
+it("opens Settings with Appearance, Session, and GitHub sections, and closes them", async () => {
   await click(q(".sidebar-footer"));
   const settings = q('main[aria-label="Settings"]')!;
-  expect(Array.from(settings.querySelectorAll("h2")).map((heading) => heading.textContent)).toEqual(["Appearance", "Session", "GitHub"]);
+  const navTabs = Array.from(settings.querySelectorAll('[role="tab"]'));
+  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Session", "GitHub"]);
+  expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
+  await click(navTabs.find((tab) => tab.textContent === "Session") ?? null);
   const restore = settings.querySelector<HTMLInputElement>('input[role="switch"]')!;
   expect(restore.checked).toBe(true);
   await click(restore);
   expect(localStorage.getItem("oxide:restore-session:v1")).toBe("false");
-  expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
   await click(label("Close settings"));
   expect(q('main[aria-label="Settings"]')).toBeNull();
 });
