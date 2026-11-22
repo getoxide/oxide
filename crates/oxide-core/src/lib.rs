@@ -19,6 +19,7 @@ mod redact;
 mod system;
 mod terminal;
 mod terminal_completion;
+mod themes;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
@@ -40,6 +41,7 @@ pub use github::{
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use system::System;
 pub use terminal::TerminalSummary;
+pub use themes::ThemeSummary;
 
 use oxide_platform::registry::ProcessRegistry;
 use rusqlite::Connection;
@@ -148,6 +150,7 @@ impl Core {
             path: home.clone(),
             source,
         })?;
+        themes::seed_builtin_themes(&home)?;
         Ok(Self {
             home,
             user_home: std::env::var_os("HOME")
@@ -243,6 +246,29 @@ impl Core {
     pub fn reveal_in_finder(&self, project_id: u32) -> Result<()> {
         let path = self.checkout_path(project_id)?;
         self.system().reveal_in_finder(Path::new(&path));
+        Ok(())
+    }
+
+    /// Lists all `*.json` themes in `~/.oxide/themes/`, seeding built-in themes if missing.
+    pub fn list_themes(&self) -> Result<Vec<ThemeSummary>> {
+        themes::list_themes(&self.home)
+    }
+
+    /// Saves a custom theme JSON file to `~/.oxide/themes/<id>.json` with private permissions.
+    /// Rejects built-in IDs, invalid IDs, symlinks, path traversal, and invalid/oversized JSON.
+    pub fn save_theme(&self, id: &str, json: &str) -> Result<ThemeSummary> {
+        themes::save_theme(&self.home, id, json)
+    }
+
+    /// Deletes a custom theme JSON file from `~/.oxide/themes/<id>.json`.
+    pub fn delete_theme(&self, id: &str) -> Result<()> {
+        themes::delete_theme(&self.home, id)
+    }
+
+    /// Opens `~/.oxide/themes/` in the OS file manager (Finder / Explorer / file manager).
+    pub fn open_themes_folder(&self) -> Result<()> {
+        let dir = themes::seed_builtin_themes(&self.home)?;
+        self.system().reveal_in_finder(&dir);
         Ok(())
     }
 

@@ -219,3 +219,74 @@ it("applies size and weight to each area and preserves legacy appearance setting
   expect(() => saveAppearance({ ...old, typography: { ...typography, ui: { size: 200, weight: 400 } } })).toThrow(/Font sizes/);
   expect(terminalAppearance().fontSize).toBe(18);
 });
+
+it("applies area-specific surface tokens and optional theme fonts, clearing them on fallback", () => {
+  const customJson = JSON.stringify({
+    name: "Studio",
+    themes: [
+      {
+        name: "Studio Dark",
+        appearance: "dark",
+        fonts: {
+          surfaces: "Georgia, serif",
+        },
+        style: {
+          "title_bar.background": "#111111",
+          "sidebar.background": "#121212",
+          "sidebar.border": "#222222",
+          "sidebar.foreground": "#eeeeee",
+          "sidebar.item.hover": "#1f1f1f",
+          "sidebar.item.active": "#2a2a2a",
+          "sidebar.switch.background": "#181818",
+          "sidebar.switch.active": "#303030",
+          "surfaces.background": "#141414",
+          "surfaces.header.background": "#191919",
+          "surfaces.card.background": "#1d1d1d",
+          "surfaces.border": "#2d2d2d",
+          "surfaces.foreground": "#f0f0f0",
+          "surfaces.font_size": 14,
+          "tab_bar.background": "#151515",
+          "tab.active_background": "#1c1c1c",
+          "tab.inactive_background": "#141414",
+          "tab.border": "#2b2b2b",
+          "breadcrumbs.background": "#161616",
+          "breadcrumbs.foreground": "#aaaaaa",
+          "status_bar.background": "#171717",
+          "status_bar.foreground": "#bbbbbb",
+          "terminal.header.background": "#181818",
+          "terminal.composer.background": "#1a1a1a",
+          "terminal.block.border": "#2c2c2c",
+          "terminal.block.running_rail": "#3399ff",
+          "terminal.block.running_tint": "#3399ff22",
+          "terminal.block.failed_rail": "#ff5555",
+          "terminal.block.failed_tint": "#ff555522",
+        },
+      },
+    ],
+  });
+
+  saveAppearance({
+    ...getAppearance(),
+    themeJson: customJson,
+    themeName: "Studio Dark",
+  });
+
+  expect(rootStyle().getPropertyValue("--header-background")).toBe("#111111");
+  expect(rootStyle().getPropertyValue("--sidebar-background")).toBe("#121212");
+  expect(rootStyle().getPropertyValue("--sidebar-switch-active")).toBe("#303030");
+  expect(rootStyle().getPropertyValue("--surfaces-card-background")).toBe("#1d1d1d");
+  expect(rootStyle().getPropertyValue("--editor-tabs-background")).toBe("#151515");
+  expect(rootStyle().getPropertyValue("--editor-breadcrumbs-foreground")).toBe("#aaaaaa");
+  expect(rootStyle().getPropertyValue("--editor-status-bar-background")).toBe("#171717");
+  expect(rootStyle().getPropertyValue("--terminal-header-background")).toBe("#181818");
+  expect(rootStyle().getPropertyValue("--terminal-block-running-rail")).toBe("#3399ff");
+  expect(rootStyle().getPropertyValue("--terminal-block-failed-tint")).toBe("#ff555522");
+  expect(rootStyle().getPropertyValue("--font-surfaces")).toBe("Georgia, serif");
+  expect(rootStyle().getPropertyValue("--font-surfaces-size")).toBe("14px");
+
+  // Switching to a minimal partial theme clears area-specific overrides so fallbacks apply.
+  saveAppearance(singleTheme("dark", { background: "#202020" }));
+  expect(rootStyle().getPropertyValue("--sidebar-background")).toBe("");
+  expect(rootStyle().getPropertyValue("--terminal-block-running-rail")).toBe("");
+  expect(rootStyle().getPropertyValue("--font-surfaces-size")).toBe("");
+});
