@@ -15,9 +15,10 @@ import {
 } from "../shared/appearance";
 import { GithubSetup } from "./GithubSetup";
 import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
+import { ShortcutsSettings } from "./ShortcutsSettings";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
-export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "github";
+export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "shortcuts" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -373,6 +374,12 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
           </label>
         </div>
       ),
+    },
+    {
+      id: "shortcuts",
+      label: "Shortcuts",
+      description: "Click a shortcut and press a new key combination. Bare Ctrl+letter keys stay reserved for the Terminal unless explicitly bound here.",
+      render: () => <ShortcutsSettings />,
     },
     {
       id: "github",

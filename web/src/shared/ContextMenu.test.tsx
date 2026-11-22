@@ -45,7 +45,7 @@ describe("ContextMenu", () => {
     });
 
     rightClick(host.querySelector('[data-testid="blank"]')!);
-    const items = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).map((b) => b.textContent);
+    const items = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).map((b) => b.querySelector("span")?.textContent ?? b.textContent);
     expect(items).toEqual(["Open a Project…", "New terminal", "Settings"]);
 
     await act(async () => {
@@ -65,7 +65,7 @@ describe("ContextMenu", () => {
     });
 
     rightClick(host.querySelector('[data-testid="blank"]')!);
-    const items = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).map((b) => b.textContent);
+    const items = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).map((b) => b.querySelector("span")?.textContent ?? b.textContent);
     expect(items).toEqual(["Open a Project…", "Settings"]);
   });
 
