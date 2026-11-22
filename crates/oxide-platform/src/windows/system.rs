@@ -84,7 +84,7 @@ pub fn system_fonts() -> Vec<String> {
     }
     // SAFETY: `LOGFONTW` is a plain C struct where zero-initialization is valid.
     let mut logfont: LOGFONTW = unsafe { std::mem::zeroed() };
-    logfont.lfCharSet = DEFAULT_CHARSET as u8;
+    logfont.lfCharSet = DEFAULT_CHARSET;
     let mut raw_families: Vec<String> = Vec::new();
     // SAFETY: `hdc` is a valid screen DC, `logfont` is initialized, and `raw_families` outlives
     // the synchronous `EnumFontFamiliesExW` call.
