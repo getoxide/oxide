@@ -860,13 +860,44 @@
 }
 
 /* Back from the Code workspace to the Project's terminals. */
-.settings-view { overflow: auto; padding: 0 24px 40px; }
-.settings-page { display: grid; gap: 28px; width: 100%; max-width: 760px; margin: 0 auto; }
-.settings-header { display: flex; align-items: center; justify-content: space-between; }
-.settings-header h1 { margin: 20px 0 0; font-size: 18px; color: var(--fg-bright); }
+.settings-view { display: flex; flex-direction: column; overflow: hidden; padding: 0 24px; }
+.settings-page { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 20px; width: 100%; max-width: 920px; margin: 0 auto; }
+.settings-header { display: flex; align-items: center; justify-content: space-between; flex: none; padding-top: 20px; }
+.settings-header h1 { margin: 0; font-size: 18px; color: var(--fg-bright); }
+.settings-body { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; flex: 1; min-height: 0; }
+.settings-nav { min-width: 0; }
+.settings-tablist { display: flex; flex-direction: column; gap: 2px; }
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav-item:hover:not(:disabled) { background: var(--bg2); color: var(--fg); }
+.settings-nav-item[aria-selected="true"],
+.settings-nav-item[aria-selected="true"]:hover { background: var(--bg3); color: var(--fg-bright); font-weight: 600; }
+.settings-nav-item:focus-visible { outline: 2px solid var(--gh-blue); outline-offset: -2px; }
+.settings-content { min-width: 0; min-height: 0; overflow-y: auto; padding-bottom: 40px; }
 .settings-section { display: grid; gap: 6px; }
+.settings-section[hidden] { display: none; }
 .settings-section h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg-bright); }
 .settings-section > .settings-note { margin-bottom: 6px; }
+@container (max-width: 620px) {
+  .settings-view { padding: 0 16px; }
+  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px; }
+  .settings-tablist { flex-direction: row; flex-wrap: wrap; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .settings-nav-item { width: auto; flex: 0 0 auto; padding: 5px 10px; }
+}
 .settings-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); overflow: hidden; }
 .settings-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 14px 16px; }
 .settings-item + .settings-item { border-top: 1px solid var(--line); }
