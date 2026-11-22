@@ -129,4 +129,27 @@ describe("codeEditorSettings", () => {
 
     expect(toMonacoEditorOptions(custom, true).smoothScrolling).toBe(false);
   });
+
+  it("defaults smoothScrolling to false when prefers-reduced-motion: reduce matches", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      vi.resetModules();
+      const fresh = await import("./codeEditorSettings");
+      expect(fresh.DEFAULT_CODE_EDITOR_SETTINGS.smoothScrolling).toBe(false);
+      expect(fresh.getCodeEditorSettings().smoothScrolling).toBe(false);
+    } finally {
+      window.matchMedia = originalMatchMedia;
+      vi.resetModules();
+    }
+  });
 });

@@ -424,7 +424,8 @@ export function validateAppearance(value: Appearance) {
     throw new Error("Select a theme from this theme pack.");
 }
 let current = load();
-let cachedTheme = parseThemePack(current.themeJson).themes.find(
+let cachedPack = parseThemePack(current.themeJson);
+let cachedTheme = cachedPack.themes.find(
   (theme) => theme.name === current.themeName,
 )!;
 export function getAppearance(): Appearance {
@@ -478,19 +479,26 @@ export function applyAppearance(): void {
     root.style.setProperty(`--font-${key}-size`, `${style.size}px`);
     root.style.setProperty(`--font-${key}-weight`, String(style.weight));
   }
-  const surfacesFont =
-    typeof theme.style["surfaces.font_family"] === "string"
-      ? theme.style["surfaces.font_family"]
-      : theme.fonts?.surfaces;
-  if (typeof surfacesFont === "string" && surfacesFont.trim())
-    root.style.setProperty("--font-surfaces", surfacesFont);
   const surfacesSize = theme.style["surfaces.font_size"];
   if (typeof surfacesSize === "number" && Number.isFinite(surfacesSize))
     root.style.setProperty("--font-surfaces-size", `${surfacesSize}px`);
 }
+function themeSuggestedFont(key: FontRole): string | undefined {
+  const raw = cachedTheme.fonts?.[key] ?? cachedPack.fonts?.[key];
+  if (typeof raw === "string" && raw.trim()) return raw;
+  if (key === "surfaces") {
+    const styleFont = cachedTheme.style["surfaces.font_family"];
+    if (typeof styleFont === "string" && styleFont.trim()) return styleFont;
+  }
+  return undefined;
+}
 export function fontFamily(key: FontRole): string {
-  if (key === "surfaces") return current.fonts.surfaces ?? current.fonts.ui;
-  return current.fonts[key];
+  if (key === "surfaces") {
+    return current.fonts.surfaces ?? themeSuggestedFont("surfaces") ?? fontFamily("ui");
+  }
+  const userFont = current.fonts[key];
+  if (userFont !== DEFAULT_APPEARANCE.fonts[key]) return userFont;
+  return themeSuggestedFont(key) ?? userFont;
 }
 export function fontStyle(key: FontRole): FontTypography {
   if (key === "surfaces") {
@@ -502,7 +510,8 @@ export function saveAppearance(value: Appearance) {
   validateAppearance(value);
   writeJson(KEY, value);
   current = structuredClone(value);
-  cachedTheme = parseThemePack(current.themeJson).themes.find(
+  cachedPack = parseThemePack(current.themeJson);
+  cachedTheme = cachedPack.themes.find(
     (theme) => theme.name === current.themeName,
   )!;
   applyAppearance();
@@ -512,7 +521,7 @@ export function terminalAppearance() {
   const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
   const color = (token: string) => themeColor(token, String(fallbacks[token]));
   return {
-    fontFamily: current.fonts.terminal,
+    fontFamily: fontFamily("terminal"),
     fontSize: fontStyle("terminal").size,
     fontWeight: fontStyle("terminal").weight,
     theme: {

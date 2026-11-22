@@ -19,7 +19,7 @@ import {
 import { commands, type Project } from "./bindings";
 import { Skeleton } from "./shared/Skeleton";
 import { ContextMenu, showContextMenu } from "./shared/ContextMenu";
-import { copyTextToClipboard, revealInFileManagerLabel } from "./shared/platform";
+import { copyTextToClipboard, currentPlatform, revealInFileManagerLabel } from "./shared/platform";
 import { Collapsible } from "./shared/Collapsible";
 import { LinkConfirmDialog } from "./shared/LinkConfirmDialog";
 import { QuitDialog } from "./shared/QuitDialog";
@@ -57,8 +57,9 @@ import {
   type ShortcutActionId,
 } from "./shared/shortcuts";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
-const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+const platform = currentPlatform();
+const isMac = platform === "macos";
+const isWindows = platform === "windows";
 
 const CodeWorkbench = lazy(() => import("./editor/CodeWorkbench").then((module) => ({ default: module.CodeWorkbench })));
 const FilesPanel = lazy(() => import("./editor/FilesPanel").then((module) => ({ default: module.FilesPanel })));

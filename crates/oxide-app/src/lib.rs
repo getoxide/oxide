@@ -520,6 +520,9 @@ pub struct DeveloperTool {
 }
 
 /// Enumerates installed system font family names on a blocking thread.
+///
+/// Starts an OS font-enumeration process (`atsutil` on macOS, `fc-list` on Linux;
+/// DirectWrite via Win32 on Windows) through `oxide-platform`.
 #[tauri::command]
 #[specta::specta]
 async fn system_fonts() -> Result<Vec<String>, AppError> {

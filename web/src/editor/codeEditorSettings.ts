@@ -46,6 +46,14 @@ export interface CodeEditorSettings {
   lineHeight: number;
 }
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 export const DEFAULT_CODE_EDITOR_SETTINGS: CodeEditorSettings = {
   tabSize: 4,
   insertSpaces: true,
@@ -58,7 +66,7 @@ export const DEFAULT_CODE_EDITOR_SETTINGS: CodeEditorSettings = {
   fontLigatures: false,
   autoIndent: "full",
   formatOnPaste: true,
-  smoothScrolling: true,
+  smoothScrolling: !prefersReducedMotion(),
   scrollBeyondLastLine: false,
   cursorStyle: "line",
   cursorBlinking: "blink",
@@ -128,9 +136,7 @@ export function resetCodeEditorSettings(): CodeEditorSettings {
 /** Maps `CodeEditorSettings` to Monaco editor options, respecting `prefers-reduced-motion`. */
 export function toMonacoEditorOptions(
   settings: CodeEditorSettings,
-  reducedMotion = typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  reducedMotion = prefersReducedMotion(),
 ): editor.IStandaloneEditorConstructionOptions & editor.IEditorOptions {
   return {
     tabSize: settings.tabSize,

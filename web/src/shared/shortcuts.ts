@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
+import { currentPlatform } from "./platform";
 import { readJson, storageKeys, writeJson } from "./storage";
 
-export const isMacPlatform =
-  typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
+export const isMacPlatform = currentPlatform() === "macos";
 
 export type ShortcutCategory = "Navigation" | "Projects & Terminals" | "Surfaces & Panels" | "Code";
 

@@ -51,7 +51,12 @@ export const commands = {
 	writeFile: (projectId: number, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	developerTools: () => typedError<DeveloperTool_Serialize[], AppError>(__TAURI_INVOKE("developer_tools")),
-	/**  Enumerates installed system font family names on a blocking thread. */
+	/**
+	 *  Enumerates installed system font family names on a blocking thread.
+	 * 
+	 *  Starts an OS font-enumeration process (`atsutil` on macOS, `fc-list` on Linux;
+	 *  DirectWrite via Win32 on Windows) through `oxide-platform`.
+	 */
 	systemFonts: () => typedError<string[], AppError>(__TAURI_INVOKE("system_fonts")),
 	installDeveloperTool: (tool: string) => typedError<null, AppError>(__TAURI_INVOKE("install_developer_tool", { tool })),
 	installLanguageSupport: (language: string, onProgress: Channel<string>) => typedError<LanguageTool_Serialize, AppError>(__TAURI_INVOKE("install_language_support", { language, onProgress })),

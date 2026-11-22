@@ -315,3 +315,67 @@ it("supports independent font, size, and weight for GitHub Surfaces with fallbac
     saveAppearance({ ...getAppearance(), fonts: { ...base.fonts, surfaces: "   " } }),
   ).toThrow(/Each font/);
 });
+
+it("applies theme and pack font suggestions for all 4 roles while respecting user overrides", () => {
+  const themeJson = JSON.stringify({
+    name: "Editorial",
+    fonts: {
+      ui: "Pack Sans",
+      code: "Pack Mono",
+      terminal: "Pack Term",
+      surfaces: "Pack Serif",
+    },
+    themes: [
+      {
+        name: "Editorial Dark",
+        appearance: "dark",
+        fonts: {
+          ui: "Theme Sans",
+          code: "Theme Mono",
+          terminal: "Theme Term",
+          surfaces: "Theme Serif",
+        },
+        style: {},
+      },
+      {
+        name: "Editorial Pack Only",
+        appearance: "dark",
+        style: {},
+      },
+    ],
+  });
+
+  // No user overrides: theme.fonts applies to all 4 roles (and terminalAppearance).
+  saveAppearance({ ...DEFAULT_APPEARANCE, themeJson, themeName: "Editorial Dark" });
+  expect(rootStyle().getPropertyValue("--font-ui")).toBe("Theme Sans");
+  expect(rootStyle().getPropertyValue("--font-code")).toBe("Theme Mono");
+  expect(rootStyle().getPropertyValue("--font-terminal")).toBe("Theme Term");
+  expect(rootStyle().getPropertyValue("--font-surfaces")).toBe("Theme Serif");
+  expect(terminalAppearance().fontFamily).toBe("Theme Term");
+
+  // Variant without theme.fonts falls back to pack.fonts.
+  saveAppearance({ ...DEFAULT_APPEARANCE, themeJson, themeName: "Editorial Pack Only" });
+  expect(rootStyle().getPropertyValue("--font-ui")).toBe("Pack Sans");
+  expect(rootStyle().getPropertyValue("--font-code")).toBe("Pack Mono");
+  expect(rootStyle().getPropertyValue("--font-terminal")).toBe("Pack Term");
+  expect(rootStyle().getPropertyValue("--font-surfaces")).toBe("Pack Serif");
+  expect(terminalAppearance().fontFamily).toBe("Pack Term");
+
+  // Explicit user overrides take precedence over theme.fonts / pack.fonts.
+  saveAppearance({
+    ...DEFAULT_APPEARANCE,
+    themeJson,
+    themeName: "Editorial Dark",
+    fonts: {
+      ui: "User UI",
+      code: "User Code",
+      terminal: "User Term",
+      surfaces: "User Surfaces",
+    },
+  });
+  expect(rootStyle().getPropertyValue("--font-ui")).toBe("User UI");
+  expect(rootStyle().getPropertyValue("--font-code")).toBe("User Code");
+  expect(rootStyle().getPropertyValue("--font-terminal")).toBe("User Term");
+  expect(rootStyle().getPropertyValue("--font-surfaces")).toBe("User Surfaces");
+  expect(terminalAppearance().fontFamily).toBe("User Term");
+});
