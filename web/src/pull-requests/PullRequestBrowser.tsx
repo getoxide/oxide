@@ -27,6 +27,7 @@ import {
   type PullRequestEdit,
 } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
+import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
 import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -287,14 +288,17 @@ export function PullRequestReview({
       </button>
       <span className="grow" />
       {shownPr && (
-        <button
-          className="pr-github"
-          onClick={() => void openLink(shownPr.url)}
-          title="Open this pull request on GitHub"
-          aria-label="Open on GitHub"
-        >
-          <MarkGithubIcon size={16} />
-        </button>
+        <>
+          <CopyLinkButton url={shownPr.url} onError={setError} />
+          <button
+            className="pr-github"
+            onClick={() => void openLink(shownPr.url)}
+            title="Open this pull request on GitHub"
+            aria-label="Open on GitHub"
+          >
+            <MarkGithubIcon size={16} />
+          </button>
+        </>
       )}
     </div>
   );

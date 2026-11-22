@@ -100,6 +100,7 @@ export function CodeWorkbench({
   const [compact, setCompact] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [filesMenu, setFilesMenu] = useState(false);
+  const filesMenuWrap = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
   const [states, setStates] = useState<Record<string, string>>({});
@@ -109,6 +110,26 @@ export function CodeWorkbench({
   const dirtyState = useRef(false);
   const requestedFile = useRef(openRequest);
   useLayoutEffect(() => { requestedFile.current = openRequest; }, [openRequest]);
+
+  useEffect(() => {
+    if (!filesMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (filesMenuWrap.current?.contains(e.target as Node)) return;
+      setFilesMenu(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFilesMenu(false);
+    };
+    const onBlur = () => setFilesMenu(false);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [filesMenu]);
 
   const publish = useCallback((persistTabs = false) => {
     const docs = [...records.current.values()];
@@ -710,7 +731,7 @@ export function CodeWorkbench({
             </div>
           ))}
         </div>
-        <div className="editor-files-menu-wrap">
+        <div className="editor-files-menu-wrap" ref={filesMenuWrap}>
           <button
             className="icon-btn sm"
             aria-label="All open files"
