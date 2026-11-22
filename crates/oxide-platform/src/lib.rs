@@ -16,6 +16,7 @@ pub mod child;
 pub mod command;
 pub mod diag;
 mod explorer;
+mod fonts;
 pub mod registry;
 pub mod sync;
 

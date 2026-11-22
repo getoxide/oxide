@@ -7,6 +7,11 @@
 .terminal-workbench {
   --mono: var(--font-terminal, monospace);
 }
+.pr-views {
+  font-family: var(--font-surfaces, var(--font-ui, system-ui, sans-serif));
+  font-size: var(--font-surfaces-size, var(--font-ui-size, 13px));
+  font-weight: var(--font-surfaces-weight, var(--font-ui-weight, 400));
+}
 /* index.html paints the splash dark before any theme is known; once the app runs, the theme decides. */
 html body,
 html #root {

@@ -219,3 +219,28 @@ it("applies size and weight to each area and preserves legacy appearance setting
   expect(() => saveAppearance({ ...old, typography: { ...typography, ui: { size: 200, weight: 400 } } })).toThrow(/Font sizes/);
   expect(terminalAppearance().fontSize).toBe(18);
 });
+
+it("supports independent font, size, and weight for GitHub Surfaces with fallback to Interface", () => {
+  const base = getAppearance();
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces")).toBe(base.fonts.ui);
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-size")).toBe("13px");
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-weight")).toBe("400");
+
+  saveAppearance({
+    ...base,
+    fonts: { ...base.fonts, surfaces: "Georgia" },
+    typography: {
+      ui: { size: 13, weight: 400 },
+      code: { size: 13, weight: 400 },
+      terminal: { size: 13, weight: 400 },
+      surfaces: { size: 15, weight: 600 },
+    },
+  });
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces")).toBe("Georgia");
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-size")).toBe("15px");
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-weight")).toBe("600");
+
+  expect(() =>
+    saveAppearance({ ...getAppearance(), fonts: { ...base.fonts, surfaces: "   " } }),
+  ).toThrow(/Each font/);
+});

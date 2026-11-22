@@ -278,3 +278,114 @@ it("renders grouped Code editor controls, persists changes, broadcasts updates, 
 
   window.removeEventListener(CODE_EDITOR_SETTINGS_EVENT, broadcastListener);
 });
+
+it("shows recommended fonts by default and reveals all system fonts when toggled across all four roles", async () => {
+  let systemFontsCalls = 0;
+  mockIPC((cmd) => {
+    if (cmd === "developer_tools") {
+      developerToolsCalls += 1;
+      return [];
+    }
+    if (cmd === "system_fonts") {
+      systemFontsCalls += 1;
+      return ["Arial", "Fira Code", "Georgia"];
+    }
+    return null;
+  });
+
+  await renderSettings();
+
+  // Four font roles including Issues & Pull requests Surfaces.
+  const uiSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Interface font"]')!;
+  const codeSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Code editor font"]')!;
+  const terminalSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Terminal font"]')!;
+  const surfacesSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Issues & Pull requests font"]')!;
+  expect(uiSelect).not.toBeNull();
+  expect(codeSelect).not.toBeNull();
+  expect(terminalSelect).not.toBeNull();
+  expect(surfacesSelect).not.toBeNull();
+
+  // Recommended-first: system fonts are hidden until toggled on.
+  expect(systemFontsCalls).toBe(0);
+  expect(Array.from(surfacesSelect.options).map((o) => o.text)).toEqual(["Inter", "System"]);
+
+  const toggle = host.querySelector<HTMLInputElement>('input[aria-label="Show all system fonts"]')!;
+  expect(toggle).not.toBeNull();
+  expect(toggle.checked).toBe(false);
+
+  await act(async () => {
+    toggle.click();
+  });
+
+  expect(systemFontsCalls).toBe(1);
+  expect(Array.from(surfacesSelect.options).map((o) => o.text)).toEqual([
+    "Inter",
+    "System",
+    "Arial",
+    "Fira Code",
+    "Georgia",
+  ]);
+
+  // Select a system font, weight, and size for Issues & Pull requests and verify live application.
+  await act(async () => {
+    surfacesSelect.value = "Georgia";
+    surfacesSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const surfacesWeight = host.querySelector<HTMLSelectElement>('select[aria-label="Issues & Pull requests weight"]')!;
+  const surfacesSize = host.querySelector<HTMLSelectElement>('select[aria-label="Issues & Pull requests size"]')!;
+  await act(async () => {
+    surfacesWeight.value = "600";
+    surfacesWeight.dispatchEvent(new Event("change", { bubbles: true }));
+    surfacesSize.value = "16";
+    surfacesSize.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces")).toBe("Georgia");
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-weight")).toBe("600");
+  expect(document.documentElement.style.getPropertyValue("--font-surfaces-size")).toBe("16px");
+});
+
+it("degrades gracefully to recommended fonts with a non-blocking retry option when system_fonts fails or returns empty", async () => {
+  let attempt = 0;
+  mockIPC((cmd) => {
+    if (cmd === "developer_tools") return [];
+    if (cmd === "system_fonts") {
+      attempt += 1;
+      if (attempt === 1) throw new Error("font enumeration failed");
+      if (attempt === 2) return [];
+      return ["Consolas", "Segoe UI"];
+    }
+    return null;
+  });
+
+  await renderSettings();
+  const toggle = host.querySelector<HTMLInputElement>('input[aria-label="Show all system fonts"]')!;
+
+  // First attempt: error -> recommended fonts remain usable, Retry button shown.
+  await act(async () => {
+    toggle.click();
+  });
+  const codeSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Code editor font"]')!;
+  expect(Array.from(codeSelect.options).map((o) => o.text)).toEqual(["JetBrains Mono", "System monospace"]);
+  const retry1 = Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Retry");
+  expect(retry1).toBeDefined();
+
+  // Second attempt: empty -> still shows non-blocking Retry button.
+  await act(async () => {
+    retry1!.click();
+  });
+  const retry2 = Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Retry");
+  expect(retry2).toBeDefined();
+
+  // Third attempt: succeeds -> system fonts appear and Retry disappears.
+  await act(async () => {
+    retry2!.click();
+  });
+  expect(Array.from(codeSelect.options).map((o) => o.text)).toEqual([
+    "JetBrains Mono",
+    "System monospace",
+    "Consolas",
+    "Segoe UI",
+  ]);
+  expect(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.trim() === "Retry")).toBeUndefined();
+});
