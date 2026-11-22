@@ -116,7 +116,10 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus,
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--gh-blue); box-shadow: inset 0 0 0 1px var(--gh-blue); }
 input:disabled, textarea:disabled, select:disabled { opacity: .6; }
-input[type="checkbox"] { padding: 0; min-height: 0; accent-color: var(--acc); }
+input[type="checkbox"], input[type="radio"] { padding: 0; min-height: 0; accent-color: var(--acc); }
+input[type="radio"] { border-radius: 50%; }
+input[type="radio"]:focus,
+input[type="radio"]:focus-visible { border-color: transparent; box-shadow: none; outline: 2px solid var(--gh-blue); outline-offset: 2px; }
 input::placeholder, textarea::placeholder { color: var(--faint); opacity: 1; }
 input, textarea { caret-color: var(--acc2); }
 ::selection { background: var(--acc); color: var(--acc-fg); }
@@ -556,6 +559,7 @@ html.macos .header,
 .pr-views .pr-diffstat-files { font-family: inherit; }
 .pr-views .pr-github { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg3); color: var(--fg); }
 .pr-views .pr-github:hover { background: var(--bg4); color: var(--fg-bright); }
+.pr-views .pr-github[data-copied="true"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--line-strong)); }
 .avatar { flex: none; display: inline-block; border-radius: 50%; background: var(--bg4); object-fit: cover; vertical-align: middle; }
 .avatar-fallback { display: inline-grid; place-items: center; color: var(--dim); font-weight: 600; line-height: 1; }
 .pr-views .pr-row-meta .avatar { margin-right: -2px; }
