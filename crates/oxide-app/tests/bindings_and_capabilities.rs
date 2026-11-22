@@ -9,7 +9,11 @@ fn bindings_are_up_to_date() {
     // Regenerates the file; CI fails on `git diff --exit-code` if it was stale.
     oxide_app_lib::export_bindings().unwrap();
     let ts = std::fs::read_to_string(oxide_app_lib::BINDINGS_PATH).unwrap();
-    assert!(ts.contains("listProjects") && ts.contains("startBlockTerminal"));
+    assert!(
+        ts.contains("listProjects")
+            && ts.contains("startBlockTerminal")
+            && ts.contains("systemFonts")
+    );
     // Oxide is Projects and plain Terminals (ADR-0018): none of it may be exported.
     for gone in [
         "createThread",
@@ -53,5 +57,13 @@ fn webview_capabilities_grant_no_filesystem_or_shell_access() {
             .unwrap()
             .iter()
             .any(|p| p == "dialog:allow-open")
+    );
+    assert!(
+        cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "core:window:allow-is-maximized"),
+        "default capability must grant core:window:allow-is-maximized for Windows titlebar sync"
     );
 }

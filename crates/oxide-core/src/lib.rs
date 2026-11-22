@@ -19,6 +19,7 @@ mod redact;
 mod system;
 mod terminal;
 mod terminal_completion;
+mod themes;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
@@ -38,8 +39,27 @@ pub use github::{
     PullRequestReviewer, ReviewDecision, ReviewState,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use system::System;
+pub use oxide_platform::{AvailableShell, ShellKind};
+pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
+pub use themes::ThemeSummary;
+
+/// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSettings {
+    pub shell: ShellKind,
+    pub load_user_config: bool,
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            shell: ShellKind::Default,
+            load_user_config: true,
+        }
+    }
+}
 
 use oxide_platform::registry::ProcessRegistry;
 use rusqlite::Connection;
@@ -148,6 +168,7 @@ impl Core {
             path: home.clone(),
             source,
         })?;
+        themes::seed_builtin_themes(&home)?;
         Ok(Self {
             home,
             user_home: std::env::var_os("HOME")
@@ -246,6 +267,29 @@ impl Core {
         Ok(())
     }
 
+    /// Lists all `*.json` themes in `~/.oxide/themes/`, seeding built-in themes if missing.
+    pub fn list_themes(&self) -> Result<Vec<ThemeSummary>> {
+        themes::list_themes(&self.home)
+    }
+
+    /// Saves a custom theme JSON file to `~/.oxide/themes/<id>.json` with private permissions.
+    /// Rejects built-in IDs, invalid IDs, symlinks, path traversal, and invalid/oversized JSON.
+    pub fn save_theme(&self, id: &str, json: &str) -> Result<ThemeSummary> {
+        themes::save_theme(&self.home, id, json)
+    }
+
+    /// Deletes a custom theme JSON file from `~/.oxide/themes/<id>.json`.
+    pub fn delete_theme(&self, id: &str) -> Result<()> {
+        themes::delete_theme(&self.home, id)
+    }
+
+    /// Opens `~/.oxide/themes/` in the OS file manager (Finder / Explorer / file manager).
+    pub fn open_themes_folder(&self) -> Result<()> {
+        let dir = themes::seed_builtin_themes(&self.home)?;
+        self.system().reveal_in_finder(&dir);
+        Ok(())
+    }
+
     /// Lists the Project in the sidebar, or takes it out and ends its terminals; it stays known
     /// either way, so the Project palette still finds it. Opening keeps the time it was first
     /// opened.
@@ -282,9 +326,57 @@ impl Core {
         }
     }
 
+    /// Supported shells installed on this OS (ADR-0016 allowlist).
+    pub fn available_shells(&self) -> Vec<AvailableShell> {
+        oxide_platform::terminal::available_shells()
+    }
+
+    /// Persisted Terminal shell and user-config loading preferences.
+    pub fn terminal_settings(&self) -> Result<TerminalSettings> {
+        use rusqlite::OptionalExtension as _;
+        let db = self.db.lock_recover();
+        let stored: Option<String> = db
+            .query_row(
+                "SELECT value FROM app_state WHERE key = 'terminal_settings'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(raw) = stored else {
+            return Ok(TerminalSettings::default());
+        };
+        let settings = serde_json::from_str::<TerminalSettings>(&raw)
+            .unwrap_or_else(|_| TerminalSettings::default());
+        if oxide_platform::terminal::is_shell_supported(settings.shell) {
+            Ok(settings)
+        } else {
+            Ok(TerminalSettings::default())
+        }
+    }
+
+    /// Validates and persists Terminal shell settings in `app_state`.
+    pub fn set_terminal_settings(&self, settings: TerminalSettings) -> Result<TerminalSettings> {
+        if !oxide_platform::terminal::is_shell_supported(settings.shell) {
+            return Err(Error::Terminal(format!(
+                "Shell {:?} is not supported or not installed on this OS.",
+                settings.shell
+            )));
+        }
+        let encoded = serde_json::to_string(&settings)
+            .map_err(|error| Error::Terminal(format!("encode terminal settings: {error}")))?;
+        let db = self.db.lock_recover();
+        db.execute(
+            "INSERT INTO app_state (key, value) VALUES ('terminal_settings', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [encoded],
+        )?;
+        Ok(settings)
+    }
+
     /// Starts a shell with Command blocks in the Project's folder. Core owns the PTY process
     /// until it is explicitly closed, its Project closes or Core shuts down.
     pub fn start_block_terminal(&self, project_id: u32) -> Result<TerminalSummary> {
+        let settings = self.terminal_settings()?;
         let cwd = self.checkout_path(project_id)?;
         let id = next_id(&self.next_terminal_id);
         let session = Arc::new(TerminalSession::start(
@@ -293,6 +385,8 @@ impl Core {
             Path::new(&cwd),
             Arc::clone(&self.processes),
             true,
+            settings.shell,
+            settings.load_user_config,
         )?);
         let summary = session.summary.clone();
         self.terminals.lock_recover().insert(id, session);

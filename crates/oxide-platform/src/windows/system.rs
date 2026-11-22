@@ -50,3 +50,53 @@ pub fn reveal_in_file_manager(path: &Path) {
 
 /// Windows shows no Dock icon.
 pub fn set_dev_dock_icon(_png: &[u8]) {}
+
+/// Returns a sorted, deduplicated list of installed font family names via GDI.
+pub fn system_fonts() -> Vec<String> {
+    use windows_sys::Win32::Foundation::LPARAM;
+    use windows_sys::Win32::Graphics::Gdi::{
+        DEFAULT_CHARSET, EnumFontFamiliesExW, GetDC, LOGFONTW, ReleaseDC, TEXTMETRICW,
+    };
+
+    unsafe extern "system" fn collect_font(
+        lpelfe: *const LOGFONTW,
+        _lpntme: *const TEXTMETRICW,
+        _font_type: u32,
+        lparam: LPARAM,
+    ) -> i32 {
+        if lpelfe.is_null() || lparam == 0 {
+            return 1;
+        }
+        // SAFETY: `EnumFontFamiliesExW` passes a valid `LOGFONTW` pointer and our `Vec<String>`
+        // pointer as `lparam` for the duration of the synchronous call.
+        let families = unsafe { &mut *(lparam as *mut Vec<String>) };
+        // SAFETY: `lpelfe` was checked non-null above and points to a valid `LOGFONTW`.
+        let face = unsafe { &(*lpelfe).lfFaceName };
+        let len = face.iter().position(|&c| c == 0).unwrap_or(face.len());
+        families.push(String::from_utf16_lossy(&face[..len]));
+        1
+    }
+
+    // SAFETY: `GetDC(null)` returns the screen device context (or null on failure).
+    let hdc = unsafe { GetDC(std::ptr::null_mut()) };
+    if hdc.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: `LOGFONTW` is a plain C struct where zero-initialization is valid.
+    let mut logfont: LOGFONTW = unsafe { std::mem::zeroed() };
+    logfont.lfCharSet = DEFAULT_CHARSET;
+    let mut raw_families: Vec<String> = Vec::new();
+    // SAFETY: `hdc` is a valid screen DC, `logfont` is initialized, and `raw_families` outlives
+    // the synchronous `EnumFontFamiliesExW` call.
+    unsafe {
+        EnumFontFamiliesExW(
+            hdc,
+            &logfont,
+            Some(collect_font),
+            (&raw mut raw_families) as LPARAM,
+            0,
+        );
+        ReleaseDC(std::ptr::null_mut(), hdc);
+    }
+    crate::fonts::normalize_font_families(raw_families)
+}

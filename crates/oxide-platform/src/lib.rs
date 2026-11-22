@@ -16,6 +16,7 @@ pub mod child;
 pub mod command;
 pub mod diag;
 mod explorer;
+mod fonts;
 pub mod registry;
 pub mod sync;
 
@@ -38,11 +39,33 @@ pub use implementation::{fs, process, system, terminal};
 
 use serde::{Deserialize, Serialize};
 
+/// The shell a Terminal runs, chosen from the OS allowlist (ADR-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellKind {
+    #[default]
+    Default,
+    Zsh,
+    Bash,
+    #[serde(rename = "powershell")]
+    PowerShell,
+    Pwsh,
+}
+
+/// An installed shell that the current OS supports for Terminals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableShell {
+    pub kind: ShellKind,
+    pub label: String,
+    pub is_default: bool,
+}
+
 /// How to start the interactive shell of a Terminal: plain data the caller turns into a PTY
 /// command, so this crate needs no PTY library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellLaunch {
-    /// What the Terminal shows as its shell: `zsh`, `bash` or `PowerShell`.
+    /// What the Terminal shows as its shell: `zsh`, `bash`, `PowerShell` or `pwsh`.
     pub name: String,
     pub program: std::ffi::OsString,
     pub args: Vec<std::ffi::OsString>,

@@ -153,6 +153,68 @@ fn reveal_in_finder(core: State<'_, Arc<Core>>, project_id: u32) -> Result<(), A
     Ok(core.reveal_in_finder(project_id)?)
 }
 
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeSummary {
+    id: String,
+    name: String,
+    builtin: bool,
+    json: Option<String>,
+    error: Option<String>,
+}
+
+impl From<oxide_core::ThemeSummary> for ThemeSummary {
+    fn from(t: oxide_core::ThemeSummary) -> Self {
+        Self {
+            id: t.id,
+            name: t.name,
+            builtin: t.builtin,
+            json: t.json,
+            error: t.error,
+        }
+    }
+}
+
+/// Lists all `*.json` themes in `~/.oxide/themes/` (outside any checkout), seeding built-ins if missing.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn list_themes(core: State<'_, Arc<Core>>) -> Result<Vec<ThemeSummary>, AppError> {
+    Ok(core
+        .list_themes()?
+        .into_iter()
+        .map(ThemeSummary::from)
+        .collect())
+}
+
+/// Writes a validated custom theme JSON file inside `~/.oxide/themes/` (outside any checkout).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn save_theme(
+    core: State<'_, Arc<Core>>,
+    id: String,
+    json: String,
+) -> Result<ThemeSummary, AppError> {
+    Ok(ThemeSummary::from(core.save_theme(&id, &json)?))
+}
+
+/// Deletes a custom theme JSON file inside `~/.oxide/themes/` (outside any checkout).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn delete_theme(core: State<'_, Arc<Core>>, id: String) -> Result<(), AppError> {
+    Ok(core.delete_theme(&id)?)
+}
+
+/// Opens `~/.oxide/themes/` in the OS file manager (outside the app).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn open_themes_folder(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
+    Ok(core.open_themes_folder()?)
+}
+
 /// Lists the Project in the sidebar, or takes it out (it stays in the Project palette).
 #[tauri::command]
 #[specta::specta]
@@ -168,6 +230,32 @@ pub enum PullRequestPhase {
     Open,
     Merged,
     Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellKind {
+    Default,
+    Zsh,
+    Bash,
+    #[serde(rename = "powershell")]
+    PowerShell,
+    Pwsh,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableShell {
+    pub kind: ShellKind,
+    pub label: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSettings {
+    pub shell: ShellKind,
+    pub load_user_config: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -223,6 +311,33 @@ async fn complete_terminal(
     .map_err(|error| AppError {
         message: error.to_string(),
     })?
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn available_shells(core: State<'_, Arc<Core>>) -> Vec<AvailableShell> {
+    core.available_shells()
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn terminal_settings(core: State<'_, Arc<Core>>) -> Result<TerminalSettings, AppError> {
+    Ok(core.terminal_settings()?.into())
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn set_terminal_settings(
+    core: State<'_, Arc<Core>>,
+    settings: TerminalSettings,
+) -> Result<TerminalSettings, AppError> {
+    Ok(core.set_terminal_settings(settings.into())?.into())
 }
 
 #[tauri::command]
@@ -402,6 +517,20 @@ pub struct DeveloperTool {
     path: Option<String>,
     can_install: bool,
     documentation: String,
+}
+
+/// Enumerates installed system font family names on a blocking thread.
+///
+/// Starts an OS font-enumeration process (`atsutil` on macOS, `fc-list` on Linux;
+/// DirectWrite via Win32 on Windows) through `oxide-platform`.
+#[tauri::command]
+#[specta::specta]
+async fn system_fonts() -> Result<Vec<String>, AppError> {
+    tauri::async_runtime::spawn_blocking(oxide_core::system_fonts)
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })
 }
 
 #[tauri::command]
@@ -1252,8 +1381,15 @@ pub fn builder() -> Builder<tauri::Wry> {
         search_github_repositories,
         clone_github_repository,
         reveal_in_finder,
+        list_themes,
+        save_theme,
+        delete_theme,
+        open_themes_folder,
         set_project_open,
         start_block_terminal,
+        available_shells,
+        terminal_settings,
+        set_terminal_settings,
         write_terminal,
         resize_terminal,
         close_terminal,
@@ -1264,6 +1400,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         write_file,
         language_tools,
         developer_tools,
+        system_fonts,
         install_developer_tool,
         install_language_support,
         create_file,

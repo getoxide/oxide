@@ -1,20 +1,31 @@
 import { readJson, storageKeys, writeJson } from "./storage";
 
+export interface ThemeFonts {
+  ui?: string;
+  code?: string;
+  terminal?: string;
+  surfaces?: string;
+}
 export interface ThemeVariant {
   name: string;
   appearance: "dark" | "light";
+  fonts?: ThemeFonts;
   style: Record<string, unknown>;
 }
 export interface ThemePack {
   name: string;
   author?: string;
+  fonts?: ThemeFonts;
   themes: ThemeVariant[];
 }
+export type FontRole = "ui" | "code" | "terminal" | "surfaces";
+export type FontTypography = { size: number; weight: number };
 export interface Appearance {
-  fonts: { ui: string; code: string; terminal: string };
-  typography?: Record<"ui" | "code" | "terminal", { size: number; weight: number }>;
+  fonts: { ui: string; code: string; terminal: string; surfaces?: string };
+  typography?: Partial<Record<FontRole, FontTypography>> & Record<"ui" | "code" | "terminal", FontTypography>;
   themeJson: string;
   themeName: string;
+  themeId?: string;
 }
 // Bundled through fonts.css, so they win over installed copies; the rest cover scripts the subsets do not.
 const SYSTEM =
@@ -196,6 +207,38 @@ export const COLOR_TOKENS: Record<string, string> = {
   warning: "--yellow",
   hint: "--purple",
 };
+export const SURFACE_TOKENS: Record<string, string> = {
+  "title_bar.background": "--header-background",
+  "title_bar.border": "--header-border",
+  "title_bar.foreground": "--header-foreground",
+  "sidebar.background": "--sidebar-background",
+  "sidebar.border": "--sidebar-border",
+  "sidebar.foreground": "--sidebar-foreground",
+  "sidebar.item.hover": "--sidebar-item-hover",
+  "sidebar.item.active": "--sidebar-item-active",
+  "sidebar.switch.background": "--sidebar-switch-background",
+  "sidebar.switch.active": "--sidebar-switch-active",
+  "surfaces.background": "--surfaces-background",
+  "surfaces.header.background": "--surfaces-header-background",
+  "surfaces.card.background": "--surfaces-card-background",
+  "surfaces.border": "--surfaces-border",
+  "surfaces.foreground": "--surfaces-foreground",
+  "tab_bar.background": "--editor-tabs-background",
+  "tab.active_background": "--editor-tab-active-background",
+  "tab.inactive_background": "--editor-tab-inactive-background",
+  "tab.border": "--editor-tab-border",
+  "breadcrumbs.background": "--editor-breadcrumbs-background",
+  "breadcrumbs.foreground": "--editor-breadcrumbs-foreground",
+  "status_bar.background": "--editor-status-bar-background",
+  "status_bar.foreground": "--editor-status-bar-foreground",
+  "terminal.header.background": "--terminal-header-background",
+  "terminal.composer.background": "--terminal-composer-background",
+  "terminal.block.border": "--terminal-block-border",
+  "terminal.block.running_rail": "--terminal-block-running-rail",
+  "terminal.block.running_tint": "--terminal-block-running-tint",
+  "terminal.block.failed_rail": "--terminal-block-failed-rail",
+  "terminal.block.failed_tint": "--terminal-block-failed-tint",
+};
 const LIGHT: Record<string, string> = {
   background: "#FBFBFA",
   "surface.background": "#F2F1EE",
@@ -282,8 +325,19 @@ export function parseThemePack(raw: string): ThemePack {
     )
       throw new Error(`${theme.name}: style must be an object.`);
     for (const [key, value] of Object.entries(theme.style)) {
+      if (key === "surfaces.font_family") {
+        if (value !== null && (typeof value !== "string" || !value.trim() || value.length > 300))
+          throw new Error(`${theme.name}: surfaces.font_family must be a font string (up to 300 characters).`);
+        continue;
+      }
+      if (key === "surfaces.font_size") {
+        if (value !== null && (typeof value !== "number" || !Number.isFinite(value) || value < 10 || value > 32))
+          throw new Error(`${theme.name}: surfaces.font_size must be a number between 10 and 32.`);
+        continue;
+      }
       if (
         (key in COLOR_TOKENS ||
+          key in SURFACE_TOKENS ||
           key.startsWith("terminal.") ||
           key.startsWith("editor.")) &&
         value !== null &&
@@ -331,8 +385,10 @@ function load(): Appearance {
     const stored = readJson(KEY) as Appearance | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
     validateAppearance(stored);
-    for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[])
-      stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[stored.fonts[key]] ?? stored.fonts[key];
+    for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[]) {
+      const value = stored.fonts[key];
+      if (value) stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[value] ?? value;
+    }
     if (stored.themeJson === PREVIOUS_BUILT_IN_THEME || stored.themeJson === PREVIOUS_DARK_ONLY_THEME)
       stored.themeJson = DEFAULT_APPEARANCE.themeJson;
     return stored;
@@ -340,18 +396,21 @@ function load(): Appearance {
     return structuredClone(DEFAULT_APPEARANCE);
   }
 }
+const FONT_ROLES: FontRole[] = ["ui", "code", "terminal", "surfaces"];
 export function validateAppearance(value: Appearance) {
-  if (value.typography && Object.keys(DEFAULT_APPEARANCE.fonts).some((key) => {
-    const style = value.typography?.[key as keyof Appearance["fonts"]];
+  if (value.typography && FONT_ROLES.some((key) => {
+    const style = value.typography?.[key];
+    if (key === "surfaces" && style === undefined) return false;
     return !style || !Number.isInteger(style.size) || style.size < 10 || style.size > 32 || ![400, 500, 600, 700].includes(style.weight);
   })) throw new Error("Font sizes must be 10–32 px and weights must be Regular, Medium, Semibold or Bold.");
   if (
     !value.fonts ||
-    Object.keys(DEFAULT_APPEARANCE.fonts).some(
-      (key) =>
-        typeof value.fonts[key as keyof Appearance["fonts"]] !== "string" ||
-        !value.fonts[key as keyof Appearance["fonts"]].trim() ||
-        value.fonts[key as keyof Appearance["fonts"]].length > 300,
+    FONT_ROLES.some(
+      (key) => {
+        const font = value.fonts[key];
+        if (key === "surfaces" && font === undefined) return false;
+        return typeof font !== "string" || !font.trim() || font.length > 300;
+      },
     )
   )
     throw new Error(
@@ -365,7 +424,8 @@ export function validateAppearance(value: Appearance) {
     throw new Error("Select a theme from this theme pack.");
 }
 let current = load();
-let cachedTheme = parseThemePack(current.themeJson).themes.find(
+let cachedPack = parseThemePack(current.themeJson);
+let cachedTheme = cachedPack.themes.find(
   (theme) => theme.name === current.themeName,
 )!;
 export function getAppearance(): Appearance {
@@ -381,7 +441,7 @@ export function themeColor(key: string, fallback: string): string {
 export function applyAppearance(): void {
   const theme = activeTheme();
   const root = document.documentElement;
-  for (const variable of Object.values(COLOR_TOKENS))
+  for (const variable of [...Object.values(COLOR_TOKENS), ...Object.values(SURFACE_TOKENS)])
     root.style.removeProperty(variable);
   const colors = {
     ...(theme.appearance === "light" ? LIGHT : {}),
@@ -390,6 +450,9 @@ export function applyAppearance(): void {
     ),
   };
   for (const [key, variable] of Object.entries(COLOR_TOKENS)) {
+    if (isColor(colors[key])) root.style.setProperty(variable, colors[key]);
+  }
+  for (const [key, variable] of Object.entries(SURFACE_TOKENS)) {
     if (isColor(colors[key])) root.style.setProperty(variable, colors[key]);
   }
   root.style.removeProperty("--gh-btn");
@@ -410,22 +473,45 @@ export function applyAppearance(): void {
     "--terminal-background",
     themeColor("terminal.background", String(colors.background ?? TITANIUM_DARK["terminal.background"])),
   );
-  for (const [key, family] of Object.entries(current.fonts))
-    root.style.setProperty(`--font-${key}`, family);
-  for (const key of Object.keys(current.fonts) as (keyof Appearance["fonts"])[]) {
+  for (const key of FONT_ROLES) {
+    root.style.setProperty(`--font-${key}`, fontFamily(key));
     const style = fontStyle(key);
     root.style.setProperty(`--font-${key}-size`, `${style.size}px`);
     root.style.setProperty(`--font-${key}-weight`, String(style.weight));
   }
+  const surfacesSize = theme.style["surfaces.font_size"];
+  if (typeof surfacesSize === "number" && Number.isFinite(surfacesSize))
+    root.style.setProperty("--font-surfaces-size", `${surfacesSize}px`);
 }
-export function fontStyle(key: keyof Appearance["fonts"]) {
+function themeSuggestedFont(key: FontRole): string | undefined {
+  const raw = cachedTheme.fonts?.[key] ?? cachedPack.fonts?.[key];
+  if (typeof raw === "string" && raw.trim()) return raw;
+  if (key === "surfaces") {
+    const styleFont = cachedTheme.style["surfaces.font_family"];
+    if (typeof styleFont === "string" && styleFont.trim()) return styleFont;
+  }
+  return undefined;
+}
+export function fontFamily(key: FontRole): string {
+  if (key === "surfaces") {
+    return current.fonts.surfaces ?? themeSuggestedFont("surfaces") ?? fontFamily("ui");
+  }
+  const userFont = current.fonts[key];
+  if (userFont !== DEFAULT_APPEARANCE.fonts[key]) return userFont;
+  return themeSuggestedFont(key) ?? userFont;
+}
+export function fontStyle(key: FontRole): FontTypography {
+  if (key === "surfaces") {
+    return current.typography?.surfaces ?? current.typography?.ui ?? DEFAULT_APPEARANCE.typography!.ui;
+  }
   return current.typography?.[key] ?? DEFAULT_APPEARANCE.typography![key];
 }
 export function saveAppearance(value: Appearance) {
   validateAppearance(value);
   writeJson(KEY, value);
   current = structuredClone(value);
-  cachedTheme = parseThemePack(current.themeJson).themes.find(
+  cachedPack = parseThemePack(current.themeJson);
+  cachedTheme = cachedPack.themes.find(
     (theme) => theme.name === current.themeName,
   )!;
   applyAppearance();
@@ -435,7 +521,7 @@ export function terminalAppearance() {
   const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
   const color = (token: string) => themeColor(token, String(fallbacks[token]));
   return {
-    fontFamily: current.fonts.terminal,
+    fontFamily: fontFamily("terminal"),
     fontSize: fontStyle("terminal").size,
     fontWeight: fontStyle("terminal").weight,
     theme: {

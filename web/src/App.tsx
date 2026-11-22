@@ -1,6 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
+import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ChevronDownIcon,
+  ChevronRightIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -17,6 +19,7 @@ import {
 import { commands, type Project } from "./bindings";
 import { Skeleton } from "./shared/Skeleton";
 import { ContextMenu, showContextMenu } from "./shared/ContextMenu";
+import { copyTextToClipboard, currentPlatform, revealInFileManagerLabel } from "./shared/platform";
 import { Collapsible } from "./shared/Collapsible";
 import { LinkConfirmDialog } from "./shared/LinkConfirmDialog";
 import { QuitDialog } from "./shared/QuitDialog";
@@ -41,9 +44,22 @@ import {
 } from "./terminal/terminalTabs";
 import type { CodeOpenRequest } from "./editor/codeOpen";
 import { forgetTerminalSession, readSession, writeSession } from "./shared/session";
+import {
+  DEFAULT_SHORTCUTS,
+  formatShortcut,
+  isTerminalFocused,
+  loadShortcutOverrides,
+  matchesShortcut,
+  shouldDispatchShortcut,
+  titleWithShortcut,
+  useShortcuts,
+  type ResolvedShortcuts,
+  type ShortcutActionId,
+} from "./shared/shortcuts";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
-const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+const platform = currentPlatform();
+const isMac = platform === "macos";
+const isWindows = platform === "windows";
 
 const CodeWorkbench = lazy(() => import("./editor/CodeWorkbench").then((module) => ({ default: module.CodeWorkbench })));
 const FilesPanel = lazy(() => import("./editor/FilesPanel").then((module) => ({ default: module.FilesPanel })));
@@ -244,13 +260,14 @@ export function App() {
     setVisitedTools({ ...visitedTools, [`${selected.id}:${activeTool}`]: true });
   }
 
-  const revealProject = async () => {
-    if (!selected) return;
-    const result = await commands.revealInFinder(selected.id);
+  const revealProject = async (projectId = selected?.id) => {
+    if (projectId === undefined) return;
+    const result = await commands.revealInFinder(projectId);
     setOpenError(result.status === "error" ? result.error.message : null);
   };
 
   const centreHidden = showSettings;
+  const shortcuts = useShortcuts();
   const hasTerminals = projectTerminals.tabs.length > 0;
   const projectLayout = layoutOf(layouts, selected?.id ?? -1);
   const bothHalves = splitMode({ terminals: hasTerminals, code: selected !== null && codeShown[selected.id] === true });
@@ -266,7 +283,7 @@ export function App() {
     const text = maximized ? "Restore Terminal and Code" : `Maximize ${name}`;
     const projectId = selected.id;
     return (
-      <button className="icon-btn sm half-toggle" aria-label={text} title={text}
+      <button className="icon-btn sm half-toggle" aria-label={text} title={titleWithShortcut(text, shortcuts.toggleMaximizeHalf)}
         onClick={() => setLayouts((previous) => maximized ? restoreSplit(previous, projectId) : maximizeHalf(previous, projectId, half))}>
         {maximized ? <ScreenNormalIcon size={14} /> : <ScreenFullIcon size={14} />}
       </button>
@@ -274,11 +291,97 @@ export function App() {
   };
   const projectsWithTerminals = Object.entries(terminals).filter(([, state]) => state.tabs.length > 0);
 
+  const shortcutHandlers = useRef<() => Partial<Record<ShortcutActionId, () => void>>>(() => ({}));
+  useLayoutEffect(() => {
+    shortcutHandlers.current = () => ({
+      openSettings: () => setShowSettings((previous) => !previous),
+      openProjectPalette: () => overlays.current?.openPalette(),
+      toggleSidebar: () => setShowSidebar((previous) => !previous),
+      toggleTools: () => setShowTools((previous) => {
+        const next = !previous;
+        if (next) setShowSettings(false);
+        return next;
+      }),
+      newTerminal: () => {
+        if (selected && !selected.missing) newTerminal(selected);
+      },
+      closeTerminal: () => {
+        if (!selected || projectTerminals.selectedId === null) return;
+        const tabId = projectTerminals.selectedId;
+        forgetTerminalSession(`${selected.id}:${tabId}`);
+        setTerminals((previous) => closeTerminal(previous, selected.id, tabId));
+      },
+      previousTerminal: () => {
+        if (!selected || projectTerminals.tabs.length < 2 || projectTerminals.selectedId === null) return;
+        const index = projectTerminals.tabs.findIndex((tab) => tab.id === projectTerminals.selectedId);
+        const nextIndex = (index - 1 + projectTerminals.tabs.length) % projectTerminals.tabs.length;
+        const tab = projectTerminals.tabs[nextIndex];
+        setShowSettings(false);
+        setFilesProjectId(null);
+        setLayouts((previous) => restoreSplit(previous, selected.id));
+        chooseHalf(selected.id, "terminal");
+        setTerminals((previous) => selectTerminal(previous, selected.id, tab.id));
+      },
+      nextTerminal: () => {
+        if (!selected || projectTerminals.tabs.length < 2 || projectTerminals.selectedId === null) return;
+        const index = projectTerminals.tabs.findIndex((tab) => tab.id === projectTerminals.selectedId);
+        const nextIndex = (index + 1) % projectTerminals.tabs.length;
+        const tab = projectTerminals.tabs[nextIndex];
+        setShowSettings(false);
+        setFilesProjectId(null);
+        setLayouts((previous) => restoreSplit(previous, selected.id));
+        chooseHalf(selected.id, "terminal");
+        setTerminals((previous) => selectTerminal(previous, selected.id, tab.id));
+      },
+      openFiles: () => {
+        if (!selected || selected.missing) return;
+        setShowSidebar(true);
+        openFiles(selected);
+      },
+      openIssues: () => selectTool("Issues"),
+      openPullRequests: () => selectTool("Pull request"),
+      toggleMaximizeHalf: () => {
+        if (!selected || bothHalves !== "split") return;
+        const activeHalf = lastHalf[selected.id] ?? "terminal";
+        setLayouts((previous) =>
+          projectLayout.maximized !== null ? restoreSplit(previous, selected.id) : maximizeHalf(previous, selected.id, activeHalf),
+        );
+      },
+    });
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.target instanceof Element && event.target.closest('[data-shortcut-recording="true"]')) return;
+
+      const overrides = loadShortcutOverrides();
+      const isTerminal = isTerminalFocused(event.target);
+      const handlers = shortcutHandlers.current();
+
+      for (const actionId of Object.keys(handlers) as ShortcutActionId[]) {
+        const binding = shortcuts[actionId];
+        if (!binding || !matchesShortcut(event, binding)) continue;
+        const isExplicitOverride =
+          Object.prototype.hasOwnProperty.call(overrides, actionId) &&
+          overrides[actionId] !== DEFAULT_SHORTCUTS[actionId];
+        if (!shouldDispatchShortcut(event, { isTerminal, isExplicitOverride })) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handlers[actionId]?.();
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [shortcuts]);
+
   return (
-    <div className={`window ${isMac ? "macos" : "windows"}`}>
+    <div className={`window ${isMac ? "macos" : isWindows ? "windows" : "linux"}`}>
       {isWindows && <WindowResizeHandles />}
       <ContextMenu actions={{
         openProject: () => overlays.current?.openPalette(),
+        newTerminal: selected && !selected.missing ? () => newTerminal(selected) : undefined,
         openSettings: () => setShowSettings(true),
       }} />
       <QuitDialog />
@@ -287,7 +390,7 @@ export function App() {
       <header className="header" data-tauri-drag-region>
         {isWindows && <AppMenu />}
         {!layout.sidebarVisible && (
-          <button className="icon-btn" aria-label="Show sidebar" title="Show sidebar" onClick={() => setShowSidebar(true)}>
+          <button className="icon-btn" aria-label="Show sidebar" title={titleWithShortcut("Show sidebar", shortcuts.toggleSidebar)} onClick={() => setShowSidebar(true)}>
             <RepoIcon size={16} />
           </button>
         )}
@@ -306,14 +409,14 @@ export function App() {
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
           {selected && !selected.missing && (
-            <button className="icon-btn" title="Reveal in Finder" aria-label="Reveal in Finder" onClick={() => void revealProject()}>
+            <button className="icon-btn" title={revealInFileManagerLabel()} aria-label={revealInFileManagerLabel()} onClick={() => void revealProject()}>
               <FileDirectoryIcon size={16} />
             </button>
           )}
           <button
             className="icon-btn"
             aria-pressed={dockVisible}
-            title="Issues and Pull request"
+            title={titleWithShortcut("Issues and Pull request", shortcuts.toggleTools)}
             aria-label="Toggle tools panel"
             onClick={() => { setShowTools(!dockVisible); setShowSettings(false); }}
           >
@@ -334,6 +437,7 @@ export function App() {
             settingsOpen={showSettings}
             onSelectProject={selectProject}
             onCloseProject={closeProject}
+            onRevealProject={(project) => void revealProject(project.id)}
             filesProject={filesProjectId !== null && filesProjectId === selected?.id ? selected : null}
             onOpenFiles={openFiles}
             onCloseFiles={() => setFilesProjectId(null)}
@@ -354,6 +458,7 @@ export function App() {
             }}
             onOpenPalette={() => overlays.current?.openPalette()}
             onOpenSettings={() => setShowSettings(true)}
+            shortcuts={shortcuts}
           />
           <ResizeHandle label="Resize sidebar" controls="workspace-sidebar" axis="x" edge="end"
             {...layout.sidebar} onResize={sidebarSize.resize} onCommit={sidebarSize.commit} onReset={sidebarSize.reset} onCancel={sidebarSize.cancel} />
@@ -377,6 +482,7 @@ export function App() {
                       contextKey={`${projectId}:${tab.id}`}
                       visible={visible}
                       headerAction={visible ? halfButton("terminal") : null}
+                      onNewTerminal={project.missing ? undefined : () => newTerminal(project)}
                       onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
                     />
                   </main>
@@ -488,6 +594,7 @@ interface SidebarProps {
   settingsOpen: boolean;
   onSelectProject: (project: Project) => void;
   onCloseProject: (projectId: number) => Promise<string | null>;
+  onRevealProject: (project: Project) => void;
   filesProject: Project | null;
   onOpenFiles: (project: Project) => void;
   onCloseFiles: () => void;
@@ -498,13 +605,14 @@ interface SidebarProps {
   onCloseTerminal: (project: Project, tabId: number) => void;
   onOpenPalette: () => void;
   onOpenSettings: () => void;
+  shortcuts: ResolvedShortcuts;
 }
 
 /** The open Projects and, under each, its terminals; or, in the Files view, the selected Project's files. */
 function Sidebar({
   projects, selected, terminals, settingsOpen, filesProject, onOpenFiles, onCloseFiles, onOpenFile,
-  onSelectProject, onCloseProject, onNewTerminal,
-  onSelectTerminal, onRenameTerminal, onCloseTerminal, onOpenPalette, onOpenSettings,
+  onSelectProject, onCloseProject, onRevealProject, onNewTerminal,
+  onSelectTerminal, onRenameTerminal, onCloseTerminal, onOpenPalette, onOpenSettings, shortcuts,
 }: SidebarProps) {
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
@@ -564,14 +672,14 @@ function Sidebar({
           </div>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
-              <FilesPanel key={filesProject.id} projectId={filesProject.id} revision={0} onOpenFile={onOpenFile} />
+              <FilesPanel key={filesProject.id} projectId={filesProject.id} rootPath={filesProject.path} revision={0} onOpenFile={onOpenFile} />
             </Suspense>
           </div>
         </nav>
       )}
       <nav className="sidebar-view" id="sidebar-terminals" aria-label="Projects" hidden={filesOpen}>
         <div className="sidebar-actions">
-          <button className="btn grow" onClick={onOpenPalette} aria-label="Open a Project" title="Open a Project">
+          <button className="btn grow" onClick={onOpenPalette} aria-label="Open a Project" title={titleWithShortcut("Open a Project", shortcuts.openProjectPalette)}>
             <RepoIcon size={14} /> Open a Project
           </button>
         </div>
@@ -594,40 +702,54 @@ function Sidebar({
               return (
                 <li key={project.id} className={`project-node${project.missing ? " missing" : ""}`}>
                   <div className="project-row" onContextMenu={(event) => showContextMenu(event, [
-                    { label: "New terminal", disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
-                    { label: "Open Files", disabled: project.missing, run: () => onOpenFiles(project) },
-                    { label: "Remove project", disabled: closingProjectId === project.id, run: () => void close(project) },
+                    { label: "New terminal", hint: formatShortcut(shortcuts.newTerminal) || undefined, disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
+                    { label: "Open Files", hint: formatShortcut(shortcuts.openFiles) || undefined, disabled: project.missing, run: () => onOpenFiles(project) },
+                    { label: revealInFileManagerLabel(), disabled: project.missing, run: () => onRevealProject(project), separatorBefore: true },
+                    { label: "Copy path", run: () => copyTextToClipboard(readablePath(project.path)) },
+                    { label: "Close project", disabled: closingProjectId === project.id, run: () => void close(project), separatorBefore: true },
                   ])}>
+                    <button
+                      type="button"
+                      className="project-chevron"
+                      aria-label={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
+                      aria-expanded={expanded}
+                      onClick={() => setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id))}
+                    >
+                      {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+                    </button>
                     <button
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
-                      aria-expanded={expanded}
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
-                      onClick={() => {
-                        if (isSelected) setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
-                        else { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onSelectProject(project); }
-                      }}
+                      onClick={() => onSelectProject(project)}
                     >
                       <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
-                    <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title="New terminal"
-                      disabled={project.missing}
-                      onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
-                      <PlusIcon size={14} />
-                    </button>
+                    <div className="project-actions">
+                      <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title={titleWithShortcut("New terminal", shortcuts.newTerminal)}
+                        disabled={project.missing}
+                        onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
+                        <PlusIcon size={14} />
+                      </button>
+                      <button className="row-action project-close" aria-label={`Close ${project.name}`} title="Close Project"
+                        disabled={closingProjectId === project.id}
+                        onClick={() => void close(project)}>
+                        <XIcon size={14} />
+                      </button>
+                    </div>
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
-                      {state.tabs.length === 0 && <li className="sidebar-note">No terminals</li>}
                       {state.tabs.map((tab) => (
                         <TerminalRow key={tab.id} name={tab.name} running={tab.running}
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}
                           onSelect={() => onSelectTerminal(project, tab.id)}
                           onRename={(name) => onRenameTerminal(project, tab.id, name)}
+                          onNewTerminal={project.missing ? undefined : () => onNewTerminal(project)}
                           onClose={() => onCloseTerminal(project, tab.id)} />
                       ))}
                     </ul>
@@ -638,7 +760,7 @@ function Sidebar({
           </ul>
         </div>
       </nav>
-      <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title="Settings">
+      <button className="sidebar-footer" aria-current={settingsOpen ? "page" : undefined} onClick={onOpenSettings} title={titleWithShortcut("Settings", shortcuts.openSettings)}>
         <GearIcon size={14} /> Settings
       </button>
     </div>
@@ -689,14 +811,32 @@ function useWindowMaximized(): boolean {
   return maximized;
 }
 
-/** Caption buttons drawn like Windows' own: Segoe glyphs, 46px wide, flush with the window's top-right corner. */
+/** Caption buttons drawn like Windows' own: crisp 10x10 vector icons, 46px wide, flush with the top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
   const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
-    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>{""}</button>
-    <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>{maximized ? "" : ""}</button>
-    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>{""}</button>
+    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+        <path d="M1 5h8" />
+      </svg>
+    </button>
+    <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>
+      {maximized ? (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+          <path d="M3 1.5h5.5v5.5M1.5 3h5.5v5.5H1.5z" />
+        </svg>
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+          <rect x="1.5" y="1.5" width="7" height="7" />
+        </svg>
+      )}
+    </button>
+    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+        <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
+      </svg>
+    </button>
   </div>;
 }
 

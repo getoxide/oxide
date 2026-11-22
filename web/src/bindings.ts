@@ -22,9 +22,20 @@ export const commands = {
 	/**  Clones one of the user's GitHub repositories into `parent` and registers it as a Project. */
 	cloneGithubRepository: (nameWithOwner: string, parent: string) => typedError<Project, AppError>(__TAURI_INVOKE("clone_github_repository", { nameWithOwner, parent })),
 	revealInFinder: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("reveal_in_finder", { projectId })),
+	/**  Lists all `*.json` themes in `~/.oxide/themes/` (outside any checkout), seeding built-ins if missing. */
+	listThemes: () => typedError<ThemeSummary_Serialize[], AppError>(__TAURI_INVOKE("list_themes")),
+	/**  Writes a validated custom theme JSON file inside `~/.oxide/themes/` (outside any checkout). */
+	saveTheme: (id: string, json: string) => typedError<ThemeSummary_Serialize, AppError>(__TAURI_INVOKE("save_theme", { id, json })),
+	/**  Deletes a custom theme JSON file inside `~/.oxide/themes/` (outside any checkout). */
+	deleteTheme: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_theme", { id })),
+	/**  Opens `~/.oxide/themes/` in the OS file manager (outside the app). */
+	openThemesFolder: () => typedError<null, AppError>(__TAURI_INVOKE("open_themes_folder")),
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
 	startBlockTerminal: (projectId: number, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, onOutput })),
+	availableShells: () => __TAURI_INVOKE<AvailableShell[]>("available_shells"),
+	terminalSettings: () => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("terminal_settings")),
+	setTerminalSettings: (settings: TerminalSettings) => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("set_terminal_settings", { settings })),
 	writeTerminal: (terminalId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_terminal", { terminalId, input })),
 	resizeTerminal: (terminalId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_terminal", { terminalId, rows, cols })),
 	closeTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("close_terminal", { terminalId })),
@@ -40,6 +51,13 @@ export const commands = {
 	writeFile: (projectId: number, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	developerTools: () => typedError<DeveloperTool_Serialize[], AppError>(__TAURI_INVOKE("developer_tools")),
+	/**
+	 *  Enumerates installed system font family names on a blocking thread.
+	 * 
+	 *  Starts an OS font-enumeration process (`atsutil` on macOS, `fc-list` on Linux;
+	 *  DirectWrite via Win32 on Windows) through `oxide-platform`.
+	 */
+	systemFonts: () => typedError<string[], AppError>(__TAURI_INVOKE("system_fonts")),
 	installDeveloperTool: (tool: string) => typedError<null, AppError>(__TAURI_INVOKE("install_developer_tool", { tool })),
 	installLanguageSupport: (language: string, onProgress: Channel<string>) => typedError<LanguageTool_Serialize, AppError>(__TAURI_INVOKE("install_language_support", { language, onProgress })),
 	createFile: (projectId: number, path: string) => typedError<null, AppError>(__TAURI_INVOKE("create_file", { projectId, path })),
@@ -106,6 +124,12 @@ export const commands = {
 /* Types */
 export type AppError = {
 	message: string,
+};
+
+export type AvailableShell = {
+	kind: ShellKind,
+	label: string,
+	isDefault: boolean,
 };
 
 export type CheckState = "success" | "failure" | "pending";
@@ -438,6 +462,8 @@ export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewState = "requested" | "approved" | "changesRequested" | "commented" | "dismissed";
 
+export type ShellKind = "default" | "zsh" | "bash" | "powershell" | "pwsh";
+
 export type Terminal = {
 	id: number,
 	pid: number,
@@ -456,6 +482,29 @@ export type TerminalMatch = {
 	text: string,
 	label: string,
 	detail: string,
+};
+
+export type TerminalSettings = {
+	shell: ShellKind,
+	loadUserConfig: boolean,
+};
+
+export type ThemeSummary = ThemeSummary_Serialize | ThemeSummary_Deserialize;
+
+export type ThemeSummary_Deserialize = {
+	id: string,
+	name: string,
+	builtin: boolean,
+	json?: string | null,
+	error?: string | null,
+};
+
+export type ThemeSummary_Serialize = {
+	id: string,
+	name: string,
+	builtin: boolean,
+	json: string | null,
+	error: string | null,
 };
 
 /* Tauri Specta runtime */

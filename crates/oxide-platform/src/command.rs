@@ -57,6 +57,7 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
     match family {
         OsFamily::MacOs => match name {
             "open" => "/usr/bin/open",
+            "atsutil" => "/usr/bin/atsutil",
             "system_profiler" => "/usr/sbin/system_profiler",
             "sh" => "/bin/sh",
             "security" => "/usr/bin/security",
@@ -83,6 +84,7 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
         }
         OsFamily::Other => match name {
             "ps" => "/bin/ps",
+            "fc-list" => "/usr/bin/fc-list",
             other => other,
         }
         .into(),
@@ -167,6 +169,10 @@ mod tests {
 
     #[test]
     fn other_platforms_keep_path_lookup() {
+        assert_eq!(
+            os_tool_for(OsFamily::Other, None, "fc-list"),
+            PathBuf::from("/usr/bin/fc-list")
+        );
         assert_eq!(
             os_tool_for(OsFamily::Other, None, "xdg-open"),
             PathBuf::from("xdg-open")

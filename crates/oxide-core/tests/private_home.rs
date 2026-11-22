@@ -119,13 +119,17 @@ fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
     assert_eq!(mode(tool_file.parent().unwrap()), 0o755);
 }
 
+fn make_symlink(src: &Path, dst: &Path) {
+    std::os::unix::fs::symlink(src, dst).unwrap();
+}
+
 #[test]
 fn a_path_that_refuses_a_change_does_not_stop_the_start() {
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
     // A dangling symlink and a directory without read permission are not Oxide's to fix.
-    std::os::unix::fs::symlink("/nonexistent/target", home.join("dangling")).unwrap();
+    make_symlink(Path::new("/nonexistent/target"), &home.join("dangling"));
     let locked = home.join("notes/locked");
     fs::create_dir_all(&locked).unwrap();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
@@ -135,4 +139,32 @@ fn a_path_that_refuses_a_change_does_not_stop_the_start() {
 
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(opened.is_ok());
+}
+
+#[test]
+fn themes_directory_and_files_are_private_and_symlinks_are_rejected() {
+    let parent = tempfile::tempdir().unwrap();
+    let home = parent.path().join("oxide");
+    let core = Core::open(&home).unwrap();
+
+    let themes_dir = home.join("themes");
+    assert_eq!(mode(&themes_dir), 0o700);
+    assert_eq!(mode(&themes_dir.join("oxide-dark.json")), 0o600);
+    assert_eq!(mode(&themes_dir.join("oxide-light.json")), 0o600);
+
+    let custom_json =
+        r#"{"name":"Custom","themes":[{"name":"Custom","appearance":"dark","style":{}}]}"#;
+    core.save_theme("custom", custom_json).unwrap();
+    assert_eq!(mode(&themes_dir.join("custom.json")), 0o600);
+
+    let outside = parent.path().join("outside.json");
+    fs::write(&outside, custom_json).unwrap();
+    make_symlink(&outside, &themes_dir.join("evil.json"));
+
+    let themes = core.list_themes().unwrap();
+    let evil = themes.iter().find(|t| t.id == "evil").unwrap();
+    assert!(evil.json.is_none());
+    assert!(evil.error.is_some());
+    assert!(core.save_theme("evil", custom_json).is_err());
+    assert!(core.delete_theme("evil").is_err());
 }

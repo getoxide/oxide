@@ -12,6 +12,7 @@
 
 export const storageKeys = {
   appearance: "oxide:appearance:v1",
+  codeEditor: "oxide:code-editor:v1",
   panelSize: (panel: string) => `oxide.layout.${panel}`,
   splitLayouts: "oxide:split-layouts:v1",
   codeTabs: (context: string) => `oxide:code-tabs:${context}`,
@@ -20,6 +21,7 @@ export const storageKeys = {
   session: "oxide:session:v1",
   terminalSession: (context: string) => `oxide:terminal-session:${context}`,
   languageDismissed: (language: string) => `oxide:language-dismissed:${language}`,
+  shortcuts: "oxide:shortcuts:v1",
 } as const;
 
 /** The stored string, or `null` when absent or storage is unavailable. */
