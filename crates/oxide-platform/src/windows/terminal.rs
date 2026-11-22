@@ -1,30 +1,102 @@
 //! The interactive shell of a Terminal on Windows: PowerShell with block markers. Children are
 //! contained by Job Objects (see `process`), so there are no groups or sessions to clean up.
 
-use crate::{ShellLaunch, ShellProcess, diag};
+use crate::command::{find_in, os_tool};
+use crate::{AvailableShell, ShellKind, ShellLaunch, ShellProcess, diag};
 use base64::Engine;
 use portable_pty::MasterPty;
+use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
+const BLOCK_PROMPT_COMMAND: &str = r#"function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write(([char]27)+"]633;Oxide;$($global:oxideCommandToken);end;$oxideCode;$($pwd.ProviderPath)"+[char]7); $global:oxideCommandToken=$null }; ' ' }"#;
+
+fn resolve_pwsh() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("PATH")
+        && let Some(found) = find_in(
+            &path,
+            OsStr::new("pwsh.exe"),
+            std::env::var_os("PATHEXT").as_deref(),
+        )
+    {
+        return Some(found);
+    }
+    let standard = PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe");
+    standard.is_file().then_some(standard)
+}
+
+/// Installed shells supported by Oxide on Windows (ADR-0016 allowlist).
+pub fn available_shells() -> Vec<AvailableShell> {
+    let mut shells = vec![AvailableShell {
+        kind: ShellKind::Default,
+        label: "System default".into(),
+        is_default: true,
+    }];
+    if os_tool("powershell").is_file()
+        || find_in(
+            &std::env::var_os("PATH").unwrap_or_default(),
+            OsStr::new("powershell.exe"),
+            None,
+        )
+        .is_some()
+    {
+        shells.push(AvailableShell {
+            kind: ShellKind::PowerShell,
+            label: "Windows PowerShell".into(),
+            is_default: false,
+        });
+    }
+    if resolve_pwsh().is_some() {
+        shells.push(AvailableShell {
+            kind: ShellKind::Pwsh,
+            label: "PowerShell (pwsh)".into(),
+            is_default: false,
+        });
+    }
+    shells
+}
+
+/// Whether `shell` is in Windows's Terminal allowlist (ADR-0016).
+pub fn is_shell_supported(shell: ShellKind) -> bool {
+    matches!(shell, ShellKind::Default | ShellKind::PowerShell)
+        || (shell == ShellKind::Pwsh && resolve_pwsh().is_some())
+}
+
 /// The shell to start. With `blocks`, PowerShell's real REPL with the block prompt: Ctrl+C
 /// cancels a pipeline without killing the shell.
-pub fn shell_launch(blocks: bool, _init_file: Option<&Path>) -> ShellLaunch {
+pub fn shell_launch(
+    blocks: bool,
+    _init_file: Option<&Path>,
+    shell: ShellKind,
+    load_user_config: bool,
+) -> ShellLaunch {
     let_children_receive_ctrl_c();
+    let (name, program) = match shell {
+        ShellKind::Pwsh => (
+            "pwsh".to_string(),
+            resolve_pwsh()
+                .map(Into::into)
+                .unwrap_or_else(|| "pwsh.exe".into()),
+        ),
+        _ => ("PowerShell".to_string(), "powershell.exe".into()),
+    };
     let mut launch = ShellLaunch {
-        name: "PowerShell".into(),
-        program: "powershell.exe".into(),
+        name,
+        program,
         args: Vec::new(),
         env: Vec::new(),
     };
+    if !load_user_config {
+        launch.args.push("-NoProfile".into());
+    }
     if blocks {
         launch.args.extend([
             "-NoLogo".into(),
             "-NoExit".into(),
             "-Command".into(),
-            r#"function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write(([char]27)+"]633;Oxide;$($global:oxideCommandToken);end;$oxideCode;$($pwd.ProviderPath)"+[char]7); $global:oxideCommandToken=$null }; ' ' }"#.into(),
+            BLOCK_PROMPT_COMMAND.into(),
         ]);
     }
     launch
@@ -59,7 +131,12 @@ pub fn completion_script(token: u32, line: &str, cursor: usize) -> Option<String
 }
 
 /// PowerShell needs no rc file.
-pub fn create_shell_init_file(_home: &Path, _id: u32) -> io::Result<Option<PathBuf>> {
+pub fn create_shell_init_file(
+    _home: &Path,
+    _id: u32,
+    _shell: ShellKind,
+    _load_user_config: bool,
+) -> io::Result<Option<PathBuf>> {
     Ok(None)
 }
 
@@ -88,3 +165,53 @@ pub fn close_session(_group: Option<i32>, _grace: Duration, shell: &mut dyn Shel
 
 /// Nothing outlives a Job Object.
 pub fn clean_up_session(_group: Option<i32>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ShellKind;
+
+    #[test]
+    fn available_shells_lists_default_and_powershell_without_unix_shells() {
+        let shells = available_shells();
+        assert!(
+            shells
+                .iter()
+                .any(|s| s.kind == ShellKind::Default && s.is_default)
+        );
+        assert!(shells.iter().any(|s| s.kind == ShellKind::PowerShell));
+        assert!(
+            !shells
+                .iter()
+                .any(|s| matches!(s.kind, ShellKind::Zsh | ShellKind::Bash))
+        );
+    }
+
+    #[test]
+    fn clean_shell_launch_adds_noprofile_while_keeping_block_prompt() {
+        let with_config = shell_launch(true, None, ShellKind::PowerShell, true);
+        assert_eq!(with_config.name, "PowerShell");
+        assert!(!with_config.args.iter().any(|a| a == "-NoProfile"));
+        assert!(with_config.args.iter().any(|a| a == "-Command"));
+
+        let clean = shell_launch(true, None, ShellKind::PowerShell, false);
+        assert_eq!(clean.name, "PowerShell");
+        assert!(clean.args.iter().any(|a| a == "-NoProfile"));
+        assert!(clean.args.iter().any(|a| a == "-Command"));
+    }
+
+    #[test]
+    fn pwsh_launch_uses_pwsh_and_respects_load_user_config() {
+        let launch = shell_launch(true, None, ShellKind::Pwsh, false);
+        assert_eq!(launch.name, "pwsh");
+        assert!(
+            launch
+                .program
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("pwsh")
+        );
+        assert!(launch.args.iter().any(|a| a == "-NoProfile"));
+        assert!(launch.args.iter().any(|a| a == "-Command"));
+    }
+}

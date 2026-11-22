@@ -25,6 +25,9 @@ export const commands = {
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
 	startBlockTerminal: (projectId: number, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, onOutput })),
+	availableShells: () => __TAURI_INVOKE<AvailableShell[]>("available_shells"),
+	terminalSettings: () => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("terminal_settings")),
+	setTerminalSettings: (settings: TerminalSettings) => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("set_terminal_settings", { settings })),
 	writeTerminal: (terminalId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_terminal", { terminalId, input })),
 	resizeTerminal: (terminalId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_terminal", { terminalId, rows, cols })),
 	closeTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("close_terminal", { terminalId })),
@@ -108,6 +111,12 @@ export const commands = {
 /* Types */
 export type AppError = {
 	message: string,
+};
+
+export type AvailableShell = {
+	kind: ShellKind,
+	label: string,
+	isDefault: boolean,
 };
 
 export type CheckState = "success" | "failure" | "pending";
@@ -440,6 +449,8 @@ export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewState = "requested" | "approved" | "changesRequested" | "commented" | "dismissed";
 
+export type ShellKind = "default" | "zsh" | "bash" | "powershell" | "pwsh";
+
 export type Terminal = {
 	id: number,
 	pid: number,
@@ -458,6 +469,11 @@ export type TerminalMatch = {
 	text: string,
 	label: string,
 	detail: string,
+};
+
+export type TerminalSettings = {
+	shell: ShellKind,
+	loadUserConfig: boolean,
 };
 
 /* Tauri Specta runtime */

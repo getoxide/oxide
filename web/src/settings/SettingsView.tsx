@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CheckIcon, XIcon } from "@primer/octicons-react";
-import { commands } from "../bindings";
+import { commands, type AvailableShell, type ShellKind, type TerminalSettings } from "../bindings";
 import {
   BUNDLED_FONTS,
   DEFAULT_APPEARANCE,
@@ -17,7 +17,7 @@ import { GithubSetup } from "./GithubSetup";
 import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
-export type SettingsSectionId = "appearance" | "code" | "session" | "github";
+export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -68,7 +68,10 @@ function swatch(theme: ThemeVariant) {
   };
 }
 
-/** Settings: sectioned preferences (appearance, session, GitHub tools). */
+const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = { shell: "default", loadUserConfig: true };
+const DEFAULT_AVAILABLE_SHELLS: AvailableShell[] = [{ kind: "default", label: "System default", isDefault: true }];
+
+/** Settings: sectioned preferences (appearance, terminal, session, GitHub tools). */
 export function SettingsView({ onClose }: { onClose: () => void }) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("appearance");
   const [appearance, setAppearance] = useState(getAppearance);
@@ -78,7 +81,39 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
   const [fontsLoading, setFontsLoading] = useState(false);
   const [fontsError, setFontsError] = useState<string | null>(null);
+  const [availableShells, setAvailableShells] = useState<AvailableShell[]>(DEFAULT_AVAILABLE_SHELLS);
+  const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(DEFAULT_TERMINAL_SETTINGS);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const tabRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
+
+  useEffect(() => {
+    let active = true;
+    void commands.availableShells().then((shells) => {
+      if (active && Array.isArray(shells) && shells.length > 0) setAvailableShells(shells);
+    }).catch(() => {});
+    void commands.terminalSettings().then((result) => {
+      if (!active || !result) return;
+      if (result.status === "error") {
+        setTerminalError(result.error.message);
+        return;
+      }
+      if (result.data) setTerminalSettingsState(result.data);
+    }).catch((cause) => {
+      if (active) setTerminalError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => { active = false; };
+  }, []);
+
+  const updateTerminalSettings = async (next: TerminalSettings) => {
+    setTerminalError(null);
+    try {
+      const result = await commands.setTerminalSettings(next);
+      if (result.status === "error") throw new Error(result.error.message);
+      setTerminalSettingsState(result.data);
+    } catch (cause) {
+      setTerminalError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
 
   const loadSystemFonts = async () => {
     setFontsLoading(true);
@@ -261,6 +296,56 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
               Restore defaults
             </button>
           </div>
+        </div>
+      ),
+    },
+    {
+      id: "terminal",
+      label: "Terminal",
+      description: "Applies to newly opened Terminals; running Terminals stay unaffected.",
+      render: () => (
+        <div className="settings-card">
+          <div className="settings-item">
+            <div className="settings-item-label">
+              <strong>Shell</strong>
+              <span className="settings-note">
+                Choose the interactive shell Oxide launches for new Terminals.
+              </span>
+            </div>
+            <div className="settings-item-controls">
+              <select
+                aria-label="Shell"
+                value={terminalSettings.shell}
+                onChange={(event) => void updateTerminalSettings({
+                  ...terminalSettings,
+                  shell: event.target.value as ShellKind,
+                })}
+              >
+                {availableShells.map((shell) => (
+                  <option key={shell.kind} value={shell.kind}>{shell.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <label className="settings-item settings-toggle">
+            <span className="settings-item-label">
+              <strong>Load user configuration</strong>
+              <span className="settings-note">
+                Sources your shell&rsquo;s profile and rc files at startup. Turn off to start a clean shell with Command blocks still enabled.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Load user configuration"
+              checked={terminalSettings.loadUserConfig}
+              onChange={(event) => void updateTerminalSettings({
+                ...terminalSettings,
+                loadUserConfig: event.target.checked,
+              })}
+            />
+          </label>
+          {terminalError && <p className="error" role="alert">{terminalError}</p>}
         </div>
       ),
     },

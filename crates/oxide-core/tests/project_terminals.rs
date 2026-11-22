@@ -182,3 +182,108 @@ fn an_older_database_is_adopted_keeping_projects_and_leaving_folders_on_disk() {
         .unwrap();
     assert_eq!(backed_up, 1, "the backup still holds the old data");
 }
+
+#[test]
+fn terminal_settings_default_and_persist_across_restarts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let core = Core::open(&home).unwrap();
+
+    let defaults = core.terminal_settings().unwrap();
+    assert_eq!(defaults.shell, oxide_core::ShellKind::Default);
+    assert!(defaults.load_user_config);
+
+    let os_shell = if cfg!(windows) {
+        oxide_core::ShellKind::PowerShell
+    } else {
+        oxide_core::ShellKind::Bash
+    };
+    let updated = core
+        .set_terminal_settings(oxide_core::TerminalSettings {
+            shell: os_shell,
+            load_user_config: false,
+        })
+        .unwrap();
+    assert_eq!(updated.shell, os_shell);
+    assert!(!updated.load_user_config);
+    drop(core);
+
+    let reopened = Core::open(&home).unwrap();
+    let persisted = reopened.terminal_settings().unwrap();
+    assert_eq!(persisted, updated);
+}
+
+#[test]
+fn set_terminal_settings_rejects_unsupported_shell_for_os() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = Core::open(tmp.path().join("home")).unwrap();
+
+    let invalid = if cfg!(windows) {
+        vec![oxide_core::ShellKind::Zsh, oxide_core::ShellKind::Bash]
+    } else {
+        vec![
+            oxide_core::ShellKind::PowerShell,
+            oxide_core::ShellKind::Pwsh,
+        ]
+    };
+    for shell in invalid {
+        let err = core.set_terminal_settings(oxide_core::TerminalSettings {
+            shell,
+            load_user_config: true,
+        });
+        assert!(err.is_err(), "expected {shell:?} to be rejected on this OS");
+    }
+    assert_eq!(
+        core.terminal_settings().unwrap(),
+        oxide_core::TerminalSettings::default()
+    );
+}
+
+#[test]
+fn available_shells_includes_default_and_os_shells() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = Core::open(tmp.path().join("home")).unwrap();
+    let shells = core.available_shells();
+    assert!(
+        shells
+            .iter()
+            .any(|s| s.kind == oxide_core::ShellKind::Default && s.is_default)
+    );
+    if cfg!(windows) {
+        assert!(
+            shells
+                .iter()
+                .any(|s| s.kind == oxide_core::ShellKind::PowerShell)
+        );
+    } else {
+        assert!(shells.iter().any(|s| matches!(
+            s.kind,
+            oxide_core::ShellKind::Zsh | oxide_core::ShellKind::Bash
+        )));
+    }
+}
+
+#[test]
+fn updated_terminal_settings_apply_to_new_terminals_without_disrupting_running_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (core, project, _) = open_with_project(tmp.path());
+
+    let first = core.start_block_terminal(project).unwrap();
+    let os_shell = if cfg!(windows) {
+        oxide_core::ShellKind::PowerShell
+    } else {
+        oxide_core::ShellKind::Bash
+    };
+    core.set_terminal_settings(oxide_core::TerminalSettings {
+        shell: os_shell,
+        load_user_config: false,
+    })
+    .unwrap();
+    let second = core.start_block_terminal(project).unwrap();
+
+    assert_ne!(first.id, second.id);
+    core.write_terminal(first.id, b"echo ok\r\n").unwrap();
+    core.write_terminal(second.id, b"echo ok\r\n").unwrap();
+    core.close_terminal(first.id).unwrap();
+    core.close_terminal(second.id).unwrap();
+}

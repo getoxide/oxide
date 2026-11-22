@@ -1,5 +1,57 @@
 use crate::*;
 
+impl From<oxide_core::ShellKind> for ShellKind {
+    fn from(k: oxide_core::ShellKind) -> Self {
+        match k {
+            oxide_core::ShellKind::Default => Self::Default,
+            oxide_core::ShellKind::Zsh => Self::Zsh,
+            oxide_core::ShellKind::Bash => Self::Bash,
+            oxide_core::ShellKind::PowerShell => Self::PowerShell,
+            oxide_core::ShellKind::Pwsh => Self::Pwsh,
+        }
+    }
+}
+
+impl From<ShellKind> for oxide_core::ShellKind {
+    fn from(k: ShellKind) -> Self {
+        match k {
+            ShellKind::Default => Self::Default,
+            ShellKind::Zsh => Self::Zsh,
+            ShellKind::Bash => Self::Bash,
+            ShellKind::PowerShell => Self::PowerShell,
+            ShellKind::Pwsh => Self::Pwsh,
+        }
+    }
+}
+
+impl From<oxide_core::AvailableShell> for AvailableShell {
+    fn from(s: oxide_core::AvailableShell) -> Self {
+        Self {
+            kind: s.kind.into(),
+            label: s.label,
+            is_default: s.is_default,
+        }
+    }
+}
+
+impl From<oxide_core::TerminalSettings> for TerminalSettings {
+    fn from(s: oxide_core::TerminalSettings) -> Self {
+        Self {
+            shell: s.shell.into(),
+            load_user_config: s.load_user_config,
+        }
+    }
+}
+
+impl From<TerminalSettings> for oxide_core::TerminalSettings {
+    fn from(s: TerminalSettings) -> Self {
+        Self {
+            shell: s.shell.into(),
+            load_user_config: s.load_user_config,
+        }
+    }
+}
+
 impl From<oxide_core::GithubRepository> for GithubRepository {
     fn from(r: oxide_core::GithubRepository) -> Self {
         Self {
