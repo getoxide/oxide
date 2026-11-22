@@ -11,7 +11,7 @@ A folder on the user's machine holding a Git repository, usually linked to a Git
 _Avoid_: Workspace, repo (when meaning the Oxide concept)
 
 **Open Project**:
-A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its terminals. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project ends its terminals, takes it out of the sidebar and keeps it known.
+A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its terminals. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project (from its `×` close button or row menu) ends its terminals, takes it out of the sidebar and keeps it known.
 _Avoid_: Pinned, recent, favourite Project
 
 **Project palette**:
@@ -35,7 +35,7 @@ One of the two tools in the right dock: Issues or Pull request. They are plain G
 _Avoid_: Tab, pane, widget
 
 **Terminals view**:
-The sidebar's default state: the Open Projects with their Terminals. A Project name selects it; only its chevron collapses its Terminals.
+The sidebar's default state: the Open Projects with their Terminals. A Project name selects it; only its leading chevron collapses or expands its Terminals without changing the selected Project, and its hover/focus `+` and `×` buttons open a Terminal or close the Project.
 _Avoid_: Terminals tab, Projects view
 
 **Files view**:

@@ -21,6 +21,8 @@ import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
 import { changeDirectoryLine, readTerminalSession, writeTerminalSession } from "../shared/session";
+import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
+import { copyTextToClipboard } from "../shared/platform";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -30,6 +32,8 @@ interface Props {
   visible: boolean;
   /** The command a Command block is running, or `null` when the shell is idle. */
   onRunningChange?: (command: string | null) => void;
+  /** Opens another Terminal tab in the same Project. */
+  onNewTerminal?: () => void;
   /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
   headerAction?: ReactNode;
 }
@@ -55,6 +59,7 @@ export function TerminalWorkbench({
   contextKey,
   visible,
   onRunningChange,
+  onNewTerminal,
   headerAction,
 }: Props) {
   // The last session's blocks and folder, when session restore is on (read once per Terminal).
@@ -279,6 +284,26 @@ export function TerminalWorkbench({
     },
     [sessionId],
   );
+  const clearTerminal = useCallback(() => {
+    if (running) return;
+    setBlocks([]);
+    launched.current.clear();
+    setFullscreen(null);
+    composer.current?.clear();
+    setError(null);
+  }, [running]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard?.readText?.();
+      if (!text) return;
+      if (running) pasteActive.current?.(text);
+      else composer.current?.insert(text);
+    } catch {
+      // Clipboard read may be denied by the environment.
+    }
+  }, [running]);
+
   function run(command: string) {
     if (
       !command.trim() ||
@@ -289,11 +314,7 @@ export function TerminalWorkbench({
     )
       return;
     if (/^(clear|cls|clear-host)\s*$/i.test(command.trim())) {
-      setBlocks([]);
-      launched.current.clear();
-      setFullscreen(null);
-      composer.current?.clear();
-      setError(null);
+      clearTerminal();
       return;
     }
     const token = crypto.randomUUID();
@@ -375,6 +396,20 @@ export function TerminalWorkbench({
       aria-label="Terminal workbench"
       hidden={!visible}
       data-fullscreen={running && fullscreen !== null ? "true" : undefined}
+      onContextMenu={(event) => {
+        if ((event.target as HTMLElement | null)?.closest?.(".terminal-command-block")) return;
+        const selectedText = window.getSelection()?.toString() ?? "";
+        showContextMenu(
+          event,
+          [
+            ...(selectedText ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => copyTextToClipboard(selectedText) }] : []),
+            { label: "Paste", hint: formatAccelerator("Mod+V"), disabled: closed || sessionId === null, run: () => void pasteFromClipboard() },
+            { label: "Clear terminal", disabled: running || blocks.length === 0, run: clearTerminal, separatorBefore: true },
+            ...(onNewTerminal ? [{ label: "New terminal", run: onNewTerminal }] : []),
+          ],
+          { replaceEdit: true },
+        );
+      }}
     >
       <header className="workbench-terminal-header">
         <TerminalIcon size={16} />
@@ -411,6 +446,11 @@ export function TerminalWorkbench({
               if (sessionId !== null && !block.ended)
                 void commands.resizeTerminal(sessionId, rows, cols);
             }}
+            canPaste={!closed && sessionId !== null}
+            canClear={!running}
+            onPaste={() => void pasteFromClipboard()}
+            onClear={clearTerminal}
+            onNewTerminal={onNewTerminal}
           />
           {block.restored && !blocks[index + 1]?.restored && (
             <div className="terminal-session-divider" role="separator" aria-label="Restored from the last session">

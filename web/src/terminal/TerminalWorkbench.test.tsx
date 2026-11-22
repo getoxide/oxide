@@ -5,6 +5,9 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { TerminalWorkbench } from "./TerminalWorkbench";
+import { ContextMenu } from "../shared/ContextMenu";
+
+const xtermSelection = { text: "" };
 
 // xterm needs a real canvas and layout; the Command block around it is what is under test.
 vi.mock("@xterm/xterm", () => ({
@@ -18,6 +21,8 @@ vi.mock("@xterm/xterm", () => ({
     open() {}
     write(data: string) { writes.push(data); }
     paste() {}
+    hasSelection() { return xtermSelection.text.length > 0; }
+    getSelection() { return xtermSelection.text; }
     focus() {}
     blur() {}
     dispose() {}
@@ -37,6 +42,7 @@ const writes: string[] = [];
 let now = 0;
 beforeEach(() => {
   writes.length = 0;
+  xtermSelection.text = "";
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
   vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -224,4 +230,72 @@ it("runs a server or an agent CLI in the shell like any other command, with no O
     expect(shell.calls.filter((name) => name !== "start_block_terminal" && name !== "run_terminal_block" && name !== "resize_terminal" && name !== "write_terminal")).toEqual([]);
     await act(async () => root.render(null));
   }
+});
+
+it("offers context actions on Command blocks and Terminal workbench (Copy, Paste, Copy command, Clear terminal, New terminal)", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  const readText = vi.fn().mockResolvedValue("pasted-cmd");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText, readText } });
+
+  const newTerminal = vi.fn();
+  let channel: Channel<number[]>;
+  let token = "";
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") token = (args as { token: string }).token;
+    return null;
+  });
+
+  await act(async () => root.render(
+    <>
+      <ContextMenu actions={{ openProject: vi.fn(), newTerminal, openSettings: vi.fn() }} />
+      <TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible onNewTerminal={newTerminal} />
+    </>,
+  ));
+
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "echo hello");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await settle();
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};start\x07hello\r\n\x1b]633;Oxide;${token};end;0;/test\x07`)]));
+  await settle();
+
+  // Right-click Command block with xterm selection.
+  xtermSelection.text = "hello";
+  const block = blocks()[0]!;
+  await act(async () => { block.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
+  const menuLabels = () => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).map((b) => b.querySelector("span")?.textContent);
+  expect(menuLabels()).toEqual(["Copy", "Paste", "Copy command", "Clear terminal", "New terminal"]);
+
+  await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click(); });
+  expect(writeText).toHaveBeenCalledWith("hello");
+
+  await act(async () => { block.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
+  await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[2]!.click(); });
+  expect(writeText).toHaveBeenCalledWith("echo hello");
+
+  // Right-click Terminal workbench outside Command block with no selection.
+  xtermSelection.text = "";
+  const scrollArea = container.querySelector(".terminal-block-scroll")!;
+  await act(async () => { scrollArea.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
+  expect(menuLabels()).toEqual(["Paste", "Clear terminal", "New terminal"]);
+
+  // Paste inserts into composer.
+  await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click(); });
+  await settle();
+  expect(readText).toHaveBeenCalledOnce();
+  expect(container.querySelector("textarea")!.value).toBe("pasted-cmd");
+
+  // Clear terminal clears blocks.
+  await act(async () => { scrollArea.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
+  await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!.click(); });
+  expect(blocks()).toHaveLength(0);
+
+  // New terminal invokes callback.
+  await act(async () => { scrollArea.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
+  await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[2]!.click(); });
+  expect(newTerminal).toHaveBeenCalledOnce();
 });

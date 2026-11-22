@@ -54,4 +54,12 @@ fn webview_capabilities_grant_no_filesystem_or_shell_access() {
             .iter()
             .any(|p| p == "dialog:allow-open")
     );
+    assert!(
+        cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "core:window:allow-is-maximized"),
+        "default capability must grant core:window:allow-is-maximized for Windows titlebar sync"
+    );
 }
