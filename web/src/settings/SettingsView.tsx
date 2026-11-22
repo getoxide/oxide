@@ -1,19 +1,20 @@
 import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CheckIcon, XIcon } from "@primer/octicons-react";
+import { commands } from "../bindings";
 import {
   BUNDLED_FONTS,
   DEFAULT_APPEARANCE,
+  fontFamily,
   fontStyle,
   getAppearance,
   parseThemePack,
   saveAppearance,
   type Appearance,
+  type FontRole,
   type ThemeVariant,
 } from "../shared/appearance";
 import { GithubSetup } from "./GithubSetup";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
-
-type FontRole = keyof Appearance["fonts"];
 
 export type SettingsSectionId = "appearance" | "session" | "github";
 
@@ -28,6 +29,7 @@ const ROLES: { key: FontRole; label: string; sample: string }[] = [
   { key: "ui", label: "Interface", sample: "Projects, tabs and buttons" },
   { key: "code", label: "Code editor", sample: "const answer = 42;" },
   { key: "terminal", label: "Terminal", sample: "~/project $ git status" },
+  { key: "surfaces", label: "Issues & Pull requests", sample: "Reviewing #544 · ready for merge" },
 ];
 const FONT_CHOICES: Record<FontRole, { label: string; value: string }[]> = {
   ui: [
@@ -41,6 +43,10 @@ const FONT_CHOICES: Record<FontRole, { label: string; value: string }[]> = {
   terminal: [
     { label: "JetBrains Mono", value: BUNDLED_FONTS[1].value },
     { label: "System monospace", value: 'ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, Menlo, monospace' },
+  ],
+  surfaces: [
+    { label: "Inter", value: BUNDLED_FONTS[0].value },
+    { label: "System", value: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif' },
   ],
 };
 const SIZES = Array.from({ length: 13 }, (_, index) => index + 10);
@@ -67,7 +73,42 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
   const [appearance, setAppearance] = useState(getAppearance);
   const [error, setError] = useState<string | null>(null);
   const [restoreSession, setRestore] = useState(restoreSessionEnabled);
+  const [showAllFonts, setShowAllFonts] = useState(false);
+  const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
+  const [fontsLoading, setFontsLoading] = useState(false);
+  const [fontsError, setFontsError] = useState<string | null>(null);
   const tabRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
+
+  const loadSystemFonts = async () => {
+    setFontsLoading(true);
+    setFontsError(null);
+    try {
+      const result = await commands.systemFonts();
+      if (result.status === "ok") {
+        if (result.data.length === 0) {
+          setSystemFonts([]);
+          setFontsError("No additional system fonts were found.");
+        } else {
+          setSystemFonts(result.data);
+        }
+      } else {
+        setSystemFonts(null);
+        setFontsError(result.error.message || "Could not load system fonts.");
+      }
+    } catch (cause) {
+      setSystemFonts(null);
+      setFontsError(cause instanceof Error ? cause.message : "Could not load system fonts.");
+    } finally {
+      setFontsLoading(false);
+    }
+  };
+
+  const handleToggleAllFonts = (checked: boolean) => {
+    setShowAllFonts(checked);
+    if (checked && !fontsLoading && (!systemFonts || systemFonts.length === 0)) {
+      void loadSystemFonts();
+    }
+  };
 
   const themes = useMemo(() => {
     try {
@@ -131,12 +172,46 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
               })}
             </div>
           </div>
+          <div className="settings-item">
+            <div className="settings-item-label">
+              <strong>Show all system fonts</strong>
+              <span className="settings-note">
+                Reveal every font installed on your system alongside Oxide&rsquo;s recommended fonts.
+              </span>
+            </div>
+            <div className="settings-item-controls">
+              {fontsLoading && <span className="settings-note">Loading fonts…</span>}
+              {showAllFonts && fontsError && (
+                <>
+                  <span className="settings-note" role="status">{fontsError}</span>
+                  <button type="button" className="btn sm" onClick={() => { void loadSystemFonts(); }}>
+                    Retry
+                  </button>
+                </>
+              )}
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="Show all system fonts"
+                checked={showAllFonts}
+                onChange={(event) => handleToggleAllFonts(event.target.checked)}
+              />
+            </div>
+          </div>
           {ROLES.map(({ key, label, sample }) => {
             const style = { ...fontStyle(key), ...appearance.typography?.[key] };
-            const family = appearance.fonts[key];
-            const choices = FONT_CHOICES[key].some((choice) => choice.value === family)
-              ? FONT_CHOICES[key]
-              : [...FONT_CHOICES[key], { label: family, value: family }];
+            const family = appearance.fonts[key] ?? fontFamily(key);
+            const recommended = FONT_CHOICES[key];
+            const visibleSystemFonts =
+              showAllFonts && systemFonts
+                ? systemFonts.filter((name) => !recommended.some((choice) => choice.value === name))
+                : [];
+            const needsCustomOption =
+              !recommended.some((choice) => choice.value === family) &&
+              !visibleSystemFonts.includes(family);
+            const recommendedChoices = needsCustomOption
+              ? [...recommended, { label: family, value: family }]
+              : recommended;
             return (
               <div className="settings-item" key={key}>
                 <div className="settings-item-label">
@@ -148,7 +223,24 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
                 <div className="settings-item-controls">
                   <select aria-label={`${label} font`} value={family}
                     onChange={(event) => apply({ ...appearance, fonts: { ...appearance.fonts, [key]: event.target.value } })}>
-                    {choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                    {visibleSystemFonts.length > 0 ? (
+                      <>
+                        <optgroup label="Recommended">
+                          {recommendedChoices.map((choice) => (
+                            <option key={choice.value} value={choice.value}>{choice.label}</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="System fonts">
+                          {visibleSystemFonts.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </optgroup>
+                      </>
+                    ) : (
+                      recommendedChoices.map((choice) => (
+                        <option key={choice.value} value={choice.value}>{choice.label}</option>
+                      ))
+                    )}
                   </select>
                   <select aria-label={`${label} weight`} value={style.weight}
                     onChange={(event) => typography(key, { weight: Number(event.target.value) })}>

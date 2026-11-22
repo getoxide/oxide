@@ -21,3 +21,18 @@ pub fn reveal_in_file_manager(path: &Path) {
 
 /// Linux shows no Dock icon.
 pub fn set_dev_dock_icon(_png: &[u8]) {}
+
+/// Returns a sorted, deduplicated list of installed font family names via `fc-list`.
+pub fn system_fonts() -> Vec<String> {
+    let mut command = crate::command::os_command("fc-list");
+    command.args([":", "family"]);
+    crate::fonts::run_bounded_font_command(command, |lines| {
+        let mut families = Vec::new();
+        for line in lines {
+            for part in line.split(',') {
+                families.push(part.to_string());
+            }
+        }
+        families
+    })
+}
