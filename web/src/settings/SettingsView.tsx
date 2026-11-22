@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { CheckIcon, XIcon } from "@primer/octicons-react";
-import { commands, type AvailableShell, type ShellKind, type TerminalSettings } from "../bindings";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { CheckIcon, TrashIcon, XIcon } from "@primer/octicons-react";
+import { commands, type AvailableShell, type ShellKind, type TerminalSettings, type ThemeSummary } from "../bindings";
 import {
   BUNDLED_FONTS,
   DEFAULT_APPEARANCE,
@@ -18,7 +18,7 @@ import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
-export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "shortcuts" | "github";
+export type SettingsSectionId = "appearance" | "themes" | "terminal" | "code" | "session" | "shortcuts" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -78,6 +78,11 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
   const [appearance, setAppearance] = useState(getAppearance);
   const [error, setError] = useState<string | null>(null);
   const [restoreSession, setRestore] = useState(restoreSessionEnabled);
+  const [diskThemes, setDiskThemes] = useState<ThemeSummary[] | null>(null);
+  const [themeRevision, setThemeRevision] = useState(0);
+  const [themeError, setThemeError] = useState<string | null>(null);
+  const [editingTheme, setEditingTheme] = useState<{ id: string; json: string; isNew: boolean } | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
   const [showAllFonts, setShowAllFonts] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
   const [fontsLoading, setFontsLoading] = useState(false);
@@ -147,15 +152,7 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const themes = useMemo(() => {
-    try {
-      return parseThemePack(appearance.themeJson).themes;
-    } catch {
-      return [];
-    }
-  }, [appearance.themeJson]);
-
-  const apply = (next: Appearance) => {
+  const apply = useCallback((next: Appearance) => {
     try {
       saveAppearance(next);
       setAppearance(next);
@@ -163,7 +160,73 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  };
+  }, []);
+
+  const reloadThemes = useCallback(() => {
+    setThemeRevision((value) => value + 1);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void commands.listThemes().then((result) => {
+      if (!active) return;
+      if (result.status === "error") {
+        setThemeError(result.error.message);
+        return;
+      }
+      if (!Array.isArray(result.data)) return;
+      setDiskThemes(result.data);
+      setThemeError(null);
+      const currentId = getAppearance().themeId;
+      if (currentId) {
+        const match = result.data.find((item) => item.id === currentId);
+        if (!match || !match.json) {
+          apply({
+            ...getAppearance(),
+            themeId: undefined,
+            themeJson: DEFAULT_APPEARANCE.themeJson,
+            themeName: DEFAULT_APPEARANCE.themeName,
+          });
+        }
+      }
+    }).catch((cause) => {
+      if (active) setThemeError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => { active = false; };
+  }, [apply, themeRevision]);
+
+  const themeEntries = useMemo(() => {
+    if (diskThemes) {
+      const entries: { id: string; builtin: boolean; json: string; variant: ThemeVariant }[] = [];
+      for (const item of diskThemes) {
+        if (!item.json) continue;
+        try {
+          const pack = parseThemePack(item.json);
+          for (const variant of pack.themes) {
+            entries.push({ id: item.id, builtin: item.builtin, json: item.json, variant });
+          }
+        } catch {
+          // Invalid pack on disk is surfaced via item.error diagnostics.
+        }
+      }
+      return entries;
+    }
+    try {
+      return parseThemePack(appearance.themeJson).themes.map((variant) => ({
+        id: appearance.themeId ?? variant.name.toLowerCase().replace(/\s+/g, "-"),
+        builtin: true,
+        json: appearance.themeJson,
+        variant,
+      }));
+    } catch {
+      return [];
+    }
+  }, [appearance.themeId, appearance.themeJson, diskThemes]);
+
+  const brokenThemes = useMemo(
+    () => (diskThemes ?? []).filter((item) => Boolean(item.error)),
+    [diskThemes],
+  );
 
   const typography = (role: FontRole, patch: Partial<{ size: number; weight: number }>) =>
     apply({
@@ -189,19 +252,19 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
           <div className="settings-item settings-item-stacked">
             <strong>Theme</strong>
             <div className="theme-choices" role="radiogroup" aria-label="Theme">
-              {themes.map((theme) => {
-                const colors = swatch(theme);
-                const checked = theme.name === appearance.themeName;
+              {themeEntries.map(({ id, json, variant }) => {
+                const colors = swatch(variant);
+                const checked = variant.name === appearance.themeName && (!appearance.themeId || appearance.themeId === id);
                 return (
-                  <button key={theme.name} type="button" role="radio" aria-checked={checked} className="theme-choice"
-                    onClick={() => apply({ ...appearance, themeName: theme.name })}>
+                  <button key={`${id}:${variant.name}`} type="button" role="radio" aria-checked={checked} className="theme-choice"
+                    onClick={() => apply({ ...appearance, themeId: id, themeJson: json, themeName: variant.name })}>
                     <span className="theme-swatch" aria-hidden="true" style={{ background: colors.background, color: colors.foreground }}>
                       <span>Aa</span>
                       <i style={{ background: colors.accent }} />
                       <i style={{ background: colors.second }} />
                     </span>
                     <span className="theme-choice-name">
-                      {theme.name}
+                      {variant.name}
                       {checked && <CheckIcon size={12} />}
                     </span>
                   </button>
@@ -296,6 +359,194 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
             <button className="btn sm" disabled={isDefault} onClick={() => apply(structuredClone(DEFAULT_APPEARANCE))}>
               Restore defaults
             </button>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "themes",
+      label: "Themes",
+      description: "Disk-backed JSON themes in ~/.oxide/themes/.",
+      render: () => (
+        <div className="settings-card">
+          <div className="settings-item settings-item-stacked">
+            <div className="theme-toolbar">
+              <button type="button" className="btn sm" onClick={() => void commands.openThemesFolder()}>
+                Open themes folder
+              </button>
+              <button type="button" className="btn sm" onClick={() => reloadThemes()}>
+                Reload from disk
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() => {
+                  const base = themeEntries[0]?.json ?? appearance.themeJson;
+                  setEditingTheme({ id: "custom-theme", json: base, isNew: true });
+                  setEditorError(null);
+                }}
+              >
+                New custom theme
+              </button>
+            </div>
+            <div className="theme-choices" role="radiogroup" aria-label="Themes">
+              {themeEntries.map(({ id, builtin, json, variant }) => {
+                const colors = swatch(variant);
+                const checked = variant.name === appearance.themeName && (!appearance.themeId || appearance.themeId === id);
+                return (
+                  <div key={`${id}:${variant.name}`} className="theme-choice-wrap">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={checked}
+                      data-theme-id={id}
+                      className="theme-choice"
+                      onClick={() => apply({ ...appearance, themeId: id, themeJson: json, themeName: variant.name })}
+                    >
+                      <span className="theme-swatch" aria-hidden="true" style={{ background: colors.background, color: colors.foreground }}>
+                        <span>Aa</span>
+                        <i style={{ background: colors.accent }} />
+                        <i style={{ background: colors.second }} />
+                      </span>
+                      <span className="theme-choice-name">
+                        {variant.name}
+                        {checked && <CheckIcon size={12} />}
+                      </span>
+                    </button>
+                    {!builtin && (
+                      <div className="theme-choice-actions">
+                        <button
+                          type="button"
+                          className="btn sm"
+                          aria-label={`Edit theme ${id}`}
+                          onClick={() => {
+                            setEditingTheme({ id, json, isNew: false });
+                            setEditorError(null);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn sm"
+                          aria-label={`Delete theme ${id}`}
+                          title={`Delete theme ${id}`}
+                          onClick={() => {
+                            void (async () => {
+                              const res = await commands.deleteTheme(id);
+                              if (res.status === "error") {
+                                setThemeError(res.error.message);
+                                return;
+                              }
+                              if (appearance.themeId === id) {
+                                apply({
+                                  ...appearance,
+                                  themeId: undefined,
+                                  themeJson: DEFAULT_APPEARANCE.themeJson,
+                                  themeName: DEFAULT_APPEARANCE.themeName,
+                                });
+                              }
+                              reloadThemes();
+                            })();
+                          }}
+                        >
+                          <TrashIcon size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {brokenThemes.length > 0 && (
+              <div className="theme-diagnostics" aria-label="Theme diagnostics">
+                {brokenThemes.map((item) => (
+                  <div key={item.id} className="theme-diagnostic">
+                    <strong>{item.id}.json</strong>: {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+            {themeError && <p className="error" role="alert">{themeError}</p>}
+            {editingTheme && (
+              <div className="theme-editor">
+                <div className="theme-editor-header">
+                  <label>
+                    <span>File ID</span>
+                    <input
+                      type="text"
+                      aria-label="Theme file id"
+                      value={editingTheme.id}
+                      disabled={!editingTheme.isNew}
+                      onChange={(event) => setEditingTheme({ ...editingTheme, id: event.target.value })}
+                    />
+                  </label>
+                  <div className="theme-toolbar">
+                    <button
+                      type="button"
+                      className="btn sm primary"
+                      disabled={Boolean(editorError)}
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            const pack = parseThemePack(editingTheme.json);
+                            const res = await commands.saveTheme(editingTheme.id, editingTheme.json);
+                            if (res.status === "error") {
+                              setEditorError(res.error.message);
+                              return;
+                            }
+                            apply({
+                              ...appearance,
+                              themeId: res.data.id,
+                              themeJson: editingTheme.json,
+                              themeName: pack.themes[0].name,
+                            });
+                            setEditingTheme(null);
+                            setEditorError(null);
+                            reloadThemes();
+                          } catch (cause) {
+                            setEditorError(cause instanceof Error ? cause.message : String(cause));
+                          }
+                        })();
+                      }}
+                    >
+                      Save theme
+                    </button>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => {
+                        setEditingTheme(null);
+                        setEditorError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  aria-label="Theme JSON"
+                  value={editingTheme.json}
+                  onChange={(event) => {
+                    const nextJson = event.target.value;
+                    setEditingTheme({ ...editingTheme, json: nextJson });
+                    try {
+                      const pack = parseThemePack(nextJson);
+                      setEditorError(null);
+                      apply({
+                        ...appearance,
+                        themeId: editingTheme.id,
+                        themeJson: nextJson,
+                        themeName: pack.themes[0].name,
+                      });
+                    } catch (cause) {
+                      setEditorError(cause instanceof Error ? cause.message : String(cause));
+                    }
+                  }}
+                />
+                {editorError && <p className="error" role="alert">{editorError}</p>}
+              </div>
+            )}
           </div>
         </div>
       ),

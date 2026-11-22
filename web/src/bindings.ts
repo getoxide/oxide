@@ -22,6 +22,14 @@ export const commands = {
 	/**  Clones one of the user's GitHub repositories into `parent` and registers it as a Project. */
 	cloneGithubRepository: (nameWithOwner: string, parent: string) => typedError<Project, AppError>(__TAURI_INVOKE("clone_github_repository", { nameWithOwner, parent })),
 	revealInFinder: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("reveal_in_finder", { projectId })),
+	/**  Lists all `*.json` themes in `~/.oxide/themes/` (outside any checkout), seeding built-ins if missing. */
+	listThemes: () => typedError<ThemeSummary_Serialize[], AppError>(__TAURI_INVOKE("list_themes")),
+	/**  Writes a validated custom theme JSON file inside `~/.oxide/themes/` (outside any checkout). */
+	saveTheme: (id: string, json: string) => typedError<ThemeSummary_Serialize, AppError>(__TAURI_INVOKE("save_theme", { id, json })),
+	/**  Deletes a custom theme JSON file inside `~/.oxide/themes/` (outside any checkout). */
+	deleteTheme: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_theme", { id })),
+	/**  Opens `~/.oxide/themes/` in the OS file manager (outside the app). */
+	openThemesFolder: () => typedError<null, AppError>(__TAURI_INVOKE("open_themes_folder")),
 	/**  Lists the Project in the sidebar, or takes it out (it stays in the Project palette). */
 	setProjectOpen: (id: number, open: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_project_open", { id, open })),
 	startBlockTerminal: (projectId: number, onOutput: Channel<number[]>) => typedError<Terminal, AppError>(__TAURI_INVOKE("start_block_terminal", { projectId, onOutput })),
@@ -474,6 +482,24 @@ export type TerminalMatch = {
 export type TerminalSettings = {
 	shell: ShellKind,
 	loadUserConfig: boolean,
+};
+
+export type ThemeSummary = ThemeSummary_Serialize | ThemeSummary_Deserialize;
+
+export type ThemeSummary_Deserialize = {
+	id: string,
+	name: string,
+	builtin: boolean,
+	json?: string | null,
+	error?: string | null,
+};
+
+export type ThemeSummary_Serialize = {
+	id: string,
+	name: string,
+	builtin: boolean,
+	json: string | null,
+	error: string | null,
 };
 
 /* Tauri Specta runtime */

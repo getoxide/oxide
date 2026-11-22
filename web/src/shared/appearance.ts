@@ -1,13 +1,21 @@
 import { readJson, storageKeys, writeJson } from "./storage";
 
+export interface ThemeFonts {
+  ui?: string;
+  code?: string;
+  terminal?: string;
+  surfaces?: string;
+}
 export interface ThemeVariant {
   name: string;
   appearance: "dark" | "light";
+  fonts?: ThemeFonts;
   style: Record<string, unknown>;
 }
 export interface ThemePack {
   name: string;
   author?: string;
+  fonts?: ThemeFonts;
   themes: ThemeVariant[];
 }
 export type FontRole = "ui" | "code" | "terminal" | "surfaces";
@@ -17,6 +25,7 @@ export interface Appearance {
   typography?: Partial<Record<FontRole, FontTypography>> & Record<"ui" | "code" | "terminal", FontTypography>;
   themeJson: string;
   themeName: string;
+  themeId?: string;
 }
 // Bundled through fonts.css, so they win over installed copies; the rest cover scripts the subsets do not.
 const SYSTEM =
@@ -198,6 +207,38 @@ export const COLOR_TOKENS: Record<string, string> = {
   warning: "--yellow",
   hint: "--purple",
 };
+export const SURFACE_TOKENS: Record<string, string> = {
+  "title_bar.background": "--header-background",
+  "title_bar.border": "--header-border",
+  "title_bar.foreground": "--header-foreground",
+  "sidebar.background": "--sidebar-background",
+  "sidebar.border": "--sidebar-border",
+  "sidebar.foreground": "--sidebar-foreground",
+  "sidebar.item.hover": "--sidebar-item-hover",
+  "sidebar.item.active": "--sidebar-item-active",
+  "sidebar.switch.background": "--sidebar-switch-background",
+  "sidebar.switch.active": "--sidebar-switch-active",
+  "surfaces.background": "--surfaces-background",
+  "surfaces.header.background": "--surfaces-header-background",
+  "surfaces.card.background": "--surfaces-card-background",
+  "surfaces.border": "--surfaces-border",
+  "surfaces.foreground": "--surfaces-foreground",
+  "tab_bar.background": "--editor-tabs-background",
+  "tab.active_background": "--editor-tab-active-background",
+  "tab.inactive_background": "--editor-tab-inactive-background",
+  "tab.border": "--editor-tab-border",
+  "breadcrumbs.background": "--editor-breadcrumbs-background",
+  "breadcrumbs.foreground": "--editor-breadcrumbs-foreground",
+  "status_bar.background": "--editor-status-bar-background",
+  "status_bar.foreground": "--editor-status-bar-foreground",
+  "terminal.header.background": "--terminal-header-background",
+  "terminal.composer.background": "--terminal-composer-background",
+  "terminal.block.border": "--terminal-block-border",
+  "terminal.block.running_rail": "--terminal-block-running-rail",
+  "terminal.block.running_tint": "--terminal-block-running-tint",
+  "terminal.block.failed_rail": "--terminal-block-failed-rail",
+  "terminal.block.failed_tint": "--terminal-block-failed-tint",
+};
 const LIGHT: Record<string, string> = {
   background: "#FBFBFA",
   "surface.background": "#F2F1EE",
@@ -284,8 +325,19 @@ export function parseThemePack(raw: string): ThemePack {
     )
       throw new Error(`${theme.name}: style must be an object.`);
     for (const [key, value] of Object.entries(theme.style)) {
+      if (key === "surfaces.font_family") {
+        if (value !== null && (typeof value !== "string" || !value.trim() || value.length > 300))
+          throw new Error(`${theme.name}: surfaces.font_family must be a font string (up to 300 characters).`);
+        continue;
+      }
+      if (key === "surfaces.font_size") {
+        if (value !== null && (typeof value !== "number" || !Number.isFinite(value) || value < 10 || value > 32))
+          throw new Error(`${theme.name}: surfaces.font_size must be a number between 10 and 32.`);
+        continue;
+      }
       if (
         (key in COLOR_TOKENS ||
+          key in SURFACE_TOKENS ||
           key.startsWith("terminal.") ||
           key.startsWith("editor.")) &&
         value !== null &&
@@ -388,7 +440,7 @@ export function themeColor(key: string, fallback: string): string {
 export function applyAppearance(): void {
   const theme = activeTheme();
   const root = document.documentElement;
-  for (const variable of Object.values(COLOR_TOKENS))
+  for (const variable of [...Object.values(COLOR_TOKENS), ...Object.values(SURFACE_TOKENS)])
     root.style.removeProperty(variable);
   const colors = {
     ...(theme.appearance === "light" ? LIGHT : {}),
@@ -397,6 +449,9 @@ export function applyAppearance(): void {
     ),
   };
   for (const [key, variable] of Object.entries(COLOR_TOKENS)) {
+    if (isColor(colors[key])) root.style.setProperty(variable, colors[key]);
+  }
+  for (const [key, variable] of Object.entries(SURFACE_TOKENS)) {
     if (isColor(colors[key])) root.style.setProperty(variable, colors[key]);
   }
   root.style.removeProperty("--gh-btn");
@@ -423,6 +478,15 @@ export function applyAppearance(): void {
     root.style.setProperty(`--font-${key}-size`, `${style.size}px`);
     root.style.setProperty(`--font-${key}-weight`, String(style.weight));
   }
+  const surfacesFont =
+    typeof theme.style["surfaces.font_family"] === "string"
+      ? theme.style["surfaces.font_family"]
+      : theme.fonts?.surfaces;
+  if (typeof surfacesFont === "string" && surfacesFont.trim())
+    root.style.setProperty("--font-surfaces", surfacesFont);
+  const surfacesSize = theme.style["surfaces.font_size"];
+  if (typeof surfacesSize === "number" && Number.isFinite(surfacesSize))
+    root.style.setProperty("--font-surfaces-size", `${surfacesSize}px`);
 }
 export function fontFamily(key: FontRole): string {
   if (key === "surfaces") return current.fonts.surfaces ?? current.fonts.ui;

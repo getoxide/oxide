@@ -153,6 +153,68 @@ fn reveal_in_finder(core: State<'_, Arc<Core>>, project_id: u32) -> Result<(), A
     Ok(core.reveal_in_finder(project_id)?)
 }
 
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeSummary {
+    id: String,
+    name: String,
+    builtin: bool,
+    json: Option<String>,
+    error: Option<String>,
+}
+
+impl From<oxide_core::ThemeSummary> for ThemeSummary {
+    fn from(t: oxide_core::ThemeSummary) -> Self {
+        Self {
+            id: t.id,
+            name: t.name,
+            builtin: t.builtin,
+            json: t.json,
+            error: t.error,
+        }
+    }
+}
+
+/// Lists all `*.json` themes in `~/.oxide/themes/` (outside any checkout), seeding built-ins if missing.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn list_themes(core: State<'_, Arc<Core>>) -> Result<Vec<ThemeSummary>, AppError> {
+    Ok(core
+        .list_themes()?
+        .into_iter()
+        .map(ThemeSummary::from)
+        .collect())
+}
+
+/// Writes a validated custom theme JSON file inside `~/.oxide/themes/` (outside any checkout).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn save_theme(
+    core: State<'_, Arc<Core>>,
+    id: String,
+    json: String,
+) -> Result<ThemeSummary, AppError> {
+    Ok(ThemeSummary::from(core.save_theme(&id, &json)?))
+}
+
+/// Deletes a custom theme JSON file inside `~/.oxide/themes/` (outside any checkout).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn delete_theme(core: State<'_, Arc<Core>>, id: String) -> Result<(), AppError> {
+    Ok(core.delete_theme(&id)?)
+}
+
+/// Opens `~/.oxide/themes/` in the OS file manager (outside the app).
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn open_themes_folder(core: State<'_, Arc<Core>>) -> Result<(), AppError> {
+    Ok(core.open_themes_folder()?)
+}
+
 /// Lists the Project in the sidebar, or takes it out (it stays in the Project palette).
 #[tauri::command]
 #[specta::specta]
@@ -1316,6 +1378,10 @@ pub fn builder() -> Builder<tauri::Wry> {
         search_github_repositories,
         clone_github_repository,
         reveal_in_finder,
+        list_themes,
+        save_theme,
+        delete_theme,
+        open_themes_folder,
         set_project_open,
         start_block_terminal,
         available_shells,

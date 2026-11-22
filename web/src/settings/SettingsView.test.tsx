@@ -92,13 +92,13 @@ it("renders a section navigation menu with Appearance, Terminal, Code, Session, 
   expect(nav?.getAttribute("aria-orientation")).toBe("vertical");
 
   const navTabs = tabs();
-  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Terminal", "Code", "Session", "Shortcuts", "GitHub"]);
-  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false", "false"]);
-  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1, -1]);
+  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Themes", "Terminal", "Code", "Session", "Shortcuts", "GitHub"]);
+  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false", "false", "false"]);
+  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1, -1, -1]);
 
   const sectionPanels = panels();
-  expect(sectionPanels).toHaveLength(6);
-  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true, true, true, true]);
+  expect(sectionPanels).toHaveLength(7);
+  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true, true, true, true, true]);
   expect(sectionPanels[0].getAttribute("aria-labelledby")).toBe(navTabs[0].id);
   expect(navTabs[0].getAttribute("aria-controls")).toBe(sectionPanels[0].id);
   expect(developerToolsCalls).toBe(1);
@@ -106,8 +106,8 @@ it("renders a section navigation menu with Appearance, Terminal, Code, Session, 
 
 it("switches visible section content on click while preserving live state across sections", async () => {
   await renderSettings();
-  const [appearanceTab, , , sessionTab, , githubTab] = tabs();
-  const [appearancePanel, , codePanel, sessionPanel, , githubPanel] = panels();
+  const [appearanceTab, , , , sessionTab, , githubTab] = tabs();
+  const [appearancePanel, , , codePanel, sessionPanel, , githubPanel] = panels();
 
   const uiSizeSelect = appearancePanel.querySelector<HTMLSelectElement>('select[aria-label="Interface size"]')!;
   await act(async () => {
@@ -155,11 +155,17 @@ it("switches visible section content on click while preserving live state across
 
 it("supports keyboard navigation across section tabs with wrapping and Home/End", async () => {
   await renderSettings();
-  const [appearanceTab, terminalTab, codeTab, sessionTab, shortcutsTab, githubTab] = tabs();
+  const [appearanceTab, themesTab, terminalTab, codeTab, sessionTab, shortcutsTab, githubTab] = tabs();
 
   await act(async () => {
     appearanceTab.focus();
     appearanceTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  expect(themesTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(themesTab);
+
+  await act(async () => {
+    themesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   });
   expect(terminalTab.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(terminalTab);
@@ -228,13 +234,154 @@ it("calls onClose when the close button is clicked", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+it("manages disk-backed themes in Settings -> Themes: diagnostics, selection, folder open, reload, inline edit/save, and delete", async () => {
+  const oceanJson = JSON.stringify({
+    name: "Ocean",
+    themes: [
+      {
+        name: "Ocean Dark",
+        appearance: "dark",
+        style: {
+          background: "#0B192C",
+          "sidebar.background": "#0E223D",
+          "terminal.background": "#0B192C",
+        },
+      },
+    ],
+  }, null, 2);
+
+  let diskThemes = [
+    {
+      id: "oxide-dark",
+      name: "Oxide Dark",
+      builtin: true,
+      json: JSON.stringify({ name: "Oxide Dark", themes: [{ name: "Oxide Dark", appearance: "dark", style: { background: "#1C1C1E" } }] }),
+      error: null,
+    },
+    {
+      id: "ocean",
+      name: "Ocean",
+      builtin: false,
+      json: oceanJson,
+      error: null,
+    },
+    {
+      id: "broken",
+      name: "broken",
+      builtin: false,
+      json: null,
+      error: "Invalid theme JSON: expected value at line 1",
+    },
+  ];
+  let openFolderCalls = 0;
+  let listCalls = 0;
+  const savedPayloads: { id: string; json: string }[] = [];
+  const deletedIds: string[] = [];
+
+  mockIPC((cmd, args) => {
+    if (cmd === "developer_tools") return [];
+    if (cmd === "list_themes") {
+      listCalls += 1;
+      return diskThemes;
+    }
+    if (cmd === "open_themes_folder") {
+      openFolderCalls += 1;
+      return null;
+    }
+    if (cmd === "save_theme") {
+      const payload = args as { id: string; json: string };
+      savedPayloads.push(payload);
+      const created = { id: payload.id, name: "Custom Studio", builtin: false, json: payload.json, error: null };
+      diskThemes = [...diskThemes.filter((t) => t.id !== payload.id), created];
+      return created;
+    }
+    if (cmd === "delete_theme") {
+      const { id } = args as { id: string };
+      deletedIds.push(id);
+      diskThemes = diskThemes.filter((t) => t.id !== id);
+      return null;
+    }
+    return null;
+  });
+
+  await renderSettings();
+  const themesTab = tabs().find((tab) => tab.textContent?.trim() === "Themes")!;
+  await act(async () => {
+    themesTab.click();
+  });
+
+  const themesPanel = panels()[1];
+  expect(themesPanel.hidden).toBe(false);
+  expect(themesPanel.textContent).toContain("Ocean Dark");
+  expect(themesPanel.textContent).toContain("broken");
+  expect(themesPanel.textContent).toContain("Invalid theme JSON");
+
+  const oceanChoice = themesPanel.querySelector<HTMLButtonElement>('button[role="radio"][data-theme-id="ocean"]')!;
+  await act(async () => {
+    oceanChoice.click();
+  });
+  expect(document.documentElement.style.getPropertyValue("--sidebar-background")).toBe("#0E223D");
+
+  const openFolderBtn = Array.from(themesPanel.querySelectorAll("button")).find((b) => b.textContent?.includes("Open themes folder"))!;
+  await act(async () => {
+    openFolderBtn.click();
+  });
+  expect(openFolderCalls).toBe(1);
+
+  const reloadBtn = Array.from(themesPanel.querySelectorAll("button")).find((b) => b.textContent?.includes("Reload from disk"))!;
+  await act(async () => {
+    reloadBtn.click();
+  });
+  expect(listCalls).toBeGreaterThanOrEqual(2);
+
+  const newBtn = Array.from(themesPanel.querySelectorAll("button")).find((b) => b.textContent?.includes("New custom theme"))!;
+  await act(async () => {
+    newBtn.click();
+  });
+
+  const idInput = themesPanel.querySelector<HTMLInputElement>('input[aria-label="Theme file id"]')!;
+  const jsonArea = themesPanel.querySelector<HTMLTextAreaElement>('textarea[aria-label="Theme JSON"]')!;
+
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(jsonArea, "{broken");
+    jsonArea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(themesPanel.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+
+  const validNewJson = JSON.stringify({
+    name: "Custom Studio",
+    themes: [{ name: "Custom Studio", appearance: "dark", style: { background: "#141820" } }],
+  }, null, 2);
+  await act(async () => {
+    const idSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    idSetter.call(idInput, "custom-studio");
+    idInput.dispatchEvent(new Event("input", { bubbles: true }));
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(jsonArea, validNewJson);
+    jsonArea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  const saveBtn = Array.from(themesPanel.querySelectorAll("button")).find((b) => b.textContent?.includes("Save theme"))!;
+  await act(async () => {
+    saveBtn.click();
+  });
+  expect(savedPayloads).toEqual([{ id: "custom-studio", json: validNewJson }]);
+
+  const deleteBtn = themesPanel.querySelector<HTMLButtonElement>('button[aria-label="Delete theme ocean"]')!;
+  await act(async () => {
+    deleteBtn.click();
+  });
+  expect(deletedIds).toEqual(["ocean"]);
+});
+
 it("renders grouped Code editor controls, persists changes, broadcasts updates, and restores defaults", async () => {
   const broadcastListener = vi.fn();
   window.addEventListener(CODE_EDITOR_SETTINGS_EVENT, broadcastListener);
 
   await renderSettings();
-  const [, , codeTab] = tabs();
-  const [, , codePanel] = panels();
+  const [, , , codeTab] = tabs();
+  const [, , , codePanel] = panels();
 
   await act(async () => {
     codeTab.click();
@@ -431,8 +578,8 @@ it("degrades gracefully to recommended fonts with a non-blocking retry option wh
 
 it("loads and persists Terminal shell and user-config settings via IPC", async () => {
   await renderSettings();
-  const [, terminalTab] = tabs();
-  const [, terminalPanel] = panels();
+  const [, , terminalTab] = tabs();
+  const [, , terminalPanel] = panels();
 
   await act(async () => {
     terminalTab.click();
@@ -470,8 +617,8 @@ it("loads and persists Terminal shell and user-config settings via IPC", async (
 
 it("supports searching, recording, clearing, conflict warnings, and resetting in Settings -> Shortcuts", async () => {
   await renderSettings();
-  const [, , , , shortcutsTab] = tabs();
-  const [, , , , shortcutsPanel] = panels();
+  const [, , , , , shortcutsTab] = tabs();
+  const [, , , , , shortcutsPanel] = panels();
 
   await act(async () => {
     shortcutsTab.click();
