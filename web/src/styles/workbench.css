@@ -892,6 +892,7 @@
 .settings-section[hidden] { display: none; }
 .settings-section h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg-bright); }
 .settings-section > .settings-note { margin-bottom: 6px; }
+.settings-group-title { margin: 12px 0 2px; font-size: 12px; font-weight: 600; color: var(--dim); }
 @container (max-width: 620px) {
   .settings-view { padding: 0 16px; }
   .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px; }

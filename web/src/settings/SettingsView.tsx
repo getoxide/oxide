@@ -11,11 +11,12 @@ import {
   type ThemeVariant,
 } from "../shared/appearance";
 import { GithubSetup } from "./GithubSetup";
+import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
 type FontRole = keyof Appearance["fonts"];
 
-export type SettingsSectionId = "appearance" | "session" | "github";
+export type SettingsSectionId = "appearance" | "code" | "session" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -170,6 +171,12 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       ),
+    },
+    {
+      id: "code",
+      label: "Code",
+      description: "Editor options apply immediately to every open Code workspace.",
+      render: () => <CodeEditorSettingsSection />,
     },
     {
       id: "session",

@@ -12,6 +12,7 @@
 
 export const storageKeys = {
   appearance: "oxide:appearance:v1",
+  codeEditor: "oxide:code-editor:v1",
   panelSize: (panel: string) => `oxide.layout.${panel}`,
   splitLayouts: "oxide:split-layouts:v1",
   codeTabs: (context: string) => `oxide:code-tabs:${context}`,

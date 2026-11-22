@@ -525,14 +525,14 @@ it("offers enriched context actions on a Project row's menu and invokes Reveal a
   expect(writeText).toHaveBeenCalledWith("/beta");
 });
 
-it("opens Settings with Appearance, Session, and GitHub sections, and closes them", async () => {
+it("opens Settings with Appearance, Code, Session, and GitHub sections, and closes them", async () => {
   await click(q(".sidebar-footer"));
   const settings = q('main[aria-label="Settings"]')!;
   const navTabs = Array.from(settings.querySelectorAll('[role="tab"]'));
-  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Session", "GitHub"]);
+  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Code", "Session", "GitHub"]);
   expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
   await click(navTabs.find((tab) => tab.textContent === "Session") ?? null);
-  const restore = settings.querySelector<HTMLInputElement>('input[role="switch"]')!;
+  const restore = settings.querySelector<HTMLInputElement>('#settings-panel-session input[role="switch"]')!;
   expect(restore.checked).toBe(true);
   await click(restore);
   expect(localStorage.getItem("oxide:restore-session:v1")).toBe("false");

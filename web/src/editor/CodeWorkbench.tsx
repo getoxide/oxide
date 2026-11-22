@@ -30,6 +30,11 @@ import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard, joinProjectPath } from "../shared/platform";
+import {
+  CODE_EDITOR_SETTINGS_EVENT,
+  getCodeEditorSettings,
+  toMonacoEditorOptions,
+} from "./codeEditorSettings";
 import { registerEditorSave } from "./editorSaves";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
@@ -378,20 +383,9 @@ export function CodeWorkbench({
       fontSize: fontStyle("code").size,
       fontWeight: String(fontStyle("code").weight),
       fontFamily: getAppearance().fonts.code,
-      fontLigatures: false,
-      minimap: { enabled: false },
       padding: { top: 16, bottom: 16 },
-      tabSize: 4,
-      insertSpaces: true,
-      autoIndent: "full",
-      formatOnPaste: true,
-      bracketPairColorization: { enabled: true },
-      smoothScrolling: !window.matchMedia("(prefers-reduced-motion: reduce)")
-        .matches,
-      scrollBeyondLastLine: false,
-      renderWhitespace: "selection",
-      stickyScroll: { enabled: true },
       contextmenu: false,
+      ...toMonacoEditorOptions(getCodeEditorSettings()),
     });
     editor.current = instance;
     setEditorInstance(instance);
@@ -430,6 +424,9 @@ export function CodeWorkbench({
     });
     const appearance=()=>instance.updateOptions({fontFamily:getAppearance().fonts.code, fontSize:fontStyle("code").size, fontWeight:String(fontStyle("code").weight)});
     window.addEventListener("oxide-appearance-changed",appearance);
+    const applyCodeSettings = () =>
+      instance.updateOptions(toMonacoEditorOptions(getCodeEditorSettings()));
+    window.addEventListener(CODE_EDITOR_SETTINGS_EVENT, applyCodeSettings);
     const bridge = new EditorLanguages(
       projectId,
       (language, state) =>
@@ -491,6 +488,7 @@ export function CodeWorkbench({
     return () => {
       unregister();
       window.removeEventListener("oxide-appearance-changed",appearance);
+      window.removeEventListener(CODE_EDITOR_SETTINGS_EVENT, applyCodeSettings);
       window.removeEventListener("oxide-language-tools-changed", reconnect);
       markers.dispose();
       opener.dispose();
