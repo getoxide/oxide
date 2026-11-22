@@ -349,6 +349,50 @@ describe("CodeWorkbench performance", () => {
     expect(localStorage.getItem("oxide:code-tabs:p1")).toBe(JSON.stringify([]));
   });
 
+  it("dismisses the open-files dropdown on outside/editor pointerdown, Escape, and window blur", async () => {
+    await act(async () =>
+      root.render(
+        <CodeWorkbench
+          projectId={1}
+          rootPath="/repo"
+          contextKey="p1"
+          visible
+          openRequest={{ id: 1, path: "src/app.ts" }}
+          onChanged={vi.fn()}
+        />,
+      ),
+    );
+    await settle();
+
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="All open files"]')!;
+    const menu = () => host.querySelector('[role="menu"][aria-label="Open files"]');
+
+    // 1. Clicking inside the editor canvas closes the dropdown.
+    await act(async () => toggle.click());
+    expect(menu()).not.toBeNull();
+    const canvas = host.querySelector(".editor-canvas")!;
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+    expect(menu()).toBeNull();
+
+    // 2. Pressing Escape on window closes the dropdown.
+    await act(async () => toggle.click());
+    expect(menu()).not.toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(menu()).toBeNull();
+
+    // 3. Blurring the window closes the dropdown.
+    await act(async () => toggle.click());
+    expect(menu()).not.toBeNull();
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(menu()).toBeNull();
+  });
+
   it("offers Close, Close others, Close all, and Copy path on Code file tabs", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
