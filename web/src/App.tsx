@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ChevronDownIcon,
+  ChevronRightIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -599,30 +601,41 @@ function Sidebar({
                     { label: "Remove project", disabled: closingProjectId === project.id, run: () => void close(project) },
                   ])}>
                     <button
+                      type="button"
+                      className="project-chevron"
+                      aria-label={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
+                      aria-expanded={expanded}
+                      onClick={() => setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id))}
+                    >
+                      {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+                    </button>
+                    <button
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
-                      aria-expanded={expanded}
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
-                      onClick={() => {
-                        if (isSelected) setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
-                        else { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onSelectProject(project); }
-                      }}
+                      onClick={() => onSelectProject(project)}
                     >
                       <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
                       {project.missing && <span className="badge">missing</span>}
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
-                    <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title="New terminal"
-                      disabled={project.missing}
-                      onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
-                      <PlusIcon size={14} />
-                    </button>
+                    <div className="project-actions">
+                      <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title="New terminal"
+                        disabled={project.missing}
+                        onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
+                        <PlusIcon size={14} />
+                      </button>
+                      <button className="row-action project-close" aria-label={`Close ${project.name}`} title="Close Project"
+                        disabled={closingProjectId === project.id}
+                        onClick={() => void close(project)}>
+                        <XIcon size={14} />
+                      </button>
+                    </div>
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
-                      {state.tabs.length === 0 && <li className="sidebar-note">No terminals</li>}
                       {state.tabs.map((tab) => (
                         <TerminalRow key={tab.id} name={tab.name} running={tab.running}
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}
