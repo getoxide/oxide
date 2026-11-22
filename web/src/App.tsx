@@ -275,7 +275,7 @@ export function App() {
   const projectsWithTerminals = Object.entries(terminals).filter(([, state]) => state.tabs.length > 0);
 
   return (
-    <div className={`window ${isMac ? "macos" : "windows"}`}>
+    <div className={`window ${isMac ? "macos" : isWindows ? "windows" : "linux"}`}>
       {isWindows && <WindowResizeHandles />}
       <ContextMenu actions={{
         openProject: () => overlays.current?.openPalette(),
@@ -689,14 +689,32 @@ function useWindowMaximized(): boolean {
   return maximized;
 }
 
-/** Caption buttons drawn like Windows' own: Segoe glyphs, 46px wide, flush with the window's top-right corner. */
+/** Caption buttons drawn like Windows' own: crisp 10x10 vector icons, 46px wide, flush with the top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
   const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
-    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>{""}</button>
-    <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>{maximized ? "" : ""}</button>
-    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>{""}</button>
+    <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+        <path d="M1 5h8" />
+      </svg>
+    </button>
+    <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>
+      {maximized ? (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+          <path d="M3 1.5h5.5v5.5M1.5 3h5.5v5.5H1.5z" />
+        </svg>
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+          <rect x="1.5" y="1.5" width="7" height="7" />
+        </svg>
+      )}
+    </button>
+    <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
+        <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
+      </svg>
+    </button>
   </div>;
 }
 
