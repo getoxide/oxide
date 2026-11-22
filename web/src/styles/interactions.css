@@ -87,8 +87,9 @@
   :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option, .pr-entry-card,
     .sidebar-footer, [role="menuitem"], [role="option"], .app-menu button, .terminal-input-menu button):active:not(:disabled) {
     transform: none;
-    background: color-mix(in srgb, var(--fg) 10%, transparent);
+    background: color-mix(in srgb, var(--fg) 14%, var(--bg4));
   }
+  .window-controls button:active:not(:disabled) { transform: none; }
   .terminal-item:active:not(:disabled) { color: var(--fg-bright); }
   .tools-tab-strip { scroll-behavior: smooth; }
   /* A newly selected row settles in with its highlight instead of snapping. */

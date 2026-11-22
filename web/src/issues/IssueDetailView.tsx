@@ -17,6 +17,7 @@ import {
   type IssueEdit,
 } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
+import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
@@ -95,14 +96,17 @@ export function IssueDetailView({ projectId, number, refreshKey, onBack, onChang
       </button>
       <span className="grow" />
       {issue && (
-        <button
-          className="pr-github"
-          onClick={() => void openLink(issue.url)}
-          title="Open this issue on GitHub"
-          aria-label="Open on GitHub"
-        >
-          <MarkGithubIcon size={16} />
-        </button>
+        <>
+          <CopyLinkButton url={issue.url} onError={setError} />
+          <button
+            className="pr-github"
+            onClick={() => void openLink(issue.url)}
+            title="Open this issue on GitHub"
+            aria-label="Open on GitHub"
+          >
+            <MarkGithubIcon size={16} />
+          </button>
+        </>
       )}
     </div>
   );
