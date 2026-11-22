@@ -97,6 +97,7 @@ button.pending:disabled { color: var(--fg-bright); opacity: 1; background: var(-
   color: var(--dim);
 }
 .icon-btn:hover:not(:disabled) { background: var(--bg4); color: var(--fg); border-color: transparent; }
+.icon-btn:active:not(:disabled) { background: color-mix(in srgb, var(--fg) 14%, var(--bg4)); color: var(--fg-bright); border-color: transparent; }
 .icon-btn[aria-pressed="true"] { background: var(--bg4); color: var(--fg); }
 .icon-btn.sm { min-width: var(--control-sm); height: var(--control-sm); min-height: var(--control-sm); padding: var(--space-1); }
 button.link { font-weight: inherit; min-height: 0; padding: 0; background: none; border: 0; color: var(--acc2); }
@@ -162,6 +163,7 @@ code { font-family: var(--mono); font-size: 12px; }
   margin-bottom: -1px;
 }
 .tab:hover:not(:disabled) { color: var(--fg); background: var(--bg3); border-color: transparent; }
+.tab:active:not(:disabled) { color: var(--fg-bright); background: var(--bg4); border-color: transparent; }
 .tab[aria-selected="true"], .tab[aria-selected="true"]:hover,
 .tab[aria-current="location"], .tab[aria-current="location"]:hover { color: var(--fg-bright); border-bottom-color: var(--acc2); }
 .spin { animation: spin 1s linear infinite; }
@@ -795,7 +797,8 @@ html.macos .header,
 
 .app-menu { display: flex; align-items: center; gap: 2px; flex: none; margin-left: -6px; }
 .app-menu button { padding: 2px 7px; min-height: 24px; line-height: 20px; border: 0; border-radius: 4px; background: transparent; color: var(--fg); font: inherit; cursor: default; }
-.app-menu button:hover, .app-menu button:focus-visible { background: var(--bg4); color: var(--fg-bright); }
+.app-menu button:hover, .app-menu button:focus-visible, .app-menu button[aria-expanded="true"] { background: var(--bg4); color: var(--fg-bright); }
+.app-menu button:active:not(:disabled), .app-menu .app-menu-popup button:active:not(:disabled) { background: color-mix(in srgb, var(--fg) 14%, var(--bg4)); color: var(--fg-bright); }
 
 .app-menu-item { position: relative; }
 .app-menu-popup { position: absolute; top: calc(100% + 3px); left: 0; z-index: 120; min-width: 180px; padding: 6px; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 32px #0009; }
@@ -825,10 +828,11 @@ html.macos .header,
 }
 
 .window-controls { display: flex; align-self: stretch; flex: none; margin-left: 4px; }
-.window-controls { margin-left: 4px; }
-.window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; min-height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); font: 10px/1 "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif; }
-.window-controls button:hover:not(:disabled) { background: var(--bg4); }
-.window-controls .window-close:hover:not(:disabled), .window-controls .window-close:active:not(:disabled) { background: #c42b1c; color: #fff; }
+.window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; min-height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); cursor: default; }
+.window-controls button:hover:not(:disabled) { background: var(--bg4); color: var(--fg-bright); }
+.window-controls button:active:not(:disabled) { background: color-mix(in srgb, var(--fg) 14%, var(--bg4)); color: var(--fg-bright); }
+.window-controls .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
+.window-controls .window-close:active:not(:disabled) { background: #b22618; color: #fff; }
 
 .window-resize { position: fixed; z-index: 1000; }
 .window-resize-north, .window-resize-south { left: 6px; right: 6px; height: 5px; cursor: ns-resize; }
@@ -946,6 +950,7 @@ html.macos .header,
 .context-menu { position: fixed; z-index: 2000; min-width: 220px; padding: 4px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); box-shadow: 0 8px 24px #0006; user-select: none; }
 .context-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--fg); font: inherit; text-align: left; white-space: nowrap; cursor: default; }
 .context-menu-item:hover:not(:disabled), .context-menu-item:focus-visible { background: var(--bg4); color: var(--fg-bright); outline: none; }
+.context-menu-item:active:not(:disabled) { background: color-mix(in srgb, var(--fg) 14%, var(--bg4)); color: var(--fg-bright); }
 .context-menu-item:disabled { color: var(--faint); }
 .context-menu-item kbd { color: var(--faint); font: 11px var(--mono); }
 .context-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
