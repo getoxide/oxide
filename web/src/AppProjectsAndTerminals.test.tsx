@@ -90,10 +90,11 @@ const click = (element: Element | null) => act(async () => (element as HTMLEleme
 const label = (name: string) => q<HTMLButtonElement>(`[aria-label="${name}"]`);
 const terminalNames = (project: string) => all(`[aria-label="Terminals of ${project}"] .terminal-item-title`).map((node) => node.textContent);
 const rowOf = (project: string) => all(".project-row").find((row) => row.textContent?.includes(project))!;
+const menuLabel = (node: Element) => node.querySelector("span")?.textContent ?? node.textContent;
 /** Right-clicks a Project row and picks an entry of the menu that opens. */
 const fromMenu = async (project: string, entry: string) => {
   await act(async () => { rowOf(project).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 })); });
-  const item = all('[role="menuitem"]').find((node) => node.textContent === entry);
+  const item = all('[role="menuitem"]').find((node) => menuLabel(node) === entry);
   expect(item, `menu entry ${entry}`).toBeDefined();
   await click(item!);
 };
@@ -455,14 +456,14 @@ it("shows a collapsed Project's terminal count and keeps its icon dim", async ()
 
 it("offers New terminal, Open Files and Remove project on a Project row's menu, in place of the app entries", async () => {
   await act(async () => { rowOf("Project Beta").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
-  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["New terminal", "Open Files", "Remove project"]);
+  expect(all('[role="menuitem"]').map(menuLabel)).toEqual(["New terminal", "Open Files", "Remove project"]);
 });
 
-it("opens Settings with Appearance, Session, and GitHub sections, and closes them", async () => {
+it("opens Settings with Appearance, Session, Shortcuts, and GitHub sections, and closes them", async () => {
   await click(q(".sidebar-footer"));
   const settings = q('main[aria-label="Settings"]')!;
   const navTabs = Array.from(settings.querySelectorAll('[role="tab"]'));
-  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Session", "GitHub"]);
+  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Session", "Shortcuts", "GitHub"]);
   expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
   await click(navTabs.find((tab) => tab.textContent === "Session") ?? null);
   const restore = settings.querySelector<HTMLInputElement>('input[role="switch"]')!;
@@ -615,14 +616,14 @@ it("opens a Project row's menu from the keyboard, under the focused button", asy
   const button = all(".project")[1];
   button.getBoundingClientRect = () => ({ left: 40, bottom: 90, top: 60, right: 200, width: 160, height: 30, x: 40, y: 60, toJSON: () => ({}) });
   await act(async () => { button.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 })); });
-  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["New terminal", "Open Files", "Remove project"]);
+  expect(all('[role="menuitem"]').map(menuLabel)).toEqual(["New terminal", "Open Files", "Remove project"]);
   expect(q<HTMLElement>(".context-menu")?.style.left).toBe("40px");
 });
 
 it("does not carry a Project row's menu entries over to the next right-click", async () => {
   await act(async () => { rowOf("Project Beta").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
   await act(async () => { q(".sidebar-footer")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })); });
-  expect(all('[role="menuitem"]').map((node) => node.textContent)).toEqual(["Open a Project…", "Settings"]);
+  expect(all('[role="menuitem"]').map(menuLabel)).toEqual(["Open a Project…", "Settings"]);
 });
 
 it("expands a collapsed Project when a terminal is opened in it from the menu", async () => {

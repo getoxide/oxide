@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { runEditCommand } from "../terminal/editCommand";
+import { formatShortcut, useShortcuts } from "./shortcuts";
 
 const isMacPlatform = typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/i.test(navigator.userAgent || navigator.platform);
 /** The hint for an operating-system edit key: ⌘C on macOS, Ctrl+C elsewhere. */
@@ -42,6 +43,7 @@ function isEditable(target: EventTarget | null): boolean {
 
 /** Oxide's own right-click menu, replacing the webview's: edit commands where text is, app actions everywhere. */
 export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
+  const shortcuts = useShortcuts();
   const [opening, setOpening] = useState<Opening | null>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -115,8 +117,8 @@ export function ContextMenu({ actions }: { actions: ContextMenuActions }) {
       ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => runEditCommand("copy") }]
       : [];
   const app: Entry[] = opening.extra.length > 0 ? [] : [
-    { label: "Open a Project…", run: actions.openProject },
-    { label: "Settings", run: actions.openSettings },
+    { label: "Open a Project…", hint: formatShortcut(shortcuts.openProjectPalette) || undefined, run: actions.openProject },
+    { label: "Settings", hint: formatShortcut(shortcuts.openSettings) || undefined, run: actions.openSettings },
   ];
 
   const renderGroup = (entries: Entry[]) => entries.map((entry) => (

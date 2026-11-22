@@ -57,7 +57,7 @@ _Avoid_: Pane, panel, split view
 ## Settings
 
 **Settings**:
-A page with Appearance (the theme and the font, weight and size of the interface, the Code editor and the Terminal, applied as soon as they are chosen) and GitHub (whether Git and the GitHub CLI are installed), and **Session restore**. New options are added deliberately. Oxide has no custom keyboard shortcuts; the operating system's own keys and the terminal's own keys keep working.
+A sectioned preferences page with **Appearance** (the theme and the font, weight and size of the interface, the Code editor and the Terminal, applied as soon as they are chosen), **Session** (**Session restore**), **Shortcuts** (customizable VS Code-inspired keyboard shortcuts with strict **Terminal priority**), and **GitHub** (whether Git and the GitHub CLI are installed). When a Terminal has focus, bare `Ctrl+<letter>` and terminal control keys pass straight through to the PTY unless explicitly rebound in Settings.
 
 **Session restore**:
 A Settings switch, on by default. Oxide then reopens what was open when it quit: each Project's Terminals (names, the folder their shell was in and their last ten Command blocks, shown above a "Restored session" line, in new shells: programs that were running are not restarted) and its Code workspace with its files. Turning it off forgets the saved session.

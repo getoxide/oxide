@@ -52,7 +52,7 @@ function panels() {
   return Array.from(host.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
 }
 
-it("renders a section navigation menu with Appearance, Session, and GitHub, showing Appearance by default", async () => {
+it("renders a section navigation menu with Appearance, Session, Shortcuts, and GitHub, showing Appearance by default", async () => {
   await renderSettings();
 
   const nav = host.querySelector('[role="tablist"]');
@@ -60,13 +60,13 @@ it("renders a section navigation menu with Appearance, Session, and GitHub, show
   expect(nav?.getAttribute("aria-orientation")).toBe("vertical");
 
   const navTabs = tabs();
-  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Session", "GitHub"]);
-  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
-  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Session", "Shortcuts", "GitHub"]);
+  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false"]);
+  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1]);
 
   const sectionPanels = panels();
-  expect(sectionPanels).toHaveLength(3);
-  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true]);
+  expect(sectionPanels).toHaveLength(4);
+  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true, true]);
   expect(sectionPanels[0].getAttribute("aria-labelledby")).toBe(navTabs[0].id);
   expect(navTabs[0].getAttribute("aria-controls")).toBe(sectionPanels[0].id);
   expect(developerToolsCalls).toBe(1);
@@ -74,8 +74,8 @@ it("renders a section navigation menu with Appearance, Session, and GitHub, show
 
 it("switches visible section content on click while preserving live state across sections", async () => {
   await renderSettings();
-  const [appearanceTab, sessionTab, githubTab] = tabs();
-  const [appearancePanel, sessionPanel, githubPanel] = panels();
+  const [appearanceTab, sessionTab, , githubTab] = tabs();
+  const [appearancePanel, sessionPanel, , githubPanel] = panels();
 
   const uiSizeSelect = appearancePanel.querySelector<HTMLSelectElement>('select[aria-label="Interface size"]')!;
   await act(async () => {
@@ -122,7 +122,7 @@ it("switches visible section content on click while preserving live state across
 
 it("supports keyboard navigation across section tabs with wrapping and Home/End", async () => {
   await renderSettings();
-  const [appearanceTab, sessionTab, githubTab] = tabs();
+  const [appearanceTab, sessionTab, shortcutsTab, githubTab] = tabs();
 
   await act(async () => {
     appearanceTab.focus();
@@ -133,6 +133,12 @@ it("supports keyboard navigation across section tabs with wrapping and Home/End"
 
   await act(async () => {
     sessionTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  expect(shortcutsTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(shortcutsTab);
+
+  await act(async () => {
+    shortcutsTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
   });
   expect(githubTab.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(githubTab);
@@ -164,8 +170,8 @@ it("supports keyboard navigation across section tabs with wrapping and Home/End"
   await act(async () => {
     githubTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
   });
-  expect(sessionTab.getAttribute("aria-selected")).toBe("true");
-  expect(document.activeElement).toBe(sessionTab);
+  expect(shortcutsTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(shortcutsTab);
 });
 
 it("calls onClose when the close button is clicked", async () => {
@@ -175,4 +181,95 @@ it("calls onClose when the close button is clicked", async () => {
     closeButton.click();
   });
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("supports searching, recording, clearing, conflict warnings, and resetting in Settings -> Shortcuts", async () => {
+  await renderSettings();
+  const [, , shortcutsTab] = tabs();
+  const [, , shortcutsPanel] = panels();
+
+  await act(async () => {
+    shortcutsTab.click();
+  });
+  expect(shortcutsPanel.hidden).toBe(false);
+  expect(shortcutsPanel.textContent).toContain("Navigation");
+  expect(shortcutsPanel.textContent).toContain("Projects & Terminals");
+  expect(shortcutsPanel.textContent).toContain("Surfaces & Panels");
+  expect(shortcutsPanel.textContent).toContain("Code");
+
+  // Search filters actions
+  const searchInput = shortcutsPanel.querySelector<HTMLInputElement>('input[aria-label="Search shortcuts"]')!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(searchInput, "New terminal");
+    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(shortcutsPanel.textContent).toContain("New terminal");
+  expect(shortcutsPanel.textContent).not.toContain("Open Settings");
+
+  // Clear search
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(searchInput, "");
+    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  const newTermBtn = shortcutsPanel.querySelector<HTMLButtonElement>('button[aria-label="Shortcut for New terminal"]')!;
+
+  // Enter recording mode and cancel with Escape
+  await act(async () => {
+    newTermBtn.click();
+  });
+  expect(newTermBtn.textContent).toContain("Press keys");
+  await act(async () => {
+    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(newTermBtn.textContent).not.toContain("Press keys");
+
+  // Enter recording mode and clear with Backspace
+  await act(async () => {
+    newTermBtn.click();
+  });
+  await act(async () => {
+    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+  });
+  expect(newTermBtn.textContent).toContain("Unassigned");
+
+  // Record a bare Ctrl+R binding -> triggers Terminal-conflict warning
+  await act(async () => {
+    newTermBtn.click();
+  });
+  await act(async () => {
+    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true }));
+  });
+  expect(shortcutsPanel.textContent).toContain("Terminal");
+
+  // Record a duplicate binding (same as Toggle sidebar: Mod+Shift+B) -> triggers duplicate warning
+  await act(async () => {
+    newTermBtn.click();
+  });
+  await act(async () => {
+    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "B", ctrlKey: true, shiftKey: true, bubbles: true }));
+  });
+  expect(shortcutsPanel.textContent).toContain("Toggle sidebar");
+
+  // Per-action Reset restores default
+  const resetOne = shortcutsPanel.querySelector<HTMLButtonElement>('button[aria-label="Reset New terminal"]')!;
+  await act(async () => {
+    resetOne.click();
+  });
+  expect(shortcutsPanel.textContent).not.toContain("Unassigned");
+
+  // Customize again and use Reset all shortcuts
+  await act(async () => {
+    newTermBtn.click();
+  });
+  await act(async () => {
+    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+  });
+  const resetAll = shortcutsPanel.querySelector<HTMLButtonElement>('button[aria-label="Reset all shortcuts"]')!;
+  await act(async () => {
+    resetAll.click();
+  });
+  expect(newTermBtn.textContent).not.toContain("Unassigned");
 });

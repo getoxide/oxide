@@ -11,11 +11,12 @@ import {
   type ThemeVariant,
 } from "../shared/appearance";
 import { GithubSetup } from "./GithubSetup";
+import { ShortcutsSettings } from "./ShortcutsSettings";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
 type FontRole = keyof Appearance["fonts"];
 
-export type SettingsSectionId = "appearance" | "session" | "github";
+export type SettingsSectionId = "appearance" | "session" | "shortcuts" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -189,6 +190,12 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
           </label>
         </div>
       ),
+    },
+    {
+      id: "shortcuts",
+      label: "Shortcuts",
+      description: "Click a shortcut and press a new key combination. Bare Ctrl+letter keys stay reserved for the Terminal unless explicitly bound here.",
+      render: () => <ShortcutsSettings />,
     },
     {
       id: "github",

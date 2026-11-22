@@ -28,6 +28,14 @@ import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
+import {
+  DEFAULT_SHORTCUTS,
+  isTerminalFocused,
+  loadShortcutOverrides,
+  matchesShortcut,
+  resolveShortcuts,
+  shouldDispatchShortcut,
+} from "../shared/shortcuts";
 import { registerEditorSave } from "./editorSaves";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
@@ -467,16 +475,27 @@ export function CodeWorkbench({
       editor.current?.focus();
     });
     const key = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      if (e.key.toLowerCase() === "s") {
+      if (e.defaultPrevented || e.isComposing) return;
+      if (e.target instanceof Element && e.target.closest('[data-shortcut-recording="true"]')) return;
+      const overrides = loadShortcutOverrides();
+      const resolved = resolveShortcuts(overrides);
+      const isTerminal = isTerminalFocused(e.target);
+
+      if (resolved.saveAllFiles && matchesShortcut(e, resolved.saveAllFiles)) {
+        const isExplicit = Object.prototype.hasOwnProperty.call(overrides, "saveAllFiles") && overrides.saveAllFiles !== DEFAULT_SHORTCUTS.saveAllFiles;
+        if (!shouldDispatchShortcut(e, { isTerminal, isExplicitOverride: isExplicit })) return;
         e.preventDefault();
-        if (e.shiftKey) void actions.current.saveAll();
-        else {
-          const doc = [...records.current.values()].find(
-            (d) => d.model === editor.current?.getModel(),
-          );
-          if (doc) void actions.current.saveDocument(doc);
-        }
+        void actions.current.saveAll();
+        return;
+      }
+      if (resolved.saveFile && matchesShortcut(e, resolved.saveFile)) {
+        const isExplicit = Object.prototype.hasOwnProperty.call(overrides, "saveFile") && overrides.saveFile !== DEFAULT_SHORTCUTS.saveFile;
+        if (!shouldDispatchShortcut(e, { isTerminal, isExplicitOverride: isExplicit })) return;
+        e.preventDefault();
+        const doc = [...records.current.values()].find(
+          (d) => d.model === editor.current?.getModel(),
+        );
+        if (doc) void actions.current.saveDocument(doc);
       }
     };
     window.addEventListener("keydown", key, true);
