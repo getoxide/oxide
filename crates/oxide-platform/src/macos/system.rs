@@ -37,3 +37,27 @@ pub fn set_dev_dock_icon(png: &[u8]) {
         unsafe { NSApplication::sharedApplication(main).setApplicationIconImage(Some(&image)) };
     }
 }
+
+/// Returns a sorted, deduplicated list of installed font family names via `atsutil`.
+pub fn system_fonts() -> Vec<String> {
+    let mut command = crate::command::os_command("atsutil");
+    command.args(["fonts", "-list"]);
+    crate::fonts::run_bounded_font_command(command, |lines| {
+        let mut in_families = false;
+        let mut families = Vec::new();
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed == "System Families:" {
+                in_families = true;
+                continue;
+            }
+            if in_families {
+                if trimmed.is_empty() || trimmed.ends_with(':') {
+                    break;
+                }
+                families.push(trimmed.to_string());
+            }
+        }
+        families
+    })
+}

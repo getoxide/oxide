@@ -18,9 +18,11 @@ export interface ThemePack {
   fonts?: ThemeFonts;
   themes: ThemeVariant[];
 }
+export type FontRole = "ui" | "code" | "terminal" | "surfaces";
+export type FontTypography = { size: number; weight: number };
 export interface Appearance {
-  fonts: { ui: string; code: string; terminal: string };
-  typography?: Record<"ui" | "code" | "terminal", { size: number; weight: number }>;
+  fonts: { ui: string; code: string; terminal: string; surfaces?: string };
+  typography?: Partial<Record<FontRole, FontTypography>> & Record<"ui" | "code" | "terminal", FontTypography>;
   themeJson: string;
   themeName: string;
   themeId?: string;
@@ -383,8 +385,10 @@ function load(): Appearance {
     const stored = readJson(KEY) as Appearance | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
     validateAppearance(stored);
-    for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[])
-      stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[stored.fonts[key]] ?? stored.fonts[key];
+    for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[]) {
+      const value = stored.fonts[key];
+      if (value) stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[value] ?? value;
+    }
     if (stored.themeJson === PREVIOUS_BUILT_IN_THEME || stored.themeJson === PREVIOUS_DARK_ONLY_THEME)
       stored.themeJson = DEFAULT_APPEARANCE.themeJson;
     return stored;
@@ -392,18 +396,21 @@ function load(): Appearance {
     return structuredClone(DEFAULT_APPEARANCE);
   }
 }
+const FONT_ROLES: FontRole[] = ["ui", "code", "terminal", "surfaces"];
 export function validateAppearance(value: Appearance) {
-  if (value.typography && Object.keys(DEFAULT_APPEARANCE.fonts).some((key) => {
-    const style = value.typography?.[key as keyof Appearance["fonts"]];
+  if (value.typography && FONT_ROLES.some((key) => {
+    const style = value.typography?.[key];
+    if (key === "surfaces" && style === undefined) return false;
     return !style || !Number.isInteger(style.size) || style.size < 10 || style.size > 32 || ![400, 500, 600, 700].includes(style.weight);
   })) throw new Error("Font sizes must be 10–32 px and weights must be Regular, Medium, Semibold or Bold.");
   if (
     !value.fonts ||
-    Object.keys(DEFAULT_APPEARANCE.fonts).some(
-      (key) =>
-        typeof value.fonts[key as keyof Appearance["fonts"]] !== "string" ||
-        !value.fonts[key as keyof Appearance["fonts"]].trim() ||
-        value.fonts[key as keyof Appearance["fonts"]].length > 300,
+    FONT_ROLES.some(
+      (key) => {
+        const font = value.fonts[key];
+        if (key === "surfaces" && font === undefined) return false;
+        return typeof font !== "string" || !font.trim() || font.length > 300;
+      },
     )
   )
     throw new Error(
@@ -465,26 +472,30 @@ export function applyAppearance(): void {
     "--terminal-background",
     themeColor("terminal.background", String(colors.background ?? TITANIUM_DARK["terminal.background"])),
   );
+  for (const key of FONT_ROLES) {
+    root.style.setProperty(`--font-${key}`, fontFamily(key));
+    const style = fontStyle(key);
+    root.style.setProperty(`--font-${key}-size`, `${style.size}px`);
+    root.style.setProperty(`--font-${key}-weight`, String(style.weight));
+  }
   const surfacesFont =
     typeof theme.style["surfaces.font_family"] === "string"
       ? theme.style["surfaces.font_family"]
       : theme.fonts?.surfaces;
   if (typeof surfacesFont === "string" && surfacesFont.trim())
     root.style.setProperty("--font-surfaces", surfacesFont);
-  else root.style.removeProperty("--font-surfaces");
   const surfacesSize = theme.style["surfaces.font_size"];
   if (typeof surfacesSize === "number" && Number.isFinite(surfacesSize))
     root.style.setProperty("--font-surfaces-size", `${surfacesSize}px`);
-  else root.style.removeProperty("--font-surfaces-size");
-  for (const [key, family] of Object.entries(current.fonts))
-    root.style.setProperty(`--font-${key}`, family);
-  for (const key of Object.keys(current.fonts) as (keyof Appearance["fonts"])[]) {
-    const style = fontStyle(key);
-    root.style.setProperty(`--font-${key}-size`, `${style.size}px`);
-    root.style.setProperty(`--font-${key}-weight`, String(style.weight));
-  }
 }
-export function fontStyle(key: keyof Appearance["fonts"]) {
+export function fontFamily(key: FontRole): string {
+  if (key === "surfaces") return current.fonts.surfaces ?? current.fonts.ui;
+  return current.fonts[key];
+}
+export function fontStyle(key: FontRole): FontTypography {
+  if (key === "surfaces") {
+    return current.typography?.surfaces ?? current.typography?.ui ?? DEFAULT_APPEARANCE.typography!.ui;
+  }
   return current.typography?.[key] ?? DEFAULT_APPEARANCE.typography![key];
 }
 export function saveAppearance(value: Appearance) {

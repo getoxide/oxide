@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { FilesPanel } from "./FilesPanel";
+import { ContextMenu } from "../shared/ContextMenu";
+import { revealInFileManagerLabel } from "../shared/platform";
 const host = document.createElement("div"); document.body.append(host);
 const root = createRoot(host);
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -96,4 +98,56 @@ it("explains an empty checkout with the shared Surface empty layout", async () =
   expect(empty.querySelector(".surface-empty-title")?.textContent).toBe("No files.");
   expect(empty.querySelector(".surface-empty-description")?.textContent).toBe("This checkout does not have any files yet.");
   expect(host.querySelector(".files-tree")).not.toBeNull();
+});
+
+it("offers Open in Code, Copy path, and Reveal in File Manager on Files view entries", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+  const open = vi.fn();
+  const invoked: { command: string; args: unknown }[] = [];
+  mockIPC((command, args) => {
+    invoked.push({ command, args });
+    if (command === "list_dir") {
+      return (args as { path: string }).path === ""
+        ? [
+            { path: "src", name: "src", isDir: true },
+            { path: "README.md", name: "README.md", isDir: false },
+          ]
+        : [{ path: "src/app.ts", name: "app.ts", isDir: false }];
+    }
+    return null;
+  });
+
+  await act(async () => root.render(
+    <>
+      <ContextMenu actions={{ openProject: vi.fn(), openSettings: vi.fn() }} />
+      <FilesPanel projectId={7} rootPath="/repo" revision={0} onOpenFile={open} />
+    </>,
+  ));
+  await settle();
+
+  const fileRow = buttonWith("README.md");
+  await act(async () => {
+    fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 16 }));
+  });
+
+  const revealLabel = revealInFileManagerLabel();
+  const menuItems = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+  expect(menuItems().map((b) => b.textContent)).toEqual(["Open in Code", "Copy path", revealLabel]);
+
+  await act(async () => { menuItems()[0]!.click(); });
+  expect(open).toHaveBeenCalledExactlyOnceWith("README.md");
+
+  await act(async () => {
+    fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 16 }));
+  });
+  await act(async () => { menuItems()[1]!.click(); });
+  expect(writeText).toHaveBeenCalledWith("/repo/README.md");
+
+  await act(async () => {
+    fileRow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 16, clientY: 16 }));
+  });
+  await act(async () => { menuItems()[2]!.click(); });
+  expect(invoked.some((c) => c.command === "reveal_in_finder" && JSON.stringify(c.args) === JSON.stringify({ projectId: 7 }))).toBe(true);
 });

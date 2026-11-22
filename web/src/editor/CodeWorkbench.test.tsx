@@ -19,9 +19,16 @@ interface MockModel {
 
 const monacoHarness = vi.hoisted(() => {
   const models: MockModel[] = [];
+  const createCalls: Record<string, unknown>[] = [];
+  const updateOptionsCalls: Array<Array<Record<string, unknown>>> = [];
   let currentModel: MockModel | null = null;
   let position = { lineNumber: 1, column: 1 };
+  let createOptions: Record<string, unknown> | null = null;
+  let selectionEmpty = false;
   const cursorListeners = new Set<(e: { position: { lineNumber: number; column: number } }) => void>();
+  const contextMenuListeners = new Set<(e: { event: { browserEvent: MouseEvent } }) => void>();
+  const actions: Record<string, { isSupported?: () => boolean; run: ReturnType<typeof vi.fn> }> = {};
+  const triggerSpy = vi.fn();
 
   const makeModel = (initial: string, _lang: string, uri: { path: string; toString: () => string }): MockModel => {
     let text = initial;
@@ -60,11 +67,27 @@ const monacoHarness = vi.hoisted(() => {
 
   return {
     models,
+    get createOptions() { return createOptions; },
+    setSelectionEmpty(empty: boolean) { selectionEmpty = empty; },
+    actions,
+    triggerSpy,
+    emitContextMenu(browserEvent: MouseEvent) {
+      for (const cb of contextMenuListeners) cb({ event: { browserEvent } });
+    },
+    createCalls,
+    updateOptionsCalls,
     reset() {
       models.length = 0;
+      createCalls.length = 0;
+      updateOptionsCalls.length = 0;
       currentModel = null;
       position = { lineNumber: 1, column: 1 };
+      createOptions = null;
+      selectionEmpty = false;
       cursorListeners.clear();
+      contextMenuListeners.clear();
+      for (const key of Object.keys(actions)) delete actions[key];
+      triggerSpy.mockReset();
     },
     emitCursor(lineNumber: number, column: number) {
       position = { lineNumber, column };
@@ -76,26 +99,40 @@ const monacoHarness = vi.hoisted(() => {
         file: (path: string) => ({ path, toString: () => `file://${path}` }),
       },
       editor: {
-        create: () => ({
-          setModel: (m: MockModel | null) => { currentModel = m; },
-          getModel: () => currentModel,
-          saveViewState: () => null,
-          restoreViewState: () => {},
-          setSelection: () => {},
-          revealRangeInCenter: () => {},
-          focus: () => {},
-          layout: () => {},
-          hasTextFocus: () => false,
-          getPosition: () => position,
-          onDidChangeCursorPosition: (cb: (e: { position: { lineNumber: number; column: number } }) => void) => {
-            cursorListeners.add(cb);
-            return { dispose: () => cursorListeners.delete(cb) };
-          },
-          updateOptions: () => {},
-          trigger: () => {},
-          getAction: () => null,
-          dispose: () => cursorListeners.clear(),
-        }),
+        create: (_el: HTMLElement, options: Record<string, unknown>) => {
+          createOptions = options;
+          const instanceIndex = createCalls.length;
+          createCalls.push(options);
+          const updates: Record<string, unknown>[] = [];
+          updateOptionsCalls.push(updates);
+          return {
+            setModel: (m: MockModel | null) => { currentModel = m; },
+            getModel: () => currentModel,
+            saveViewState: () => null,
+            restoreViewState: () => {},
+            setSelection: () => {},
+            getSelection: () => ({ isEmpty: () => selectionEmpty }),
+            revealRangeInCenter: () => {},
+            focus: () => {},
+            layout: () => {},
+            hasTextFocus: () => false,
+            getPosition: () => position,
+            onDidChangeCursorPosition: (cb: (e: { position: { lineNumber: number; column: number } }) => void) => {
+              cursorListeners.add(cb);
+              return { dispose: () => cursorListeners.delete(cb) };
+            },
+            onContextMenu: (cb: (e: { event: { browserEvent: MouseEvent } }) => void) => {
+              contextMenuListeners.add(cb);
+              return { dispose: () => contextMenuListeners.delete(cb) };
+            },
+            updateOptions: (next: Record<string, unknown>) => {
+              updateOptionsCalls[instanceIndex].push(next);
+            },
+            trigger: triggerSpy,
+            getAction: (id: string) => actions[id] ?? null,
+            dispose: () => { cursorListeners.clear(); contextMenuListeners.clear(); },
+          };
+        },
         createModel: makeModel,
         onDidChangeMarkers: () => ({ dispose: () => {} }),
         getModelMarkers: () => [],
@@ -148,6 +185,8 @@ vi.mock("./EditorFileTree", async (importOriginal) => {
 });
 
 import { CodeWorkbench } from "./CodeWorkbench";
+import { ContextMenu } from "../shared/ContextMenu";
+import { DEFAULT_CODE_EDITOR_SETTINGS, resetCodeEditorSettings, saveCodeEditorSettings } from "./codeEditorSettings";
 
 Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
@@ -323,6 +362,106 @@ describe("CodeWorkbench performance", () => {
     expect(localStorage.getItem("oxide:code-tabs:p1")).toBe(JSON.stringify([]));
   });
 
+  it("initializes Monaco with saved CodeEditorSettings and broadcasts live updates across all mounted workbenches", async () => {
+    saveCodeEditorSettings({
+      ...DEFAULT_CODE_EDITOR_SETTINGS,
+      tabSize: 2,
+      insertSpaces: false,
+      wordWrap: "on",
+      lineNumbers: "relative",
+      minimap: true,
+      stickyScroll: false,
+      renderWhitespace: "all",
+      bracketPairColorization: false,
+      fontLigatures: true,
+      autoIndent: "brackets",
+      formatOnPaste: false,
+      smoothScrolling: false,
+      scrollBeyondLastLine: true,
+      cursorStyle: "block",
+      cursorBlinking: "phase",
+      lineHeight: 1.6,
+    });
+
+    await act(async () =>
+      root.render(
+        <>
+          <CodeWorkbench
+            projectId={1}
+            rootPath="/repo-one"
+            contextKey="p1"
+            visible
+            onChanged={vi.fn()}
+          />
+          <CodeWorkbench
+            projectId={2}
+            rootPath="/repo-two"
+            contextKey="p2"
+            visible={false}
+            onChanged={vi.fn()}
+          />
+        </>,
+      ),
+    );
+    await settle();
+
+    expect(monacoHarness.createCalls).toHaveLength(2);
+    for (const initialOptions of monacoHarness.createCalls) {
+      expect(initialOptions).toMatchObject({
+        tabSize: 2,
+        insertSpaces: false,
+        wordWrap: "on",
+        lineNumbers: "relative",
+        minimap: { enabled: true },
+        stickyScroll: { enabled: false },
+        renderWhitespace: "all",
+        bracketPairColorization: { enabled: false },
+        fontLigatures: true,
+        autoIndent: "brackets",
+        formatOnPaste: false,
+        smoothScrolling: false,
+        scrollBeyondLastLine: true,
+        cursorStyle: "block",
+        cursorBlinking: "phase",
+        lineHeight: 1.6,
+      });
+    }
+
+    await act(async () => {
+      saveCodeEditorSettings({
+        ...DEFAULT_CODE_EDITOR_SETTINGS,
+        tabSize: 8,
+        wordWrap: "bounded",
+        cursorStyle: "underline",
+      });
+    });
+
+    expect(monacoHarness.updateOptionsCalls[0]).toHaveLength(1);
+    expect(monacoHarness.updateOptionsCalls[1]).toHaveLength(1);
+    expect(monacoHarness.updateOptionsCalls[0][0]).toMatchObject({
+      tabSize: 8,
+      wordWrap: "bounded",
+      cursorStyle: "underline",
+    });
+    expect(monacoHarness.updateOptionsCalls[1][0]).toMatchObject({
+      tabSize: 8,
+      wordWrap: "bounded",
+      cursorStyle: "underline",
+    });
+
+    await act(async () => {
+      resetCodeEditorSettings();
+    });
+
+    expect(monacoHarness.updateOptionsCalls[0]).toHaveLength(2);
+    expect(monacoHarness.updateOptionsCalls[1]).toHaveLength(2);
+    expect(monacoHarness.updateOptionsCalls[0][1]).toMatchObject({
+      tabSize: 4,
+      wordWrap: "off",
+      cursorStyle: "line",
+    });
+  });
+
   it("dismisses the open-files dropdown on outside/editor pointerdown, Escape, and window blur", async () => {
     await act(async () =>
       root.render(
@@ -365,5 +504,108 @@ describe("CodeWorkbench performance", () => {
       window.dispatchEvent(new Event("blur"));
     });
     expect(menu()).toBeNull();
+  });
+
+  it("offers Close, Close others, Close all, and Copy path on Code file tabs", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+    await act(async () =>
+      root.render(
+        <>
+          <ContextMenu actions={{ openProject: vi.fn(), openSettings: vi.fn() }} />
+          <CodeWorkbench
+            projectId={1}
+            rootPath="/repo"
+            contextKey="p1"
+            visible
+            openRequest={{ id: 1, path: "src/app.ts" }}
+            onChanged={vi.fn()}
+          />
+        </>,
+      ),
+    );
+    await settle();
+    await act(async () =>
+      root.render(
+        <>
+          <ContextMenu actions={{ openProject: vi.fn(), openSettings: vi.fn() }} />
+          <CodeWorkbench
+            projectId={1}
+            rootPath="/repo"
+            contextKey="p1"
+            visible
+            openRequest={{ id: 2, path: "src/util.ts" }}
+            onChanged={vi.fn()}
+          />
+        </>,
+      ),
+    );
+    await settle();
+
+    const firstTab = host.querySelector<HTMLElement>('.editor-tab[data-path="src/app.ts"]')!;
+    await act(async () => {
+      firstTab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    });
+    const items = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    expect(items().map((b) => b.textContent)).toEqual(["Close", "Close others", "Close all", "Copy path"]);
+
+    await act(async () => { items()[3]!.click(); });
+    expect(writeText).toHaveBeenCalledWith("/repo/src/app.ts");
+
+    await act(async () => {
+      firstTab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    });
+    await act(async () => { items()[1]!.click(); });
+    await settle();
+    expect(host.querySelectorAll(".editor-tab")).toHaveLength(1);
+    expect(host.querySelector('.editor-tab[data-path="src/app.ts"]')).not.toBeNull();
+  });
+
+  it("disables Monaco's built-in context menu and routes editor right-clicks through Oxide's ContextMenu", async () => {
+    monacoHarness.actions["editor.action.revealDefinition"] = { isSupported: () => true, run: vi.fn() };
+    monacoHarness.actions["editor.action.goToReferences"] = { isSupported: () => true, run: vi.fn() };
+    monacoHarness.actions["editor.action.formatDocument"] = { isSupported: () => true, run: vi.fn() };
+    monacoHarness.actions["actions.find"] = { isSupported: () => true, run: vi.fn() };
+
+    await act(async () =>
+      root.render(
+        <>
+          <ContextMenu actions={{ openProject: vi.fn(), openSettings: vi.fn() }} />
+          <CodeWorkbench
+            projectId={1}
+            rootPath="/repo"
+            contextKey="p1"
+            visible
+            openRequest={{ id: 1, path: "src/app.ts" }}
+            onChanged={vi.fn()}
+          />
+        </>,
+      ),
+    );
+    await settle();
+
+    expect(monacoHarness.createOptions?.contextmenu).toBe(false);
+
+    const browserEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 });
+    await act(async () => {
+      monacoHarness.emitContextMenu(browserEvent);
+      window.dispatchEvent(browserEvent);
+    });
+
+    const items = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    expect(items().map((b) => b.querySelector("span")?.textContent)).toEqual([
+      "Cut",
+      "Copy",
+      "Paste",
+      "Select All",
+      "Find",
+      "Format Document",
+      "Go to Definition",
+      "Find References",
+    ]);
+
+    await act(async () => { items()[6]!.click(); });
+    expect(monacoHarness.actions["editor.action.revealDefinition"]!.run).toHaveBeenCalledOnce();
   });
 });

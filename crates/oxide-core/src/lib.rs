@@ -39,7 +39,7 @@ pub use github::{
     PullRequestReviewer, ReviewDecision, ReviewState,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
-pub use system::System;
+pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use themes::ThemeSummary;
 

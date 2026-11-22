@@ -57,6 +57,7 @@ fn os_tool_for(family: OsFamily, system_root: Option<&str>, name: &str) -> PathB
     match family {
         OsFamily::MacOs => match name {
             "open" => "/usr/bin/open",
+            "atsutil" => "/usr/bin/atsutil",
             "system_profiler" => "/usr/sbin/system_profiler",
             "sh" => "/bin/sh",
             "security" => "/usr/bin/security",

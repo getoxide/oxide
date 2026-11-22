@@ -13,3 +13,8 @@ pub trait System: Send + Sync + 'static {
 pub(crate) struct NoSystem;
 
 impl System for NoSystem {}
+
+/// Returns a sorted, deduplicated list of installed system font family names.
+pub fn system_fonts() -> Vec<String> {
+    oxide_platform::system::system_fonts()
+}

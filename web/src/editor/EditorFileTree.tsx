@@ -7,9 +7,12 @@ import {
 } from "@primer/octicons-react";
 import { commands, type FileEntry } from "../bindings";
 import { Skeleton } from "../shared/Skeleton";
+import { showContextMenu } from "../shared/ContextMenu";
+import { copyTextToClipboard, joinProjectPath, revealInFileManagerLabel } from "../shared/platform";
 
 export const EditorFileTree = memo(function EditorFileTree({
   projectId,
+  rootPath,
   selected,
   onOpen,
   onKeep,
@@ -17,6 +20,7 @@ export const EditorFileTree = memo(function EditorFileTree({
   empty,
 }: {
   projectId: number;
+  rootPath?: string;
   selected: string | null;
   /** Single click: opens or previews the file. */
   onOpen: (path: string) => void;
@@ -100,6 +104,16 @@ export const EditorFileTree = memo(function EditorFileTree({
           }
           onDoubleClick={() => {
             if (!entry.isDir) onKeep?.(entry.path);
+          }}
+          onContextMenu={(event) => {
+            const fullPath = rootPath ? joinProjectPath(rootPath, entry.path) : entry.path;
+            showContextMenu(event, [
+              ...(entry.isDir
+                ? [{ label: expanded.has(entry.path) ? "Collapse" : "Expand", run: () => toggle(entry.path) }]
+                : [{ label: "Open in Code", run: () => (onKeep ?? onOpen)(entry.path) }]),
+              { label: "Copy path", run: () => copyTextToClipboard(fullPath) },
+              { label: revealInFileManagerLabel(), run: () => void commands.revealInFinder(projectId), separatorBefore: true },
+            ]);
           }}
           onKeyDown={(e) => {
             if (!entry.isDir && (e.key === "Enter" || e.key === " ")) {

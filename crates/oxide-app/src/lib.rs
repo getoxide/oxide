@@ -466,6 +466,17 @@ pub struct DeveloperTool {
     documentation: String,
 }
 
+/// Enumerates installed system font family names on a blocking thread.
+#[tauri::command]
+#[specta::specta]
+async fn system_fonts() -> Result<Vec<String>, AppError> {
+    tauri::async_runtime::spawn_blocking(oxide_core::system_fonts)
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })
+}
+
 #[tauri::command]
 #[specta::specta]
 async fn developer_tools() -> Result<Vec<DeveloperTool>, AppError> {
@@ -1330,6 +1341,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         write_file,
         language_tools,
         developer_tools,
+        system_fonts,
         install_developer_tool,
         install_language_support,
         create_file,
