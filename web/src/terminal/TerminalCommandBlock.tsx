@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { terminalAppearance } from "../shared/appearance";
+import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
+import { copyTextToClipboard } from "../shared/platform";
 import { attachGpuRenderer } from "./gpuRenderer";
 
 export interface TerminalBlock {
@@ -27,11 +29,16 @@ interface Props {
   onReady: (rows: number, cols: number) => void;
   onResize: (rows: number, cols: number) => void;
   onScreen: (fullscreen: boolean) => void;
+  canPaste?: boolean;
+  canClear?: boolean;
+  onPaste?: () => void;
+  onClear?: () => void;
+  onNewTerminal?: () => void;
 }
 
 /** The PTY has a stable viewport. Output can change its clipping, never its live geometry. */
 export function TerminalCommandBlock(props: Props) {
-  const { block, active, visible, onScreen, onPasteReady } = props;
+  const { block, active, visible, onScreen, onPasteReady, canPaste, canClear, onPaste, onClear, onNewTerminal } = props;
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const callbacks = useRef(props);
@@ -48,20 +55,14 @@ export function TerminalCommandBlock(props: Props) {
     const toolbar = workspace.querySelector<HTMLElement>(
       ".workbench-terminal-header",
     )!;
-    // The block behind the output paints the background, so its hover and failure tints reach
-    // under the text instead of stopping at a box around it.
-    const transparent = (theme: ReturnType<typeof terminalAppearance>["theme"]) => ({ ...theme, background: "#00000000" });
     const initial = terminalAppearance();
     const term = new Terminal({
       ...initial,
-      theme: transparent(initial.theme),
-      allowTransparency: true,
       cursorBlink: true,
       cursorInactiveStyle: "none",
       scrollback: 5000,
       convertEol: false,
-      // A little air between rows; the GPU renderer still joins box and block characters across it.
-      lineHeight: 1.2,
+      lineHeight: 1,
       rescaleOverlappingGlyphs: true,
     });
     const addon = new FitAddon();
@@ -76,14 +77,19 @@ export function TerminalCommandBlock(props: Props) {
       last = "",
       interactive = false,
       settle = 0;
-    const contentHeight = () =>
-      Math.max(
-        1,
-        Math.min(
-          200,
-          term.buffer.active.baseY + term.buffer.active.cursorY + 1,
-        ),
-      ) * cell;
+    const contentHeight = () => {
+      const { active: isActive, block: current } = callbacks.current;
+      if (!isActive && !current.output && current.outputOffset === 0) return 0;
+      return (
+        Math.max(
+          1,
+          Math.min(
+            200,
+            term.buffer.active.baseY + term.buffer.active.cursorY + 1,
+          ),
+        ) * cell
+      );
+    };
     const fit = () => {
       if (
         !workspace.clientWidth ||
@@ -92,7 +98,7 @@ export function TerminalCommandBlock(props: Props) {
       )
         return;
       viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
-      element.style.height = `${callbacks.current.active ? viewport : contentHeight()}px`;
+      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight())}px`;
       addon.fit();
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
       if (screenElement && term.rows)
@@ -127,7 +133,7 @@ export function TerminalCommandBlock(props: Props) {
       term.options.fontFamily = options.fontFamily;
       term.options.fontSize = options.fontSize;
       term.options.fontWeight = options.fontWeight;
-      term.options.theme = transparent(options.theme);
+      term.options.theme = options.theme;
       scheduleFit();
     };
     window.addEventListener("oxide-appearance-changed", appearance);
@@ -144,6 +150,11 @@ export function TerminalCommandBlock(props: Props) {
     };
     const alternate = term.buffer.onBufferChange((buffer) => {
       if (buffer.type === "alternate") markScreen();
+      else if (interactive) {
+        interactive = false;
+        setScreen(false);
+        scheduleFit();
+      }
     });
     // Cursor-addressed applications also use the normal buffer (readline, Ink, curses variants).
     const cursor = term.parser.registerCsiHandler({ final: "H" }, (params) => {
@@ -204,6 +215,20 @@ export function TerminalCommandBlock(props: Props) {
     <section
       className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
+      onContextMenu={(event) => {
+        const selectedText = (terminal.current?.hasSelection?.() ? terminal.current.getSelection() : "") || window.getSelection()?.toString() || "";
+        showContextMenu(
+          event,
+          [
+            ...(selectedText ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => copyTextToClipboard(selectedText) }] : []),
+            { label: "Paste", hint: formatAccelerator("Mod+V"), disabled: !canPaste, run: () => onPaste?.() },
+            { label: "Copy command", run: () => copyTextToClipboard(block.command) },
+            { label: "Clear terminal", disabled: !canClear, run: () => onClear?.(), separatorBefore: true },
+            ...(onNewTerminal ? [{ label: "New terminal", run: onNewTerminal }] : []),
+          ],
+          { replaceEdit: true },
+        );
+      }}
     >
       <header>
         <code>{block.command}</code>

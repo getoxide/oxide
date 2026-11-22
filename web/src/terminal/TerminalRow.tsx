@@ -9,6 +9,7 @@ interface Props {
   running: string | null;
   onSelect: () => void;
   onRename: (name: string) => void;
+  onNewTerminal?: () => void;
   onClose: () => void;
 }
 
@@ -17,7 +18,7 @@ interface Props {
  * click, a Force Click on a Mac trackpad, or Rename on its menu turn the title into a field with
  * the name selected. Enter or leaving the field keeps the name, Escape restores it.
  */
-export function TerminalRow({ name, current, running, onSelect, onRename, onClose }: Props) {
+export function TerminalRow({ name, current, running, onSelect, onRename, onNewTerminal, onClose }: Props) {
   const [editing, setEditing] = useState(false);
   const item = useRef<HTMLButtonElement>(null);
   const field = useRef<HTMLInputElement>(null);
@@ -59,7 +60,8 @@ export function TerminalRow({ name, current, running, onSelect, onRename, onClos
     <li className={`terminal-row${editing ? " renaming" : ""}`}
       onContextMenu={(event) => showContextMenu(event, [
         { label: "Rename", run: () => setEditing(true) },
-        { label: "Close terminal", run: onClose },
+        ...(onNewTerminal ? [{ label: "New terminal", run: onNewTerminal }] : []),
+        { label: "Close terminal", run: onClose, separatorBefore: true },
       ])}>
       {editing ? (
         <div className="terminal-item terminal-item-editing">
