@@ -28,6 +28,8 @@ import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
+import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
+import { copyTextToClipboard, joinProjectPath } from "../shared/platform";
 import { registerEditorSave } from "./editorSaves";
 import type { CodeOpenRequest } from "./codeOpen";
 import { batchCloseTargets, neighborAfterClose, previewToReplace, rovingTab } from "./editorTabs";
@@ -100,6 +102,7 @@ export function CodeWorkbench({
   const [compact, setCompact] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [filesMenu, setFilesMenu] = useState(false);
+  const filesMenuWrap = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
   const [states, setStates] = useState<Record<string, string>>({});
@@ -109,6 +112,26 @@ export function CodeWorkbench({
   const dirtyState = useRef(false);
   const requestedFile = useRef(openRequest);
   useLayoutEffect(() => { requestedFile.current = openRequest; }, [openRequest]);
+
+  useEffect(() => {
+    if (!filesMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (filesMenuWrap.current?.contains(e.target as Node)) return;
+      setFilesMenu(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFilesMenu(false);
+    };
+    const onBlur = () => setFilesMenu(false);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [filesMenu]);
 
   const publish = useCallback((persistTabs = false) => {
     const docs = [...records.current.values()];
@@ -368,9 +391,43 @@ export function CodeWorkbench({
       scrollBeyondLastLine: false,
       renderWhitespace: "selection",
       stickyScroll: { enabled: true },
+      contextmenu: false,
     });
     editor.current = instance;
     setEditorInstance(instance);
+    const runMonacoAction = (id: string) => {
+      instance.focus();
+      const action = instance.getAction(id);
+      if (action) void action.run();
+      else instance.trigger("contextMenu", id, null);
+    };
+    const isActionAvailable = (action: ReturnType<typeof instance.getAction>) =>
+      Boolean(action && (!("isSupported" in action) || typeof action.isSupported !== "function" || action.isSupported()));
+    const contextMenu = instance.onContextMenu?.((event) => {
+      const hasSelection = !(instance.getSelection?.()?.isEmpty() ?? true);
+      const formatAction = instance.getAction("editor.action.formatDocument");
+      const definitionAction = instance.getAction("editor.action.revealDefinition");
+      const referencesId = instance.getAction("editor.action.goToReferences")
+        ? "editor.action.goToReferences"
+        : "editor.action.referenceSearch.trigger";
+      const referencesAction = instance.getAction(referencesId);
+      const hasDefinition = isActionAvailable(definitionAction);
+      const hasReferences = isActionAvailable(referencesAction);
+      showContextMenu(
+        event.event.browserEvent,
+        [
+          { label: "Cut", hint: formatAccelerator("Mod+X"), disabled: !hasSelection, run: () => runMonacoAction("editor.action.clipboardCutAction") },
+          { label: "Copy", hint: formatAccelerator("Mod+C"), disabled: !hasSelection, run: () => runMonacoAction("editor.action.clipboardCopyAction") },
+          { label: "Paste", hint: formatAccelerator("Mod+V"), run: () => runMonacoAction("editor.action.clipboardPasteAction") },
+          { label: "Select All", hint: formatAccelerator("Mod+A"), run: () => runMonacoAction("editor.action.selectAll") },
+          { label: "Find", hint: formatAccelerator("Mod+F"), run: () => runMonacoAction("actions.find"), separatorBefore: true },
+          { label: "Format Document", disabled: formatAction ? !isActionAvailable(formatAction) : false, run: () => runMonacoAction("editor.action.formatDocument") },
+          ...(hasDefinition ? [{ label: "Go to Definition", run: () => runMonacoAction("editor.action.revealDefinition"), separatorBefore: true }] : []),
+          ...(hasReferences ? [{ label: "Find References", run: () => runMonacoAction(referencesId), separatorBefore: !hasDefinition }] : []),
+        ],
+        { replaceEdit: true },
+      );
+    });
     const appearance=()=>instance.updateOptions({fontFamily:getAppearance().fonts.code, fontSize:fontStyle("code").size, fontWeight:String(fontStyle("code").weight)});
     window.addEventListener("oxide-appearance-changed",appearance);
     const bridge = new EditorLanguages(
@@ -437,6 +494,7 @@ export function CodeWorkbench({
       window.removeEventListener("oxide-language-tools-changed", reconnect);
       markers.dispose();
       opener.dispose();
+      contextMenu?.dispose();
       bridge.dispose();
       instance.dispose();
       editor.current = null;
@@ -673,6 +731,15 @@ export function CodeWorkbench({
               onMouseDown={(e) => {
                 if (e.button === 1) e.preventDefault();
               }}
+              onContextMenu={(e) => {
+                const others = documents.filter((d) => d.path !== doc.path).map((d) => d.path);
+                showContextMenu(e, [
+                  { label: "Close", run: () => void requestClose([doc.path]) },
+                  { label: "Close others", disabled: others.length === 0, run: () => void requestClose(others) },
+                  { label: "Close all", run: () => void requestClose(documents.map((d) => d.path)) },
+                  { label: "Copy path", run: () => copyTextToClipboard(joinProjectPath(rootPath, doc.path)), separatorBefore: true },
+                ]);
+              }}
             >
               <button
                 role="tab"
@@ -710,7 +777,7 @@ export function CodeWorkbench({
             </div>
           ))}
         </div>
-        <div className="editor-files-menu-wrap">
+        <div className="editor-files-menu-wrap" ref={filesMenuWrap}>
           <button
             className="icon-btn sm"
             aria-label="All open files"

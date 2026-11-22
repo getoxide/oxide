@@ -18,7 +18,7 @@ ADR-0018 left Oxide with a Terminal in the centre and a dock of Files, Issues an
 
 ## Amendment: a Sidebar switch replaces the Files button
 
-The Files button on the selected Project row read as a stray control beside the row, and the row's own fill stacked on the selected Terminal's. The sidebar now opens with a **Sidebar switch**, two tabs (Terminals and Files), and the Files view shows the selected Project. Project rows carry no fill and no buttons, so the selected Terminal is the only highlighted row. Open Files stays on a Project row's menu. This reverses the first rejected option below.
+The Files button on the selected Project row read as a stray control beside the row, and the row's own fill stacked on the selected Terminal's. The sidebar now opens with a **Sidebar switch**, two tabs (Terminals and Files), and the Files view shows the selected Project. Project rows carry no fill and no Files button, so the selected Terminal is the only highlighted row; each Project row keeps its leading chevron (collapsing or expanding its Terminals without changing the selected Project) and its hover/focus `+` (New terminal) and `×` (Close Project) actions. Open Files stays on a Project row's menu. This reverses the first rejected option below.
 
 ## Consequences
 

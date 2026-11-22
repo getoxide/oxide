@@ -4,6 +4,7 @@ import { EditorFileTree } from "./EditorFileTree";
 
 interface FilesPanelProps {
   projectId: number;
+  rootPath?: string;
   /** Changes after checkout mutations (commits, checkouts, terminal commands), so the tree refetches. */
   revision: number;
   /** Opens the file in the Project's central Code workspace. */
@@ -16,13 +17,14 @@ export function FilesPanel(props: FilesPanelProps) {
 }
 
 /** The Files view: a full-width navigator. A click selects; a double click opens Code. */
-function FilesExplorer({ projectId, revision, onOpenFile }: FilesPanelProps) {
+function FilesExplorer({ projectId, rootPath, revision, onOpenFile }: FilesPanelProps) {
   const [selected, setSelected] = useState<string | null>(null);
   return (
     <section className="files files-navigation" aria-label="Files">
       <div className="files-tree">
         <EditorFileTree
           projectId={projectId}
+          rootPath={rootPath}
           selected={selected}
           onOpen={(path) => setSelected(path)}
           onKeep={onOpenFile}

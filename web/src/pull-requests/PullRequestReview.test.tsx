@@ -115,6 +115,24 @@ it("shows the author's avatar, an Open on GitHub button, and opens the pull requ
   expect(open).toHaveBeenCalledWith("https://github.com/me/oxide/pull/174");
 });
 
+it("copies the pull request URL with confirmation feedback and surfaces clipboard errors", async () => {
+  const writeText = vi.fn<(_: string) => Promise<void>>().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  await render();
+
+  const copyBtn = host.querySelector<HTMLButtonElement>('.pr-nav button[aria-label="Copy link"]');
+  expect(copyBtn).not.toBeNull();
+
+  await click(copyBtn!);
+  expect(writeText).toHaveBeenCalledWith("https://github.com/me/oxide/pull/174");
+  expect(copyBtn!.getAttribute("data-copied")).toBe("true");
+  expect(host.querySelector('.pr-nav [role="status"]')?.textContent).toContain("Copied");
+
+  writeText.mockRejectedValueOnce(new Error("Clipboard blocked"));
+  await click(copyBtn!);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Clipboard blocked");
+});
+
 it("folds the description away and reads all of it when opened", async () => {
   await render();
   expect(host.querySelector(".pr-description .md")).toBeNull();

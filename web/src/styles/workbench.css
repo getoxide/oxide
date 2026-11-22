@@ -437,7 +437,6 @@
   position: relative;
   flex: none;
   padding: 12px 20px 10px;
-  transition: background-color var(--motion-fast) ease-out;
 }
 .terminal-command-block::before {
   content: "";
@@ -450,14 +449,11 @@
 .terminal-command-block + .terminal-command-block {
   border-top: 1px solid var(--line);
 }
-.terminal-command-block:hover {
-  background: color-mix(in srgb, var(--fg) 3%, transparent);
+.terminal-command-block:not(.running):not(.failed):hover::before {
+  background: var(--line-strong);
 }
 .terminal-command-block.running::before {
   background: var(--acc2);
-}
-.terminal-command-block.failed {
-  background: color-mix(in srgb, var(--red) 5%, transparent);
 }
 .terminal-command-block.failed::before {
   background: var(--red);
