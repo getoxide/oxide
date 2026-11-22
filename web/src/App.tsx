@@ -19,6 +19,7 @@ import {
 import { commands, type Project } from "./bindings";
 import { Skeleton } from "./shared/Skeleton";
 import { ContextMenu, showContextMenu } from "./shared/ContextMenu";
+import { copyTextToClipboard, revealInFileManagerLabel } from "./shared/platform";
 import { Collapsible } from "./shared/Collapsible";
 import { LinkConfirmDialog } from "./shared/LinkConfirmDialog";
 import { QuitDialog } from "./shared/QuitDialog";
@@ -246,9 +247,9 @@ export function App() {
     setVisitedTools({ ...visitedTools, [`${selected.id}:${activeTool}`]: true });
   }
 
-  const revealProject = async () => {
-    if (!selected) return;
-    const result = await commands.revealInFinder(selected.id);
+  const revealProject = async (projectId = selected?.id) => {
+    if (projectId === undefined) return;
+    const result = await commands.revealInFinder(projectId);
     setOpenError(result.status === "error" ? result.error.message : null);
   };
 
@@ -281,6 +282,7 @@ export function App() {
       {isWindows && <WindowResizeHandles />}
       <ContextMenu actions={{
         openProject: () => overlays.current?.openPalette(),
+        newTerminal: selected && !selected.missing ? () => newTerminal(selected) : undefined,
         openSettings: () => setShowSettings(true),
       }} />
       <QuitDialog />
@@ -308,7 +310,7 @@ export function App() {
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
           {selected && !selected.missing && (
-            <button className="icon-btn" title="Reveal in Finder" aria-label="Reveal in Finder" onClick={() => void revealProject()}>
+            <button className="icon-btn" title={revealInFileManagerLabel()} aria-label={revealInFileManagerLabel()} onClick={() => void revealProject()}>
               <FileDirectoryIcon size={16} />
             </button>
           )}
@@ -336,6 +338,7 @@ export function App() {
             settingsOpen={showSettings}
             onSelectProject={selectProject}
             onCloseProject={closeProject}
+            onRevealProject={(project) => void revealProject(project.id)}
             filesProject={filesProjectId !== null && filesProjectId === selected?.id ? selected : null}
             onOpenFiles={openFiles}
             onCloseFiles={() => setFilesProjectId(null)}
@@ -379,6 +382,7 @@ export function App() {
                       contextKey={`${projectId}:${tab.id}`}
                       visible={visible}
                       headerAction={visible ? halfButton("terminal") : null}
+                      onNewTerminal={project.missing ? undefined : () => newTerminal(project)}
                       onRunningChange={(command) => setTerminals((previous) => setRunning(previous, projectId, tab.id, command))}
                     />
                   </main>
@@ -490,6 +494,7 @@ interface SidebarProps {
   settingsOpen: boolean;
   onSelectProject: (project: Project) => void;
   onCloseProject: (projectId: number) => Promise<string | null>;
+  onRevealProject: (project: Project) => void;
   filesProject: Project | null;
   onOpenFiles: (project: Project) => void;
   onCloseFiles: () => void;
@@ -505,7 +510,7 @@ interface SidebarProps {
 /** The open Projects and, under each, its terminals; or, in the Files view, the selected Project's files. */
 function Sidebar({
   projects, selected, terminals, settingsOpen, filesProject, onOpenFiles, onCloseFiles, onOpenFile,
-  onSelectProject, onCloseProject, onNewTerminal,
+  onSelectProject, onCloseProject, onRevealProject, onNewTerminal,
   onSelectTerminal, onRenameTerminal, onCloseTerminal, onOpenPalette, onOpenSettings,
 }: SidebarProps) {
   const [error, setError] = useState<string | null>(null);
@@ -566,7 +571,7 @@ function Sidebar({
           </div>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
-              <FilesPanel key={filesProject.id} projectId={filesProject.id} revision={0} onOpenFile={onOpenFile} />
+              <FilesPanel key={filesProject.id} projectId={filesProject.id} rootPath={filesProject.path} revision={0} onOpenFile={onOpenFile} />
             </Suspense>
           </div>
         </nav>
@@ -598,7 +603,9 @@ function Sidebar({
                   <div className="project-row" onContextMenu={(event) => showContextMenu(event, [
                     { label: "New terminal", disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
                     { label: "Open Files", disabled: project.missing, run: () => onOpenFiles(project) },
-                    { label: "Remove project", disabled: closingProjectId === project.id, run: () => void close(project) },
+                    { label: revealInFileManagerLabel(), disabled: project.missing, run: () => onRevealProject(project), separatorBefore: true },
+                    { label: "Copy path", run: () => copyTextToClipboard(readablePath(project.path)) },
+                    { label: "Close project", disabled: closingProjectId === project.id, run: () => void close(project), separatorBefore: true },
                   ])}>
                     <button
                       type="button"
@@ -641,6 +648,7 @@ function Sidebar({
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}
                           onSelect={() => onSelectTerminal(project, tab.id)}
                           onRename={(name) => onRenameTerminal(project, tab.id, name)}
+                          onNewTerminal={project.missing ? undefined : () => onNewTerminal(project)}
                           onClose={() => onCloseTerminal(project, tab.id)} />
                       ))}
                     </ul>

@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { terminalAppearance } from "../shared/appearance";
+import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
+import { copyTextToClipboard } from "../shared/platform";
 import { attachGpuRenderer } from "./gpuRenderer";
 
 export interface TerminalBlock {
@@ -27,11 +29,16 @@ interface Props {
   onReady: (rows: number, cols: number) => void;
   onResize: (rows: number, cols: number) => void;
   onScreen: (fullscreen: boolean) => void;
+  canPaste?: boolean;
+  canClear?: boolean;
+  onPaste?: () => void;
+  onClear?: () => void;
+  onNewTerminal?: () => void;
 }
 
 /** The PTY has a stable viewport. Output can change its clipping, never its live geometry. */
 export function TerminalCommandBlock(props: Props) {
-  const { block, active, visible, onScreen, onPasteReady } = props;
+  const { block, active, visible, onScreen, onPasteReady, canPaste, canClear, onPaste, onClear, onNewTerminal } = props;
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const callbacks = useRef(props);
@@ -208,6 +215,20 @@ export function TerminalCommandBlock(props: Props) {
     <section
       className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
+      onContextMenu={(event) => {
+        const selectedText = (terminal.current?.hasSelection?.() ? terminal.current.getSelection() : "") || window.getSelection()?.toString() || "";
+        showContextMenu(
+          event,
+          [
+            ...(selectedText ? [{ label: "Copy", hint: formatAccelerator("Mod+C"), run: () => copyTextToClipboard(selectedText) }] : []),
+            { label: "Paste", hint: formatAccelerator("Mod+V"), disabled: !canPaste, run: () => onPaste?.() },
+            { label: "Copy command", run: () => copyTextToClipboard(block.command) },
+            { label: "Clear terminal", disabled: !canClear, run: () => onClear?.(), separatorBefore: true },
+            ...(onNewTerminal ? [{ label: "New terminal", run: onNewTerminal }] : []),
+          ],
+          { replaceEdit: true },
+        );
+      }}
     >
       <header>
         <code>{block.command}</code>
