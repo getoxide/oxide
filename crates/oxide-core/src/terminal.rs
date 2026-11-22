@@ -1,5 +1,6 @@
 use crate::{Error, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
+use oxide_platform::ShellKind;
 use oxide_platform::diag;
 use oxide_platform::diag::SenderExt as _;
 use oxide_platform::registry::{ProcessRegistry, SHUTDOWN_GRACE};
@@ -56,15 +57,18 @@ impl TerminalSession {
         cwd: &Path,
         registry: Arc<ProcessRegistry>,
         blocks: bool,
+        shell: ShellKind,
+        load_user_config: bool,
     ) -> Result<Self> {
         let shell_init = if blocks {
-            os::create_shell_init_file(home, id).map_err(|error| {
+            os::create_shell_init_file(home, id, shell, load_user_config).map_err(|error| {
                 Error::Terminal(format!("create terminal shell init file: {error}"))
             })?
         } else {
             None
         };
-        let (command, shell_name) = shell_command(cwd, blocks, shell_init.as_deref());
+        let (command, shell_name) =
+            shell_command(cwd, blocks, shell_init.as_deref(), shell, load_user_config);
         Self::spawn(id, cwd, registry, command, shell_name, shell_init, blocks)
     }
 
@@ -282,8 +286,14 @@ fn remove_shell_init(path: &Path) {
     }
 }
 
-fn shell_command(cwd: &Path, blocks: bool, shell_init: Option<&Path>) -> (CommandBuilder, String) {
-    let launch = os::shell_launch(blocks, shell_init);
+fn shell_command(
+    cwd: &Path,
+    blocks: bool,
+    shell_init: Option<&Path>,
+    shell: ShellKind,
+    load_user_config: bool,
+) -> (CommandBuilder, String) {
+    let launch = os::shell_launch(blocks, shell_init, shell, load_user_config);
     let mut command = CommandBuilder::new(launch.program);
     command.args(launch.args);
     for (name, value) in launch.env {

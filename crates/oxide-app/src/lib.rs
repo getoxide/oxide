@@ -170,6 +170,32 @@ pub enum PullRequestPhase {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellKind {
+    Default,
+    Zsh,
+    Bash,
+    #[serde(rename = "powershell")]
+    PowerShell,
+    Pwsh,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableShell {
+    pub kind: ShellKind,
+    pub label: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSettings {
+    pub shell: ShellKind,
+    pub load_user_config: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Terminal {
@@ -223,6 +249,33 @@ async fn complete_terminal(
     .map_err(|error| AppError {
         message: error.to_string(),
     })?
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn available_shells(core: State<'_, Arc<Core>>) -> Vec<AvailableShell> {
+    core.available_shells()
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn terminal_settings(core: State<'_, Arc<Core>>) -> Result<TerminalSettings, AppError> {
+    Ok(core.terminal_settings()?.into())
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn set_terminal_settings(
+    core: State<'_, Arc<Core>>,
+    settings: TerminalSettings,
+) -> Result<TerminalSettings, AppError> {
+    Ok(core.set_terminal_settings(settings.into())?.into())
 }
 
 #[tauri::command]
@@ -1254,6 +1307,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         reveal_in_finder,
         set_project_open,
         start_block_terminal,
+        available_shells,
+        terminal_settings,
+        set_terminal_settings,
         write_terminal,
         resize_terminal,
         close_terminal,
