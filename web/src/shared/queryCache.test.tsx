@@ -202,6 +202,17 @@ describe("query cache", () => {
     expect(seen).toMatchObject({ state: "ready", data: "after login" });
   });
 
+  it("lets a mount ask again when a prefetch returned data the caller does not trust", async () => {
+    await prefetchQuery("k", async () => ok({ availability: "loggedOut" }), {
+      staleMs: QUERY_STALE_MS,
+      trust: (data) => data.availability === "ready",
+    });
+    const fetcher = vi.fn(async () => ok({ availability: "ready" }));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: { availability: "ready" } });
+  });
+
   it("stays bounded", async () => {
     for (let i = 0; i < 1000; i++) setQueryData(`k${i}`, i);
     await mount("k0", () => never<number>());
