@@ -273,6 +273,7 @@ impl From<oxide_core::TimelineComment> for TimelineComment {
             author: x.author,
             body: x.body,
             created_at: x.created_at,
+            reactions: x.reactions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -285,6 +286,47 @@ impl From<oxide_core::TimelineReview> for TimelineReview {
             body: x.body,
             created_at: x.created_at,
             state: x.state.into(),
+            reactions: x.reactions.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<oxide_core::ReactionContent> for ReactionContent {
+    fn from(c: oxide_core::ReactionContent) -> Self {
+        match c {
+            oxide_core::ReactionContent::ThumbsUp => Self::ThumbsUp,
+            oxide_core::ReactionContent::ThumbsDown => Self::ThumbsDown,
+            oxide_core::ReactionContent::Laugh => Self::Laugh,
+            oxide_core::ReactionContent::Hooray => Self::Hooray,
+            oxide_core::ReactionContent::Confused => Self::Confused,
+            oxide_core::ReactionContent::Heart => Self::Heart,
+            oxide_core::ReactionContent::Rocket => Self::Rocket,
+            oxide_core::ReactionContent::Eyes => Self::Eyes,
+        }
+    }
+}
+
+impl From<ReactionContent> for oxide_core::ReactionContent {
+    fn from(c: ReactionContent) -> Self {
+        match c {
+            ReactionContent::ThumbsUp => Self::ThumbsUp,
+            ReactionContent::ThumbsDown => Self::ThumbsDown,
+            ReactionContent::Laugh => Self::Laugh,
+            ReactionContent::Hooray => Self::Hooray,
+            ReactionContent::Confused => Self::Confused,
+            ReactionContent::Heart => Self::Heart,
+            ReactionContent::Rocket => Self::Rocket,
+            ReactionContent::Eyes => Self::Eyes,
+        }
+    }
+}
+
+impl From<oxide_core::ReactionGroup> for ReactionGroup {
+    fn from(g: oxide_core::ReactionGroup) -> Self {
+        Self {
+            content: g.content.into(),
+            count: g.count,
+            viewer_has_reacted: g.viewer_has_reacted,
         }
     }
 }
@@ -467,6 +509,7 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            reactions: d.reactions.into_iter().map(Into::into).collect(),
             signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
     }
@@ -527,6 +570,7 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            reactions: d.reactions.into_iter().map(Into::into).collect(),
             signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
     }

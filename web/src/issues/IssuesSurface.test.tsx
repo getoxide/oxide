@@ -41,6 +41,7 @@ const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   comments: [],
   viewer: "me",
   nodeId: "I_7",
+  reactions: [],
   participants: [],
   timeline: [],
   signedImages: [],
@@ -230,7 +231,7 @@ it("interleaves activity with comments in the issue Conversation and opens refer
       timeline: [
         { kind: "labeled", actor: "alice", createdAt: "2026-01-01T01:00:00Z", label: { name: "bug", color: "d73a4a" } },
         { kind: "assigned", actor: "alice", createdAt: "2026-01-01T02:00:00Z", login: "bob" },
-        { kind: "comment", id: "IC_1", author: "me", body: "On it", createdAt: "2026-01-01T03:00:00Z" },
+        { kind: "comment", id: "IC_1", author: "me", body: "On it", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
         { kind: "renamed", actor: "alice", createdAt: "2026-01-01T04:00:00Z", from: "Crash", to: "Crash on startup" },
         {
           kind: "crossReferenced", actor: "erin", createdAt: "2026-01-01T05:00:00Z", number: 9, title: "Fix the crash",
@@ -273,8 +274,8 @@ it("offers the conversation's people before collaborators in the comment box and
     data: detail({
       participants: ["dave", "me"],
       timeline: [
-        { kind: "comment", id: "IC_1", author: "carol", body: "Same here", createdAt: "2026-01-01T03:00:00Z" },
-        { kind: "comment", id: "IC_2", author: "me", body: "On it", createdAt: "2026-01-01T04:00:00Z" },
+        { kind: "comment", id: "IC_1", author: "carol", body: "Same here", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
+        { kind: "comment", id: "IC_2", author: "me", body: "On it", createdAt: "2026-01-01T04:00:00Z", reactions: [] },
       ],
     }),
   });
@@ -569,6 +570,49 @@ it("stops polling while the Surface is hidden, and revalidates silently once sho
   }
 });
 
+it("shows reactions under the description and comments and toggles them optimistically", async () => {
+  let finish!: () => void;
+  const toggle = vi.spyOn(commands, "toggleReaction").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      reactions: [{ content: "thumbsUp", count: 2, viewerHasReacted: true }],
+      timeline: [
+        {
+          kind: "comment", id: "IC_1", author: "bob", body: "Same here", createdAt: "2026-01-01T03:00:00Z",
+          reactions: [{ content: "eyes", count: 1, viewerHasReacted: false }],
+        },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  const thumbs = description.querySelector<HTMLButtonElement>('.reactions button[aria-pressed]')!;
+  expect(thumbs.textContent).toBe("👍2");
+  expect(thumbs.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => thumbs.click());
+  expect(toggle).toHaveBeenCalledWith(1, "I_7", "thumbsUp", false);
+  // Before GitHub answers, the count already shows the viewer's reaction gone.
+  expect(thumbs.textContent).toBe("👍1");
+  expect(thumbs.getAttribute("aria-pressed")).toBe("false");
+  await act(async () => finish());
+
+  const comment = host.querySelector('section[aria-label="Conversation"] .pr-entry')!;
+  expect(comment.querySelector(".reactions")?.textContent).toContain("👀1");
+  await act(async () => comment.querySelector<HTMLButtonElement>('button[aria-label="Add reaction"]')!.click());
+  const picker = document.querySelector('[role="dialog"][aria-label="Add reaction"]')!;
+  expect([...picker.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"]);
+  await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Rocket"]')!.click());
+  expect(toggle).toHaveBeenLastCalledWith(1, "IC_1", "rocket", true);
+  expect(comment.querySelector(".reactions")?.textContent).toContain("🚀1");
+  expect(document.querySelector('[role="dialog"][aria-label="Add reaction"]')).toBeNull();
+  await act(async () => finish());
+});
+
 it("shows the description's private attachment through its signed URL and other hosts as a link", async () => {
   const asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
   const signed = "https://private-user-images.githubusercontent.com/7/9-84ccda0a-5c4a-4fe4-b897-ed3f90e852b2.png?jwt=abc";
@@ -579,7 +623,7 @@ it("shows the description's private attachment through its signed URL and other 
       body: `It crashes:\n\n<img width="600" alt="Crash dialog" src="${asset}" />`,
       signedImages: [{ url: asset, signedUrl: signed }],
       timeline: [
-        { kind: "comment", id: "IC_1", author: "dave", body: "![tracker](https://tracker.example/pixel.png)", createdAt: "2026-01-01T03:00:00Z" },
+        { kind: "comment", id: "IC_1", author: "dave", body: "![tracker](https://tracker.example/pixel.png)", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
       ],
     }),
   });

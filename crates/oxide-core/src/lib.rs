@@ -38,9 +38,10 @@ pub use github::{
     IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
     PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
     PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewer, ReviewDecision, ReviewState, SignedImage, TimelineAction, TimelineClosed,
-    TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem, TimelineLabel, TimelineMerge,
-    TimelinePerson, TimelineReference, TimelineRename, TimelineReview,
+    PullRequestReviewer, ReactionContent, ReactionGroup, ReviewDecision, ReviewState, SignedImage,
+    TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
+    TimelineItem, TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
+    TimelineReview,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use oxide_platform::{AvailableShell, ShellKind};
@@ -765,6 +766,24 @@ impl Core {
     /// Deletes a comment of a pull request or an issue.
     pub fn delete_comment(&self, project_id: u32, id: &str) -> Result<()> {
         github::delete_comment(&self.gh, &self.main_checkout(project_id)?, id)
+    }
+
+    /// Adds or removes the signed-in user's reaction on an issue, a pull request, a comment
+    /// or a review, by its GraphQL node id.
+    pub fn toggle_reaction(
+        &self,
+        project_id: u32,
+        subject_id: &str,
+        content: ReactionContent,
+        add: bool,
+    ) -> Result<()> {
+        github::toggle_reaction(
+            &self.gh,
+            &self.main_checkout(project_id)?,
+            subject_id,
+            content,
+            add,
+        )
     }
 
     /// Adds a comment to an issue.

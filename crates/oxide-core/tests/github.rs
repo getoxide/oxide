@@ -1261,6 +1261,7 @@ fn pull_request_detail_interleaves_commits_force_pushes_reviews_and_events() {
                 body: "Rename it".into(),
                 created_at: "2026-05-01T09:30:00Z".into(),
                 state: ReviewState::ChangesRequested,
+                reactions: vec![],
             }),
             TimelineItem::ForcePush(TimelineForcePush {
                 actor: "other".into(),
@@ -1307,12 +1308,14 @@ fn pull_request_detail_falls_back_to_comments_and_reviews_when_the_timeline_quer
                 body: "Ship it".into(),
                 created_at: "2026-05-01T09:00:00Z".into(),
                 state: ReviewState::Approved,
+                reactions: vec![],
             }),
             TimelineItem::Comment(TimelineComment {
                 id: "IC_1".into(),
                 author: "reviewer".into(),
                 body: "Looks good".into(),
                 created_at: "2026-05-01T10:00:00Z".into(),
+                reactions: vec![],
             }),
         ]
     );
@@ -1905,6 +1908,7 @@ fn issue_detail_interleaves_activity_with_comments_from_graphql() {
                 author: "dave".into(),
                 body: "Can confirm".into(),
                 created_at: "2026-01-03T10:30:00Z".into(),
+                reactions: vec![],
             }),
             TimelineItem::Unlabeled(TimelineLabel {
                 actor: "dave".into(),
@@ -1965,6 +1969,7 @@ fn issue_detail_falls_back_to_its_comments_when_the_timeline_query_fails() {
             author: "dave".into(),
             body: "Can confirm".into(),
             created_at: "2026-01-03T10:30:00Z".into(),
+            reactions: vec![],
         })]
     );
 }
@@ -2191,6 +2196,194 @@ fn checks_know_whether_branch_protection_requires_them() {
             ("ci/legacy", false)
         ]
     );
+}
+
+#[test]
+fn issue_detail_reads_the_reactions_on_the_issue_and_its_comments() {
+    use oxide_core::{ReactionContent, ReactionGroup, TimelineItem};
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "reactionGroups": [
+            {"content": "THUMBS_UP", "viewerHasReacted": true, "reactors": {"totalCount": 2}},
+            {"content": "HEART", "viewerHasReacted": false, "reactors": {"totalCount": 0}},
+            {"content": "ROCKET", "viewerHasReacted": false, "reactors": {"totalCount": 1}},
+            {"content": "SOMETHING_NEW", "viewerHasReacted": false, "reactors": {"totalCount": 3}}
+        ],
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm",
+             "createdAt": "2026-01-03T10:30:00Z",
+             "reactionGroups": [{"content": "EYES", "viewerHasReacted": false, "reactors": {"totalCount": 1}}]}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    // Empty groups and kinds GitHub may add later are left out.
+    assert_eq!(
+        detail.reactions,
+        vec![
+            ReactionGroup {
+                content: ReactionContent::ThumbsUp,
+                count: 2,
+                viewer_has_reacted: true,
+            },
+            ReactionGroup {
+                content: ReactionContent::Rocket,
+                count: 1,
+                viewer_has_reacted: false,
+            },
+        ]
+    );
+    let TimelineItem::Comment(comment) = &detail.timeline[0] else {
+        panic!("{:?}", detail.timeline);
+    };
+    assert_eq!(
+        comment.reactions,
+        vec![ReactionGroup {
+            content: ReactionContent::Eyes,
+            count: 1,
+            viewer_has_reacted: false,
+        }]
+    );
+    let call = f
+        .gh_calls()
+        .into_iter()
+        .find(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .expect("a timeline query");
+    assert!(
+        call.iter().any(|a| a.contains("reactionGroups")),
+        "{call:?}"
+    );
+}
+
+#[test]
+fn pull_request_detail_reads_the_reactions_on_the_description_and_reviews() {
+    use oxide_core::{ReactionContent, ReactionGroup, TimelineItem};
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    state["timelines"] = serde_json::json!({"5": {
+        "id": "PR_kwDO5",
+        "url": "https://github.com/fake/repo/pull/5",
+        "reactionGroups": [{"content": "HOORAY", "viewerHasReacted": false, "reactors": {"totalCount": 4}}],
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "PullRequestReview", "id": "PRR_2", "author": {"login": "reviewer"}, "body": "Rename it",
+             "state": "CHANGES_REQUESTED", "createdAt": "2026-05-01T09:29:00Z", "submittedAt": "2026-05-01T09:30:00Z",
+             "reactionGroups": [{"content": "CONFUSED", "viewerHasReacted": true, "reactors": {"totalCount": 1}}]}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(
+        detail.reactions,
+        vec![ReactionGroup {
+            content: ReactionContent::Hooray,
+            count: 4,
+            viewer_has_reacted: false,
+        }]
+    );
+    let TimelineItem::Review(review) = &detail.timeline[0] else {
+        panic!("{:?}", detail.timeline);
+    };
+    assert_eq!(
+        review.reactions,
+        vec![ReactionGroup {
+            content: ReactionContent::Confused,
+            count: 1,
+            viewer_has_reacted: true,
+        }]
+    );
+}
+
+/// The arguments of the GraphQL reaction mutations `gh` was asked to run.
+fn reaction_calls(f: &Fixture) -> Vec<Vec<String>> {
+    f.gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("Reaction(")))
+        .collect()
+}
+
+#[test]
+fn toggle_reaction_adds_and_removes_through_typed_graphql_fields() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    install_gh(&f, &ok_state());
+
+    f.core
+        .toggle_reaction(f.project.id, "IC_kwDO1", ReactionContent::Rocket, true)
+        .unwrap();
+    f.core
+        .toggle_reaction(f.project.id, "PRR_kwDO2", ReactionContent::ThumbsUp, false)
+        .unwrap();
+
+    let calls = reaction_calls(&f);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let field =
+        |call: &[String], value: &str| call.windows(2).any(|w| w[0] == "-f" && w[1] == value);
+    assert!(
+        calls[0].iter().any(|a| a.contains("addReaction")),
+        "{:?}",
+        calls[0]
+    );
+    assert!(field(&calls[0], "subject=IC_kwDO1"), "{:?}", calls[0]);
+    assert!(field(&calls[0], "content=ROCKET"), "{:?}", calls[0]);
+    assert!(
+        calls[1].iter().any(|a| a.contains("removeReaction")),
+        "{:?}",
+        calls[1]
+    );
+    assert!(field(&calls[1], "subject=PRR_kwDO2"), "{:?}", calls[1]);
+    assert!(field(&calls[1], "content=THUMBS_UP"), "{:?}", calls[1]);
+    // User values never go through -F, which reads a leading @ as a file.
+    assert!(!calls.iter().flatten().any(|a| a == "-F"), "{calls:?}");
+}
+
+#[test]
+fn toggle_reaction_refuses_a_subject_that_is_not_a_node_id_without_calling_gh() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let long = "A".repeat(257);
+    for id in [
+        "",
+        "@/etc/passwd",
+        "@IC_1",
+        "a b",
+        "IC_1\n",
+        "id=1&x",
+        "a/b",
+        "é",
+        long.as_str(),
+    ] {
+        assert!(
+            f.core
+                .toggle_reaction(f.project.id, id, ReactionContent::Heart, true)
+                .is_err(),
+            "{id:?}"
+        );
+    }
+    assert!(reaction_calls(&f).is_empty());
+}
+
+#[test]
+fn toggle_reaction_reports_what_github_refused() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    let mut state = ok_state();
+    state["reaction_error"] =
+        serde_json::json!("GraphQL: Could not resolve to a node with the global id of 'IC_gone'");
+    install_gh(&f, &state);
+    let message = f
+        .core
+        .toggle_reaction(f.project.id, "IC_gone", ReactionContent::Laugh, true)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("Could not resolve"), "{message}");
 }
 
 #[test]
