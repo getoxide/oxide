@@ -13,7 +13,7 @@ import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { mergeLabel, type MergeRequirement, type Tone } from "./pullRequestReview";
 
 /** The action in flight. Its button keeps its colour and shows a spinner; the others wait. */
-export type Pending = "merge" | "auto" | "close" | "ready" | "update" | "comment" | "checkout" | "edit";
+export type Pending = "merge" | "auto" | "close" | "ready" | "update" | "comment" | "checkout";
 
 /** Button content while its work runs. */
 export function Working({ on, label, children }: { on: boolean; label: string; children: React.ReactNode }) {
