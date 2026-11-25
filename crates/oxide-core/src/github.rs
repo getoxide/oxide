@@ -351,6 +351,12 @@ impl Gh {
         *self.search_path.lock_recover() = dirs;
         *self.ready_at.lock_recover() = None;
         *self.auth_check.lock_recover() = None;
+        self.forget_metadata();
+    }
+
+    /// Drops what was read about repositories and the signed-in viewer: after `gh` changes or
+    /// logs out, the next account may see other settings.
+    fn forget_metadata(&self) {
         self.default_branches.clear();
         self.merge_settings.clear();
         self.default_merge_methods.clear();
@@ -503,6 +509,9 @@ impl Gh {
             Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
             Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
         };
+        if outcome.0 != GithubAvailability::Ready {
+            self.forget_metadata();
+        }
         *last = Some((Instant::now(), outcome.clone()));
         outcome
     }
@@ -1240,6 +1249,47 @@ mod tests {
                 "{url:?}"
             );
         }
+    }
+
+    /// A `Gh` that finds only the fake `gh` fixture, with the given state.
+    fn fake_gh(dir: &Path, state: &serde_json::Value) -> Gh {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/gh");
+        let names: &[&str] = if cfg!(windows) {
+            &["gh", "gh.py", "gh.cmd"]
+        } else {
+            &["gh", "gh.py"]
+        };
+        for name in names {
+            std::fs::copy(fixture.join(name), dir.join(name)).unwrap();
+        }
+        std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+        let gh = Gh::default();
+        gh.set_search_path(Some(vec![dir.to_path_buf()]));
+        gh
+    }
+
+    #[test]
+    fn a_failed_auth_check_forgets_the_viewer_and_repository_metadata() {
+        let bin = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let gh = fake_gh(
+            bin.path(),
+            &serde_json::json!({"auth": "ok", "viewer": "me"}),
+        );
+        assert_eq!(gh.availability(cwd.path()).0, GithubAvailability::Ready);
+        assert_eq!(viewer_login(&gh, cwd.path()).as_deref(), Some("me"));
+
+        // The ready answer expires, `gh` is logged out, then logged in as someone else.
+        *gh.ready_at.lock_recover() = None;
+        std::fs::write(bin.path().join("state.json"), r#"{"auth": "logged_out"}"#).unwrap();
+        assert_eq!(gh.availability(cwd.path()).0, GithubAvailability::LoggedOut);
+        std::fs::write(
+            bin.path().join("state.json"),
+            r#"{"auth": "ok", "viewer": "someone"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(viewer_login(&gh, cwd.path()).as_deref(), Some("someone"));
     }
 }
 
