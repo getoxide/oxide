@@ -146,12 +146,22 @@ fn plain_https(url: &url::Url) -> Option<&str> {
     }
 }
 
+/// Whether a path segment hides a `/` or `\` behind percent-encoding, which a server may
+/// decode into another path.
+fn encodes_a_separator(segment: &str) -> bool {
+    let lower = segment.to_ascii_lowercase();
+    lower.contains("%2f") || lower.contains("%5c")
+}
+
 /// On `github.com`, only attachments and a repository's assets and raw files are images.
 fn github_path(url: &url::Url) -> bool {
     let segments: Vec<&str> = url
         .path_segments()
         .map(Iterator::collect)
         .unwrap_or_default();
+    if segments.iter().any(|s| encodes_a_separator(s)) {
+        return false;
+    }
     match segments.as_slice() {
         ["user-attachments", kind, ..] => !kind.is_empty(),
         [owner, repo, "assets" | "raw", first, ..] => {
@@ -185,19 +195,30 @@ fn checked_image_url(url: &str) -> Result<url::Url> {
     }
 }
 
+/// The S3 buckets GitHub redirects its uploads to, named exactly: bucket names are global, so
+/// anyone could create another `github-…` one. User attachments and issue images, release
+/// assets, and files attached to issues and pull requests, as GitHub's own redirects name them.
+const ASSET_BUCKETS: &[&str] = &[
+    "github-production-user-asset-6210df.s3.amazonaws.com",
+    "github-production-release-asset-2e65be.s3.amazonaws.com",
+    "github-production-repository-file-5c1aeb.s3.amazonaws.com",
+];
+
 /// Where a redirect may lead: another GitHub image host, or one of the storage buckets
 /// GitHub serves its assets from. The first request is always to a GitHub host, so a bucket
 /// is only ever reached from GitHub.
 fn allowed_hop(url: &url::Url) -> bool {
     match plain_https(url) {
-        Some(host) => {
-            allowed_image_url(url)
-                || host
-                    .strip_suffix(".s3.amazonaws.com")
-                    .is_some_and(|bucket| bucket.starts_with("github-") && !bucket.contains('.'))
-        }
+        Some(host) => allowed_image_url(url) || ASSET_BUCKETS.contains(&host),
         None => false,
     }
+}
+
+/// Whether to follow a redirect to `next`, given the URLs requested so far in the chain
+/// (reqwest's `previous()`, which includes the first one): at most [`MAX_REDIRECTS`] of them,
+/// each to an allowed hop.
+fn redirect_allowed(previous: usize, next: &url::Url) -> bool {
+    previous <= MAX_REDIRECTS && allowed_hop(next)
 }
 
 /// The type of a raster image, told by its first bytes; `None` for anything else, notably
@@ -253,26 +274,38 @@ enum Response {
     NotFound,
 }
 
+/// The one client every image is read with, built once: no cookies, no `Referer` (a signed URL
+/// must not leak to the next hop), HTTPS only, every redirect checked.
+fn client() -> Result<&'static reqwest::blocking::Client> {
+    static CLIENT: std::sync::OnceLock<Option<reqwest::blocking::Client>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            let policy = reqwest::redirect::Policy::custom(|attempt| {
+                if redirect_allowed(attempt.previous().len(), attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("redirected too often or away from GitHub")
+                }
+            });
+            let built = reqwest::blocking::Client::builder()
+                .user_agent("Oxide-images/0.1")
+                .https_only(true)
+                .referer(false)
+                .connect_timeout(TIMEOUT)
+                .timeout(TIMEOUT)
+                .redirect(policy)
+                .build();
+            oxide_platform::diag::best_effort("image client", built.as_ref().map(|_| ()));
+            built.ok()
+        })
+        .as_ref()
+        .ok_or_else(failed)
+}
+
 /// One `GET` without credentials: no cookies, no token, every redirect checked.
 fn http_get(url: &url::Url) -> Result<Response> {
-    let policy = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= MAX_REDIRECTS {
-            attempt.error("too many redirects")
-        } else if allowed_hop(attempt.url()) {
-            attempt.follow()
-        } else {
-            attempt.error("redirected away from GitHub")
-        }
-    });
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Oxide-images/0.1")
-        .https_only(true)
-        .connect_timeout(TIMEOUT)
-        .timeout(TIMEOUT)
-        .redirect(policy)
-        .build()
-        .map_err(|_| failed())?;
-    let response = client.get(url.as_str()).send().map_err(|_| failed())?;
+    let response = client()?.get(url.as_str()).send().map_err(|_| failed())?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(Response::NotFound);
@@ -312,6 +345,7 @@ fn raw_endpoint(url: &url::Url) -> Option<String> {
         !s.is_empty()
             && *s != "."
             && *s != ".."
+            && !encodes_a_separator(s)
             && s.bytes().all(|b| {
                 b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'%' | b'+')
             })
@@ -477,7 +511,21 @@ mod tests {
                 "https://objects.githubusercontent.com/github-production-release-asset/1",
                 true,
             ),
+            (
+                "https://github-production-release-asset-2e65be.s3.amazonaws.com/1/x?X-Amz=1",
+                true,
+            ),
+            (
+                "https://github-production-repository-file-5c1aeb.s3.amazonaws.com/1/x?X-Amz=1",
+                true,
+            ),
             ("https://evil.s3.amazonaws.com/x.png", false),
+            // Bucket names are global: anyone can create one that starts with `github-`.
+            ("https://github-evil.s3.amazonaws.com/x.png", false),
+            (
+                "https://github-production-user-asset-6210df-evil.s3.amazonaws.com/x.png",
+                false,
+            ),
             (
                 "https://github-production-user-asset-6210df.s3.amazonaws.com.evil.example/x",
                 false,
@@ -495,6 +543,35 @@ mod tests {
             let parsed = url::Url::parse(url).unwrap();
             assert_eq!(allowed_hop(&parsed), ok, "{url}");
         }
+    }
+
+    #[test]
+    fn exactly_five_redirects_are_followed() {
+        let hop = url::Url::parse("https://objects.githubusercontent.com/a").unwrap();
+        // reqwest lists the first URL among the previous ones, so the fifth redirect sees five.
+        assert!(redirect_allowed(1, &hop));
+        assert!(redirect_allowed(MAX_REDIRECTS, &hop));
+        assert!(!redirect_allowed(MAX_REDIRECTS + 1, &hop));
+        let away = url::Url::parse("https://evil.example/a").unwrap();
+        assert!(!redirect_allowed(1, &away));
+    }
+
+    #[test]
+    fn encoded_slashes_and_backslashes_are_refused_in_paths() {
+        for url in [
+            "https://raw.githubusercontent.com/fake/repo/main/a%2F..%2F..%2Fsecret.png",
+            "https://raw.githubusercontent.com/fake/repo/main/a%2f.png",
+            "https://raw.githubusercontent.com/fake/repo/main/a%5Cb.png",
+            "https://raw.githubusercontent.com/fake/repo/ma%5cin/a.png",
+            "https://github.com/fake/repo/raw/main/a%2Fb.png",
+        ] {
+            let parsed = url::Url::parse(url).unwrap();
+            assert_eq!(raw_endpoint(&parsed), None, "{url}");
+        }
+        assert!(rejected(
+            "https://github.com/fake/repo/assets/12%2F..%2F..%2Fsettings"
+        ));
+        assert!(rejected("https://github.com/user-attachments/assets%5Cx"));
     }
 
     #[test]
