@@ -19,11 +19,14 @@ function deferred<T>() {
 let host: HTMLDivElement;
 let root: Root;
 let seen: QueryState<unknown>;
+/** Every state a Probe committed, to catch one that flashed by. */
+let history: QueryState<unknown>[] = [];
 
 function Probe({ k, fetch, refresh = 0, staleMs, poll }: { k: string; fetch: () => Promise<QueryResult<unknown>>; refresh?: number; staleMs?: number; poll?: number }) {
   const state = useQuery(k, fetch, refresh, staleMs === undefined && poll === undefined ? undefined : { staleMs, poll });
   useEffect(() => {
     seen = state;
+    history.push(state);
   });
   return null;
 }
@@ -35,6 +38,7 @@ const poll = (k: string, fetch: () => Promise<QueryResult<unknown>>, token: numb
 
 beforeEach(() => {
   clearQueryCache();
+  history = [];
   host = document.createElement("div");
   root = createRoot(host);
 });
@@ -203,6 +207,31 @@ describe("query cache", () => {
     await mount("k", fetcher, 0, QUERY_STALE_MS);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: "after login" });
+  });
+
+  it("shows loading, never the background failure, while a mount asks again after a failed prefetch", async () => {
+    await prefetchQuery("k", async () => fail("gh is not logged in"), { staleMs: QUERY_STALE_MS });
+    const retry = deferred<QueryResult<string>>();
+    await mount("k", () => retry.promise, 0, QUERY_STALE_MS);
+    expect(seen.state).toBe("loading");
+    await act(async () => retry.resolve(ok("after login")));
+    expect(seen).toMatchObject({ state: "ready", data: "after login" });
+    expect(history.map((s) => s.state)).not.toContain("error");
+  });
+
+  it("asks again when a background prefetch fails under a mounted query with nothing to show", async () => {
+    const first = deferred<QueryResult<string>>();
+    await mount("k", () => first.promise, 0, QUERY_STALE_MS);
+    await act(async () => first.resolve(fail("offline")));
+    expect(seen).toMatchObject({ state: "error", message: "offline" });
+
+    const fetcher = vi.fn(async () => fail("still offline"));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).not.toHaveBeenCalled();
+    await act(async () => void (await prefetchQuery("k", async () => fail("offline"), { staleMs: QUERY_STALE_MS })));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    // The mounted query does not wait for a fetch nobody runs: it asked itself, and shows that answer.
+    expect(seen).toMatchObject({ state: "error", message: "still offline" });
   });
 
   it("lets a mount ask again when a prefetch returned data the caller does not trust", async () => {

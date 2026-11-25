@@ -19,6 +19,9 @@ interface Entry {
   stale?: boolean;
   /** Fetches that failed in a row; soft polls back off while it is above zero. */
   failures?: number;
+  /** The last fetch was a background one (a preload) that failed: nobody saw it fail, so a mount
+   *  with nothing to show asks again and shows loading meanwhile, not that error. */
+  backgroundError?: boolean;
 }
 
 /** How long cached data is trusted before a mount revalidates it in the background. */
@@ -93,6 +96,7 @@ function run<T>(
             error: result.error.message,
             updatedAt: Date.now(),
             stale: options.background,
+            backgroundError: options.background,
             failures: (previous?.failures ?? 0) + 1,
           },
     );
@@ -139,6 +143,9 @@ export function useQuery<T>(
     () =>
       subscribe(key, (invalidated) => {
         if (invalidated) run(key, () => fetchRef.current(), true);
+        // A preload failed under this mounted query, which has nothing to show: ask in the
+        // foreground rather than wait for a fetch nobody runs.
+        else if (awaitsRetry(key) && !inflight.has(key)) run(key, () => fetchRef.current(), false);
         rerender();
       }),
     [key],
@@ -161,8 +168,15 @@ export function useQuery<T>(
   if (entry?.data !== undefined) {
     return { state: "ready", data: entry.data as T, refreshing: inflight.has(key), refreshError: entry.error };
   }
-  if (entry?.error !== undefined) return { state: "error", message: entry.error };
+  // A failed preload is always fetched again on mount, so it shows as loading until then.
+  if (entry?.error !== undefined && !awaitsRetry(key)) return { state: "error", message: entry.error };
   return { state: "loading" };
+}
+
+/** Whether `key` holds only the error of a background fetch, which a mounted query asks again. */
+function awaitsRetry(key: string): boolean {
+  const entry = entries.get(key);
+  return entry?.backgroundError === true && entry.data === undefined;
 }
 
 /** Warms `key` in the background, under the same key and in-flight deduplication as `useQuery`:
