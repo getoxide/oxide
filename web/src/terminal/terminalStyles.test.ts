@@ -63,13 +63,17 @@ it.each([
   expect(start + px(symbol.width) + px(symbol["margin-right"]) + px(declarations(row).gap)).toBe(gutter);
 });
 
-it("sets the command line apart from its output: a raised header band and a heavier command", () => {
+it("keeps the command line of a block flush with the Terminal: no band behind it", () => {
   const header = declarations(".terminal-command-block > header");
-  // Translucent over the block, so it raises the plain and the red-tinted block alike.
-  expect(header.background).toBe("color-mix(in srgb, var(--fg-bright) 4%, transparent)");
-  expect(declarations(".terminal-command-block > header > code")["font-weight"]).toBe(
-    "calc(var(--font-terminal-weight, 400) + 200)",
-  );
+  expect(paints(header.background)).toBe(false);
+  expect(paints(header["background-color"])).toBe(false);
+});
+
+it("sets the command apart from its output by type alone: the bright text, heavier than the output", () => {
+  const command = declarations(".terminal-command-block > header > code");
+  // The output is drawn in the Terminal foreground, a step under the bright text.
+  expect(command.color).toBe("var(--fg-bright)");
+  expect(command["font-weight"]).toBe("calc(var(--font-terminal-weight, 400) + 200)");
 });
 
 it("leaves no output gap under a block without output", () => {

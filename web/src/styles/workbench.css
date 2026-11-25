@@ -463,14 +463,13 @@
 .terminal-command-block.failed {
   background: var(--terminal-failed-background);
 }
-/* The command line of a block sits on a band a shade off the Terminal, its output on the Terminal
-   itself: one read tells where each command starts, without boxing anything. */
+/* The command line of a block stays flush with the Terminal: the command reads apart from its
+   output by type alone (the bright text, heavier), with a hairline between blocks. */
 .terminal-command-block > header {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 20px 6px var(--terminal-gutter);
-  background: color-mix(in srgb, var(--fg-bright) 4%, transparent);
+  padding: 8px 20px 8px var(--terminal-gutter);
 }
 /* The $ cue hangs in the gutter, clear of the rail, so the command keeps its output's text edge. */
 .terminal-block-prompt {
@@ -535,7 +534,7 @@
 }
 .terminal-output-clip {
   overflow: hidden;
-  margin: 6px 20px 8px var(--terminal-gutter);
+  margin: 0 20px 8px var(--terminal-gutter);
 }
 .terminal-output-clip.empty {
   margin: 0;

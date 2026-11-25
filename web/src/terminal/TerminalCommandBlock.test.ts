@@ -503,11 +503,10 @@ it.each([
       expect(color, themeName).toMatch(/^#[\da-f]{6}$/i);
       expect(contrast(color, theme.background), `${color} on ${theme.background}`).toBeGreaterThanOrEqual(4.5);
     }
-    // The exit badge and $ of a failed block (red 85% toward the bright text) on its header band
-    // (the bright text at 4% over the tint): see the failed-block rules in workbench.css.
+    // The exit badge and $ of a failed block (red 85% toward the bright text) right on its tint:
+    // see the failed-block rules in workbench.css.
     const badge = mixHex(errorRed, brightText, 0.15);
-    const band = mixHex(theme.background, brightText, 0.04);
-    expect(contrast(badge, band), `${badge} on ${band}`).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(badge, theme.background), `${badge} on ${theme.background}`).toBeGreaterThanOrEqual(4.5);
   } finally {
     saveAppearance(initial);
   }
