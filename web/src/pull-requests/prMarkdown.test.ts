@@ -118,3 +118,38 @@ describe("mentions", () => {
     expect(parseInline("@ alone, @-x and @a--b")).toEqual([{ kind: "text", text: "@ alone, @-x and @a--b" }]);
   });
 });
+
+describe("images", () => {
+  const asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+
+  it("reads a Markdown image into an image node", () => {
+    expect(parseInline(`Before ![The panel](${asset}) after`)).toEqual([
+      { kind: "text", text: "Before " },
+      { kind: "image", alt: "The panel", url: asset },
+      { kind: "text", text: " after" },
+    ]);
+  });
+
+  it("reads GitHub's drag-and-drop <img> tag into an image node", () => {
+    const blocks = parseMarkdown(`<img width="1024" alt="Screenshot 2026" src="${asset}" />`);
+    expect(blocks).toEqual([{ kind: "paragraph", inline: [{ kind: "image", alt: "Screenshot 2026", url: asset }] }]);
+  });
+
+  it("reads an image inside a link as the image", () => {
+    expect(parseInline("[![CI](https://img.shields.io/badge/ci-green.png)](https://example.com/ci)")).toEqual([
+      { kind: "image", alt: "CI", url: "https://img.shields.io/badge/ci-green.png" },
+    ]);
+  });
+
+  it("drops images that are not https, and still strips the other tags", () => {
+    const blocks = parseMarkdown(
+      '![a](http://example.com/a.png) <img src="javascript:alert(1)" alt="b"> <img src=\'data:image/png;base64,AAAA\'> <div>c</div>',
+    );
+    expect(blocks).toEqual([{ kind: "paragraph", inline: [{ kind: "text", text: "   c" }] }]);
+  });
+
+  it("keeps an attribute from closing the image early", () => {
+    const blocks = parseMarkdown(`<img alt="a](x) b" src="${asset}?a=1&amp;b=2">`);
+    expect(blocks).toEqual([{ kind: "paragraph", inline: [{ kind: "image", alt: "a(x) b", url: `${asset}?a=1&b=2` }] }]);
+  });
+});
