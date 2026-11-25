@@ -448,47 +448,33 @@ it("leaves the Files view when another route selects a Project", async () => {
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
 });
 
-it("selects a Project by its name without collapsing its Terminals", async () => {
-  const beta = () => all(".project")[1];
-  const betaChevron = () => rowOf("Project Beta").querySelector<HTMLButtonElement>(".project-chevron")!;
-  await click(beta());
-  expect(beta().getAttribute("aria-current")).toBe("true");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("true");
-  await click(beta());
-  expect(beta().getAttribute("aria-current")).toBe("true");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("true");
-});
-
-it("collapses and expands a Project's Terminals via its chevron without switching Projects", async () => {
+it("toggles a Project's Terminals and selects it when its name is clicked, with no chevron", async () => {
   const alpha = () => all(".project")[0];
   const beta = () => all(".project")[1];
-  const betaChevron = () => rowOf("Project Beta").querySelector<HTMLButtonElement>(".project-chevron")!;
+  expect(all(".project-chevron")).toHaveLength(0);
   expect(alpha().getAttribute("aria-current")).toBe("true");
-  expect(betaChevron().getAttribute("aria-label")).toBe("Collapse Project Beta");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("true");
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
 
-  await click(betaChevron());
-  expect(betaChevron().getAttribute("aria-label")).toBe("Expand Project Beta");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("false");
+  await click(beta());
+  expect(beta().getAttribute("aria-current")).toBe("true");
+  expect(alpha().getAttribute("aria-current")).toBe("false");
+  expect(beta().getAttribute("aria-expanded")).toBe("false");
   expect(beta().classList.contains("open")).toBe(false);
-  expect(alpha().getAttribute("aria-current")).toBe("true");
-  expect(beta().getAttribute("aria-current")).toBe("false");
 
-  await click(betaChevron());
-  expect(betaChevron().getAttribute("aria-label")).toBe("Collapse Project Beta");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("true");
+  await click(beta());
+  expect(beta().getAttribute("aria-current")).toBe("true");
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
   expect(beta().classList.contains("open")).toBe(true);
-  expect(alpha().getAttribute("aria-current")).toBe("true");
 });
 
 it("shows a collapsed Project's terminal count and keeps its icon dim", async () => {
   await newTerminal("Project Alpha");
-  await click(rowOf("Project Alpha").querySelector(".project-chevron"));
+  await click(all(".project")[0]);
   expect(all(".project")[0].classList.contains("open")).toBe(false);
   expect(rowOf("Project Alpha").querySelector(".project-count")?.textContent).toBe("1");
 });
 
-it("closes a Project via its × button, ending its terminals, removing it from the sidebar, and updating selection", async () => {
+it("closes a Project from its menu, with no × on its row, ending its terminals, removing it from the sidebar, and updating selection", async () => {
   const stateful = projects.map((project) => ({ ...project }));
   await act(async () => root.unmount());
   clearQueryCache();
@@ -513,12 +499,15 @@ it("closes a Project via its × button, ending its terminals, removing it from t
 
   await newTerminal("Project Alpha");
   await newTerminal("Project Beta");
-  await click(all(".project")[0]);
+  await click(q('[aria-label="Terminals of Project Alpha"] .terminal-item'));
   expect(all(".project")[0].getAttribute("aria-current")).toBe("true");
-  expect(label("Close Project Alpha")).not.toBeNull();
-  expect(label("New terminal in Project Alpha")).not.toBeNull();
+  expect(label("Close Project Alpha")).toBeNull();
+  expect(Array.from(rowOf("Project Alpha").querySelectorAll(".row-action")).map((node) => node.getAttribute("aria-label")))
+    .toEqual(["Files of Project Alpha", "New terminal in Project Alpha"]);
+  expect(Array.from(q('[aria-label="Terminals of Project Alpha"]')!.querySelectorAll(".row-action")).map((node) => node.getAttribute("aria-label")))
+    .toEqual(["Close Terminal 1"]);
 
-  await click(label("Close Project Alpha"));
+  await removeProject("Project Alpha");
   expect(calls.some((call) => call.command === "set_project_open" && JSON.stringify(call.args) === JSON.stringify({ id: 1, open: false }))).toBe(true);
   expect(all(".project-name").map((node) => node.textContent)).toEqual(["Project Beta"]);
   expect(all(".project")[0].getAttribute("aria-current")).toBe("true");
@@ -723,9 +712,9 @@ it("offers Rename, New terminal, and Close terminal on a Terminal row's context 
 });
 
 it("expands a collapsed Project when a terminal is opened in it from the menu", async () => {
-  const betaChevron = () => rowOf("Project Beta").querySelector<HTMLButtonElement>(".project-chevron")!;
-  await click(betaChevron());
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("false");
+  const beta = () => all(".project")[1];
+  await click(beta());
+  expect(beta().getAttribute("aria-expanded")).toBe("false");
   await newTerminal("Project Beta");
-  expect(betaChevron().getAttribute("aria-expanded")).toBe("true");
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
 });

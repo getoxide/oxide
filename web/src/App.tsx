@@ -2,8 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutE
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeftIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -680,21 +678,17 @@ function Sidebar({
                     { label: "Copy path", run: () => copyTextToClipboard(readablePath(project.path)) },
                     { label: "Close project", disabled: closingProjectId === project.id, run: () => void close(project), separatorBefore: true },
                   ])}>
-                    <button
-                      type="button"
-                      className="project-chevron"
-                      aria-label={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
-                      aria-expanded={expanded}
-                      onClick={() => setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id))}
-                    >
-                      {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-                    </button>
+                    {/* The name selects the Project and folds or unfolds its Terminals. */}
                     <button
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
+                      aria-expanded={expanded}
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
-                      onClick={() => onSelectProject(project)}
+                      onClick={() => {
+                        setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
+                        onSelectProject(project);
+                      }}
                     >
                       <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
@@ -712,13 +706,7 @@ function Sidebar({
                         disabled={project.missing}
                         onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
                         <PlusIcon size={14} />
-                      </button>
-                      <button className="row-action project-close" aria-label={`Close ${project.name}`} title="Close Project"
-                        disabled={closingProjectId === project.id}
-                        onClick={() => void close(project)}>
-                        <XIcon size={14} />
-                      </button>
-                    </div>
+                      </button>                    </div>
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
