@@ -32,7 +32,7 @@ import { githubKeys } from "../shared/githubQueries";
 import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
-import { Markdown } from "./PullRequestMarkdown";
+import { Markdown, MarkdownImages } from "./PullRequestMarkdown";
 import { ActivityRow, type ConversationItem, isConversationItem } from "./PullRequestTimeline";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon, useCandidates } from "./PullRequestPeople";
@@ -423,6 +423,7 @@ export function PullRequestReview({
   const edit = (partial: Partial<PullRequestEdit>) =>
     change(null, () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
   return (
+    <MarkdownImages projectId={projectId} signed={detail.signedImages}>
     <div className="pr-review">
       {nav}
       <RefreshNotice query={query} />
@@ -584,6 +585,7 @@ export function PullRequestReview({
         </div>
       )}
     </div>
+    </MarkdownImages>
   );
 }
 

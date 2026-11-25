@@ -704,3 +704,29 @@ it("places the loading preview header inside .pr-scroll so it shares the review 
   expect(scroll).not.toBeNull();
   expect(scroll!.querySelector('.skeleton[role="status"]')).not.toBeNull();
 });
+
+it("shows images in the description and reviews through Core, with a link for other hosts", async () => {
+  const asset = "https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const signed = "https://private-user-images.githubusercontent.com/7/9-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.png?jwt=abc";
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: "data:image/gif;base64,R0lGODlh" });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      body: `Before and after:\n\n![After](${asset})`,
+      signedImages: [{ url: asset, signedUrl: signed }],
+      timeline: [
+        { kind: "review", id: "PRR_1", author: "bob", body: "See ![mock](http://example.com/a.png) and ![ext](https://example.com/b.png)", createdAt: "2026-10-27T10:00:00Z", state: "commented" },
+      ],
+    }),
+  });
+  await render();
+  await click(host.querySelector<HTMLButtonElement>(".pr-description .pr-toggle")!);
+  const images = [...host.querySelectorAll<HTMLImageElement>(".md img")];
+  expect(images.map((i) => [i.alt, i.getAttribute("src")])).toEqual([["After", "data:image/gif;base64,R0lGODlh"]]);
+  expect(fetch).toHaveBeenCalledWith(1, signed);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const conversation = host.querySelector('[aria-label="Conversation"]')!;
+  expect(conversation.textContent).toContain("ext");
+  expect(conversation.textContent).toContain("Open image");
+  expect(conversation.textContent).not.toContain("mock");
+});
