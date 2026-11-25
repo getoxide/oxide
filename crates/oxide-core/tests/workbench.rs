@@ -295,6 +295,25 @@ fn a_syntax_error_fails_the_block_and_keeps_the_shell_usable() {
     }
 }
 
+/// A command with a quote and a later `!` runs as typed: bash before 4.4 (macOS's /bin/bash)
+/// expands history inside the wrapper's quoting, which would fail with "event not found" and
+/// leave the block without a start or an end.
+#[test]
+fn an_exclamation_mark_after_a_quote_runs_as_typed() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo 'fix!'", "bang")
+            .unwrap();
+        let (code, _) = block_end(&view, "bang");
+        assert_eq!(code, "0", "{shell:?}: {}", view.text());
+        assert!(view.text().contains("fix!\r\n"), "{shell:?}: {}", view.text());
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
 /// A user's own hooks and options (a cleared `precmd_functions` or `PROMPT_COMMAND`, a prompt
 /// theme, `nounset`) never stop blocks from ending, Ctrl+C included, and their prompt never
 /// shows up in the Terminal.

@@ -325,7 +325,8 @@ pub fn block_script(token: &str, command: &str) -> String {
 }
 
 /// `text` as one `$'...'` word, which bash and zsh both read back unchanged, with every line
-/// break and control character escaped so the word stays on one line.
+/// break and ASCII control character escaped so the word stays on one line. `!` is escaped too:
+/// bash before 4.4 (macOS's /bin/bash) expands history inside `$'...'` once a quote precedes it.
 fn ansi_c_quoted(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len() + 3);
     quoted.push_str("$'");
@@ -336,6 +337,7 @@ fn ansi_c_quoted(text: &str) -> String {
             '\n' => quoted.push_str("\\n"),
             '\r' => quoted.push_str("\\r"),
             '\t' => quoted.push_str("\\t"),
+            '!' => quoted.push_str("\\041"),
             c if c.is_ascii_control() => quoted.push_str(&format!("\\{:03o}", c as u32)),
             c => quoted.push(c),
         }
