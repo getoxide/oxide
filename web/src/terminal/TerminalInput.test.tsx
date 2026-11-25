@@ -126,3 +126,26 @@ it("normalizes extended drive and UNC paths without losing the network share", (
   expect(readablePath("\\\\?\\UNC\\server\\share")).toBe("\\\\server\\share");
   expect(readablePath("/home/work")).toBe("/home/work");
 });
+
+it.each([
+  ["Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"],
+  ["macOS", "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15"],
+  ["Linux", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"],
+])("shows the same $ prompt on %s", async (_platform, userAgent) => {
+  vi.stubGlobal("navigator", { ...navigator, userAgent });
+  await act(async () =>
+    root.render(
+      <TerminalInput
+        ref={createRef<TerminalInputHandle>()}
+        history={[]}
+        sessionId={1}
+        cwd="/project"
+        disabled={false}
+        visible
+        fresh
+        onRun={() => {}}
+      />,
+    ),
+  );
+  expect(container.querySelector(".terminal-prompt-symbol")?.textContent).toBe("$");
+});

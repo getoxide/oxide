@@ -338,7 +338,7 @@ export function TerminalInput({
       )}
       <div className="terminal-command-entry">
         <span className="terminal-prompt-symbol" aria-hidden="true">
-          {/Windows/i.test(navigator.userAgent) ? "PS>" : "$"}
+          $
         </span>
         <div className="terminal-input-editor">
           {suggestion && selection === input.length && (
