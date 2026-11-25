@@ -730,7 +730,13 @@ impl Core {
 
     /// Detailed issue with its description, status and comments.
     pub fn issue_detail(&self, project_id: u32, number: u32) -> Result<IssueDetail> {
-        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number)
+        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number, false)
+    }
+
+    /// [`Core::issue_detail`] for a background poll: it reads only the first page of the
+    /// Activity Timeline, reusing the rest from a full read made in the last few minutes.
+    pub fn poll_issue_detail(&self, project_id: u32, number: u32) -> Result<IssueDetail> {
+        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number, true)
     }
 
     /// The files of the repository's issue templates directory on GitHub.
@@ -850,7 +856,17 @@ impl Core {
     /// A pull request's description, checks, conversation, allowed merge
     /// methods and changed files.
     pub fn pull_request_detail(&self, project_id: u32, number: u32) -> Result<PullRequestDetail> {
-        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number)
+        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number, false)
+    }
+
+    /// [`Core::pull_request_detail`] for a background poll: it reads only the first page of the
+    /// Activity Timeline, reusing the rest from a full read made in the last few minutes.
+    pub fn poll_pull_request_detail(
+        &self,
+        project_id: u32,
+        number: u32,
+    ) -> Result<PullRequestDetail> {
+        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number, true)
     }
 
     /// Adds a conversation comment to a pull request.

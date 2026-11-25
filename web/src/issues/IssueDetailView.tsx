@@ -75,7 +75,7 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
 export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, onBack, onChanged }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
-  const query = useQuery(githubKeys.issueDetail(projectId, number), () => commands.issueDetail(projectId, number), refreshKey + reload, {
+  const query = useQuery(githubKeys.issueDetail(projectId, number), ({ poll }) => commands.issueDetail(projectId, number, poll), refreshKey + reload, {
     staleMs: QUERY_STALE_MS,
     poll: pollKey,
   });

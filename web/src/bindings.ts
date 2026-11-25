@@ -79,8 +79,11 @@ export const commands = {
 	createPullRequest: (projectId: number, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, pullRequest })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
 	listPullRequests: (projectId: number, mine: boolean, search: string) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("list_pull_requests", { projectId, mine, search })),
-	/**  One pull request's description, checks, conversation and changed files. */
-	pullRequestDetail: (projectId: number, number: number) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number })),
+	/**
+	 *  One pull request's description, checks, conversation and changed files. `poll`: a
+	 *  background refresh, which reads only the first page of the Activity Timeline.
+	 */
+	pullRequestDetail: (projectId: number, number: number, poll: boolean) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number, poll })),
 	commentPullRequest: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_pull_request", { projectId, number, body })),
 	/**  Rewrites a comment of a pull request or an issue. */
 	editComment: (projectId: number, id: string, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_comment", { projectId, id, body })),
@@ -123,7 +126,8 @@ export const commands = {
 	/**  The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none. */
 	issueTemplates: (projectId: number) => typedError<IssueTemplateFile[], AppError>(__TAURI_INVOKE("issue_templates", { projectId })),
 	listIssues: (projectId: number, closed: boolean, mine: boolean, search: string) => typedError<IssueSummary[], AppError>(__TAURI_INVOKE("list_issues", { projectId, closed, mine, search })),
-	issueDetail: (projectId: number, number: number) => typedError<IssueDetail_Serialize, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number })),
+	/**  `poll`: a background refresh, which reads only the first page of the Activity Timeline. */
+	issueDetail: (projectId: number, number: number, poll: boolean) => typedError<IssueDetail_Serialize, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number, poll })),
 	createIssue: (projectId: number, title: string, body: string, assignees: string[], labels: string[]) => typedError<IssueSummary, AppError>(__TAURI_INVOKE("create_issue", { projectId, title, body, assignees, labels })),
 	commentIssue: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_issue", { projectId, number, body })),
 	/**  Closes an issue with a reason, leaving `comment` first when it is not empty. */

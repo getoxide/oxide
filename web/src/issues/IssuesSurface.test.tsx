@@ -223,6 +223,19 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
 });
 
+it("asks for the issue's whole timeline when opened, and only its first page when polling", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+    expect(vi.mocked(commands.issueDetail).mock.calls).toEqual([[1, 7, false]]);
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS));
+    expect(vi.mocked(commands.issueDetail).mock.calls.at(-1)).toEqual([1, 7, true]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("links to the issue on GitHub when its timeline holds more activity than was read", async () => {
   const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
   vi.mocked(commands.issueDetail).mockResolvedValue({ status: "ok", data: detail({ timelineTruncated: true }) });

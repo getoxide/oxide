@@ -4,8 +4,12 @@
 use super::image::{SignedImage, signed_images};
 use super::reactions::{REACTION_FIELDS, ReactionGroup, reactions_from};
 use super::{CheckState, Gh, PullRequestLabel, ReviewState, review_state_from, text};
+use oxide_platform::sync::LockExt;
 use serde::Serialize;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// A plain comment, which its author can edit or delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -182,7 +186,7 @@ pub(super) struct Timeline {
 }
 
 /// Which kind of number the query asks for.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Subject {
     Issue,
     PullRequest,
@@ -192,6 +196,64 @@ pub(super) enum Subject {
 const PAGE_SIZE: u32 = 100;
 /// The pages read at most, so a very long conversation costs a bounded number of round trips.
 const MAX_PAGES: usize = 5;
+
+/// How long the pages after the first, from the last full read, stand in for themselves when
+/// a poll reads only the first: under the few minutes GitHub's signed image URLs in their
+/// bodies stay valid, and a poll past it reads every page again.
+const LATER_PAGES_TTL: Duration = Duration::from_secs(4 * 60);
+/// The timelines whose later pages are kept at most.
+const LATER_PAGES_KEPT: usize = 16;
+
+/// The entries after the first page of the timelines read in full lately, so a background poll
+/// (every few seconds while checks run) costs one GraphQL round trip instead of up to
+/// [`MAX_PAGES`]. Only comments and reviews are sure to be current in what a poll returns
+/// (the detail view adds those from `gh`); newer events past the first page wait for the next
+/// full read.
+#[derive(Default)]
+pub(super) struct LaterPages(Mutex<HashMap<(PathBuf, Subject, u32), Later>>);
+
+struct Later {
+    read_at: Instant,
+    /// The end cursor of the first page they follow: a first page that changed starts afresh.
+    after: String,
+    nodes: Vec<serde_json::Value>,
+    /// Whether GitHub held more than the pages read.
+    more: bool,
+}
+
+impl LaterPages {
+    fn get(
+        &self,
+        key: &(PathBuf, Subject, u32),
+        after: &str,
+    ) -> Option<(Vec<serde_json::Value>, bool)> {
+        let pages = self.0.lock_recover();
+        let later = pages.get(key)?;
+        (later.after == after && later.read_at.elapsed() < LATER_PAGES_TTL)
+            .then(|| (later.nodes.clone(), later.more))
+    }
+
+    fn keep(&self, key: (PathBuf, Subject, u32), later: Option<Later>) {
+        let mut pages = self.0.lock_recover();
+        pages.retain(|_, l| l.read_at.elapsed() < LATER_PAGES_TTL);
+        match later {
+            Some(later) => {
+                if pages.len() >= LATER_PAGES_KEPT && !pages.contains_key(&key) {
+                    pages.clear();
+                }
+                pages.insert(key, later);
+            }
+            None => {
+                pages.remove(&key);
+            }
+        }
+    }
+
+    /// Forgets every timeline, e.g. when `gh` changes account.
+    pub(super) fn clear(&self) {
+        self.0.lock_recover().clear();
+    }
+}
 
 const ACTOR: &str = "actor{login} createdAt";
 
@@ -281,31 +343,81 @@ fn timeline_page(
     parsed.ok()
 }
 
+/// The cursor of the page after the one `info` describes, if GitHub holds one.
+fn next_cursor(info: &serde_json::Value) -> Option<&str> {
+    info["endCursor"]
+        .as_str()
+        .filter(|c| info["hasNextPage"].as_bool() == Some(true) && !c.is_empty())
+}
+
 /// The timeline, node id and participants of issue or pull request `number`, up to
-/// [`MAX_PAGES`] pages of entries. Best effort: `None` when GitHub refuses the query, so the
-/// detail view still shows what `gh` gave.
-pub(super) fn timeline(gh: &Gh, cwd: &Path, subject: Subject, number: u32) -> Option<Timeline> {
+/// [`MAX_PAGES`] pages of entries. A `poll` reads only the first page and reuses the later
+/// ones of a full read made in the last few minutes ([`LaterPages`]). Best effort: `None` when
+/// GitHub refuses the query, so the detail view still shows what `gh` gave.
+pub(super) fn timeline(
+    gh: &Gh,
+    cwd: &Path,
+    subject: Subject,
+    number: u32,
+    poll: bool,
+) -> Option<Timeline> {
     let mut node = timeline_page(gh, cwd, subject, number, None)?;
     let mut items = list(&node["timelineItems"]["nodes"]).to_vec();
-    let mut info = node["timelineItems"]["pageInfo"].clone();
-    for _ in 1..MAX_PAGES {
-        let Some(cursor) = info["endCursor"]
-            .as_str()
-            .filter(|c| info["hasNextPage"].as_bool() == Some(true) && !c.is_empty())
-        else {
-            break;
+    let key = (cwd.to_path_buf(), subject, number);
+    let mut truncated = false;
+    if let Some(after) = next_cursor(&node["timelineItems"]["pageInfo"]).map(str::to_string) {
+        let reused = if poll {
+            gh.timeline_pages.get(&key, &after)
+        } else {
+            None
         };
-        let Some(page) = timeline_page(gh, cwd, subject, number, Some(cursor)) else {
-            break;
-        };
-        items.extend(list(&page["timelineItems"]["nodes"]).iter().cloned());
-        info = page["timelineItems"]["pageInfo"].clone();
+        let (later, more) = reused.unwrap_or_else(|| {
+            let (later, more, complete) = later_pages(gh, cwd, subject, number, &after);
+            gh.timeline_pages.keep(
+                key,
+                complete.then(|| Later {
+                    read_at: Instant::now(),
+                    after,
+                    nodes: later.clone(),
+                    more,
+                }),
+            );
+            (later, more)
+        });
+        items.extend(later);
+        truncated = more;
+    } else {
+        gh.timeline_pages.keep(key, None);
     }
     node["timelineItems"]["nodes"] = serde_json::Value::Array(items);
     Some(Timeline {
-        truncated: info["hasNextPage"].as_bool() == Some(true),
+        truncated,
         ..timeline_from(&node)
     })
+}
+
+/// The entries after `cursor`, up to [`MAX_PAGES`] pages counting the first, whether GitHub
+/// holds more still, and whether every page asked for was read.
+fn later_pages(
+    gh: &Gh,
+    cwd: &Path,
+    subject: Subject,
+    number: u32,
+    cursor: &str,
+) -> (Vec<serde_json::Value>, bool, bool) {
+    let mut items = Vec::new();
+    let mut cursor = cursor.to_string();
+    for _ in 1..MAX_PAGES {
+        let Some(page) = timeline_page(gh, cwd, subject, number, Some(&cursor)) else {
+            return (items, true, false);
+        };
+        items.extend(list(&page["timelineItems"]["nodes"]).iter().cloned());
+        match next_cursor(&page["timelineItems"]["pageInfo"]) {
+            Some(next) => cursor = next.to_string(),
+            None => return (items, false, true),
+        }
+    }
+    (items, true, true)
 }
 
 impl TimelineItem {

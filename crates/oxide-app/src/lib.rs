@@ -1154,14 +1154,22 @@ async fn list_issues(
 
 #[tauri::command]
 #[specta::specta]
+/// `poll`: a background refresh, which reads only the first page of the Activity Timeline.
 async fn issue_detail(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     number: u32,
+    poll: bool,
 ) -> Result<IssueDetail, AppError> {
-    git_blocking(&core, move |core| core.issue_detail(project_id, number))
-        .await
-        .map(IssueDetail::from)
+    git_blocking(&core, move |core| {
+        if poll {
+            core.poll_issue_detail(project_id, number)
+        } else {
+            core.issue_detail(project_id, number)
+        }
+    })
+    .await
+    .map(IssueDetail::from)
 }
 
 #[tauri::command]
@@ -1294,16 +1302,22 @@ async fn list_pull_requests(
     .map(|prs| prs.into_iter().map(PullRequest::from).collect())
 }
 
-/// One pull request's description, checks, conversation and changed files.
+/// One pull request's description, checks, conversation and changed files. `poll`: a
+/// background refresh, which reads only the first page of the Activity Timeline.
 #[tauri::command]
 #[specta::specta]
 async fn pull_request_detail(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     number: u32,
+    poll: bool,
 ) -> Result<PullRequestDetail, AppError> {
     git_blocking(&core, move |core| {
-        core.pull_request_detail(project_id, number)
+        if poll {
+            core.poll_pull_request_detail(project_id, number)
+        } else {
+            core.pull_request_detail(project_id, number)
+        }
     })
     .await
     .map(PullRequestDetail::from)

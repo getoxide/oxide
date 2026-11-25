@@ -324,6 +324,7 @@ pub struct Gh {
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
     viewer_logins: Cached<PathBuf, Option<String>>,
+    timeline_pages: timeline::LaterPages,
 }
 
 /// Whether `gh` can be used, and if not, what to tell the user.
@@ -459,6 +460,7 @@ impl Gh {
         self.merge_settings.clear();
         self.default_merge_methods.clear();
         self.viewer_logins.clear();
+        self.timeline_pages.clear();
     }
 
     fn path_var(&self) -> OsString {
@@ -1113,8 +1115,14 @@ fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
 }
 
 /// One pull request with its description, checks, conversation, the merge
-/// methods the repository allows and its changed-file count.
-pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
+/// methods the repository allows and its changed-file count. A `poll` reads only the first page
+/// of the Activity Timeline (see [`timeline::timeline`]).
+pub fn pull_request_detail(
+    gh: &Gh,
+    cwd: &Path,
+    number: u32,
+    poll: bool,
+) -> Result<PullRequestDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
     let fields = format!(
@@ -1126,7 +1134,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         std::thread::scope(|scope| {
             let required = scope.spawn(|| required_check_names(gh, cwd, number));
             let timeline =
-                scope.spawn(|| timeline::timeline(gh, cwd, Subject::PullRequest, number));
+                scope.spawn(|| timeline::timeline(gh, cwd, Subject::PullRequest, number, poll));
             let settings = scope.spawn(|| merge_settings(gh, cwd));
             let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
             let viewer = scope.spawn(|| viewer_login(gh, cwd));
@@ -1980,12 +1988,14 @@ pub fn issue_templates(gh: &Gh, cwd: &Path) -> Result<Vec<IssueTemplateFile>> {
     Ok(files)
 }
 
-pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
+/// One issue with its description and Activity Timeline; a `poll` reads only the first page
+/// of the timeline (see [`timeline::timeline`]).
+pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32, poll: bool) -> Result<IssueDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
     let (view, viewer, timeline) = std::thread::scope(|scope| {
         let viewer = scope.spawn(|| viewer_login(gh, cwd));
-        let timeline = scope.spawn(|| timeline::timeline(gh, cwd, Subject::Issue, number));
+        let timeline = scope.spawn(|| timeline::timeline(gh, cwd, Subject::Issue, number, poll));
         let view = gh.run(cwd, &["issue", "view", &n, "--json", ISSUE_DETAIL_FIELDS]);
         (view, join(viewer), join(timeline))
     });
@@ -2049,7 +2059,7 @@ pub fn create_issue(
         .next()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
-    let detail = issue_detail(gh, cwd, number)?;
+    let detail = issue_detail(gh, cwd, number, false)?;
     Ok(IssueSummary {
         number: detail.number,
         title: detail.title,

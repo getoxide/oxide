@@ -109,6 +109,12 @@ function run<T>(
   return settled;
 }
 
+/** How a `useQuery` fetch was asked: `poll` for a timer or focus tick, which may read less (e.g.
+ *  only the first page of a GitHub timeline), false for a load, a refresh or an invalidation. */
+export interface FetchAsk {
+  poll: boolean;
+}
+
 /** A timer or focus tick: never overlaps a fetch already running for the key, and waits longer
  *  after each failure in a row so a rate limit or an outage is not hammered. */
 function softRefresh<T>(key: string, fetch: () => Promise<QueryResult<T>>): void {
@@ -118,15 +124,19 @@ function softRefresh<T>(key: string, fetch: () => Promise<QueryResult<T>>): void
   run(key, fetch, false);
 }
 
+const FULL: FetchAsk = { poll: false };
+const POLL: FetchAsk = { poll: true };
+
 /** Shows the last known result for `key` at once. By default a mount revalidates in the
  *  background; pass `staleMs` to trust cached data for that long (the GitHub surfaces do, since
  *  every fetch is a `gh` call). A changed `refresh` token is a hard ask (the user just acted), so
  *  it bypasses the threshold and any fetch in flight, and an invalidation always wins. A changed
  *  `poll` token is a soft one (a timer or focus tick): it fetches unless a fetch for the key is
- *  already running. The caller owns the refresh policy; this owns what to show meanwhile. */
+ *  already running, and is the only fetch asked as a `poll`. The caller owns the refresh policy;
+ *  this owns what to show meanwhile. */
 export function useQuery<T>(
   key: string,
-  fetch: () => Promise<QueryResult<T>>,
+  fetch: (ask: FetchAsk) => Promise<QueryResult<T>>,
   refresh: string | number = 0,
   options: { staleMs?: number; poll?: string | number } = {},
 ): QueryState<T> {
@@ -142,10 +152,10 @@ export function useQuery<T>(
   useEffect(
     () =>
       subscribe(key, (invalidated) => {
-        if (invalidated) run(key, () => fetchRef.current(), true);
+        if (invalidated) run(key, () => fetchRef.current(FULL), true);
         // A preload failed under this mounted query, which has nothing to show: ask in the
         // foreground rather than wait for a fetch nobody runs.
-        else if (awaitsRetry(key) && !inflight.has(key)) run(key, () => fetchRef.current(), false);
+        else if (awaitsRetry(key) && !inflight.has(key)) run(key, () => fetchRef.current(FULL), false);
         rerender();
       }),
     [key],
@@ -159,9 +169,9 @@ export function useQuery<T>(
     // new key) reuses the cache unless it has gone stale.
     const forced = same && previous.refresh !== refresh;
     const polled = same && previous.poll !== poll;
-    if (forced) run(key, () => fetchRef.current(), true);
-    else if (polled) softRefresh(key, () => fetchRef.current());
-    else if (isStale(key, staleMs)) run(key, () => fetchRef.current(), false);
+    if (forced) run(key, () => fetchRef.current(FULL), true);
+    else if (polled) softRefresh(key, () => fetchRef.current(POLL));
+    else if (isStale(key, staleMs)) run(key, () => fetchRef.current(FULL), false);
   }, [key, refresh, staleMs, poll]);
 
   const entry = entries.get(key);

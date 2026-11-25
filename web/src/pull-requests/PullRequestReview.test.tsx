@@ -601,6 +601,21 @@ it("reloads sooner while checks are still running, and stops once they are done"
   }
 });
 
+it("asks for the whole timeline on load and on refresh, but only its first page when polling", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    await render();
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls).toEqual([[1, 174, false]]);
+    await tickChecks();
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls.at(-1)).toEqual([1, 174, true]);
+    await render({ refreshKey: 1 });
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls.at(-1)).toEqual([1, 174, false]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 const detailCalls = () => vi.mocked(commands.pullRequestDetail).mock.calls.length;
 /** One check interval at a time, letting each poll's `gh` call settle before the next tick. */
 async function tickChecks(times = 1) {

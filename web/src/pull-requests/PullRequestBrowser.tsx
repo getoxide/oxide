@@ -267,8 +267,8 @@ export function PullRequestReview({
   });
   const query = useQuery(
     key,
-    async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
-      const detail = await commands.pullRequestDetail(projectId, number);
+    async ({ poll }): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
+      const detail = await commands.pullRequestDetail(projectId, number, poll);
       if (detail.status === "error") return detail;
       return { status: "ok", data: { detail: detail.data } };
     },

@@ -1402,6 +1402,89 @@ fn issue_detail_pages_through_a_timeline_longer_than_one_page() {
 }
 
 #[test]
+fn a_polled_issue_detail_reads_only_the_first_timeline_page_and_reuses_the_rest() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut state = ok_state();
+    let nodes: Vec<serde_json::Value> = (0..250)
+        .map(|i| {
+            serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                "createdAt": at_second(i)})
+        })
+        .collect();
+    let mut issue = issue_42();
+    issue["comments"] = serde_json::json!([]);
+    state["issues"] = serde_json::json!([issue]);
+    state["timelines"] =
+        serde_json::json!({"42": {"id": "I_kwDO42", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+    let timeline_reads = || {
+        f.gh_calls()
+            .into_iter()
+            .filter(|c| {
+                c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems"))
+            })
+            .count()
+    };
+
+    // A poll with nothing read before reads the whole timeline.
+    let first = f.core.poll_issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(first.timeline.len(), 250);
+    assert_eq!(timeline_reads(), 3);
+
+    let polled = f.core.poll_issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(timeline_reads(), 4, "a poll reads only the first page");
+    assert_eq!(
+        polled.timeline.len(),
+        250,
+        "the later pages come from the last full read"
+    );
+    assert!(!polled.timeline_truncated);
+    assert!(
+        matches!(&polled.timeline[249], TimelineItem::Reopened(e) if e.created_at == at_second(249))
+    );
+
+    f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(
+        timeline_reads(),
+        7,
+        "a load or a refresh reads every page again"
+    );
+}
+
+#[test]
+fn a_polled_pull_request_detail_reads_only_the_first_timeline_page() {
+    let f = fixture();
+    let nodes: Vec<serde_json::Value> = (0..150)
+        .map(|i| {
+            serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                "createdAt": at_second(i)})
+        })
+        .collect();
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([]);
+    pr["reviews"] = serde_json::json!([]);
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] =
+        serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+    let timeline_reads = || {
+        f.gh_calls()
+            .into_iter()
+            .filter(|c| {
+                c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems"))
+            })
+            .count()
+    };
+
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(timeline_reads(), 2);
+    let polled = f.core.poll_pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(timeline_reads(), 3);
+    assert_eq!(polled.timeline.len(), 150);
+}
+
+#[test]
 fn a_timeline_beyond_the_page_cap_is_flagged_and_keeps_every_comment_and_review() {
     use oxide_core::TimelineItem;
     let f = fixture();
