@@ -9,12 +9,14 @@ use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-/// A `https://github.com/user-attachments/assets/<id>` URL and the short-lived signed URL
-/// GitHub rendered for it, which loads without the user's token.
+/// The short-lived signed URL GitHub rendered for an uploaded asset, which loads without the
+/// user's token. The asset is named by its uuid, the last segment of both
+/// `https://github.com/user-attachments/assets/<uuid>` and a private repository's
+/// `https://github.com/<owner>/<repo>/assets/<n>/<uuid>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignedImage {
-    pub url: String,
+    pub asset_id: String,
     pub signed_url: String,
 }
 
@@ -90,10 +92,10 @@ pub(super) fn signed_images(html: &str, out: &mut Vec<SignedImage>) {
         let Some(id) = asset_id(&signed) else {
             continue;
         };
-        let url = format!("https://github.com/user-attachments/assets/{id}");
-        if out.iter().all(|image| image.url != url) {
+        let id = id.to_ascii_lowercase();
+        if out.iter().all(|image| image.asset_id != id) {
             out.push(SignedImage {
-                url,
+                asset_id: id,
                 signed_url: src,
             });
         }

@@ -764,7 +764,7 @@ it("shows images in the description and reviews through Core, with a link for ot
     status: "ok",
     data: detail({
       body: `Before and after:\n\n![After](${asset})`,
-      signedImages: [{ url: asset, signedUrl: signed }],
+      signedImages: [{ assetId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", signedUrl: signed }],
       timeline: [
         { kind: "review", id: "PRR_1", author: "bob", body: "See ![mock](http://example.com/a.png) and ![ext](https://example.com/b.png)", createdAt: "2026-10-27T10:00:00Z", state: "commented", reactions: [] },
       ],

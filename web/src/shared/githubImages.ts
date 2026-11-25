@@ -31,6 +31,28 @@ export function isGithubImageUrl(url: string): boolean {
   return HOSTS.has(parsed.hostname);
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The uuid of an asset uploaded to GitHub, from `github.com/user-attachments/assets/<uuid>` or a
+ *  private repository's `github.com/<owner>/<repo>/assets/<n>/<uuid>`; what Core keys signed URLs by. */
+export function githubAssetId(url: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "github.com") return undefined;
+  const segments = parsed.pathname.split("/").slice(1);
+  const id =
+    segments.length === 3 && segments[0] === "user-attachments" && segments[1] === "assets"
+      ? segments[2]
+      : segments.length === 5 && segments[2] === "assets"
+        ? segments[4]
+        : undefined;
+  return id && UUID.test(id) ? id.toLowerCase() : undefined;
+}
+
 /** Loaded images, keyed by the URL in the Markdown rather than the short-lived signed URL, so a
  *  refreshed detail view reuses them. Sized by the length of their `data:` URLs. */
 const cache = new LruCache<string, string>(48 * 1024 * 1024, (src) => src.length);

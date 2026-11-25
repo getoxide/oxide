@@ -519,7 +519,7 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
 impl From<oxide_core::SignedImage> for SignedImage {
     fn from(i: oxide_core::SignedImage) -> Self {
         Self {
-            url: i.url,
+            asset_id: i.asset_id,
             signed_url: i.signed_url,
         }
     }

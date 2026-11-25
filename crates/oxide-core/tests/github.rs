@@ -2540,7 +2540,8 @@ fn issue_detail_resolves_private_user_attachments_from_body_html() {
         "participants": {"nodes": []},
         "timelineItems": {"nodes": [
             {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"},
-             "body": format!("![shot](https://github.com/user-attachments/assets/{b})"),
+             // A private repository's asset: GitHub signs it the same way, by its uuid.
+             "body": format!("![shot](https://github.com/fake/repo/assets/7/{b})"),
              "bodyHTML": format!("<p><img src='{}' alt='shot'></p>", signed(b)),
              "createdAt": "2026-01-03T10:30:00Z"}
         ]}
@@ -2552,11 +2553,11 @@ fn issue_detail_resolves_private_user_attachments_from_body_html() {
         detail.signed_images,
         vec![
             SignedImage {
-                url: format!("https://github.com/user-attachments/assets/{a}"),
+                asset_id: a.to_string(),
                 signed_url: format!("{}&x=1", signed(a)),
             },
             SignedImage {
-                url: format!("https://github.com/user-attachments/assets/{b}"),
+                asset_id: b.to_string(),
                 signed_url: signed(b),
             },
         ]

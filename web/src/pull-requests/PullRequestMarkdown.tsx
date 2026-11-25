@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SignedImage } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
-import { cachedGithubImage, isGithubImageUrl, loadGithubImage } from "../shared/githubImages";
+import { cachedGithubImage, githubAssetId, isGithubImageUrl, loadGithubImage } from "../shared/githubImages";
 import { limitBlocks, parseMarkdown, type Inline } from "./prMarkdown";
 
 const ImagesContext = createContext<{ projectId: number; signed: Map<string, string> } | null>(null);
@@ -9,7 +9,7 @@ const ImagesContext = createContext<{ projectId: number; signed: Map<string, str
 /** Lets the Markdown inside load GitHub images through the Project, using the signed URLs GitHub
  *  gave for private attachments. Without it, every image is shown as a link. */
 export function MarkdownImages({ projectId, signed, children }: { projectId: number; signed: SignedImage[]; children: ReactNode }) {
-  const value = useMemo(() => ({ projectId, signed: new Map(signed.map((s) => [s.url, s.signedUrl])) }), [projectId, signed]);
+  const value = useMemo(() => ({ projectId, signed: new Map(signed.map((s) => [s.assetId, s.signedUrl])) }), [projectId, signed]);
   return <ImagesContext.Provider value={value}>{children}</ImagesContext.Provider>;
 }
 
@@ -18,7 +18,8 @@ export function MarkdownImages({ projectId, signed, children }: { projectId: num
 function MarkdownImage({ alt, url }: { alt: string; url: string }) {
   const images = useContext(ImagesContext);
   const projectId = images?.projectId;
-  const source = images?.signed.get(url) ?? url;
+  const asset = githubAssetId(url);
+  const source = (asset && images?.signed.get(asset)) || url;
   const loadable = projectId !== undefined && isGithubImageUrl(url);
   const [src, setSrc] = useState(() => cachedGithubImage(url));
   const [failed, setFailed] = useState(false);

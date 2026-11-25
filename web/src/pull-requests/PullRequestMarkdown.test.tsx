@@ -38,7 +38,7 @@ it("loads a GitHub image through Core, from its signed URL, once", async () => {
   const asset = "https://github.com/user-attachments/assets/11111111-2222-3333-4444-555555555555";
   const signed = "https://private-user-images.githubusercontent.com/1/2-11111111-2222-3333-4444-555555555555.png?jwt=x";
   const view = (n: number) => (
-    <MarkdownImages projectId={3} signed={[{ url: asset, signedUrl: signed }]}>
+    <MarkdownImages projectId={3} signed={[{ assetId: "11111111-2222-3333-4444-555555555555", signedUrl: signed }]}>
       <Markdown key={n} source={`![The panel](${asset})`} />
     </MarkdownImages>
   );
@@ -50,6 +50,21 @@ it("loads a GitHub image through Core, from its signed URL, once", async () => {
   await act(async () => root.render(view(2)));
   expect(host.querySelector("img")?.getAttribute("src")).toBe(PNG_DATA);
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("loads a private repository's asset from the signed URL GitHub gave for its uuid", async () => {
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: PNG_DATA });
+  const id = "aaaaaaaa-2222-3333-4444-555555555555";
+  const signed = `https://private-user-images.githubusercontent.com/1/2-${id}.png?jwt=y`;
+  await act(async () =>
+    root.render(
+      <MarkdownImages projectId={3} signed={[{ assetId: id, signedUrl: signed }]}>
+        <Markdown source={`<img alt="Repo shot" src="https://github.com/fake/repo/assets/12/${id}">`} />
+      </MarkdownImages>,
+    ),
+  );
+  expect(fetch).toHaveBeenCalledWith(3, signed);
+  expect(host.querySelector("img")?.getAttribute("src")).toBe(PNG_DATA);
 });
 
 it("offers an image on another host as a link instead of loading it", async () => {

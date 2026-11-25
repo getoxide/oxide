@@ -635,7 +635,7 @@ it("shows the description's private attachment through its signed URL and other 
     status: "ok",
     data: detail({
       body: `It crashes:\n\n<img width="600" alt="Crash dialog" src="${asset}" />`,
-      signedImages: [{ url: asset, signedUrl: signed }],
+      signedImages: [{ assetId: "84ccda0a-5c4a-4fe4-b897-ed3f90e852b2", signedUrl: signed }],
       timeline: [
         { kind: "comment", id: "IC_1", author: "dave", body: "![tracker](https://tracker.example/pixel.png)", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
       ],

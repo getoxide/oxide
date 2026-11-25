@@ -594,11 +594,12 @@ export type ReviewState = "requested" | "approved" | "changesRequested" | "comme
 export type ShellKind = "default" | "zsh" | "bash" | "powershell" | "pwsh";
 
 /**
- *  A `https://github.com/user-attachments/assets/<id>` URL and the short-lived signed URL that
+ *  The short-lived signed URL GitHub rendered for an uploaded asset (named by its uuid), which
  *  loads it without the user's token.
  */
 export type SignedImage = {
-	url: string,
+	/**  The uuid of the asset, the last segment of its `github.com` URL. */
+	assetId: string,
 	signedUrl: string,
 };
 

@@ -706,12 +706,13 @@ pub struct PullRequestReviewer {
     pub state: ReviewState,
 }
 
-/// A `https://github.com/user-attachments/assets/<id>` URL and the short-lived signed URL that
+/// The short-lived signed URL GitHub rendered for an uploaded asset (named by its uuid), which
 /// loads it without the user's token.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SignedImage {
-    pub url: String,
+    /// The uuid of the asset, the last segment of its `github.com` URL.
+    pub asset_id: String,
     pub signed_url: String,
 }
 
