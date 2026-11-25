@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface TerminalInstance {
   rows: number;
@@ -398,8 +398,6 @@ it("keeps xterm opaque on the Terminal background in a running block", async () 
       }),
     ),
   );
-  const section = mount.querySelector("section.terminal-command-block")!;
-  expect(section.classList.contains("running")).toBe(true);
   const term = instances[0];
   expect((term.options.theme as { background: string }).background).toBe(terminalAppearance().theme.background);
   expect(term.options.allowTransparency).not.toBe(true);
@@ -630,4 +628,54 @@ it.each([
   const seen = instances[0].shownLines().slice(0, parseFloat(clip.style.height) / 16);
   const expected = output.split("\r\n").filter(Boolean);
   expect(seen).toEqual(expected);
+});
+
+
+describe("running indicator", () => {
+  // The running treatment (status rail, accent $, spinner) is time based: a command that ends
+  // before RUNNING_INDICATOR_DELAY_MS never shows it, so a fast `cd` does not flash blue.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const render = (ended: boolean) =>
+    act(async () =>
+      root.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ command: "cd ..", ended, exitCode: ended ? 0 : null }),
+          active: !ended,
+          visible: true,
+          onInput: () => {},
+          onReady: () => {},
+          onResize: () => {},
+          onScreen: () => {},
+        }),
+      ),
+    );
+  const section = () => mount.querySelector("section.terminal-command-block")!;
+  const spinner = () => section().querySelector('[role="img"][aria-label="Running"]');
+  const advance = (ms: number) => act(async () => { vi.advanceTimersByTime(ms); });
+
+  it("never shows a command that ends within 100 ms as running", async () => {
+    const seen: boolean[] = [];
+    await render(false);
+    seen.push(section().classList.contains("running"), spinner() !== null);
+    await advance(100);
+    seen.push(section().classList.contains("running"), spinner() !== null);
+    await render(true);
+    await advance(1_000);
+    seen.push(section().classList.contains("running"), spinner() !== null);
+    expect(seen).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("shows a command still running at 400 ms as running, and keeps showing it", async () => {
+    await render(false);
+    await advance(400);
+    expect(section().classList.contains("running")).toBe(true);
+    expect(spinner()).not.toBeNull();
+    await advance(60_000);
+    expect(section().classList.contains("running")).toBe(true);
+    expect(spinner()).not.toBeNull();
+    await render(true);
+    expect(section().classList.contains("running")).toBe(false);
+    expect(spinner()).toBeNull();
+  });
 });

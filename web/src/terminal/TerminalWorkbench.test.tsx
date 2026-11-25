@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { TerminalWorkbench } from "./TerminalWorkbench";
+import { RUNNING_INDICATOR_DELAY_MS } from "./runningIndicator";
 import { ContextMenu } from "../shared/ContextMenu";
 
 const xtermSelection = { text: "" };
@@ -137,7 +138,10 @@ it("shows a Running indicator while a command runs and only its duration once it
   await shell.submit("ls");
   await shell.start();
   const [block] = blocks();
+  // Past the running indicator delay, so the command shows as running and can be interrupted.
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
   expect(block.querySelector('[role="img"][aria-label="Running"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
   expect(block.textContent).not.toMatch(/\d\s?ms|\d\s?s\b/);
   now = 1_017;
   await shell.output("a.txt\r\n");
@@ -146,6 +150,48 @@ it("shows a Running indicator while a command runs and only its duration once it
   expect(block.textContent).toContain("17 ms");
   expect(spoken(block)).toContain("Command duration: 17 ms");
   expect(block.textContent).not.toContain("Done");
+});
+
+it("keeps the command line in place of Interrupt for a command that ends before the running indicator delay", async () => {
+  const shell = await openShell();
+  await shell.submit("cd sub");
+  await shell.start();
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  await shell.end(0, "/test/sub");
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  expect(container.querySelector("textarea")).not.toBeNull();
+});
+
+it("reports a command as running to the Terminal row only once it runs past the running indicator delay", async () => {
+  const reported: Array<string | null> = [];
+  let channel: Channel<number[]>;
+  const tokens: string[] = [];
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") tokens.push((args as { token: string }).token);
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible onRunningChange={(command) => reported.push(command)} />));
+  const send = (text: string) => act(async () => channel.onmessage([...new TextEncoder().encode(text)]));
+  const submit = async (value: string) => {
+    const input = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector("form")!.requestSubmit());
+    await settle();
+  };
+  const wait = () => act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  await submit("cd sub");
+  await send(`\x1b]633;Oxide;${tokens[0]};start\x07\x1b]633;Oxide;${tokens[0]};end;0;/test/sub\x07`);
+  await wait();
+  expect(reported.filter(Boolean)).toEqual([]);
+  await submit("sleep 5");
+  await send(`\x1b]633;Oxide;${tokens[1]};start\x07`);
+  await wait();
+  expect(reported.at(-1)).toBe("sleep 5");
 });
 
 it("shows the exit code beside the duration when a command fails", async () => {

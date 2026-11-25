@@ -5,6 +5,7 @@ import { terminalAppearance } from "../shared/appearance";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard } from "../shared/platform";
 import { attachGpuRenderer } from "./gpuRenderer";
+import { useRunningIndicator } from "./runningIndicator";
 
 export interface TerminalBlock {
   token: string;
@@ -216,6 +217,7 @@ export function TerminalCommandBlock(props: Props) {
     term.write("\x1b[?25l");
   }, [active]);
   const failed = isFailed(props);
+  const showRunning = useRunningIndicator(active);
   useEffect(() => {
     const term = terminal.current;
     if (term) term.options.theme = terminalAppearance({ failed }).theme;
@@ -231,7 +233,7 @@ export function TerminalCommandBlock(props: Props) {
   }, [visible, active, block.started]);
   return (
     <section
-      className={`terminal-command-block${active ? " running" : ""}${failed ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
+      className={`terminal-command-block${showRunning ? " running" : ""}${failed ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
       onContextMenu={(event) => {
         const selectedText = (terminal.current?.hasSelection?.() ? terminal.current.getSelection() : "") || window.getSelection()?.toString() || "";
@@ -254,7 +256,7 @@ export function TerminalCommandBlock(props: Props) {
         </span>
         <code>{block.command}</code>
         <span className="grow" />
-        <BlockStatus block={block} running={active} />
+        <BlockStatus block={block} running={active} showRunning={showRunning} />
       </header>
       {block.truncated && (
         <p className="terminal-truncated">
@@ -273,13 +275,16 @@ function isFailed({ active, block }: { active: boolean; block: TerminalBlock }):
   return !active && block.exitCode !== 0;
 }
 
-/** One status at the right of the header: a spinner while running, then how long it took. */
-function BlockStatus({ block, running }: { block: TerminalBlock; running: boolean }) {
+/**
+ * One status at the right of the header: a spinner once the command has run past the running
+ * indicator delay (nothing before that), then how long it took.
+ */
+function BlockStatus({ block, running, showRunning }: { block: TerminalBlock; running: boolean; showRunning: boolean }) {
   // One live region per block: the spinner is mounted with it, so only the outcome is announced.
   return (
     <span className={`terminal-block-status${!running && block.exitCode !== 0 ? " error" : ""}`} role="status">
       {running ? (
-        <span className="terminal-block-spinner" role="img" aria-label="Running" />
+        showRunning && <span className="terminal-block-spinner" role="img" aria-label="Running" />
       ) : (
         <BlockOutcome block={block} />
       )}

@@ -20,6 +20,7 @@ import { commands } from "../bindings";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
+import { useRunningIndicator } from "./runningIndicator";
 import { changeDirectoryLine, readTerminalSession, writeTerminalSession } from "../shared/session";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard, currentPlatform } from "../shared/platform";
@@ -91,11 +92,13 @@ export function TerminalWorkbench({
   const [fullscreen, setFullscreen] = useState<string | null>(null);
   const launched = useRef(new Set<string>());
   const [running, setRunning] = useState(false);
+  // Interrupt replaces the command line only once a command has run past the indicator delay.
+  const showRunning = useRunningIndicator(running);
   const activeBlock = useRef<string | null>(null);
   const runningCommand = useRef("");
   const reportRunning = useRef(onRunningChange);
   useEffect(() => { reportRunning.current = onRunningChange; });
-  useEffect(() => { reportRunning.current?.(running ? runningCommand.current : null); }, [running]);
+  useEffect(() => { reportRunning.current?.(showRunning ? runningCommand.current : null); }, [showRunning]);
   const composer = useRef<TerminalInputHandle>(null);
   // Read by the output listener, which lives as long as the shell and would otherwise keep the
   // visibility the Terminal had when the shell started.
@@ -496,7 +499,7 @@ export function TerminalWorkbench({
           </button>
         </div>
       )}
-      {running ? (
+      {running && (showRunning || fullscreen) ? (
         !fullscreen && (
           <button
             className="terminal-interrupt"
