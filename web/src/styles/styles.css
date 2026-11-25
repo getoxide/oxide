@@ -194,21 +194,11 @@ html.macos .header,
   /* Room for the macOS traffic lights of the overlay title bar. */
   padding: 0 12px 0 84px;
 }
-.header .title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; white-space: nowrap; }
-.header .title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg-bright); }
-.header .project-label { padding: 2px 10px 2px 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg3); color: var(--dim); font-size: 12.5px; }
-.header .project-label strong { color: var(--fg-bright); }
-.header-project, .header-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.header-actions { justify-content: flex-end; }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
 .header-actions > .icon-btn { flex: none; }
-.window.windows .header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr); padding-right: 0; }
-.window.windows .header-project { justify-content: center; }
-.window.windows .header-project .title { max-width: 220px; }
-@media (max-width: 1240px) {
-  .window.windows .header { display: flex; }
-  .window.windows .header-project { flex: 1; min-width: 0; }
-  .window.windows .header-project .title { max-width: 96px; }
-}
+/* The Windows caption buttons sit flush with the top-right corner and span the full titlebar height. */
+.window.windows .header { padding-right: 0; }
+.window.windows .header-actions { align-self: stretch; }
 .header-error { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .header-actions > .icon-btn { height: var(--control-sm); min-height: var(--control-sm); min-width: 28px; }
 .body { flex: 1; display: flex; min-height: 0; }
@@ -788,7 +778,6 @@ html.macos .header,
 /* Keep the primary task usable at the desktop window's 900px minimum. */
 @media (max-width: 1100px) {
   .sidebar-region { width: var(--sidebar-width, 208px); }
-  .header .title { max-width: 96px; }
 }
 @container (max-width: 360px) {
   .tools .tab { padding: 0 6px; }

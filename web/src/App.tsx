@@ -260,8 +260,7 @@ export function App() {
     setVisitedTools({ ...visitedTools, [`${selected.id}:${activeTool}`]: true });
   }
 
-  const revealProject = async (projectId = selected?.id) => {
-    if (projectId === undefined) return;
+  const revealProject = async (projectId: number) => {
     const result = await commands.revealInFinder(projectId);
     setOpenError(result.status === "error" ? result.error.message : null);
   };
@@ -394,25 +393,9 @@ export function App() {
             <RepoIcon size={16} />
           </button>
         )}
-        <div className="header-project" data-tauri-drag-region>
-          {selected ? (
-            <span className="title project-label" data-tauri-drag-region title={`Project: ${readablePath(selected.path)}`}>
-              <RepoIcon size={13} />
-              <strong>{selected.name}</strong>
-              {selected.missing && <span className="badge">missing</span>}
-            </span>
-          ) : !isWindows ? (
-            <span className="title" data-tauri-drag-region><strong>Oxide</strong></span>
-          ) : null}
-        </div>
-        {!isWindows && <span className="grow" data-tauri-drag-region />}
+        <span className="grow" data-tauri-drag-region />
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
-          {selected && !selected.missing && (
-            <button className="icon-btn" title={revealInFileManagerLabel()} aria-label={revealInFileManagerLabel()} onClick={() => void revealProject()}>
-              <FileDirectoryIcon size={16} />
-            </button>
-          )}
           <button
             className="icon-btn"
             aria-pressed={dockVisible}

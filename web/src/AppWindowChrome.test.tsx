@@ -43,6 +43,8 @@ Object.assign(globalThis, {
 
 let host: HTMLDivElement;
 let root: Root;
+let projects: { id: number; name: string; path: string; hidden: boolean; open: boolean; missing: boolean }[] = [];
+let calls: { command: string; args: unknown }[] = [];
 
 async function renderAppWithUserAgent(userAgent: string) {
   vi.resetModules();
@@ -61,13 +63,16 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  mockIPC((command) => {
+  projects = [];
+  calls = [];
+  mockIPC((command, args) => {
+    calls.push({ command, args });
     switch (command) {
       case "list_projects":
       case "rescan_projects":
-        return [];
+        return projects;
       case "last_selection":
-        return null;
+        return projects[0]?.id ?? null;
       case "plugin:event|listen":
         return 1;
       default:
@@ -84,7 +89,26 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+const MACOS = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+const LINUX = "Mozilla/5.0 (X11; Linux x86_64)";
+const alpha = { id: 1, name: "Project Alpha", path: "/alpha", hidden: false, open: true, missing: false };
+
 describe("App window chrome", () => {
+  it.each([["Windows", WINDOWS], ["macOS", MACOS], ["Linux", LINUX]])(
+    "keeps the %s header free of the active Project name and Reveal button, with a drag region spacer",
+    async (_name, userAgent) => {
+      projects = [alpha];
+      await renderAppWithUserAgent(userAgent);
+      expect(host.querySelector(".project-name")?.textContent).toBe("Project Alpha");
+
+      const header = host.querySelector("header.header")!;
+      expect(header.textContent).not.toContain("Project Alpha");
+      expect(header.querySelector('[aria-label^="Reveal in"]')).toBeNull();
+      expect(header.querySelector('.grow[data-tauri-drag-region]')).not.toBeNull();
+    },
+  );
+
   it("renders visible SVG icons inside Windows caption buttons", async () => {
     await renderAppWithUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
