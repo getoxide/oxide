@@ -415,8 +415,12 @@ describe("CodeWorkbench performance", () => {
     await act(async () => indicator.click());
     await settle();
     expect(document.querySelector('[role="dialog"][aria-label="Language"]')).not.toBeNull();
+    expect(document.activeElement).not.toBe(indicator);
     await act(async () => document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+    await settle();
     expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
+    // Focus had nowhere else to go, so it is back on the button.
+    expect(document.activeElement).toBe(indicator);
   });
 
   it("switches the buffer's language mode from the popover and moves its LSP tracking", async () => {

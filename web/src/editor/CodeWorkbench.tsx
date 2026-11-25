@@ -985,7 +985,14 @@ export function CodeWorkbench({
               setLanguageMode(current.path, languageId);
               languageButton.current?.focus();
             }}
-            onClose={() => setLanguageMenu(false)}
+            onClose={() => {
+              setLanguageMenu(false);
+              // An outside click on nothing focusable leaves focus on the page: give it back to the button.
+              setTimeout(() => {
+                const focused = document.activeElement;
+                if (!focused || focused === document.body) languageButton.current?.focus();
+              });
+            }}
           />
         )}
       </div>
