@@ -137,3 +137,35 @@ it("creates the pull request with the description as written", async () => {
     draft: false,
   });
 });
+
+
+function mockDraft(over: Partial<{ head: string; base: string; commitsBeyond: number | null; protected: boolean }>) {
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
+    status: "ok",
+    data: {
+      title: "Fix topic",
+      body: "",
+      base: "main",
+      head: "fix/topic",
+      commitsBeyond: 1,
+      protected: false,
+      ...over,
+    },
+  });
+}
+
+function createButton() {
+  return host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+}
+
+it("keeps Create disabled and explains why when the branch has no commits beyond the base", async () => {
+  mockDraft({ commitsBeyond: 0 });
+  const create = vi.spyOn(commands, "createPullRequest");
+  await open();
+  expect(createButton().disabled).toBe(true);
+  expect(host.textContent).toContain(
+    "No commits on fix/topic beyond main. Commit changes before creating a pull request.",
+  );
+  await submit();
+  expect(create).not.toHaveBeenCalled();
+});

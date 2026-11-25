@@ -24,6 +24,8 @@ export function PullRequestCreate({
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
+  // Commits the head has beyond each base checked so far; null when Core cannot tell.
+  const [ahead, setAhead] = useState<Record<string, number | null>>({});
   const [draft, setDraft] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -45,6 +47,7 @@ export function PullRequestCreate({
         setTitle(defaults.data.title);
         setBody(defaults.data.body);
         setBase(defaults.data.base);
+        setAhead({ [defaults.data.base]: defaults.data.commitsBeyond });
         setBranches([...new Set([defaults.data.base, ...bases.data])]);
       } catch (cause) {
         if (active)
@@ -57,13 +60,15 @@ export function PullRequestCreate({
       active = false;
     };
   }, [projectId, retry]);
+  const noDiff = ahead[base] === 0;
   async function submit() {
     if (
       busy ||
       loading ||
       !title.trim() ||
       !base ||
-      base === head
+      base === head ||
+      noDiff
     )
       return;
     setBusy(true);
@@ -159,14 +164,23 @@ export function PullRequestCreate({
             />{" "}
             Create as draft
           </label>
-          <p className="dim">
-            Your branch will be pushed before the pull request is created.
-          </p>
+          {noDiff ? (
+            <p className="pr-create-hint" id="pr-create-hint">
+              No commits on <span className="mono">{head}</span> beyond{" "}
+              <span className="mono">{base}</span>. Commit changes before
+              creating a pull request.
+            </p>
+          ) : (
+            <p className="dim">
+              Your branch will be pushed before the pull request is created.
+            </p>
+          )}
           <button
             className="btn primary"
             type="submit"
+            aria-describedby={noDiff ? "pr-create-hint" : undefined}
             disabled={
-              busy || !title.trim() || !base || base === head
+              busy || !title.trim() || !base || base === head || noDiff
             }
           >
             {busy ? (
