@@ -565,6 +565,99 @@ mod tests {
         assert!(content.contains("_oxide_prompt_command"));
     }
 
+    /// The user's own startup files run first; whatever they do to the hooks and prompts
+    /// (`nounset`, a theme in `precmd_functions`, a `.zlogin` that clears it), the block hooks
+    /// come out first and last and the prompts empty.
+    #[test]
+    fn user_startup_files_cannot_unhook_a_zsh_block_terminal() {
+        let Some(zsh) = resolve_zsh() else { return };
+        let home = tempfile::tempdir().expect("temporary home");
+        let user = home.path().join("user");
+        std::fs::create_dir(&user).expect("user zdotdir");
+        std::fs::write(
+            user.join(".zshrc"),
+            "setopt nounset\ntheme() { PROMPT='$ '; }\nprecmd_functions=(theme)\nPROMPT='$ '\n",
+        )
+        .expect("user zshrc");
+        std::fs::write(user.join(".zlogin"), "precmd_functions=()\nPS2='> '\n")
+            .expect("user zlogin");
+        let zdotdir = create_shell_init_file(home.path(), 4, ShellKind::Zsh, true)
+            .expect("init")
+            .expect("zdotdir");
+        let output = crate::command::resolved_command(&zsh)
+            .args(["-l", "-i", "-c"])
+            .arg(r#"print -r -- "[${precmd_functions[1]}|${precmd_functions[-1]}|$PROMPT|$PS2]""#)
+            .env("ZDOTDIR", &zdotdir)
+            .env("OXIDE_USER_ZDOTDIR", &user)
+            .env("HOME", home.path())
+            .output()
+            .expect("run zsh");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("[_oxide_precmd|_oxide_quiet_prompt||]"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn user_startup_files_cannot_unhook_a_bash_block_terminal() {
+        let Some(bash) = resolve_bash() else { return };
+        let home = tempfile::tempdir().expect("temporary home");
+        std::fs::write(
+            home.path().join(".bashrc"),
+            "set -u\nPROMPT_COMMAND='theme=1'\nPS1='$ '\nPS2='> '\n",
+        )
+        .expect("user bashrc");
+        let rc = create_shell_init_file(home.path(), 5, ShellKind::Bash, true)
+            .expect("init")
+            .expect("rcfile");
+        let output = crate::command::resolved_command(&bash)
+            .args(["--noprofile", "--rcfile"])
+            .arg(&rc)
+            .args([
+                "-i",
+                "-c",
+                r#"printf '[%s|%s|%s]' "$PROMPT_COMMAND" "$PS1" "$PS2""#,
+            ])
+            .env("HOME", home.path())
+            .output()
+            .expect("run bash");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("[_oxide_prompt_command; theme=1; _oxide_quiet_prompt||]"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// The wrapper is one line whatever the command holds, and the shell reads the command
+    /// back unchanged: quotes, backslashes, line breaks and control characters.
+    #[test]
+    fn the_block_wrapper_is_one_line_that_runs_the_command_unchanged() {
+        let command = "printf '%s|' \"it's\" 'a\\b' \"$(printf 'x\\001y' | od -An -c | tr -s ' ')\"\nprintf 'second line\\n'";
+        let script = block_script("tok", command);
+        assert_eq!(script.matches('\n').count(), 1, "{script}");
+        assert!(script.ends_with('\n'));
+        for shell in [resolve_zsh(), resolve_bash()].into_iter().flatten() {
+            let line = script.strip_prefix('\u{15}').expect("line editor clear");
+            let output = crate::command::resolved_command(&shell)
+                .arg("-c")
+                .arg(line)
+                .output()
+                .expect("run shell");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("\x1b]633;Oxide;tok;start\x07it's|a\\b|"),
+                "{shell:?}: {stdout:?}"
+            );
+            assert!(
+                stdout.contains("second line\n\x1b]633;Oxide;tok;end;0;"),
+                "{shell:?}: {stdout:?}"
+            );
+        }
+    }
+
     #[test]
     fn unix_allowlist_rejects_windows_shells() {
         assert!(is_shell_supported(ShellKind::Default));
