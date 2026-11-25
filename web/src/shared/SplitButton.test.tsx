@@ -48,6 +48,8 @@ afterEach(() => {
 it("renders one blue group: the action and an attached chevron that opens a menu", async () => {
   await render();
   const group = host.querySelector(".split-btn")!;
+  expect(group.getAttribute("role")).toBe("group");
+  expect(group.getAttribute("aria-label")).toBe("Close options");
   const buttons = group.querySelectorAll("button");
   expect(buttons).toHaveLength(2);
   expect(buttons[0].classList.contains("primary")).toBe(true);

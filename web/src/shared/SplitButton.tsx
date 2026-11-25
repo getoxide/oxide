@@ -37,7 +37,7 @@ export function SplitButton(p: SplitButtonProps) {
   const locked = p.pending === true;
 
   return (
-    <div className={`split-btn${p.risky ? " risky" : ""}`} role="group">
+    <div className={`split-btn${p.risky ? " risky" : ""}`} role="group" aria-label={p.menuLabel}>
       <button
         className={`primary split-btn-main${locked ? " pending" : ""}`}
         disabled={locked || p.disabled}
