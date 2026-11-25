@@ -79,11 +79,19 @@
     transform: scale(.95);
   }
   :is(.btn, .tab, .sidebar-actions button):active:not(:disabled) { transform: scale(.97); }
+  /* A row whose control is a full-width button inside it (picker options) tints the button, not
+     the row behind it, so the press reads as one surface. */
   :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option, .pr-entry-card,
-    .sidebar-footer, [role="menuitem"], [role="option"], .app-menu button, .terminal-input-menu button):active:not(:disabled) {
+    .sidebar-footer, [role="menuitem"], [role="option"]:not(:has(> button)), [role="option"] > button,
+    .pr-picker li > button, .pr-toggle, .issue-template, .app-menu button,
+    .terminal-input-menu button):active:not(:disabled) {
     transform: none;
     background: color-mix(in srgb, var(--fg) 14%, var(--bg4));
   }
+  /* An inline link ("assign yourself", "Done") dims on press, like a link, instead of shrinking. */
+  button.link:active:not(:disabled) { transform: none; background: none; opacity: .6; }
+  /* A picker row's check lands with a short settle rather than snapping in. */
+  .pr-picker-check svg { animation: check-in 160ms cubic-bezier(.16, 1, .3, 1); }
   .window-controls button:active:not(:disabled) { transform: none; }
   /* The halves of a split button are one control: neither shrinks away from the other. */
   .split-btn > button:active:not(:disabled) { transform: none; }
@@ -98,6 +106,7 @@
 @keyframes selection-in { from { background-color: color-mix(in srgb, var(--fg) 12%, transparent); } }
 @keyframes surface-reveal { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes popover-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes check-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modal-pop { from { opacity: 0; transform: scale(.96) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 @keyframes pr-draw-circle { to { stroke-dashoffset: 0; } }
