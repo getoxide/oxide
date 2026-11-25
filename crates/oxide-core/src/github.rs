@@ -290,6 +290,9 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
 pub struct Gh {
     search_path: Mutex<Option<Vec<PathBuf>>>,
     ready_at: Mutex<Option<Instant>>,
+    /// The last `gh auth status` outcome and when it finished. Held while a check runs, so
+    /// callers that asked meanwhile wait for it and share its answer instead of starting their own.
+    auth_check: Mutex<Option<(Instant, (GithubAvailability, Option<String>))>>,
     default_branches: Cached<PathBuf, String>,
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
@@ -334,6 +337,7 @@ impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
         *self.search_path.lock_recover() = dirs;
         *self.ready_at.lock_recover() = None;
+        *self.auth_check.lock_recover() = None;
         self.default_branches.clear();
         self.merge_settings.clear();
         self.default_merge_methods.clear();
@@ -469,14 +473,25 @@ impl Gh {
         if fresh(&self.ready_at.lock_recover()) {
             return (GithubAvailability::Ready, None);
         }
-        match self.run(cwd, &["auth", "status"]) {
+        let asked = Instant::now();
+        let mut last = self.auth_check.lock_recover();
+        // A check that finished after this caller asked answers it too. An older failure does
+        // not: logging in must be noticed on the next ask.
+        if let Some((finished, outcome)) = last.as_ref()
+            && *finished >= asked
+        {
+            return outcome.clone();
+        }
+        let outcome = match self.run(cwd, &["auth", "status"]) {
             Ok(_) => {
                 *self.ready_at.lock_recover() = Some(Instant::now());
                 (GithubAvailability::Ready, None)
             }
             Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
             Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
-        }
+        };
+        *last = Some((Instant::now(), outcome.clone()));
+        outcome
     }
 
     fn require_ready(&self, cwd: &Path) -> Result<()> {

@@ -357,6 +357,59 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
     );
 }
 
+fn auth_checks(f: &Fixture) -> usize {
+    f.gh_calls()
+        .iter()
+        .filter(|c| c[..2] == ["auth", "status"])
+        .count()
+}
+
+/// Asks for the Issues state from several threads at once, as startup preloading does.
+fn issues_state_at_once(f: &Fixture) -> Vec<GithubAvailability> {
+    let barrier = std::sync::Barrier::new(3);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    f.core.issues_state(f.project.id).unwrap().availability
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    })
+}
+
+#[test]
+fn concurrent_cold_starts_share_one_auth_check() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    assert_eq!(
+        issues_state_at_once(&f),
+        [GithubAvailability::Ready; 3].to_vec()
+    );
+    assert_eq!(auth_checks(&f), 1);
+}
+
+#[test]
+fn concurrent_checks_of_a_logged_out_gh_share_one_call_but_a_later_ask_checks_again() {
+    let f = fixture();
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
+    assert_eq!(
+        issues_state_at_once(&f),
+        [GithubAvailability::LoggedOut; 3].to_vec()
+    );
+    assert_eq!(auth_checks(&f), 1);
+
+    // Logging in afterwards is noticed: a failed check is never cached.
+    f.set_gh(&ok_state());
+    assert_eq!(
+        f.core.issues_state(f.project.id).unwrap().availability,
+        GithubAvailability::Ready
+    );
+    assert_eq!(auth_checks(&f), 2);
+}
+
 #[test]
 fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
     let f = fixture();
