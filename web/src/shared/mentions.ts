@@ -1,3 +1,5 @@
+import type { TimelineItem } from "../bindings";
+
 /** The `@mention` being typed at the caret: where its `@` sits and the login typed so far. */
 export interface MentionQuery {
   start: number;
@@ -31,4 +33,29 @@ export function mergeMentions(...lists: readonly (readonly string[])[]): string[
     out.push(login);
   }
   return out;
+}
+
+/** The people of an issue or pull request, most involved first: its author, assignees and
+ *  reviewers, whoever wrote or acted in its timeline, then GitHub's own participant list. The
+ *  viewer is left out: nobody mentions themselves. */
+export function conversationPeople(conversation: {
+  author: string;
+  assignees: readonly string[];
+  reviewers?: readonly { login: string }[];
+  timeline: readonly TimelineItem[];
+  participants: readonly string[];
+  viewer: string;
+}): string[] {
+  const actors = conversation.timeline.flatMap((item) => {
+    if ("actor" in item) return "login" in item ? [item.actor, item.login] : [item.actor];
+    return [item.author];
+  });
+  const viewer = conversation.viewer.toLowerCase();
+  return mergeMentions(
+    [conversation.author],
+    conversation.assignees,
+    (conversation.reviewers ?? []).map((r) => r.login),
+    actors,
+    conversation.participants,
+  ).filter((login) => login.toLowerCase() !== viewer);
 }

@@ -251,6 +251,45 @@ it("interleaves activity with comments in the issue Conversation and opens refer
   expect(open).toHaveBeenCalledWith("https://github.com/other/repo/pull/9");
 });
 
+it("offers the conversation's people before collaborators in the comment box and the comment editor", async () => {
+  const candidates = vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["zed", "Carol", "ann"], labels: [] } });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      participants: ["dave", "me"],
+      timeline: [
+        { kind: "comment", id: "IC_1", author: "carol", body: "Same here", createdAt: "2026-01-01T03:00:00Z" },
+        { kind: "comment", id: "IC_2", author: "me", body: "On it", createdAt: "2026-01-01T04:00:00Z" },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  const typeIn = (box: HTMLTextAreaElement, text: string) => act(async () => {
+    setter.call(box, text);
+    box.setSelectionRange(text.length, text.length);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const options = (box: HTMLTextAreaElement) =>
+    [...box.closest(".md-editor")!.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+
+  const compose = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!;
+  await typeIn(compose, "@");
+  expect(candidates).toHaveBeenCalledTimes(1);
+  expect(options(compose)).toEqual(["alice", "bob", "carol", "dave", "zed", "ann"]);
+
+  await act(async () => (host.querySelector('[aria-label="Edit comment"]') as HTMLButtonElement).click());
+  const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit comment"]')!;
+  await typeIn(editor, "On it @da");
+  expect(options(editor)).toEqual(["dave"]);
+  await act(async () => {
+    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  expect(options(editor)).toEqual([]);
+  expect(host.querySelector('textarea[aria-label="Edit comment"]')).not.toBeNull();
+});
+
 it("closes as not planned with one click in the close split-button's menu, the comment going along", async () => {
   vi.spyOn(commands, "closeIssue").mockResolvedValue({ status: "ok", data: null });
   await render();

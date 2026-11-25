@@ -124,10 +124,13 @@ function DeleteCommentDialog({ deleting, onCancel, onConfirm }: {
 }
 
 /** The comment's text as an editor with Save and Cancel, in place of its rendered body. */
-export function CommentEditForm({ projectId, id, initial, onSaved, onCancel, onError }: {
+export function CommentEditForm({ projectId, id, initial, onSaved, onCancel, onError, mentions, onMentionOpen }: {
   projectId: number;
   id: string;
   initial: string;
+  /** Logins offered after `@`, and the hook to fetch more of them. */
+  mentions?: readonly string[];
+  onMentionOpen?: () => void;
   onSaved: () => void;
   onCancel: () => void;
   onError: (message: string) => void;
@@ -157,6 +160,8 @@ export function CommentEditForm({ projectId, id, initial, onSaved, onCancel, onE
         rows={4}
         value={text}
         onChange={setText}
+        mentions={mentions}
+        onMentionOpen={onMentionOpen}
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
