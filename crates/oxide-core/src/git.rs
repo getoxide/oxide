@@ -216,6 +216,7 @@ pub(crate) fn existing_local_branch(cwd: &Path, name: &str) -> Result<String> {
 /// checking it out, unless `origin` already has all of it. There is no force: a rejected
 /// push stays rejected. Refuses a protected branch and one
 /// that has diverged from `origin`. `branch` must be an existing, valid branch name.
+/// A `pre-push` hook runs with HEAD on the checked-out branch, not on the pushed `branch`.
 pub(crate) fn push_branch_if_needed(cwd: &Path, branch: &str) -> Result<()> {
     if is_protected(branch) {
         return Err(Error::Git(format!(

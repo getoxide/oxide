@@ -770,6 +770,70 @@ fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
 }
 
 #[test]
+fn create_from_a_head_already_on_origin_opens_the_pull_request_without_pushing() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    git(&f.work, &["push", "-q", "origin", "feature"]);
+    let before = git(&f.remote, &["rev-parse", "feature"]);
+    // A push URL that cannot be reached proves no push is attempted.
+    let unreachable = f.work.parent().unwrap().join("no-such-remote.git");
+    git(
+        &f.work,
+        &[
+            "config",
+            "remote.origin.pushurl",
+            unreachable.to_str().unwrap(),
+        ],
+    );
+
+    let pr = f
+        .core
+        .create_pull_request(f.project.id, &input("Published", "main", false))
+        .unwrap();
+
+    assert_eq!(pr.number, 7);
+    assert_eq!(git(&f.remote, &["rev-parse", "feature"]), before);
+    assert_eq!(f.create_calls().len(), 1);
+}
+
+#[test]
+fn create_from_a_head_diverged_from_origin_is_refused_before_gh() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    git(&f.work, &["push", "-q", "origin", "feature"]);
+    // Someone else pushes to origin/feature while the local branch moves on.
+    let other = f.work.parent().unwrap().join("other");
+    git(
+        f.work.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            f.remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    git(&other, &["config", "user.name", "T"]);
+    git(&other, &["config", "user.email", "t@example.com"]);
+    git(&other, &["branch", "-q", "feature", "origin/feature"]);
+    commit_on(&other, "feature", "c.txt", "Add c", 1_800_000_100);
+    git(&other, &["push", "-q", "origin", "feature"]);
+    commit_on(&f.work, "feature", "d.txt", "Add d", 1_800_000_200);
+    git(&f.work, &["fetch", "-q", "origin"]);
+    let before = git(&f.remote, &["rev-parse", "feature"]);
+
+    let err = f
+        .core
+        .create_pull_request(f.project.id, &input("Diverged", "main", false))
+        .unwrap_err();
+
+    assert!(err.to_string().contains("behind and ahead"), "{err}");
+    assert!(f.create_calls().is_empty());
+    assert_eq!(git(&f.remote, &["rev-parse", "feature"]), before);
+}
+
+#[test]
 fn create_is_refused_from_the_protected_branch_and_without_gh() {
     let f = fixture();
     let err = f
