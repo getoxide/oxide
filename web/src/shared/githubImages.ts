@@ -62,15 +62,32 @@ export function cachedGithubImage(url: string): string | undefined {
   return cache.get(url);
 }
 
+/** Images read from Core at once: each holds a blocking thread there and a GitHub request. */
+export const MAX_IMAGE_FETCHES = 4;
+let active = 0;
+const waiting: (() => void)[] = [];
+
+/** Runs `task` once fewer than `MAX_IMAGE_FETCHES` others run, oldest first. */
+async function queued<T>(task: () => Promise<T>): Promise<T> {
+  if (active >= MAX_IMAGE_FETCHES) await new Promise<void>((resume) => waiting.push(resume));
+  active++;
+  try {
+    return await task();
+  } finally {
+    active--;
+    waiting.shift()?.();
+  }
+}
+
 /** The `data:` URL of the image at `url`, read from `source` (its signed URL, when GitHub gave
- *  one). One request at a time per image; a failure is not kept, so a later view tries again. */
+ *  one). One request at a time per image, and a few at most overall; a failure is not kept, so a
+ *  later view tries again. */
 export function loadGithubImage(projectId: number, url: string, source = url): Promise<string> {
   const hit = cache.get(url);
   if (hit) return Promise.resolve(hit);
   let pending = loading.get(url);
   if (!pending) {
-    pending = commands
-      .fetchGithubImage(projectId, source)
+    pending = queued(() => commands.fetchGithubImage(projectId, source))
       .then((result) => {
         if (result.status === "error") throw new Error(result.error.message);
         cache.set(url, result.data);
