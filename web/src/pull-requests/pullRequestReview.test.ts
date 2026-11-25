@@ -57,6 +57,25 @@ describe("dedupeChecks", () => {
     ]);
     expect(out).toEqual([check("lint", "failure"), check("rust", "pending"), check("web", "success")]);
   });
+
+  it("ranks neutral and skipped after passed, so a real result wins over a skipped run of the same check", () => {
+    const out = dedupeChecks([
+      check("docs", "skipped"),
+      check("lint", "neutral"),
+      check("docs", "success"),
+      check("lint", "skipped"),
+      check("audit", "skipped"),
+      check("format", "neutral"),
+      check("rust", "success"),
+    ]);
+    expect(out).toEqual([
+      check("docs", "success"),
+      check("rust", "success"),
+      check("lint", "neutral"),
+      check("format", "neutral"),
+      check("audit", "skipped"),
+    ]);
+  });
 });
 
 describe("readiness", () => {
@@ -105,13 +124,24 @@ describe("avatarUrl", () => {
 describe("countChecks", () => {
   const required = (name: string, state: PullRequestCheck["state"]): PullRequestCheck => ({ ...check(name, state), required: true });
 
-  it("counts only the required checks once branch protection names some, as GitHub's merge box does", () => {
-    const checks = [required("rust", "pending"), required("web", "success"), check("rust (macos-latest)", "pending"), check("supply-chain", "pending")];
-    expect(countChecks(checks)).toEqual({ failing: 0, pending: 1, passing: 1 });
+  it("counts every listed check, required or not, so the count matches the rows beneath it", () => {
+    const checks = [required("rust", "pending"), required("web", "success"), check("rust (macos-latest)", "pending"), check("supply-chain", "failure")];
+    expect(countChecks(checks)).toEqual({ failing: 1, pending: 2, passing: 1, neutral: 0, skipped: 0 });
   });
 
-  it("counts every check when none is marked required", () => {
-    expect(countChecks([check("a", "pending"), check("b", "success")])).toEqual({ failing: 0, pending: 1, passing: 1 });
+  it("never folds neutral or skipped checks into the passed count", () => {
+    const checks = [check("a", "neutral"), check("b", "pending"), check("c", "success"), check("d", "skipped"), check("d", "skipped")];
+    expect(countChecks(checks)).toEqual({ failing: 0, pending: 1, passing: 1, neutral: 1, skipped: 1 });
+  });
+
+  it("does not hold the merge up for a required check that is neutral or skipped", () => {
+    const checks = [required("rust", "success"), required("docs", "skipped"), required("lint", "neutral")];
+    expect(readiness({ ...open, checks })).toEqual({ tone: "ok", label: "Ready to merge" });
+  });
+
+  it("does not hold the merge up for an optional check that fails", () => {
+    const checks = [required("rust", "success"), check("supply-chain", "failure")];
+    expect(readiness({ ...open, checks })).toEqual({ tone: "ok", label: "Ready to merge" });
   });
 
   it("does not hold the merge up for an optional check that is running", () => {

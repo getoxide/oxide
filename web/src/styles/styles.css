@@ -478,6 +478,7 @@ html.macos .header,
 .pr-check-success { color: var(--green); }
 .pr-check-failure { color: var(--red); }
 .pr-check-pending { color: var(--yellow); }
+.pr-check-neutral, .pr-check-skipped { color: var(--faint); }
 .pr-check-state { color: var(--faint); font-size: 12px; }
 .pr-check-optional { color: var(--faint); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
 
@@ -689,6 +690,8 @@ html.macos .header,
 .pr-views .pr-bar .success { background: var(--green); }
 .pr-views .pr-bar .pending { background: var(--yellow); }
 .pr-views .pr-bar .failure { background: var(--red); }
+.pr-views .pr-bar .neutral { background: var(--dim); }
+.pr-views .pr-bar .skipped { background: color-mix(in srgb, var(--faint) 50%, transparent); }
 .pr-views .pr-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
 .pr-views .pr-checks-box .pr-checks > li, .pr-views .pr-passed { border-top: 1px solid var(--line); }
 .pr-views .pr-passed .pr-checks > li:first-child { border-top: 1px solid var(--line); }
@@ -703,6 +706,8 @@ html.macos .header,
 .pr-views .pr-check-success > .pr-check-link > svg:first-child, .pr-views .pr-check-success .pr-check-state { color: var(--green); }
 .pr-views .pr-check-failure > .pr-check-link > svg:first-child, .pr-views .pr-check-failure .pr-check-state { color: var(--red); }
 .pr-views .pr-check-pending > .pr-check-link > svg:first-child, .pr-views .pr-check-pending .pr-check-state { color: var(--yellow); }
+.pr-views .pr-check-neutral > .pr-check-link > svg:first-child, .pr-views .pr-check-neutral .pr-check-state { color: var(--dim); }
+.pr-views .pr-check-skipped > .pr-check-link > svg:first-child, .pr-views .pr-check-skipped .pr-check-state { color: var(--faint); }
 .pr-views .pr-check-failure { background: color-mix(in srgb, var(--red) 7%, transparent); }
 .pr-views .pr-check-failure .pr-check-name { color: var(--fg-bright); font-weight: 600; }
 .pr-views .pr-passed summary { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 12px; cursor: pointer; list-style: none; color: var(--dim); }
