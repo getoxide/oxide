@@ -41,7 +41,7 @@ function mentionable(login: string): string {
 }
 
 /** The people of an issue or pull request, most involved first: its author, assignees and
- *  reviewers, whoever wrote or acted in its timeline, then GitHub's own participant list. The
+ *  reviewers, whoever commented or acted in its timeline, then GitHub's own participant list. The
  *  viewer is left out: nobody mentions themselves. */
 export function conversationPeople(conversation: {
   author: string;
@@ -52,6 +52,8 @@ export function conversationPeople(conversation: {
   viewer: string;
 }): string[] {
   const actors = conversation.timeline.flatMap((item) => {
+    // A commit's author may be a git name with no GitHub login ("John Doe").
+    if (item.kind === "commit") return [];
     if ("actor" in item) return "login" in item ? [item.actor, item.login] : [item.actor];
     return [item.author];
   });
