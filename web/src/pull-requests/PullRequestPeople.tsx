@@ -321,13 +321,13 @@ export function Picker({
   // The rows the user just toggled: the state they asked for, shown at once, and whether GitHub is still on it.
   const [toggled, setToggled] = useState<ReadonlyMap<string, { on: boolean; running: boolean }>>(new Map());
   useEffect(onOpen, [onOpen]);
-  // Once the reloaded selection shows a toggle, the row has nothing left to pretend: forget it as
-  // soon as the selection changes (adjusting state while rendering, not in an effect).
+  // Once a row's request is done, the reloaded selection is the truth, whether or not it shows the
+  // toggle: forget the row as soon as the selection changes (adjusting state while rendering).
   const selectedKey = selected.join("\n");
   const [seenSelected, setSeenSelected] = useState(selectedKey);
   if (seenSelected !== selectedKey) {
     setSeenSelected(selectedKey);
-    const settled = [...toggled].filter(([key, t]) => !t.running && selected.includes(key) === t.on);
+    const settled = [...toggled].filter(([, t]) => !t.running);
     if (settled.length > 0) {
       const next = new Map(toggled);
       for (const [key] of settled) next.delete(key);

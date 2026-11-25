@@ -408,6 +408,23 @@ it("toggles a reviewer on its own row while the rest of the picker stays usable"
   expect(row("ana").hasAttribute("aria-busy")).toBe(false);
 });
 
+it("shows what GitHub reports once a toggle is done and the selection changes, even when it differs", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob", "cy"], labels: [] } });
+  vi.spyOn(commands, "editPullRequest").mockResolvedValue({ status: "ok", data: null });
+  // GitHub did not take ana, and someone else swapped bob for cy meanwhile.
+  await render();
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ reviewers: [{ login: "cy", state: "requested" }] }),
+  });
+  await click(button("Edit reviewers"));
+  const row = (name: string) => Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) => o.textContent === name)!;
+  await click(row("ana").querySelector("button")!);
+  await act(async () => {});
+  expect(row("cy").getAttribute("aria-selected")).toBe("true");
+  expect(row("ana").getAttribute("aria-selected")).toBe("false");
+});
+
 it("toggles an assignee the same way, and assigning yourself shows on the link alone", async () => {
   vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "me"], labels: [] } });
   let finish!: () => void;
