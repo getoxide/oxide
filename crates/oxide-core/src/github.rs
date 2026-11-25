@@ -302,7 +302,7 @@ pub struct Gh {
     default_branches: Cached<PathBuf, String>,
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
-    viewer_logins: Cached<(), Option<String>>,
+    viewer_logins: Cached<PathBuf, Option<String>>,
 }
 
 /// Whether `gh` can be used, and if not, what to tell the user.
@@ -1026,7 +1026,7 @@ fn read_viewer_default_merge_method(
 
 fn viewer_login(gh: &Gh, cwd: &Path) -> Option<String> {
     gh.viewer_logins
-        .get_or(&(), || {
+        .get_or(&cwd.to_path_buf(), || {
             let out = gh.run(cwd, &["api", "user", "--jq", ".login"])?;
             Ok::<_, GhError>(Some(out.trim().to_string()).filter(|login| !login.is_empty()))
         })

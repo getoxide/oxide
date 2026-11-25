@@ -443,6 +443,36 @@ fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
 }
 
 #[test]
+fn each_project_reads_its_own_viewer_login() {
+    let f = fixture();
+    let other_work = f.work.with_file_name("other");
+    git(
+        f.work.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            f.remote.to_str().unwrap(),
+            other_work.to_str().unwrap(),
+        ],
+    );
+    let other = f.core.add_project(&other_work.to_string_lossy()).unwrap();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    install_gh(&f, &state);
+    assert_eq!(
+        f.core.pull_request_detail(f.project.id, 5).unwrap().viewer,
+        "me"
+    );
+
+    // The other Project's checkout is signed in to GitHub as someone else.
+    state["viewer"] = "someone".into();
+    f.set_gh(&state);
+    assert_eq!(
+        f.core.pull_request_detail(other.id, 5).unwrap().viewer,
+        "someone"
+    );
+}
+
+#[test]
 fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     let f = fixture();
     install_gh(&f, &ok_state());
