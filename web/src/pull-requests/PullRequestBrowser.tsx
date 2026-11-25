@@ -396,7 +396,7 @@ export function PullRequestReview({
   return (
     <div className="pr-review">
       {nav}
-      <RefreshNotice query={query} working={busy} />
+      <RefreshNotice query={query} />
       <div className="pr-scroll">
         <header className="pr-hero">
           <h3 className="pr-title">
