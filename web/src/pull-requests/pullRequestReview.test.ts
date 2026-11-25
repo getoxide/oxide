@@ -114,6 +114,18 @@ describe("mergeRequirements", () => {
   });
 });
 
+describe("mergeRequirements with checks that only completed", () => {
+  it("says the checks completed, not passed, when none of the deciding checks passed", () => {
+    const rows = mergeRequirements({ ...open, checks: [check("docs", "skipped"), check("lint", "neutral")] });
+    expect(rows.find((r) => r.kind === "checks")).toMatchObject({ tone: "ok", title: "All checks completed" });
+  });
+
+  it("still says passed once a deciding check passed beside skipped ones", () => {
+    const rows = mergeRequirements({ ...open, checks: [check("docs", "skipped"), check("web", "success")] });
+    expect(rows.find((r) => r.kind === "checks")?.title).toBe("All checks passed");
+  });
+});
+
 describe("avatarUrl", () => {
   it("points at the user's GitHub avatar, and at the bot's for `app/` logins", () => {
     expect(avatarUrl("octocat")).toBe("https://github.com/octocat.png?size=40");

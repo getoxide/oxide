@@ -104,11 +104,12 @@ export function mergeRequirements({ phase, checks, mergeState, reviewDecision }:
     rows.push({ kind: "review", tone: "ok", title: "Changes approved" });
   }
   // Neutral and skipped checks never hold the merge up, as on GitHub.
-  const { failing, pending } = countChecks(decidingChecks(checks));
+  const { failing, pending, passing } = countChecks(decidingChecks(checks));
   if (failing > 0) {
     rows.push({ kind: "checks", tone: "bad", title: `${plural(failing, "check")} failing`, detail: "Open a failing check to see what went wrong." });
   } else if (pending === 0 && checks.length > 0) {
-    rows.push({ kind: "checks", tone: "ok", title: "All checks passed" });
+    // Only skipped or neutral checks decide: none failed, but none passed either.
+    rows.push({ kind: "checks", tone: "ok", title: passing > 0 ? "All checks passed" : "All checks completed" });
   }
   if (mergeState === "conflicting") {
     rows.push({
