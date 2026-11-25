@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 mod image;
 mod timeline;
-pub use image::SignedImage;
+pub use image::{SignedImage, fetch_github_image};
 use timeline::{Subject, Timeline};
 pub use timeline::{
     TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
@@ -493,12 +493,9 @@ impl Gh {
         self.run_with_input(cwd, args, None)
     }
 
-    fn run_with_input(
-        &self,
-        cwd: &Path,
-        args: &[&str],
-        input: Option<&str>,
-    ) -> std::result::Result<String, GhError> {
+    /// The one hardened `gh` command (ADR-0016): found on the search path, with the hardened
+    /// environment and no standard input.
+    fn command(&self, cwd: &Path, args: &[&str]) -> std::result::Result<Command, GhError> {
         let path = self.path_var();
         #[cfg(windows)]
         let mut child_path = path.clone();
@@ -536,6 +533,23 @@ impl Gh {
             .ok_or(GhError::Missing)?,
         );
         oxide_platform::process::hide_console(&mut command);
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("PATH", &child_path)
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("NO_COLOR", "1")
+            .envs(crate::git_command::hardening_env())
+            .stdin(Stdio::null());
+        Ok(command)
+    }
+
+    fn run_with_input(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: Option<&str>,
+    ) -> std::result::Result<String, GhError> {
         // cmd.exe cannot safely carry newlines in a batch argument. gh accepts body text
         // on stdin, preserving descriptions and comments when it is installed as a shim.
         #[cfg(windows)]
@@ -554,14 +568,9 @@ impl Gh {
                 Some(body)
             })
         };
-        command
-            .args(args)
-            .current_dir(cwd)
-            .env("PATH", &child_path)
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .envs(crate::git_command::hardening_env())
-            .stdin(Stdio::null());
+        #[cfg(windows)]
+        let args = args.as_slice();
+        let mut command = self.command(cwd, args)?;
         let output = match input {
             Some(input) => pipe_stdin(command, input),
             None => {
@@ -589,6 +598,42 @@ impl Gh {
             stderr
         };
         Err(GhError::Failed(redact_url_credentials(message.trim())))
+    }
+
+    /// Runs `gh` for binary output, reading at most `cap` bytes of it: a child that writes more
+    /// is stopped and the call fails. Its standard error is not read.
+    fn run_bounded(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        cap: u64,
+    ) -> std::result::Result<Vec<u8>, GhError> {
+        use std::io::Read;
+        let failed = |what: &str| GhError::Failed(what.to_string());
+        let mut command = self.command(cwd, args)?;
+        command.stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = command.spawn().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => GhError::Missing,
+            _ => GhError::Failed(redact_url_credentials(&format!("could not run gh: {e}"))),
+        })?;
+        let mut out = Vec::new();
+        let read = match child.stdout.take() {
+            Some(stdout) => stdout.take(cap + 1).read_to_end(&mut out).map(drop),
+            None => Err(std::io::Error::other("gh stdout was not piped")),
+        };
+        let too_large = out.len() as u64 > cap;
+        if too_large {
+            oxide_platform::diag::best_effort("stopping gh", child.kill());
+        }
+        let status = child.wait().map_err(|_| failed("gh did not finish"))?;
+        if too_large {
+            return Err(failed("gh wrote more than Oxide reads"));
+        }
+        read.map_err(|_| failed("could not read gh's output"))?;
+        if !status.success() {
+            return Err(failed("gh failed"));
+        }
+        Ok(out)
     }
 
     /// Whether `gh` can be used, and if not, what to tell the user.

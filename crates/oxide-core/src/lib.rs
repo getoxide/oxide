@@ -805,6 +805,13 @@ impl Core {
         Ok(())
     }
 
+    /// An image embedded in an issue or pull request of the Project's repository, as a
+    /// `data:` URL. Network access: see [`github::fetch_github_image`]; it reads only GitHub's
+    /// image hosts, refuses everything else before connecting and returns raster images only.
+    pub fn fetch_github_image(&self, project_id: u32, url: &str) -> Result<String> {
+        github::fetch_github_image(&self.gh, &self.main_checkout(project_id)?, url)
+    }
+
     /// Opens a link on a host outside the allowlist, after the user confirmed the host.
     pub fn open_confirmed_link(&self, url: &str) -> Result<()> {
         self.system().open_url(github::confirmed_url(url)?);

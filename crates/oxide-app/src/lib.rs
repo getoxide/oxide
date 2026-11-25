@@ -1338,6 +1338,19 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<Option<Str
     .await
 }
 
+/// An image embedded in an issue or pull request, as a `data:` URL the webview shows under its
+/// existing Content Security Policy. Network access: Core reads it from GitHub's image hosts
+/// only, without the user's token, and returns raster images only (`Core::fetch_github_image`).
+#[tauri::command]
+#[specta::specta]
+async fn fetch_github_image(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    url: String,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| core.fetch_github_image(project_id, &url)).await
+}
+
 /// Opens a link whose host the user confirmed after `open_link` refused it as unlisted.
 #[tauri::command]
 #[specta::specta]
@@ -1545,6 +1558,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         close_pull_request,
         open_link,
         open_confirmed_link,
+        fetch_github_image,
         set_pull_request_draft,
         update_pull_request_branch,
         pull_request_candidates,

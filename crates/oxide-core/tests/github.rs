@@ -2245,3 +2245,35 @@ fn issue_detail_resolves_private_user_attachments_from_body_html() {
         .unwrap();
     assert_eq!(query.matches("bodyHTML").count(), 2, "{query}");
 }
+
+#[test]
+fn fetch_github_image_refuses_unknown_projects_and_non_github_urls_without_a_request() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+    assert!(
+        f.core
+            .fetch_github_image(f.project.id + 100, asset)
+            .is_err()
+    );
+    for url in [
+        "http://user-images.githubusercontent.com/1/2-x.png",
+        "https://user:pw@github.com/user-attachments/assets/x",
+        "https://127.0.0.1/a.png",
+        "https://localhost/a.png",
+        "https://evil.example/a.png",
+        "https://raw.githubusercontent.com:8443/fake/repo/main/a.png",
+        "https://github.com/settings/tokens",
+        "data:image/svg+xml,<svg/>",
+        "",
+    ] {
+        let error = f.core.fetch_github_image(f.project.id, url).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("only shows images hosted on GitHub"),
+            "{url}: {error}"
+        );
+    }
+    assert!(f.gh_calls().is_empty(), "no gh call for a refused URL");
+}

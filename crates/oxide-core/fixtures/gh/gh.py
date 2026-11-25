@@ -187,6 +187,24 @@ if args[:2] == ["pr", "edit"]:
     save()
     sys.exit(0)
 
+if len(args) > 1 and args[0] == "api" and args[1].startswith("repos/") and "/contents/" in args[1] \
+        and flag("-H") == "Accept: application/vnd.github.raw":
+    # `state["raw_files"]` maps endpoints to base64 file contents; "big" stands for a file
+    # larger than any image Oxide reads.
+    content = state.get("raw_files", {}).get(args[1])
+    if content is None:
+        sys.stderr.write("gh: Not Found (HTTP 404)")
+        sys.exit(1)
+    if content == "big":
+        chunk = b"\0" * 65536
+        for _ in range(6 * 16):
+            sys.stdout.buffer.write(chunk)
+    else:
+        import base64
+        sys.stdout.buffer.write(base64.b64decode(content))
+    sys.stdout.buffer.flush()
+    sys.exit(0)
+
 TEMPLATES_DIR = "repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE"
 if len(args) > 1 and args[0] == "api" and args[1].startswith(TEMPLATES_DIR):
     # `state["issue_templates"]` maps file names to their text; absent, the directory is missing.

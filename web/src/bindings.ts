@@ -98,6 +98,12 @@ export const commands = {
 	openLink: (url: string) => typedError<string | null, AppError>(__TAURI_INVOKE("open_link", { url })),
 	/**  Opens a link whose host the user confirmed after `open_link` refused it as unlisted. */
 	openConfirmedLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_confirmed_link", { url })),
+	/**
+	 *  An image embedded in an issue or pull request, as a `data:` URL the webview shows under its
+	 *  existing Content Security Policy. Network access: Core reads it from GitHub's image hosts
+	 *  only, without the user's token, and returns raster images only (`Core::fetch_github_image`).
+	 */
+	fetchGithubImage: (projectId: number, url: string) => typedError<string, AppError>(__TAURI_INVOKE("fetch_github_image", { projectId, url })),
 	/**  Moves a pull request out of draft (`draft` false), or back into it. */
 	setPullRequestDraft: (projectId: number, number: number, draft: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_pull_request_draft", { projectId, number, draft })),
 	/**  Brings a pull request's branch up to date with its base. */
