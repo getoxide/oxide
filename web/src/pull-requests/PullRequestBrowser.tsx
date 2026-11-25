@@ -379,9 +379,9 @@ export function PullRequestReview({
     }
   }
 
-  async function merge() {
-    if (method === null) return;
-    if (await act("merge", () => commands.mergePullRequest(projectId, number, method, deleteBranch, false))) {
+  async function merge(how: MergeMethod) {
+    setMethod(how);
+    if (await act("merge", () => commands.mergePullRequest(projectId, number, how, deleteBranch, false))) {
       setMerged(true);
       dropFromLists();
       onChanged();
@@ -543,7 +543,7 @@ export function PullRequestReview({
           status={status.label}
           onMethod={setMethod}
           onDeleteBranch={setDeleteBranch}
-          onMerge={() => void merge()}
+          onMerge={(how) => void merge(how)}
           onAutoMerge={() => void mergeWhenReady()}
           onReady={() => void setDraft(false)}
           onClose={() => void closePullRequest()}

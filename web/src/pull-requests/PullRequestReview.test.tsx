@@ -154,31 +154,98 @@ it("lists conflicts and offers no merge while the branch conflicts", async () =>
   expect(button(/Squash and merge/).disabled).toBe(true);
 });
 
-it("offers no merge while GitHub's branch policy blocks it, e.g. required checks still running", async () => {
+it("offers no direct merge while GitHub's branch policy blocks it, e.g. required checks still running", async () => {
   vi.mocked(commands.pullRequestDetail).mockResolvedValue({
     status: "ok",
     data: detail({ mergeState: "blocked", checks: [{ name: "web", state: "pending", url: null, required: false }] }),
   });
   await render();
-  expect(button(/Squash and merge/).disabled).toBe(true);
+  await click(host.querySelector<HTMLButtonElement>('button[aria-label="Merge options"]')!);
+  const direct = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find((b) => /Squash and merge/.test(b.textContent ?? ""))!;
+  expect(direct.textContent).toContain("Waits for");
 });
 
-it("turns on auto-merge while the checks run, and only then offers it", async () => {
-  const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+const blocked = () =>
   vi.mocked(commands.pullRequestDetail).mockResolvedValue({
     status: "ok",
     data: detail({ mergeState: "blocked", checks: [{ name: "web", state: "pending", url: null, required: false }] }),
   });
+const menuItem = (name: RegExp) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find((b) => name.test(b.textContent ?? ""));
+const openMergeMenu = () => click(host.querySelector<HTMLButtonElement>('.split-btn button[aria-label="Merge options"]')!);
+
+it("keeps every merge control in one split button: no side Merge when ready button, no gear", async () => {
+  blocked();
   await render();
-  await click(button(/Merge when ready/));
+  const row = host.querySelector(".pr-merge-row")!;
+  const split = row.querySelector(".split-btn")!;
+  // The split button, then Close beside it: nothing else.
+  expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual(["split-btn", ""]);
+  expect(row.children[1].textContent).toContain("Close");
+  expect(split.querySelector('[aria-haspopup="menu"]')!.getAttribute("aria-label")).toBe("Merge options");
+  expect(row.querySelector(".icon-btn")).toBeNull();
+});
+
+it("promotes Merge when ready on a blocked pull request and turns auto-merge on with one click", async () => {
+  const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+  blocked();
+  await render();
+  const main = host.querySelector<HTMLButtonElement>(".split-btn-main")!;
+  expect(main.textContent).toContain("Merge when ready");
+  await click(main);
   expect(merge).toHaveBeenCalledWith(1, 174, "squash", false, true);
-  expect(button(/Auto-merge on/).disabled).toBe(true);
+  expect(host.querySelector<HTMLButtonElement>(".split-btn-main")!.textContent).toContain("Auto-merge on");
+  expect(host.querySelector<HTMLButtonElement>(".split-btn-main")!.disabled).toBe(true);
+  expect(host.textContent).toContain("GitHub will merge it once the checks pass.");
   expect(onChanged).not.toHaveBeenCalled();
+});
+
+it("runs Merge when ready straight from the split button's menu, with the chosen method", async () => {
+  const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+  blocked();
+  await render();
+  await openMergeMenu();
+  // A direct merge would be refused, so picking a method only remembers it for Merge when ready.
+  await click(menuItem(/Rebase and merge/)!);
+  expect(merge).not.toHaveBeenCalled();
+  await openMergeMenu();
+  expect(menuItem(/Rebase and merge/)!.getAttribute("aria-checked")).toBe("true");
+  await click(menuItem(/Merge when ready/)!);
+  expect(merge).toHaveBeenCalledTimes(1);
+  expect(merge).toHaveBeenCalledWith(1, 174, "rebase", false, true);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  expect(button(/Auto-merge on/).disabled).toBe(true);
 });
 
 it("does not offer auto-merge when nothing is waiting", async () => {
   await render();
-  expect([...host.querySelectorAll("button")].some((b) => /Merge when ready/.test(b.textContent ?? ""))).toBe(false);
+  await openMergeMenu();
+  expect([...document.querySelectorAll("button")].some((b) => /Merge when ready/.test(b.textContent ?? ""))).toBe(false);
+});
+
+it("merges with another allowed method in one click from the menu, and remembers it", async () => {
+  const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+  await render();
+  await openMergeMenu();
+  const items = [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')].map((b) => b.querySelector("strong")!.textContent);
+  expect(items).toEqual(["Create a merge commit", "Squash and merge", "Rebase and merge"]);
+  await click(menuItem(/Rebase and merge/)!);
+  expect(merge).toHaveBeenCalledTimes(1);
+  expect(merge).toHaveBeenCalledWith(1, 174, "rebase", false, false);
+  expect(onChanged).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the menu reachable on a conflicting branch while the merge itself stays disabled", async () => {
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "conflicting", checks: [] }) });
+  await render();
+  expect(host.querySelector<HTMLButtonElement>(".split-btn-main")!.disabled).toBe(true);
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="Merge options"]')!.disabled).toBe(false);
+  expect(button(/^\s*Close /).disabled).toBe(false);
+});
+
+it("marks the split button risky when checks fail on a mergeable pull request", async () => {
+  await render();
+  expect(host.querySelector(".split-btn")!.classList.contains("risky")).toBe(true);
 });
 
 it("preselects the merge method GitHub's own merge box would, not the first allowed", async () => {
