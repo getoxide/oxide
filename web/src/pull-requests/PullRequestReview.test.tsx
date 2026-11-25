@@ -357,6 +357,53 @@ it("picks reviewers from the repository's people, without the author", async () 
   expect(edit).toHaveBeenCalledWith(1, 174, expect.objectContaining({ addReviewers: ["ana"] }));
 });
 
+it("toggles a reviewer on its own row while the rest of the picker stays usable", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob", "cy"], labels: [] } });
+  let finish!: () => void;
+  vi.spyOn(commands, "editPullRequest").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  await render();
+  await click(button("Edit reviewers"));
+  const row = (name: string) => Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) => o.textContent === name)!;
+  await click(row("ana").querySelector("button")!);
+  expect(row("ana").getAttribute("aria-selected")).toBe("true");
+  expect(row("ana").getAttribute("aria-busy")).toBe("true");
+  expect(row("cy").querySelector("button")!.disabled).toBe(false);
+  // Nothing else on the pull request waits on a reviewer change.
+  expect(host.querySelector<HTMLButtonElement>('.split-btn button[aria-label="Merge options"]')!.disabled).toBe(false);
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ reviewers: [{ login: "bob", state: "changesRequested" }, { login: "ana", state: "requested" }] }),
+  });
+  await act(async () => finish());
+  expect(row("ana").getAttribute("aria-selected")).toBe("true");
+  expect(row("ana").hasAttribute("aria-busy")).toBe(false);
+});
+
+it("toggles an assignee the same way, and assigning yourself shows on the link alone", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "me"], labels: [] } });
+  let finish!: () => void;
+  const edit = vi.spyOn(commands, "editPullRequest").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  await render();
+  await click(button("assign yourself"));
+  expect(edit).toHaveBeenCalledWith(1, 174, expect.objectContaining({ addAssignees: ["me"] }));
+  const link = host.querySelector<HTMLButtonElement>(".pr-field-empty button.link")!;
+  expect(link.getAttribute("aria-busy")).toBe("true");
+  expect(link.textContent).toContain("Assigning");
+  await act(async () => finish());
+
+  await click(button("Edit assignees"));
+  const ana = () => Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) => o.textContent === "ana")!;
+  await click(ana().querySelector("button")!);
+  expect(edit).toHaveBeenLastCalledWith(1, 174, expect.objectContaining({ addAssignees: ["ana"] }));
+  expect(ana().getAttribute("aria-selected")).toBe("true");
+  expect(ana().getAttribute("aria-busy")).toBe("true");
+  await act(async () => finish());
+});
+
 it("reads the conversation like the web: avatar, name, what they did and when", async () => {
   await render();
   const entries = Array.from(host.querySelectorAll(".pr-entry"));
