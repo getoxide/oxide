@@ -187,6 +187,21 @@ describe("query cache", () => {
     await expect(prefetched).resolves.toEqual(ok("warm"));
   });
 
+  it("does not prefetch an entry that is still fresh", async () => {
+    await prefetchQuery("k", async () => ok("one"), { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(() => never<string>());
+    await expect(prefetchQuery("k", fetcher, { staleMs: QUERY_STALE_MS })).resolves.toEqual(ok("one"));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not trap a later mount behind a failed background prefetch", async () => {
+    await prefetchQuery("k", async () => fail("gh is not logged in"), { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(async () => ok("after login"));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "after login" });
+  });
+
   it("stays bounded", async () => {
     for (let i = 0; i < 1000; i++) setQueryData(`k${i}`, i);
     await mount("k0", () => never<number>());

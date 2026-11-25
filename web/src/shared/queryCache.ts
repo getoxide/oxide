@@ -56,7 +56,12 @@ function subscribe(key: string, listener: (invalidated: boolean) => void): () =>
 /** Fetches `key`, joining a fetch already in flight unless `force`. A result is only applied if no
  *  newer fetch for the same key started meanwhile. Resolves with the outcome of the fetch it ran
  *  or joined. */
-function run<T>(key: string, fetch: () => Promise<QueryResult<T>>, force: boolean): Promise<QueryResult<T>> {
+function run<T>(
+  key: string,
+  fetch: () => Promise<QueryResult<T>>,
+  force: boolean,
+  options: { background?: boolean } = {},
+): Promise<QueryResult<T>> {
   const running = inflight.get(key);
   if (!force && running) return running.settled as Promise<QueryResult<T>>;
   const id = ++sequence;
@@ -68,7 +73,9 @@ function run<T>(key: string, fetch: () => Promise<QueryResult<T>>, force: boolea
       key,
       result.status === "ok"
         ? { data: result.data, updatedAt: Date.now() }
-        : { data: previous?.data, error: result.error.message, updatedAt: Date.now() },
+        : // Nobody asked for a background fetch, so its failure is not trusted for the staleness
+          // window: the next mount asks again (e.g. once the user has logged in to `gh`).
+          { data: previous?.data, error: result.error.message, updatedAt: Date.now(), stale: options.background },
     );
     notify(key);
     return result;
@@ -139,7 +146,7 @@ export function prefetchQuery<T>(
   if (!isStale(key, options.staleMs ?? 0) && entry?.error === undefined && entry?.data !== undefined) {
     return Promise.resolve({ status: "ok", data: entry.data as T });
   }
-  return run(key, fetch, false);
+  return run(key, fetch, false, { background: true });
 }
 
 /** Marks every entry under `prefix` stale: mounted queries refetch now, unmounted ones on their next
