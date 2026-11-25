@@ -852,6 +852,10 @@ pub struct PullRequestDraft {
     pub body: String,
     pub base: String,
     pub head: String,
+    /// How many commits `head` has beyond `base`; null when that cannot be told locally.
+    pub commits_beyond: Option<u32>,
+    /// Whether `head` is a main branch, which a pull request cannot be opened from.
+    pub protected: bool,
 }
 
 /// What the author chose for a new pull request.

@@ -61,7 +61,7 @@ export const commands = {
 	/**  The repository's branches on GitHub, for choosing a pull request's base. */
 	pullRequestBaseBranches: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("pull_request_base_branches", { projectId })),
 	/**  Title, body and base prefilled from the branch's commits. */
-	pullRequestDraft: (projectId: number) => typedError<PullRequestDraft, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId })),
+	pullRequestDraft: (projectId: number) => typedError<PullRequestDraft_Serialize, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId })),
 	/**  Pushes the branch if needed, then opens a pull request for it. */
 	createPullRequest: (projectId: number, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, pullRequest })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
@@ -422,11 +422,28 @@ export type PullRequestDetail_Serialize = {
 	changedFiles: number,
 };
 
-export type PullRequestDraft = {
+export type PullRequestDraft = PullRequestDraft_Serialize | PullRequestDraft_Deserialize;
+
+export type PullRequestDraft_Deserialize = {
 	title: string,
 	body: string,
 	base: string,
 	head: string,
+	/**  How many commits `head` has beyond `base`; null when that cannot be told locally. */
+	commitsBeyond?: number | null,
+	/**  Whether `head` is a main branch, which a pull request cannot be opened from. */
+	protected: boolean,
+};
+
+export type PullRequestDraft_Serialize = {
+	title: string,
+	body: string,
+	base: string,
+	head: string,
+	/**  How many commits `head` has beyond `base`; null when that cannot be told locally. */
+	commitsBeyond: number | null,
+	/**  Whether `head` is a main branch, which a pull request cannot be opened from. */
+	protected: boolean,
 };
 
 export type PullRequestEdit = {

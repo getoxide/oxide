@@ -512,6 +512,33 @@ fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
 }
 
 #[test]
+fn draft_counts_the_commits_beyond_the_default_branch() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    let empty = f.core.pull_request_draft(f.project.id).unwrap();
+    assert_eq!(empty.commits_beyond, Some(0));
+    assert!(!empty.protected);
+
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+    commit_file(&f.work, "c.txt", "c\n", "Add c");
+    assert_eq!(
+        f.core.pull_request_draft(f.project.id).unwrap().commits_beyond,
+        Some(2)
+    );
+}
+
+#[test]
+fn draft_on_the_main_branch_reports_it_is_protected() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let draft = f.core.pull_request_draft(f.project.id).unwrap();
+    assert_eq!(draft.head, "main");
+    assert!(draft.protected);
+    assert_eq!(draft.commits_beyond, Some(0));
+}
+
+#[test]
 fn create_pushes_when_needed_and_calls_gh_with_the_chosen_title_base_and_draft() {
     let f = fixture();
     install_gh(&f, &ok_state());

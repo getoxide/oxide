@@ -17,6 +17,8 @@ beforeEach(() => {
       body: "Tested locally",
       base: "main",
       head: "fix/topic",
+      commitsBeyond: 1,
+      protected: false,
     },
   });
   vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({

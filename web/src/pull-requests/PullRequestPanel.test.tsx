@@ -47,7 +47,7 @@ it("shows the open pull requests without a branch tab or a manual reload button"
 });
 
 it("shows an empty pull request list on the shared Surface empty layout, with its primary action", async () => {
-  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "", body: "", base: "main", head: "topic" } });
+  vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({ status: "ok", data: { title: "", body: "", base: "main", head: "topic", commitsBeyond: 1, protected: false } });
   vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
   await render();
 
@@ -112,7 +112,7 @@ it("clears the pull request search with Escape and restores the unfiltered list"
 it("opens the pull request form from New pull request", async () => {
   vi.spyOn(commands, "pullRequestDraft").mockResolvedValue({
     status: "ok",
-    data: { title: "Topic", body: "", base: "main", head: "topic" },
+    data: { title: "Topic", body: "", base: "main", head: "topic", commitsBeyond: 1, protected: false },
   });
   vi.spyOn(commands, "pullRequestBaseBranches").mockResolvedValue({ status: "ok", data: ["main"] });
   await render();

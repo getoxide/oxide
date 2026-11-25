@@ -246,6 +246,11 @@ pub struct PullRequestDraft {
     pub body: String,
     pub base: String,
     pub head: String,
+    /// How many commits `head` has beyond `base`; `None` when neither the base nor its
+    /// remote-tracking branch exists locally, so it cannot be told.
+    pub commits_beyond: Option<u32>,
+    /// Whether `head` is a main branch, which a pull request cannot be opened from.
+    pub protected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -851,7 +856,10 @@ pub fn pull_request_base_branches(gh: &Gh, cwd: &Path) -> Result<Vec<String>> {
 /// lone commit's own message, or the branch's name over a list of subjects.
 pub fn pull_request_draft(gh: &Gh, cwd: &Path) -> Result<PullRequestDraft> {
     gh.require_ready(cwd)?;
-    let head = current_branch(cwd)?;
+    let status = git::status(cwd)?;
+    let head = status
+        .branch
+        .ok_or_else(|| Error::Github("HEAD is detached; switch to a branch first.".into()))?;
     let base = gh.default_branch(cwd)?;
     let remote_base = format!("origin/{base}");
     let range = if git::ref_exists(cwd, &remote_base) {
@@ -885,11 +893,14 @@ pub fn pull_request_draft(gh: &Gh, cwd: &Path) -> Result<PullRequestDraft> {
                 .join("\n"),
         ),
     };
+    let commits_beyond = git::commits_beyond(cwd, &base);
     Ok(PullRequestDraft {
         title,
         body,
         base,
         head,
+        commits_beyond,
+        protected: status.protected,
     })
 }
 
