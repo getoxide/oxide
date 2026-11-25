@@ -617,6 +617,9 @@ html.macos .header,
 .pr-views .md p { white-space: pre-line; }
 .pr-views .md-h { font-weight: 650; color: var(--fg-bright); margin-top: var(--space-1); }
 .pr-views .md-link { color: var(--acc2); }
+/* GitHub's @mention: bold link text that opens the profile. */
+button.md-mention { display: inline; min-height: 0; padding: 0; border: 0; border-radius: 3px; background: none; font-size: inherit; font-weight: 600; line-height: inherit; color: var(--acc2); white-space: normal; }
+button.md-mention:hover:not(:disabled) { background: none; text-decoration: underline; }
 .pr-views .md code, .pr-views .md pre { font-family: var(--mono); font-size: 12px; background: var(--bg3); border-radius: 4px; }
 .pr-views .md code { padding: 1px 5px; }
 .pr-views .md pre { padding: var(--space-2) 10px; overflow-x: auto; white-space: pre; }
@@ -998,6 +1001,10 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .md-editor .md-tool:hover:not(:disabled) { background: var(--gh-btn-hover); color: var(--fg-bright); border: 0; }
 .md-editor textarea { display: block; width: 100%; border: 0; border-radius: 0; box-shadow: none; resize: vertical; min-height: 96px; padding: 10px 12px; background: var(--gh-field); }
 .md-editor textarea:focus { box-shadow: none; }
+.md-editor .md-mention-menu { list-style: none; margin: 0; padding: 4px; max-height: 200px; overflow-y: auto; border-top: 1px solid var(--gh-border); background: var(--bg3); }
+.md-editor .md-mention-menu li { padding: 4px 8px; border-radius: 4px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.md-editor .md-mention-menu li:hover { background: var(--gh-btn-hover); }
+.md-editor .md-mention-menu li[aria-selected="true"] { background: var(--gh-blue); color: #fff; }
 .md-editor .md-preview { min-height: 96px; padding: 10px 12px; background: var(--gh-field); }
 .pr-views .issue-body-edit { padding: var(--space-2); }
 .pr-views .pr-compose-box { justify-items: stretch; }

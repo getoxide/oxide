@@ -22,6 +22,7 @@ import { Avatar } from "../shared/Avatar";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
+import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
@@ -137,6 +138,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const { issue: detail } = loaded;
   const phase = issuePhase(detail);
   const conversationCount = detail.timeline.filter(isConversationItem).length;
+  const mentions = mergeMentions(conversationPeople(detail), candidates.state === "ready" ? candidates.data.users : []);
   const open = phase === "open";
 
   /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
@@ -278,6 +280,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     value={bodyDraft}
                     autoFocus
                     onChange={setBodyDraft}
+                    mentions={mentions}
+                    onMentionOpen={load}
                   />
                   <div className="pr-merge-row">
                     <button
@@ -393,6 +397,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     onSaved={() => { setEditingComment(null); setReload((n) => n + 1); }}
                     onCancel={() => setEditingComment(null)}
                     onError={setError}
+                    mentions={mentions}
+                    onMentionOpen={load}
                   />
                 ) : (
                   <>
@@ -418,6 +424,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 rows={3}
                 value={comment}
                 onChange={setComment}
+                mentions={mentions}
+                onMentionOpen={load}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();

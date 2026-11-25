@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { limitBlocks, parseMarkdown } from "./prMarkdown";
+import { limitBlocks, parseInline, parseMarkdown } from "./prMarkdown";
 
 describe("limitBlocks", () => {
   it("keeps short documents whole", () => {
@@ -77,5 +77,44 @@ describe("parseMarkdown", () => {
 
   it("keeps fenced code verbatim", () => {
     expect(parseMarkdown("```\n- not a list\n```")).toEqual([{ kind: "code", text: "- not a list" }]);
+  });
+});
+
+describe("mentions", () => {
+  it("reads @login as a mention", () => {
+    expect(parseInline("Thanks @octo-cat, and @dependabot recreate.")).toEqual([
+      { kind: "text", text: "Thanks " },
+      { kind: "mention", text: "@octo-cat", login: "octo-cat" },
+      { kind: "text", text: ", and " },
+      { kind: "mention", text: "@dependabot", login: "dependabot" },
+      { kind: "text", text: " recreate." },
+    ]);
+  });
+
+  it("reads a mention at the start of a line and after punctuation", () => {
+    expect(parseInline("@a\n(@b)")).toEqual([
+      { kind: "mention", text: "@a", login: "a" },
+      { kind: "text", text: "\n(" },
+      { kind: "mention", text: "@b", login: "b" },
+      { kind: "text", text: ")" },
+    ]);
+  });
+
+  it("leaves @ inside inline code as code", () => {
+    expect(parseInline("run `@foo` now")).toEqual([
+      { kind: "text", text: "run " },
+      { kind: "code", text: "@foo" },
+      { kind: "text", text: " now" },
+    ]);
+  });
+
+  it("leaves email addresses as plain text", () => {
+    expect(parseInline("write to a@b.com or user.name@example.org")).toEqual([
+      { kind: "text", text: "write to a@b.com or user.name@example.org" },
+    ]);
+  });
+
+  it("does not read a bare @ or an invalid login as a mention", () => {
+    expect(parseInline("@ alone, @-x and @a--b")).toEqual([{ kind: "text", text: "@ alone, @-x and @a--b" }]);
   });
 });
