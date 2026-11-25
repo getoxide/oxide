@@ -809,12 +809,8 @@ fn checks_keep_github_s_exact_conclusion() {
     use oxide_core::CheckState;
     let f = fixture();
     let mut pr = detailed_pr();
-    let run = |name: &str, status: &str, conclusion: &str| {
-        serde_json::json!({"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion})
-    };
-    let status = |context: &str, state: &str| {
-        serde_json::json!({"__typename": "StatusContext", "context": context, "state": state})
-    };
+    let run = |name: &str, status: &str, conclusion: &str| serde_json::json!({"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion});
+    let status = |context: &str, state: &str| serde_json::json!({"__typename": "StatusContext", "context": context, "state": state});
     pr["statusCheckRollup"] = serde_json::json!([
         run("success", "COMPLETED", "SUCCESS"),
         run("neutral", "COMPLETED", "NEUTRAL"),
