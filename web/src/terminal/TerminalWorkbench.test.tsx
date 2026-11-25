@@ -424,3 +424,25 @@ it("leaves focus alone when a block ends in a Terminal that has been hidden sinc
   expect(document.activeElement).toBe(elsewhere);
   elsewhere.remove();
 });
+
+
+it("keeps the command line the same element, unchanged, from the start to the end of a fast command", async () => {
+  const shell = await openShell();
+  await shell.submit("ls");
+  await shell.start();
+  await shell.end(0);
+  const composer = container.querySelector("form.terminal-command-composer")!;
+  const seen: string[] = [];
+  const look = () => {
+    expect(container.querySelector("form.terminal-command-composer")).toBe(composer);
+    seen.push(composer.outerHTML);
+  };
+  look();
+  await shell.submit("cd ..");
+  look();
+  await shell.start();
+  look();
+  await shell.end(0, "/");
+  look();
+  expect(new Set(seen).size).toBe(1);
+});
