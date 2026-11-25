@@ -448,7 +448,7 @@ it("leaves the Files view when another route selects a Project", async () => {
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
 });
 
-it("toggles a Project's Terminals and selects it when its name is clicked, with no chevron", async () => {
+it("selects a Project when its name is clicked, then toggles its Terminals once it is active, with no chevron", async () => {
   const alpha = () => all(".project")[0];
   const beta = () => all(".project")[1];
   expect(all(".project-chevron")).toHaveLength(0);
@@ -458,13 +458,26 @@ it("toggles a Project's Terminals and selects it when its name is clicked, with 
   await click(beta());
   expect(beta().getAttribute("aria-current")).toBe("true");
   expect(alpha().getAttribute("aria-current")).toBe("false");
+  expect(beta().getAttribute("aria-expanded")).toBe("true");
+
+  await click(beta());
+  expect(beta().getAttribute("aria-current")).toBe("true");
   expect(beta().getAttribute("aria-expanded")).toBe("false");
   expect(beta().classList.contains("open")).toBe(false);
 
   await click(beta());
-  expect(beta().getAttribute("aria-current")).toBe("true");
   expect(beta().getAttribute("aria-expanded")).toBe("true");
   expect(beta().classList.contains("open")).toBe(true);
+});
+
+it("expands a collapsed Project that is not active when its name selects it", async () => {
+  const alpha = () => all(".project")[0];
+  await click(alpha());
+  expect(alpha().getAttribute("aria-expanded")).toBe("false");
+  await click(all(".project")[1]);
+  await click(alpha());
+  expect(alpha().getAttribute("aria-current")).toBe("true");
+  expect(alpha().getAttribute("aria-expanded")).toBe("true");
 });
 
 it("marks only the active Project's row as selected, and moves the mark with the selection", async () => {
@@ -721,6 +734,7 @@ it("offers Rename, New terminal, and Close terminal on a Terminal row's context 
 
 it("expands a collapsed Project when a terminal is opened in it from the menu", async () => {
   const beta = () => all(".project")[1];
+  await click(beta());
   await click(beta());
   expect(beta().getAttribute("aria-expanded")).toBe("false");
   await newTerminal("Project Beta");

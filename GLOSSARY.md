@@ -35,7 +35,7 @@ One of the two tools in the right dock: Issues or Pull request. They are plain G
 _Avoid_: Tab, pane, widget
 
 **Terminals view**:
-The sidebar's default state: the Open Projects with their Terminals nested under each. A click on a Project name selects it and folds or unfolds its Terminals; the active Project is marked with an accent. Its hover/focus Files and `+` buttons open its **Files view** or a new Terminal; Close project is on its row menu.
+The sidebar's default state: the Open Projects with their Terminals nested under each. A click on a Project name selects it and unfolds its Terminals, and on the active Project's name folds or unfolds them; the active Project is marked with an accent. Its hover/focus Files and `+` buttons open its **Files view** or a new Terminal; Close project is on its row menu.
 _Avoid_: Terminals tab, Projects view
 
 **Files view**:

@@ -678,7 +678,7 @@ function Sidebar({
                     { label: "Copy path", run: () => copyTextToClipboard(readablePath(project.path)) },
                     { label: "Close project", disabled: closingProjectId === project.id, run: () => void close(project), separatorBefore: true },
                   ])}>
-                    {/* The name selects the Project and folds or unfolds its Terminals. */}
+                    {/* The name selects the Project and unfolds its Terminals; on the active Project it folds or unfolds them. */}
                     <button
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
@@ -686,7 +686,8 @@ function Sidebar({
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
                       onClick={() => {
-                        setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id));
+                        const fold = isSelected && expanded;
+                        setCollapsed((previous) => fold ? [...previous, project.id] : previous.filter((id) => id !== project.id));
                         onSelectProject(project);
                       }}
                     >

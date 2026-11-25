@@ -25,7 +25,7 @@ The Files button on the selected Project row read as a stray control beside the 
 The Sidebar switch spent the top of the sidebar on a choice that belongs to a Project, and the Project row asked for precision: a small chevron to fold, a `×` beside the name that ended every Terminal of the Project on a stray click. This amendment reverses the previous one ([spec #561](https://github.com/getoxide/oxide/issues/561)):
 
 - **No Sidebar switch.** The sidebar opens straight on the Open Projects. A **Files button** on each Project row, in the hover/focus action slot beside `+` (disabled while the Project's folder is missing), opens that Project's Files view. Its header, a button reading "← Project name · Terminals", returns to the Terminals view. Open Files stays on the Project row's menu and its shortcut.
-- **Project row.** No leading chevron and no `×`. A click on the Project name selects the Project and folds or unfolds its Terminals. Close project lives only on the row's menu; each Terminal row keeps its own hover/focus `×`.
+- **Project row.** No leading chevron and no `×`. A click on the name of another Project selects it and unfolds its Terminals; a click on the active Project's name folds or unfolds them. Close project lives only on the row's menu; each Terminal row keeps its own hover/focus `×`.
 - **Hierarchy.** The active Project row carries an accent tint and an accent bar on its leading edge; the selected Terminal keeps the neutral item fill, so the two never read alike. Terminal rows are indented under their Project on a guide rail, and their hover and selection fills stay inside that indent. A single stylesheet rule governs each fill.
 
 ## Consequences
