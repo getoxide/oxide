@@ -671,7 +671,7 @@ function Sidebar({
               const expanded = !collapsed.includes(project.id);
               return (
                 <li key={project.id} className={`project-node${project.missing ? " missing" : ""}`}>
-                  <div className="project-row" onContextMenu={(event) => showContextMenu(event, [
+                  <div className="project-row" data-selected={isSelected || undefined} onContextMenu={(event) => showContextMenu(event, [
                     { label: "New terminal", hint: formatShortcut(shortcuts.newTerminal) || undefined, disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
                     { label: "Open Files", hint: formatShortcut(shortcuts.openFiles) || undefined, disabled: project.missing, run: () => onOpenFiles(project) },
                     { label: revealInFileManagerLabel(), disabled: project.missing, run: () => onRevealProject(project), separatorBefore: true },

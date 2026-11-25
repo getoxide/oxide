@@ -228,7 +228,8 @@ html.macos .header,
 .sidebar-empty-hint { color: var(--dim); font-size: 12px; }
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
 .project-row { display: flex; align-items: center; gap: 2px; padding: 2px 8px 0; }
-/* + opens a Terminal in the Project at once; × closes the Project. Both appear on row hover or focus. */
+/* The Files button opens the Project's Files view; + opens a Terminal in it at once. Both appear on
+   row hover or focus, in the slot the terminal count holds otherwise. */
 .project-row { position: relative; }
 .project-row .project-actions { position: absolute; right: 12px; display: flex; align-items: center; gap: 2px; }
 .project-row .row-action { border-radius: 5px; }
@@ -254,13 +255,43 @@ html.macos .header,
 .project-count { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint); }
 .sidebar-files { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .sidebar-files .surface-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.files-heading { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 12px 16px 6px; color: var(--fg); font-weight: 600; }
+/* "← Project · Terminals": the Files view's header is the way back to the Terminals view. */
+.files-heading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: var(--space-2) var(--space-2) var(--space-1);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--fg);
+  font-weight: 600;
+  text-align: left;
+}
+.files-heading:hover:not(:disabled) { color: var(--fg-bright); background: var(--sidebar-item-hover, var(--bg3)); }
 .files-heading svg { flex: none; color: var(--faint); }
+.files-heading:hover svg { color: var(--fg); }
 .files-heading .project-name { white-space: nowrap; }
-/* A Project row is a heading over its Terminals: it never takes a fill of its own, so the selected
-   Terminal is the only highlighted row in the list. The selected Project reads as brighter text. */
-.project-row .project:hover:not(:disabled) { color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.project-row .project[aria-current="true"] { color: var(--fg-bright); }
+.files-heading-terminals { flex: none; color: var(--faint); font-weight: 500; }
+/* One rule per fill. The active Project takes an accent tint and an accent bar on its leading edge;
+   the selected Terminal takes the neutral item fill, so the two never read as the same thing. */
+.project-row .project:hover:not(:disabled) { color: var(--fg); background: var(--sidebar-item-hover, var(--bg3)); }
+.project-row[data-selected] .project { color: var(--fg-bright); background: color-mix(in srgb, var(--acc) 14%, transparent); }
+.project-row[data-selected] .project:hover:not(:disabled) { background: color-mix(in srgb, var(--acc) 20%, transparent); }
+.project-row[data-selected] .project::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--acc);
+}
+.project-row[data-selected] .project-icon { color: var(--acc2); }
 .project-name { overflow: hidden; text-overflow: ellipsis; }
 .project-node.missing .project-name { text-decoration: line-through; color: var(--faint); }
 .row-action {
@@ -275,16 +306,28 @@ html.macos .header,
 }
 .row-action:hover:not(:disabled) { color: var(--fg); background: var(--bg4); }
 .terminal-row:is(:hover, :focus-within) .row-action { opacity: 1; }
-.terminal-row { display: flex; align-items: center; margin: 0 8px; border-radius: var(--radius-control); position: relative; transition: background-color var(--motion-fast) ease-out; }
-.terminal-row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.terminal-row:has(.terminal-item[aria-current="true"]) { background: var(--bg3); }
+/* Terminals nest under their Project: indented to the Project's icon, joined by a guide rail, and
+   each row's fill stays inside that indent instead of spanning the sidebar. */
+.sidebar .terminal-list { position: relative; margin: 2px 8px 2px 22px; padding-left: 8px; }
+.sidebar .terminal-list:not(:empty)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.terminal-row { display: flex; align-items: center; border-radius: var(--radius-control); position: relative; transition: background-color var(--motion-fast) ease-out; }
+.terminal-row:hover { background: var(--sidebar-item-hover, var(--bg3)); }
+.terminal-row:has(.terminal-item[aria-current="true"]) { background: var(--sidebar-item-active, var(--bg4)); }
 .terminal-item {
   flex: 1;
   min-width: 0;
   justify-content: flex-start;
   gap: 8px;
-  min-height: 32px;
-  padding: 6px 8px 6px 16px;
+  min-height: 30px;
+  padding: 5px 8px;
   color: var(--dim);
   background: none;
   border: 0;
@@ -294,6 +337,7 @@ html.macos .header,
 .terminal-item:hover:not(:disabled) { background: none; }
 .terminal-item[aria-current="true"] { color: var(--fg-bright); }
 .terminal-item[aria-current="true"] .terminal-item-title { font-weight: 500; }
+.terminal-item-title { font-weight: 500; }
 .terminal-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 /* Shortcut hints (shown while Ctrl/⌘ is held) float over their control and never take layout space. */
 :is(.btn, .tab, .icon-btn, .sidebar-footer, .terminal-item, .project-row .project) { position: relative; }

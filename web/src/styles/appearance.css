@@ -40,14 +40,6 @@ kbd {
   border-right-color: var(--sidebar-border, var(--line));
   color: var(--sidebar-foreground, var(--fg));
 }
-.sidebar .project-row .project:hover:not(:disabled),
-.sidebar .terminal-item:hover:not(:disabled) {
-  background: var(--sidebar-item-hover, var(--bg3));
-}
-.sidebar .project-row.selected .project,
-.sidebar .terminal-item[aria-current="true"] {
-  background: var(--sidebar-item-active, var(--bg4));
-}
 .pr-views {
   background: var(--surfaces-background, var(--bg));
   color: var(--surfaces-foreground, var(--fg));

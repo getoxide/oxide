@@ -467,6 +467,14 @@ it("toggles a Project's Terminals and selects it when its name is clicked, with 
   expect(beta().classList.contains("open")).toBe(true);
 });
 
+it("marks only the active Project's row as selected, and moves the mark with the selection", async () => {
+  expect(rowOf("Project Alpha").dataset.selected).toBe("true");
+  expect(rowOf("Project Beta").dataset.selected).toBeUndefined();
+  await click(all(".project")[1]);
+  expect(rowOf("Project Beta").dataset.selected).toBe("true");
+  expect(rowOf("Project Alpha").dataset.selected).toBeUndefined();
+});
+
 it("shows a collapsed Project's terminal count and keeps its icon dim", async () => {
   await newTerminal("Project Alpha");
   await click(all(".project")[0]);
