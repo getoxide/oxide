@@ -104,7 +104,9 @@ export class EditorLanguages {
           this.disposed ||
           generation !== this.generation ||
           this.documents.get(uri) !== model ||
-          model.isDisposed()
+          model.isDisposed() ||
+          // Its language changed while the server was starting: it belongs to another server now.
+          serverLanguage(model.getLanguageId()) !== language
         )
           return;
         const version = model.getVersionId();
