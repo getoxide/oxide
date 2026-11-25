@@ -50,6 +50,17 @@ it("focuses Cancel, which closes the modal and returns focus to the Delete icon"
   expect(deleteComment).not.toHaveBeenCalled();
 });
 
+it("keeps Tab and Shift+Tab inside the modal", async () => {
+  await openConfirmation();
+  const tab = (from: HTMLElement, shiftKey = false) =>
+    act(async () => void from.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true })));
+  dialogButton("Delete").focus();
+  await tab(dialogButton("Delete"));
+  expect(document.activeElement).toBe(dialogButton("Cancel"));
+  await tab(dialogButton("Cancel"), true);
+  expect(document.activeElement).toBe(dialogButton("Delete"));
+});
+
 it("cancels on Escape and on a click on the backdrop", async () => {
   await openConfirmation();
   await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));

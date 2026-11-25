@@ -57,6 +57,24 @@ export function CommentTools({ projectId, id, onEdit, onDeleted, onError }: {
   );
 }
 
+/** Keeps Tab and Shift+Tab among the enabled buttons of a modal: focus wraps around instead of
+ *  leaving it for the page behind. */
+function trapTab(event: React.KeyboardEvent<HTMLElement>) {
+  if (event.key !== "Tab") return;
+  const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")];
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const at = document.activeElement;
+  if (!first) {
+    event.preventDefault();
+    return;
+  }
+  if (event.shiftKey ? at === first || !event.currentTarget.contains(at) : at === last) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+}
+
 /** Asks before deleting, in a modal over the window so the comment's card cannot clip it. */
 function DeleteCommentDialog({ deleting, onCancel, onConfirm }: {
   deleting: boolean;
@@ -88,6 +106,8 @@ function DeleteCommentDialog({ deleting, onCancel, onConfirm }: {
         aria-modal="true"
         aria-labelledby="comment-delete-title"
         aria-describedby="comment-delete-text"
+        tabIndex={-1}
+        onKeyDown={trapTab}
       >
         <h2 id="comment-delete-title">Delete this comment?</h2>
         <p id="comment-delete-text">It is removed from GitHub for everyone. This cannot be undone.</p>
