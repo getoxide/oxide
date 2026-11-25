@@ -348,11 +348,21 @@ impl Drop for RunningCheck<'_> {
 /// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
 /// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
 /// reads are kept: a failure is asked again next time.
-struct Cached<K, V>(Mutex<HashMap<K, (Instant, V)>>);
+struct Cached<K, V>(Mutex<CacheEntries<K, V>>);
+
+struct CacheEntries<K, V> {
+    /// Bumped by every clear or removal: a read that started before then is not kept, since it
+    /// may have been answered for the account or settings that were just forgotten.
+    epoch: u64,
+    values: HashMap<K, (Instant, V)>,
+}
 
 impl<K, V> Default for Cached<K, V> {
     fn default() -> Self {
-        Self(Mutex::new(HashMap::new()))
+        Self(Mutex::new(CacheEntries {
+            epoch: 0,
+            values: HashMap::new(),
+        }))
     }
 }
 
@@ -362,24 +372,35 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
         key: &K,
         fetch: impl FnOnce() -> std::result::Result<V, E>,
     ) -> std::result::Result<V, E> {
-        if let Some((at, value)) = self.0.lock_recover().get(key)
-            && at.elapsed() < CACHE_TTL
-        {
-            return Ok(value.clone());
-        }
+        let started = {
+            let entries = self.0.lock_recover();
+            if let Some((at, value)) = entries.values.get(key)
+                && at.elapsed() < CACHE_TTL
+            {
+                return Ok(value.clone());
+            }
+            entries.epoch
+        };
         let value = fetch()?;
-        self.0
-            .lock_recover()
-            .insert(key.clone(), (Instant::now(), value.clone()));
+        let mut entries = self.0.lock_recover();
+        if entries.epoch == started {
+            entries
+                .values
+                .insert(key.clone(), (Instant::now(), value.clone()));
+        }
         Ok(value)
     }
 
     fn remove(&self, key: &K) {
-        self.0.lock_recover().remove(key);
+        let mut entries = self.0.lock_recover();
+        entries.epoch += 1;
+        entries.values.remove(key);
     }
 
     fn clear(&self) {
-        self.0.lock_recover().clear();
+        let mut entries = self.0.lock_recover();
+        entries.epoch += 1;
+        entries.values.clear();
     }
 }
 
@@ -1313,6 +1334,29 @@ mod tests {
                 "{url:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_value_fetched_across_a_clear_or_remove_is_not_kept() {
+        let cache: Cached<&str, &str> = Cached::default();
+        let fetched = cache.get_or(&"repo", || {
+            // The account changes while the old one is still being asked.
+            cache.clear();
+            Ok::<_, ()>("old account")
+        });
+        assert_eq!(fetched, Ok("old account"));
+        assert_eq!(
+            cache.get_or(&"repo", || Ok::<_, ()>("new account")),
+            Ok("new account")
+        );
+
+        cache.remove(&"repo");
+        let fetched = cache.get_or(&"repo", || {
+            cache.remove(&"repo");
+            Ok::<_, ()>("stale")
+        });
+        assert_eq!(fetched, Ok("stale"));
+        assert_eq!(cache.get_or(&"repo", || Ok::<_, ()>("fresh")), Ok("fresh"));
     }
 
     /// Runs `ask` on its own thread and gives up after a while, so a hang fails the test.
