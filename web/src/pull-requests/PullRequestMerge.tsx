@@ -100,7 +100,7 @@ interface MergeFooterProps {
 }
 
 /** Always in view: the verdict, one split button to merge (its menu holds the other methods,
- *  Merge when ready and Delete branch), and Close beside it. */
+ *  Merge when ready and Delete branch), and Close to its left. */
 export function MergeFooter(p: MergeFooterProps) {
   const closeButton = (
     <button
@@ -131,12 +131,12 @@ export function MergeFooter(p: MergeFooterProps) {
           <GitPullRequestDraftIcon size={14} /> Draft: not ready for review yet
         </p>
         <div className="pr-merge-row">
+          {closeButton}
           <button className={`primary${p.pending === "ready" ? " pending" : ""}`} disabled={p.busy} onClick={p.onReady}>
             <Working on={p.pending === "ready"} label="Marking ready…">
               Ready for review
             </Working>
           </button>
-          {closeButton}
         </div>
       </footer>
     );
@@ -163,6 +163,7 @@ export function MergeFooter(p: MergeFooterProps) {
         {p.status}
       </p>
       <div className="pr-merge-row">
+        {closeButton}
         <SplitButton
           label={
             auto ? (
@@ -223,7 +224,6 @@ export function MergeFooter(p: MergeFooterProps) {
             </div>
           </div>
         </SplitButton>
-        {closeButton}
       </div>
       {p.autoMerge && <p className="pr-merge-note">GitHub will merge it once the checks pass.</p>}
       {p.deleteBranch && !p.autoMerge && (
