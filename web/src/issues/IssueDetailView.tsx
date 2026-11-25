@@ -26,6 +26,7 @@ import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
 import { ActivityRow, isConversationItem } from "../pull-requests/PullRequestTimeline";
+import { Reactions } from "../shared/Reactions";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
@@ -261,11 +262,14 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 )}
               </header>
               {bodyDraft === null ? (
-                detail.body.trim() ? (
-                  <Markdown source={detail.body} />
-                ) : (
-                  <p className="pr-field-empty issue-no-body">No description provided.</p>
-                )
+                <>
+                  {detail.body.trim() ? (
+                    <Markdown source={detail.body} />
+                  ) : (
+                    <p className="pr-field-empty issue-no-body">No description provided.</p>
+                  )}
+                  <Reactions projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
+                </>
               ) : (
                 <div className="issue-body-edit">
                   <MarkdownEditor
@@ -390,7 +394,12 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     onCancel={() => setEditingComment(null)}
                     onError={setError}
                   />
-                ) : c.body.trim() && <Markdown source={c.body} />}
+                ) : (
+                  <>
+                    {c.body.trim() && <Markdown source={c.body} />}
+                    <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />
+                  </>
+                )}
               </div>
             </article>
           ))}

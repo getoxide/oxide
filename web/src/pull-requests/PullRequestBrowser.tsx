@@ -24,6 +24,7 @@ import {
   type PullRequest,
   type PullRequestDetail,
   type PullRequestEdit,
+  type ReactionGroup,
 } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
@@ -34,6 +35,7 @@ import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
 import { Markdown } from "./PullRequestMarkdown";
 import { ActivityRow, type ConversationItem, isConversationItem } from "./PullRequestTimeline";
+import { Reactions } from "../shared/Reactions";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
@@ -454,7 +456,9 @@ export function PullRequestReview({
           )}
         </header>
 
-        {detail.body.trim() && <Description body={detail.body} />}
+        {(detail.body.trim() || detail.reactions.length > 0) && (
+          <Description body={detail.body} projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
+        )}
         {live && <MergeStatus
             requirements={requirements}
             busy={busy}
@@ -652,7 +656,12 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
             onCancel={() => setEditing(false)}
             onError={onError}
           />
-        ) : entry.body.trim() && <Markdown source={entry.body} />}
+        ) : (
+          <>
+            {entry.body.trim() && <Markdown source={entry.body} />}
+            <Reactions projectId={projectId} subjectId={entry.id} reactions={entry.reactions} onError={onError} />
+          </>
+        )}
       </div>
     </article>
   );
@@ -660,7 +669,13 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
 
 /** The description, folded away until asked for: bot and template boilerplate shouldn't
  *  push the rest off the screen, and when opened it is the whole text. */
-function Description({ body }: { body: string }) {
+function Description({ body, projectId, subjectId, reactions, onError }: {
+  body: string;
+  projectId: number;
+  subjectId: string;
+  reactions: ReactionGroup[];
+  onError: (message: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <section className="pr-section pr-description" aria-label="Description">
@@ -671,6 +686,7 @@ function Description({ body }: { body: string }) {
       <Collapsible open={open}>
         <Markdown source={body} />
       </Collapsible>
+      <Reactions projectId={projectId} subjectId={subjectId} reactions={reactions} onError={onError} />
     </section>
   );
 }

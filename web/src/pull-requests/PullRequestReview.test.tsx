@@ -49,10 +49,11 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     deleteBranchOnMerge: false,
     changedFiles: 3,
     nodeId: "PR_174",
+    reactions: [],
     participants: [],
     timeline: [
-      { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
-      { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z" },
+      { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
+      { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
     ],
     ...overrides,
   };
@@ -108,12 +109,12 @@ it("interleaves commits, force-pushes, reviews and events with comments, opening
           committedAt: "2026-10-27T08:00:00Z", verified: true, status: "success", url: "https://github.com/me/oxide/commit/1111111aaaa",
         },
         { kind: "reviewRequested", actor: "app/dependabot", createdAt: "2026-10-27T08:01:00Z", login: "bob" },
-        { kind: "review", id: "PRR_1", author: "me", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
+        { kind: "review", id: "PRR_1", author: "me", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
         {
           kind: "forcePush", actor: "app/dependabot", createdAt: "2026-10-27T10:30:00Z", branch: "dependabot/npm/react-virtual",
           before: "1111111", after: "2222222", compareUrl: "https://github.com/me/oxide/compare/1111111aaaa..2222222bbbb",
         },
-        { kind: "comment", id: "c1", author: "me", body: "Rebased", createdAt: "2026-10-27T11:00:00Z" },
+        { kind: "comment", id: "c1", author: "me", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
         { kind: "labeled", actor: "bob", createdAt: "2026-10-27T11:30:00Z", label: { name: "dependencies", color: "0366d6" } },
         { kind: "convertedToDraft", actor: "bob", createdAt: "2026-10-27T12:00:00Z" },
         { kind: "readyForReview", actor: "bob", createdAt: "2026-10-27T12:30:00Z" },
@@ -664,4 +665,31 @@ it("places the loading preview header inside .pr-scroll so it shares the review 
   const scroll = host.querySelector(".pr-review .pr-scroll");
   expect(scroll).not.toBeNull();
   expect(scroll!.querySelector('.skeleton[role="status"]')).not.toBeNull();
+});
+
+it("shows reactions on the description and reviews, and rolls a refused toggle back", async () => {
+  vi.spyOn(commands, "toggleReaction").mockResolvedValue({ status: "error", error: { message: "GitHub refused the reaction" } });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      reactions: [{ content: "heart", count: 3, viewerHasReacted: false }],
+      timeline: [
+        {
+          kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested",
+          reactions: [{ content: "hooray", count: 1, viewerHasReacted: false }],
+        },
+      ],
+    }),
+  });
+  await render();
+
+  expect(host.querySelector('section[aria-label="Description"] .reactions')?.textContent).toContain("❤️3");
+  const review = host.querySelector('section[aria-label="Conversation"] .pr-entry')!;
+  const hooray = review.querySelector<HTMLButtonElement>(".reactions button[aria-pressed]")!;
+  expect(hooray.textContent).toBe("🎉1");
+  await click(hooray);
+  expect(commands.toggleReaction).toHaveBeenCalledWith(1, "PRR_1", "hooray", true);
+  expect(hooray.textContent).toBe("🎉1");
+  expect(hooray.getAttribute("aria-pressed")).toBe("false");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("GitHub refused the reaction");
 });

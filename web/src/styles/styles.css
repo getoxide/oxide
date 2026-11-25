@@ -713,6 +713,15 @@ html.macos .header,
 /* Popovers: reviewers/assignees/labels pickers and merge options. Portalled to <body>. */
 .pr-popover { position: fixed; z-index: 60; display: flex; flex-direction: column; overflow: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg2); box-shadow: 0 12px 32px #0008; color: var(--fg); }
 .pr-popover[data-side="top"] { box-shadow: 0 -12px 32px #0008; }
+/* Reactions under a description, comment or review, as GitHub's pills, and their picker. */
+.reactions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-2); }
+.reactions .reaction { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: none; font-size: 12px; line-height: 1; }
+.reactions .reaction.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 14%, transparent); color: var(--fg); }
+.reactions .reaction-count { font-variant-numeric: tabular-nums; }
+.reaction-picker { display: flex; gap: 2px; padding: var(--space-2); }
+.reaction-picker .reaction-option { width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; font-size: 16px; }
+.reaction-picker .reaction-option:hover { background: var(--bg3); }
+.reaction-picker .reaction-option.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 14%, transparent); }
 .pr-picker { display: grid; gap: var(--space-2); padding: var(--space-3); min-height: 0; }
 .pr-picker header { display: flex; align-items: center; justify-content: space-between; }
 .pr-picker input { width: 100%; }
