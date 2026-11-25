@@ -226,7 +226,7 @@ fn stray_input_before_a_block_cannot_leave_it_running() {
             .unwrap();
         block_end(&view, "ready");
         let stray: &[u8] = if cfg!(windows) {
-            b"stray"
+            b"stray\x1b[1;1R"
         } else {
             b"stray'\x1b[1;1R"
         };
