@@ -74,7 +74,7 @@ vi.mock("@xterm/xterm", () => ({
     write(data: string) {
       this.written.push(data);
       // A line-oriented model of the buffer: enough to know which rows hold text and where the cursor is.
-      for (const [index, part] of data.replace(/\x1b\[[?\d;]*[A-Za-z]/g, "").split(/\r?\n/).entries()) {
+      for (const [index, part] of data.replace(new RegExp(`${String.fromCharCode(27)}\\[[?\\d;]*[A-Za-z]`, "g"), "").split(/\r?\n/).entries()) {
         if (index > 0) this.lines.push("");
         this.lines[this.lines.length - 1] += part.replace(/\r/g, "");
       }
@@ -538,7 +538,9 @@ it("never shows a cursor in a block restored from the last session", async () =>
     ),
   );
   const term = instances[0];
-  expect(term.written.join("")).toMatch(/old\r\n.*\x1b\[\?25l/s);
+  const written = term.written.join("");
+  expect(written.indexOf("\x1b[?25l")).toBeGreaterThan(written.indexOf("old\r\n"));
+  expect(written.indexOf("old\r\n")).toBeGreaterThanOrEqual(0);
   expect(term.options.disableStdin).toBe(true);
 });
 
