@@ -102,7 +102,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         <>
           <CopyLinkButton url={issue.url} onError={setError} />
           <button
-            className="pr-github"
+            className="icon-btn sm"
             onClick={() => void openLink(issue.url)}
             title="Open this issue on GitHub"
             aria-label="Open on GitHub"

@@ -179,9 +179,9 @@ it("keeps every merge control in one split button: no side Merge when ready butt
   await render();
   const row = host.querySelector(".pr-merge-row")!;
   const split = row.querySelector(".split-btn")!;
-  // The split button, then Close beside it: nothing else.
-  expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual(["split-btn", ""]);
-  expect(row.children[1].textContent).toContain("Close");
+  // Close on the left, then the split button taking the rest of the row: nothing else.
+  expect([...row.children].map((c) => c.className.split(" ")[0])).toEqual(["", "split-btn"]);
+  expect(row.children[0].textContent).toContain("Close");
   expect(split.querySelector('[aria-haspopup="menu"]')!.getAttribute("aria-label")).toBe("Merge options");
   expect(row.querySelector(".icon-btn")).toBeNull();
 });

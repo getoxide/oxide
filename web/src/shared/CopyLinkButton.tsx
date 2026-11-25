@@ -40,7 +40,7 @@ export function CopyLinkButton({ url, onError }: CopyLinkButtonProps) {
     <>
       <button
         type="button"
-        className="pr-github"
+        className="icon-btn sm"
         data-copied={copied ? "true" : undefined}
         onClick={() => void copy()}
         title={copied ? "Copied link" : "Copy link"}

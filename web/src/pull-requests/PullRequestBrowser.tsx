@@ -312,7 +312,7 @@ export function PullRequestReview({
         <>
           <CopyLinkButton url={shownPr.url} onError={setError} />
           <button
-            className="pr-github"
+            className="icon-btn sm"
             onClick={() => void openLink(shownPr.url)}
             title="Open this pull request on GitHub"
             aria-label="Open on GitHub"

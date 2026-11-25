@@ -47,8 +47,8 @@ kbd {
   font-size: var(--font-surfaces-size, var(--font-ui-size, 13px));
 }
 .pr-views .pr-nav {
-  background: var(--surfaces-header-background, transparent);
-  border-bottom: 1px solid var(--surfaces-border, transparent);
+  background: var(--surfaces-header-background, var(--surfaces-background, var(--bg)));
+  border-bottom: 1px solid var(--surfaces-border, var(--line));
 }
 .pr-views .pr-details {
   background: var(--surfaces-card-background, var(--bg2));

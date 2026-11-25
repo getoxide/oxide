@@ -36,6 +36,8 @@ export function Popover({ anchor, label, onClose, width = 280, children }: Popov
       bottom: upward ? `${window.innerHeight - rect.top + 4}px` : "auto",
       visibility: "visible",
     });
+    // The shadow falls away from the button, so it never darkens the control it opens from.
+    el.dataset.side = upward ? "top" : "bottom";
   }, [anchor, width]);
 
   useEffect(() => {
