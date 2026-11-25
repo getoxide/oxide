@@ -640,7 +640,7 @@ impl Gh {
         })
     }
 
-    /// The open pull request of the checked-out branch.
+    /// The pull request numbered `number`.
     fn pull_request(&self, cwd: &Path, number: u32) -> Result<PullRequest> {
         let number = number.to_string();
         let json = self.run(cwd, &["pr", "view", &number, "--json", PR_FIELDS])?;
@@ -865,17 +865,7 @@ pub fn pull_request_draft(gh: &Gh, cwd: &Path, head: Option<&str>) -> Result<Pul
         .collect();
     let head = match chosen {
         Some(head) => head,
-        None => {
-            let current = git::status(cwd)?.branch;
-            current
-                .clone()
-                .filter(|branch| !git::is_protected(branch))
-                .or_else(|| heads.first().cloned())
-                .or(current)
-                .ok_or_else(|| {
-                    Error::Github("HEAD is detached; switch to a branch first.".into())
-                })?
-        }
+        None => default_head(cwd, &heads)?,
     };
     let base = gh.default_branch(cwd)?;
     let tip = format!("refs/heads/{head}");
@@ -919,6 +909,19 @@ pub fn pull_request_draft(gh: &Gh, cwd: &Path, head: Option<&str>) -> Result<Pul
     })
 }
 
+/// The head a draft starts with: the checked-out branch unless it is a main one, else the
+/// most recently committed of `heads` (the local branches that are not main ones), else
+/// the checked-out main branch, which the draft reports as protected.
+fn default_head(cwd: &Path, heads: &[String]) -> Result<String> {
+    let current = git::status(cwd)?.branch;
+    current
+        .clone()
+        .filter(|branch| !git::is_protected(branch))
+        .or_else(|| heads.first().cloned())
+        .or(current)
+        .ok_or_else(|| Error::Github("HEAD is detached; switch to a branch first.".into()))
+}
+
 /// A head branch from the webview: a valid name (ADR-0016) of an existing local branch
 /// that is not a main branch.
 fn pull_request_head(cwd: &Path, head: &str) -> Result<String> {
@@ -935,7 +938,6 @@ fn pull_request_head(cwd: &Path, head: &str) -> Result<String> {
 /// (no network); `None` when `base` is not known locally. Both are validated as branch
 /// names and `head` must be an existing local branch. Starts `git`.
 pub fn pull_request_commits_beyond(cwd: &Path, head: &str, base: &str) -> Result<Option<u32>> {
-    git::valid_branch_name(head)?;
     let base = git::valid_branch_name(base)?;
     let head = git::existing_local_branch(cwd, head)?;
     Ok(git::commits_beyond(cwd, &head, base))
@@ -960,7 +962,7 @@ fn humanize(branch: &str) -> String {
 pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Result<PullRequest> {
     gh.require_ready(cwd)?;
     // The head reaches Git and `gh` as an argument (ADR-0016).
-    let branch = pull_request_head(cwd, input.head.trim())?;
+    let branch = pull_request_head(cwd, &input.head)?;
     let title = input.title.trim();
     if title.is_empty() {
         return Err(Error::Github("Write a pull request title.".into()));
@@ -968,7 +970,7 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
     let base = input.base.trim();
     if base.is_empty() || base == branch {
         return Err(Error::Github(
-            "Choose a base branch other than the current one.".into(),
+            "Choose a base branch other than the head.".into(),
         ));
     }
     // The base reaches Git and `gh` as an argument (ADR-0016).

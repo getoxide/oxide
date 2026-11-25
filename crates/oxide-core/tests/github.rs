@@ -910,6 +910,7 @@ fn draft_refuses_a_head_that_is_invalid_unknown_or_protected() {
         "main..HEAD",
         "main@{1}",
         "",
+        " feature",
         "nope",
         "main",
     ] {
@@ -974,6 +975,8 @@ fn create_refuses_a_head_that_is_invalid_unknown_protected_or_the_base() {
         ("feature..main", "main", "branch name"),
         ("feature@{1}", "main", "branch name"),
         ("", "main", "branch name"),
+        (" feature", "main", "branch name"),
+        ("feature ", "main", "branch name"),
         ("nope", "main", "no local branch"),
         ("main", "feature", "main branch"),
         ("master", "main", "main branch"),
@@ -1010,7 +1013,15 @@ fn commits_beyond_counts_the_chosen_head_and_refuses_a_bad_one() {
             .unwrap(),
         Some(0)
     );
-    for head in ["", "-n", "main..HEAD", "main@{1}", "main^", "main:x"] {
+    for head in [
+        "",
+        " feature",
+        "-n",
+        "main..HEAD",
+        "main@{1}",
+        "main^",
+        "main:x",
+    ] {
         let err = f
             .core
             .pull_request_commits_beyond(f.project.id, head, "main")
