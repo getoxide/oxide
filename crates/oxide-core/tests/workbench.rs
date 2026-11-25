@@ -181,6 +181,65 @@ fn a_stalled_terminal_view_never_stalls_the_shell() {
     core.close_terminal(terminal.id).unwrap();
 }
 
+/// The shells a Command block runs in on this OS: zsh and bash where installed, else PowerShell.
+fn block_shells(core: &Core) -> Vec<oxide_core::ShellKind> {
+    use oxide_core::ShellKind;
+    if cfg!(windows) {
+        return vec![ShellKind::Default];
+    }
+    core.available_shells()
+        .into_iter()
+        .map(|shell| shell.kind)
+        .filter(|kind| matches!(kind, ShellKind::Zsh | ShellKind::Bash))
+        .collect()
+}
+
+fn start_terminal_in(core: &Core, project_id: u32, shell: oxide_core::ShellKind) -> u32 {
+    core.set_terminal_settings(oxide_core::TerminalSettings {
+        shell,
+        load_user_config: true,
+    })
+    .unwrap();
+    core.start_block_terminal(project_id).unwrap().id
+}
+
+/// The exit code and folder a block's `end` marker reports, once it has arrived.
+fn block_end(view: &Drained, token: &str) -> (String, String) {
+    let needle = format!("{token};end;");
+    let output = view.wait_for(&needle);
+    let rest = &output[output.find(&needle).unwrap() + needle.len()..];
+    let marker = rest.split('\x07').next().unwrap();
+    let (code, cwd) = marker.split_once(';').unwrap();
+    (code.to_string(), cwd.to_string())
+}
+
+/// Keystrokes and terminal replies that reach the shell's line editor before a block is typed
+/// (typeahead, a cursor-position reply) must not break the block's wrapper.
+#[test]
+fn stray_input_before_a_block_cannot_leave_it_running() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo READY", "ready")
+            .unwrap();
+        block_end(&view, "ready");
+        let stray: &[u8] = if cfg!(windows) {
+            b"stray"
+        } else {
+            b"stray'\x1b[1;1R"
+        };
+        core.write_terminal(terminal, stray).unwrap();
+        core.run_terminal_block(terminal, "printf 'AFTER_%s\\n' STRAY", "after")
+            .unwrap();
+        let (code, _) = block_end(&view, "after");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(view.text().contains("AFTER_STRAY"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
 #[test]
 fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
     let (_temporary, core, id) = fixture();

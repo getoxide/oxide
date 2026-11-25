@@ -289,12 +289,38 @@ pub fn shell_launch(
     launch
 }
 
-/// What to type into the shell to run `command` as a block marked by `token`.
-/// The leading space keeps the wrapper out of the user's zsh history (`hist_ignore_space`).
+/// What to type into the shell to run `command` as a block marked by `token`: one line, so a
+/// syntax error in `command` is reported by `eval` instead of leaving the shell at a continuation
+/// prompt. Ctrl+U first empties the line editor of anything typed or replied before it. The
+/// wrapper re-arms the prompt hooks, marks the start, runs the command in the live shell (its
+/// `cd`, variables, aliases and functions stay) and marks the end itself; the prompt hook only
+/// marks the end of a command that never got back to the wrapper (Ctrl+C). The leading space
+/// keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`).
 pub fn block_script(token: &str, command: &str) -> String {
+    let command = ansi_c_quoted(command);
     format!(
-        " _oxide_token='{token}'; _oxide_exit=; printf '\\033]633;Oxide;{token};start\\007'; __oxide_run_block() {{\n{command}\n}}; __oxide_run_block; _oxide_exit=$?; unset -f __oxide_run_block\n"
+        "\x15 _oxide_token={token}; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=\n"
     )
+}
+
+/// `text` as one `$'...'` word, which bash and zsh both read back unchanged, with every line
+/// break and control character escaped so the word stays on one line.
+fn ansi_c_quoted(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 3);
+    quoted.push_str("$'");
+    for character in text.chars() {
+        match character {
+            '\\' => quoted.push_str("\\\\"),
+            '\'' => quoted.push_str("\\'"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            c if c.is_ascii_control() => quoted.push_str(&format!("\\{:03o}", c as u32)),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// A script that asks the shell itself for completions, or `None` when the shell cannot (the
@@ -527,6 +553,8 @@ mod tests {
 
     #[test]
     fn the_block_wrapper_stays_out_of_the_shell_history() {
-        assert!(block_script("token", "echo hi").starts_with(' '));
+        // Ctrl+U clears the line editor; the line it then reads starts with a space.
+        let script = block_script("token", "echo hi");
+        assert!(script.strip_prefix('\u{15}').unwrap().starts_with(' '));
     }
 }
