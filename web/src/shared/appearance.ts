@@ -25,7 +25,6 @@ export interface Appearance {
   typography?: Partial<Record<FontRole, FontTypography>> & Record<"ui" | "code" | "terminal", FontTypography>;
   themeJson: string;
   themeName: string;
-  themeId?: string;
 }
 // Bundled through fonts.css, so they win over installed copies; the rest cover scripts the subsets do not.
 const SYSTEM =
@@ -216,8 +215,6 @@ export const SURFACE_TOKENS: Record<string, string> = {
   "sidebar.foreground": "--sidebar-foreground",
   "sidebar.item.hover": "--sidebar-item-hover",
   "sidebar.item.active": "--sidebar-item-active",
-  "sidebar.switch.background": "--sidebar-switch-background",
-  "sidebar.switch.active": "--sidebar-switch-active",
   "surfaces.background": "--surfaces-background",
   "surfaces.header.background": "--surfaces-header-background",
   "surfaces.card.background": "--surfaces-card-background",
@@ -380,10 +377,30 @@ export function parseThemePack(raw: string): ThemePack {
   }
   return pack;
 }
+// A theme file that no longer parses keeps the rest of the profile and falls back to the default theme.
+function themeFileAppearance(themeJson: string, themeName: string): ThemeVariant["appearance"] | undefined {
+  try {
+    return parseThemePack(themeJson).themes.find((theme) => theme.name === themeName)?.appearance;
+  } catch {
+    return undefined;
+  }
+}
+function builtInThemeName(appearance: ThemeVariant["appearance"] | undefined): string {
+  const builtIn = parseThemePack(DEFAULT_APPEARANCE.themeJson).themes;
+  return builtIn.find((theme) => theme.appearance === appearance)?.name ?? DEFAULT_APPEARANCE.themeName;
+}
 function load(): Appearance {
   try {
-    const stored = readJson(KEY) as Appearance | null;
+    const stored = readJson(KEY) as (Appearance & { themeId?: string }) | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
+    // Theme files from the removed Themes section: keep the light or dark choice, on the built-in theme,
+    // and save the result so the theme file leaves storage.
+    const fromThemeFile = stored.themeId !== undefined;
+    if (fromThemeFile) {
+      stored.themeName = builtInThemeName(themeFileAppearance(stored.themeJson, stored.themeName));
+      stored.themeJson = DEFAULT_APPEARANCE.themeJson;
+      delete stored.themeId;
+    }
     validateAppearance(stored);
     for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[]) {
       const value = stored.fonts[key];
@@ -391,6 +408,7 @@ function load(): Appearance {
     }
     if (stored.themeJson === PREVIOUS_BUILT_IN_THEME || stored.themeJson === PREVIOUS_DARK_ONLY_THEME)
       stored.themeJson = DEFAULT_APPEARANCE.themeJson;
+    if (fromThemeFile) writeJson(KEY, stored);
     return stored;
   } catch {
     return structuredClone(DEFAULT_APPEARANCE);

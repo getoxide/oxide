@@ -1,23 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { XIcon } from "@primer/octicons-react";
-import { commands, type ThemeSummary } from "../bindings";
-import {
-  DEFAULT_APPEARANCE,
-  getAppearance,
-  parseThemePack,
-  saveAppearance,
-  type Appearance,
-} from "../shared/appearance";
+import { getAppearance, saveAppearance, type Appearance } from "../shared/appearance";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
 import { GithubSetup } from "./GithubSetup";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
-import type { ThemeEntry } from "./ThemeChoiceButton";
-import { ThemesSettingsSection } from "./ThemesSettingsSection";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
-export type SettingsSectionId = "appearance" | "themes" | "terminal" | "code" | "session" | "shortcuts" | "github";
+export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "shortcuts" | "github";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -32,9 +23,6 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
   const [appearance, setAppearance] = useState(getAppearance);
   const [error, setError] = useState<string | null>(null);
   const [restoreSession, setRestore] = useState(restoreSessionEnabled);
-  const [diskThemes, setDiskThemes] = useState<ThemeSummary[] | null>(null);
-  const [themeRevision, setThemeRevision] = useState(0);
-  const [themeError, setThemeError] = useState<string | null>(null);
   const tabRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
 
   const apply = useCallback((next: Appearance) => {
@@ -47,72 +35,6 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
     }
   }, []);
 
-  const reloadThemes = useCallback(() => {
-    setThemeRevision((value) => value + 1);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    void commands.listThemes().then((result) => {
-      if (!active) return;
-      if (result.status === "error") {
-        setThemeError(result.error.message);
-        return;
-      }
-      if (!Array.isArray(result.data)) return;
-      setDiskThemes(result.data);
-      setThemeError(null);
-      const currentId = getAppearance().themeId;
-      if (currentId) {
-        const match = result.data.find((item) => item.id === currentId);
-        if (!match || !match.json) {
-          apply({
-            ...getAppearance(),
-            themeId: undefined,
-            themeJson: DEFAULT_APPEARANCE.themeJson,
-            themeName: DEFAULT_APPEARANCE.themeName,
-          });
-        }
-      }
-    }).catch((cause) => {
-      if (active) setThemeError(cause instanceof Error ? cause.message : String(cause));
-    });
-    return () => { active = false; };
-  }, [apply, themeRevision]);
-
-  const themeEntries = useMemo<ThemeEntry[]>(() => {
-    if (diskThemes) {
-      const entries: ThemeEntry[] = [];
-      for (const item of diskThemes) {
-        if (!item.json) continue;
-        try {
-          const pack = parseThemePack(item.json);
-          for (const variant of pack.themes) {
-            entries.push({ id: item.id, builtin: item.builtin, json: item.json, variant });
-          }
-        } catch {
-          // Invalid pack on disk is surfaced via item.error diagnostics.
-        }
-      }
-      return entries;
-    }
-    try {
-      return parseThemePack(appearance.themeJson).themes.map((variant) => ({
-        id: appearance.themeId ?? variant.name.toLowerCase().replace(/\s+/g, "-"),
-        builtin: true,
-        json: appearance.themeJson,
-        variant,
-      }));
-    } catch {
-      return [];
-    }
-  }, [appearance.themeId, appearance.themeJson, diskThemes]);
-
-  const brokenThemes = useMemo(
-    () => (diskThemes ?? []).filter((item) => Boolean(item.error)),
-    [diskThemes],
-  );
-
   const sections: SettingsSection[] = [
     {
       id: "appearance",
@@ -121,25 +43,8 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
       render: () => (
         <AppearanceSettingsSection
           appearance={appearance}
-          themeEntries={themeEntries}
           error={error}
           onApply={apply}
-        />
-      ),
-    },
-    {
-      id: "themes",
-      label: "Themes",
-      description: "Disk-backed JSON themes in ~/.oxide/themes/.",
-      render: () => (
-        <ThemesSettingsSection
-          appearance={appearance}
-          themeEntries={themeEntries}
-          brokenThemes={brokenThemes}
-          themeError={themeError}
-          onSetThemeError={setThemeError}
-          onApply={apply}
-          onReloadThemes={reloadThemes}
         />
       ),
     },

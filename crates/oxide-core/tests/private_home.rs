@@ -140,31 +140,3 @@ fn a_path_that_refuses_a_change_does_not_stop_the_start() {
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(opened.is_ok());
 }
-
-#[test]
-fn themes_directory_and_files_are_private_and_symlinks_are_rejected() {
-    let parent = tempfile::tempdir().unwrap();
-    let home = parent.path().join("oxide");
-    let core = Core::open(&home).unwrap();
-
-    let themes_dir = home.join("themes");
-    assert_eq!(mode(&themes_dir), 0o700);
-    assert_eq!(mode(&themes_dir.join("oxide-dark.json")), 0o600);
-    assert_eq!(mode(&themes_dir.join("oxide-light.json")), 0o600);
-
-    let custom_json =
-        r#"{"name":"Custom","themes":[{"name":"Custom","appearance":"dark","style":{}}]}"#;
-    core.save_theme("custom", custom_json).unwrap();
-    assert_eq!(mode(&themes_dir.join("custom.json")), 0o600);
-
-    let outside = parent.path().join("outside.json");
-    fs::write(&outside, custom_json).unwrap();
-    make_symlink(&outside, &themes_dir.join("evil.json"));
-
-    let themes = core.list_themes().unwrap();
-    let evil = themes.iter().find(|t| t.id == "evil").unwrap();
-    assert!(evil.json.is_none());
-    assert!(evil.error.is_some());
-    assert!(core.save_theme("evil", custom_json).is_err());
-    assert!(core.delete_theme("evil").is_err());
-}

@@ -1,13 +1,6 @@
 import { CheckIcon } from "@primer/octicons-react";
 import type { ThemeVariant } from "../shared/appearance";
 
-export interface ThemeEntry {
-  id: string;
-  builtin: boolean;
-  json: string;
-  variant: ThemeVariant;
-}
-
 /** The swatch colours of a theme variant: its background and two of its terminal colours. */
 function swatch(theme: ThemeVariant) {
   const color = (key: string, fallback: string) => {
@@ -24,21 +17,19 @@ function swatch(theme: ThemeVariant) {
 }
 
 interface ThemeChoiceButtonProps {
-  id: string;
   variant: ThemeVariant;
   checked: boolean;
   onSelect: () => void;
 }
 
 /** Radio button displaying a theme variant's swatch and name. */
-export function ThemeChoiceButton({ id, variant, checked, onSelect }: ThemeChoiceButtonProps) {
+export function ThemeChoiceButton({ variant, checked, onSelect }: ThemeChoiceButtonProps) {
   const colors = swatch(variant);
   return (
     <button
       type="button"
       role="radio"
       aria-checked={checked}
-      data-theme-id={id}
       className="theme-choice"
       onClick={onSelect}
     >

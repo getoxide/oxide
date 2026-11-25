@@ -20,9 +20,17 @@ ADR-0018 left Oxide with a Terminal in the centre and a dock of Files, Issues an
 
 The Files button on the selected Project row read as a stray control beside the row, and the row's own fill stacked on the selected Terminal's. The sidebar now opens with a **Sidebar switch**, two tabs (Terminals and Files), and the Files view shows the selected Project. Project rows carry no fill and no Files button, so the selected Terminal is the only highlighted row; each Project row keeps its leading chevron (collapsing or expanding its Terminals without changing the selected Project) and its hover/focus `+` (New terminal) and `×` (Close Project) actions. Open Files stays on a Project row's menu. This reverses the first rejected option below.
 
+## Amendment: the Files button returns, and the Project name folds its Terminals
+
+The Sidebar switch spent the top of the sidebar on a choice that belongs to a Project, and the Project row asked for precision: a small chevron to fold, a `×` beside the name that ended every Terminal of the Project on a stray click. This amendment reverses the previous one ([spec #561](https://github.com/getoxide/oxide/issues/561)):
+
+- **No Sidebar switch.** The sidebar opens straight on the Open Projects. A **Files button** on each Project row, in the hover/focus action slot beside `+` (disabled while the Project's folder is missing), opens that Project's Files view. Its header, a button reading "← Project name · Terminals", returns to the Terminals view. Open Files stays on the Project row's menu and its shortcut.
+- **Project row.** No leading chevron and no `×`. A click on the name of another Project selects it and unfolds its Terminals; a click on the active Project's name folds or unfolds them. Close project lives only on the row's menu; each Terminal row keeps its own hover/focus `×`.
+- **Hierarchy.** The active Project row carries an accent tint and an accent bar on its leading edge; the selected Terminal keeps the neutral item fill, so the two never read alike. Terminal rows are indented under their Project on a guide rail, and their hover and selection fills stay inside that indent. A single stylesheet rule governs each fill.
+
 ## Consequences
 
-- **Surface** now means Issues or Pull request; **Code workspace** opens beside the Terminal. `GLOSSARY.md` gains **Terminals view**, **Files view** and **Files button**.
+- **Surface** now means Issues or Pull request; **Code workspace** opens beside the Terminal. `GLOSSARY.md` gains **Terminals view** and **Files view**; the **Sidebar switch** it once held is gone.
 - At the minimum window width (`minWidth` 1064) with the dock open, Terminal and file are never visible together. Accepted.
 - ADR-0009's "Files is a navigator" amendment is superseded for placement: the navigator is the Files view, not a dock Surface.
 - The centre is at most Terminal | Code: no further splits, no top/bottom, no several editor groups.

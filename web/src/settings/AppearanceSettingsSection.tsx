@@ -5,10 +5,11 @@ import {
   DEFAULT_APPEARANCE,
   fontFamily,
   fontStyle,
+  parseThemePack,
   type Appearance,
   type FontRole,
 } from "../shared/appearance";
-import { ThemeChoiceButton, type ThemeEntry } from "./ThemeChoiceButton";
+import { ThemeChoiceButton } from "./ThemeChoiceButton";
 
 const ROLES: { key: FontRole; label: string; sample: string }[] = [
   { key: "ui", label: "Interface", sample: "Projects, tabs and buttons" },
@@ -36,6 +37,9 @@ const FONT_CHOICES: Record<FontRole, { label: string; value: string }[]> = {
   ],
 };
 
+/** Oxide's built-in Titanium Dark and Light themes, the only ones Settings offers. */
+const BUILT_IN_THEMES = parseThemePack(DEFAULT_APPEARANCE.themeJson).themes;
+
 const SIZES = Array.from({ length: 13 }, (_, index) => index + 10);
 const WEIGHTS = [
   [400, "Regular"],
@@ -46,7 +50,6 @@ const WEIGHTS = [
 
 interface AppearanceSettingsSectionProps {
   appearance: Appearance;
-  themeEntries: ThemeEntry[];
   error: string | null;
   onApply: (next: Appearance) => void;
 }
@@ -54,7 +57,6 @@ interface AppearanceSettingsSectionProps {
 /** Appearance preferences: theme selector, per-role font families, sizes and weights. */
 export function AppearanceSettingsSection({
   appearance,
-  themeEntries,
   error,
   onApply,
 }: AppearanceSettingsSectionProps) {
@@ -113,20 +115,16 @@ export function AppearanceSettingsSection({
       <div className="settings-item settings-item-stacked">
         <strong>Theme</strong>
         <div className="theme-choices" role="radiogroup" aria-label="Theme">
-          {themeEntries.map(({ id, json, variant }) => {
-            const checked =
-              variant.name === appearance.themeName &&
-              (!appearance.themeId || appearance.themeId === id);
-            return (
-              <ThemeChoiceButton
-                key={`${id}:${variant.name}`}
-                id={id}
-                variant={variant}
-                checked={checked}
-                onSelect={() => onApply({ ...appearance, themeId: id, themeJson: json, themeName: variant.name })}
-              />
-            );
-          })}
+          {BUILT_IN_THEMES.map((variant) => (
+            <ThemeChoiceButton
+              key={variant.name}
+              variant={variant}
+              checked={variant.name === appearance.themeName}
+              onSelect={() =>
+                onApply({ ...appearance, themeJson: DEFAULT_APPEARANCE.themeJson, themeName: variant.name })
+              }
+            />
+          ))}
         </div>
       </div>
       <div className="settings-item">

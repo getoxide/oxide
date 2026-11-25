@@ -1,8 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ChevronDownIcon,
-  ChevronRightIcon,
+  ArrowLeftIcon,
   ScreenFullIcon,
   ScreenNormalIcon,
   FileDirectoryIcon,
@@ -260,8 +259,7 @@ export function App() {
     setVisitedTools({ ...visitedTools, [`${selected.id}:${activeTool}`]: true });
   }
 
-  const revealProject = async (projectId = selected?.id) => {
-    if (projectId === undefined) return;
+  const revealProject = async (projectId: number) => {
     const result = await commands.revealInFinder(projectId);
     setOpenError(result.status === "error" ? result.error.message : null);
   };
@@ -394,25 +392,9 @@ export function App() {
             <RepoIcon size={16} />
           </button>
         )}
-        <div className="header-project" data-tauri-drag-region>
-          {selected ? (
-            <span className="title project-label" data-tauri-drag-region title={`Project: ${readablePath(selected.path)}`}>
-              <RepoIcon size={13} />
-              <strong>{selected.name}</strong>
-              {selected.missing && <span className="badge">missing</span>}
-            </span>
-          ) : !isWindows ? (
-            <span className="title" data-tauri-drag-region><strong>Oxide</strong></span>
-          ) : null}
-        </div>
-        {!isWindows && <span className="grow" data-tauri-drag-region />}
+        <span className="grow" data-tauri-drag-region />
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
-          {selected && !selected.missing && (
-            <button className="icon-btn" title={revealInFileManagerLabel()} aria-label={revealInFileManagerLabel()} onClick={() => void revealProject()}>
-              <FileDirectoryIcon size={16} />
-            </button>
-          )}
           <button
             className="icon-btn"
             aria-pressed={dockVisible}
@@ -617,14 +599,19 @@ function Sidebar({
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<number[]>([]);
-  const terminalsTab = useRef<HTMLButtonElement>(null);
-  const filesTab = useRef<HTMLButtonElement>(null);
   const filesOpen = filesProject !== null;
-  const canOpenFiles = selected !== null && !selected.missing;
-  const showView = (files: boolean) => {
-    if (files && selected && canOpenFiles) onOpenFiles(selected);
-    if (!files) onCloseFiles();
-  };
+  // Where focus goes once the view has switched: the back button, or the Files button that was pressed.
+  const pendingFocus = useRef<"back" | number | null>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const filesButtons = useRef(new Map<number, HTMLButtonElement>());
+  useLayoutEffect(() => {
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target === "back") backButton.current?.focus();
+    else if (target !== null) filesButtons.current.get(target)?.focus();
+  }, [filesProject]);
+  const openFilesView = (project: Project) => { pendingFocus.current = "back"; onOpenFiles(project); };
+  const backToTerminals = () => { pendingFocus.current = filesProject?.id ?? null; onCloseFiles(); };
 
   const close = async (project: Project) => {
     if (closingProjectId !== null) return;
@@ -644,32 +631,15 @@ function Sidebar({
 
   return (
     <div className="sidebar">
-      {/* The two views of the sidebar: the open Projects with their Terminals, or the selected Project's files. */}
-      <div className="sidebar-switch" role="tablist" aria-label="Sidebar view"
-        onKeyDown={(event) => {
-          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-          event.preventDefault();
-          const files = event.key === "End" || (event.key !== "Home" && !filesOpen);
-          if (files && !canOpenFiles) return;
-          showView(files);
-          (files ? filesTab : terminalsTab).current?.focus();
-        }}>
-        <button ref={terminalsTab} role="tab" aria-selected={!filesOpen} aria-controls="sidebar-terminals" tabIndex={filesOpen ? -1 : 0}
-          onClick={() => showView(false)}>
-          <TerminalIcon size={14} /> Terminals
-        </button>
-        <button ref={filesTab} role="tab" aria-selected={filesOpen} aria-controls="sidebar-files" tabIndex={filesOpen ? 0 : -1}
-          disabled={!canOpenFiles} title={selected ? `Files of ${selected.name}` : "Select a Project to see its files"}
-          onClick={() => showView(true)}>
-          <FileDirectoryIcon size={14} /> Files
-        </button>
-      </div>
+      {/* The two views of the sidebar: the open Projects with their Terminals, or one Project's files. */}
       {filesProject && (
         <nav className="sidebar-view sidebar-files" id="sidebar-files" aria-label="Files">
-          <div className="files-heading" title={readablePath(filesProject.path)}>
-            <RepoIcon size={13} />
+          <button ref={backButton} type="button" className="files-heading" aria-label={`Back to Terminals from ${filesProject.name}`}
+            title={readablePath(filesProject.path)} onClick={backToTerminals}>
+            <ArrowLeftIcon size={14} className="files-heading-back" />
             <span className="project-name">{filesProject.name}</span>
-          </div>
+            <span className="files-heading-terminals" aria-hidden="true">· Terminals</span>
+          </button>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
               <FilesPanel key={filesProject.id} projectId={filesProject.id} rootPath={filesProject.path} revision={0} onOpenFile={onOpenFile} />
@@ -701,28 +671,26 @@ function Sidebar({
               const expanded = !collapsed.includes(project.id);
               return (
                 <li key={project.id} className={`project-node${project.missing ? " missing" : ""}`}>
-                  <div className="project-row" onContextMenu={(event) => showContextMenu(event, [
+                  <div className="project-row" data-selected={isSelected || undefined} onContextMenu={(event) => showContextMenu(event, [
                     { label: "New terminal", hint: formatShortcut(shortcuts.newTerminal) || undefined, disabled: project.missing, run: () => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); } },
                     { label: "Open Files", hint: formatShortcut(shortcuts.openFiles) || undefined, disabled: project.missing, run: () => onOpenFiles(project) },
                     { label: revealInFileManagerLabel(), disabled: project.missing, run: () => onRevealProject(project), separatorBefore: true },
                     { label: "Copy path", run: () => copyTextToClipboard(readablePath(project.path)) },
                     { label: "Close project", disabled: closingProjectId === project.id, run: () => void close(project), separatorBefore: true },
                   ])}>
-                    <button
-                      type="button"
-                      className="project-chevron"
-                      aria-label={expanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
-                      aria-expanded={expanded}
-                      onClick={() => setCollapsed((previous) => expanded ? [...previous, project.id] : previous.filter((id) => id !== project.id))}
-                    >
-                      {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-                    </button>
+                    {/* The name selects the Project and unfolds its Terminals; on the active Project it folds or unfolds them. */}
                     <button
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
+                      aria-expanded={expanded}
+                      aria-controls={expanded ? `project-${project.id}-terminals` : undefined}
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
-                      onClick={() => onSelectProject(project)}
+                      onClick={() => {
+                        const fold = isSelected && expanded;
+                        setCollapsed((previous) => fold ? [...previous, project.id] : previous.filter((id) => id !== project.id));
+                        onSelectProject(project);
+                      }}
                     >
                       <RepoIcon size={13} className="project-icon" />
                       <span className="project-name">{project.name}</span>
@@ -730,20 +698,21 @@ function Sidebar({
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
                     <div className="project-actions">
+                      <button ref={(node) => { if (node) filesButtons.current.set(project.id, node); else filesButtons.current.delete(project.id); }}
+                        className="row-action project-files" aria-label={`Files of ${project.name}`} title={titleWithShortcut("Open Files", shortcuts.openFiles)}
+                        disabled={project.missing}
+                        onClick={() => openFilesView(project)}>
+                        <FileDirectoryIcon size={14} />
+                      </button>
                       <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title={titleWithShortcut("New terminal", shortcuts.newTerminal)}
                         disabled={project.missing}
                         onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
                         <PlusIcon size={14} />
                       </button>
-                      <button className="row-action project-close" aria-label={`Close ${project.name}`} title="Close Project"
-                        disabled={closingProjectId === project.id}
-                        onClick={() => void close(project)}>
-                        <XIcon size={14} />
-                      </button>
                     </div>
                   </div>
                   <Collapsible open={expanded}>
-                    <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
+                    <ul className="terminal-list" id={`project-${project.id}-terminals`} aria-label={`Terminals of ${project.name}`}>
                       {state.tabs.map((tab) => (
                         <TerminalRow key={tab.id} name={tab.name} running={tab.running}
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}
@@ -811,31 +780,29 @@ function useWindowMaximized(): boolean {
   return maximized;
 }
 
-/** Caption buttons drawn like Windows' own: crisp 10x10 vector icons, 46px wide, flush with the top-right corner. */
+/** A 10x10 caption glyph drawn with a 1px stroke, like the Segoe Fluent Icons Windows uses. */
+function CaptionGlyph({ d, crisp = true }: { d: string; crisp?: boolean }) {
+  // Straight strokes sit on half-pixel coordinates and snap to the pixel grid; the Close cross stays anti-aliased.
+  return <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"
+    shapeRendering={crisp ? "crispEdges" : "geometricPrecision"} aria-hidden="true">
+    <path d={d} />
+  </svg>;
+}
+
+/** Caption buttons drawn like Windows 11's own: 46px wide, the full titlebar high, flush with the top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
   const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
     <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1 5h8" />
-      </svg>
+      <CaptionGlyph d="M0 5.5h10" />
     </button>
     <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>
-      {maximized ? (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <path d="M3 1.5h5.5v5.5M1.5 3h5.5v5.5H1.5z" />
-        </svg>
-      ) : (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <rect x="1.5" y="1.5" width="7" height="7" />
-        </svg>
-      )}
+      {/* Restore layers a front window over the top and right edges of the one behind it. */}
+      <CaptionGlyph d={maximized ? "M0.5 2.5h7v7h-7zM2.5 2.5v-2h7v7h-2" : "M0.5 0.5h9v9h-9z"} />
     </button>
     <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
-      </svg>
+      <CaptionGlyph d="M0 0l10 10M10 0L0 10" crisp={false} />
     </button>
   </div>;
 }
@@ -855,11 +822,13 @@ function ProjectCode({ reportOpenFiles, failOpenFile, ...props }: ProjectCodePro
 
 function WindowResizeHandles() {
   const maximized = useWindowMaximized();
-  // A maximized window cannot be resized, and the handles would cover the Close button's corner.
+  // A maximized window cannot be resized.
   if (maximized) return null;
-  const directions = ["North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
+  // No North-East corner: like a native window, the top-right corner belongs to the Close button,
+  // and the North and East edges stop short of the caption buttons (see styles.css).
+  const directions = ["North", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
   return <div className="window-resize-handles" aria-hidden="true">
-    {directions.map((direction) => <div key={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
+    {directions.map((direction) => <div key={direction} data-direction={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
       onMouseDown={(event) => { if (event.button === 0) void getCurrentWindow().startResizeDragging(direction); }} />)}
   </div>;
 }
