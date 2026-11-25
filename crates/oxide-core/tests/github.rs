@@ -413,8 +413,12 @@ fn concurrent_checks_of_a_logged_out_gh_share_one_call_but_a_later_ask_checks_ag
 #[test]
 fn a_hung_auth_check_does_not_hold_up_changing_where_gh_is_found() {
     let f = fixture();
+    // The old check hangs far longer than the bound below, so a slow runner (Windows CI spawns
+    // gh through a .cmd shim and Python) still tells "did not wait" from "waited".
+    let hang = std::time::Duration::from_secs(10);
+    let bound = hang / 2;
     let mut state = ok_state();
-    state["auth_delay"] = 3.into();
+    state["auth_delay"] = hang.as_secs().into();
     install_gh(&f, &state);
     std::thread::scope(|scope| {
         let slow = scope.spawn(|| f.core.issues_state(f.project.id).unwrap().availability);
@@ -425,13 +429,13 @@ fn a_hung_auth_check_does_not_hold_up_changing_where_gh_is_found() {
 
         let started = std::time::Instant::now();
         f.core.set_gh_search_path(Some(vec![f.gh_dir.clone()]));
-        assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+        assert!(started.elapsed() < bound, "{:?}", started.elapsed());
         // A check asked after the change runs on its own instead of queueing behind the old one.
         assert_eq!(
             f.core.issues_state(f.project.id).unwrap().availability,
             GithubAvailability::Ready
         );
-        assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+        assert!(started.elapsed() < bound, "{:?}", started.elapsed());
         assert_eq!(slow.join().unwrap(), GithubAvailability::Ready);
     });
 }
