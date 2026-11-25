@@ -229,7 +229,6 @@ export const SURFACE_TOKENS: Record<string, string> = {
   "status_bar.background": "--editor-status-bar-background",
   "status_bar.foreground": "--editor-status-bar-foreground",
   "terminal.header.background": "--terminal-header-background",
-  "terminal.composer.background": "--terminal-composer-background",
   "terminal.block.border": "--terminal-block-border",
   "terminal.block.running_rail": "--terminal-block-running-rail",
   "terminal.block.running_tint": "--terminal-block-running-tint",

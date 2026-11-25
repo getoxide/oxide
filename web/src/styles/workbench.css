@@ -561,30 +561,30 @@
   font-size: 12px;
   border-top: 1px solid var(--line);
 }
+/* The command line is the next prompt of the Terminal itself: no card, fill or focus halo, and its
+   $ lines up with the $ of the Command block headers above. */
 .terminal-command-composer {
   position: relative;
   flex: none;
-  margin: 6px 16px 10px;
-  background: transparent;
+  padding: 4px 20px 10px;
+  background: none;
 }
-/* The command field: one rounded surface that lifts when it has focus. */
 .terminal-command-entry {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 4px 6px 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg2);
-  transition: border-color var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
-}
-.terminal-command-composer:focus-within .terminal-command-entry {
-  border-color: var(--line-strong);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc2) 14%, transparent);
+  gap: 1ch;
+  font: 13px/20px var(--mono);
+  background: none;
 }
 .terminal-prompt-symbol {
+  flex: none;
   padding: 4px 0;
   font: 13px/20px var(--mono);
+  color: var(--faint);
+  user-select: none;
+  transition: color var(--motion-fast) ease-out;
+}
+.terminal-command-composer:focus-within .terminal-prompt-symbol {
   color: var(--acc2);
 }
 .terminal-input-editor {
@@ -662,7 +662,7 @@
     padding-inline: 12px;
   }
   .terminal-command-composer {
-    margin: 6px 10px 8px;
+    padding-inline: 12px;
   }
   .terminal-command-hint > span:last-child {
     display: none;

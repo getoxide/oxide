@@ -76,9 +76,6 @@ kbd {
 .workbench-terminal-header {
   background: var(--terminal-header-background, var(--bg2));
 }
-.terminal-command-composer {
-  background: var(--terminal-composer-background, var(--bg2));
-}
 .terminal-command-block {
   border-color: var(--terminal-block-border, var(--line));
 }
