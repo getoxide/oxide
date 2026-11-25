@@ -708,7 +708,8 @@ function Sidebar({
                         disabled={project.missing}
                         onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>
                         <PlusIcon size={14} />
-                      </button>                    </div>
+                      </button>
+                    </div>
                   </div>
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" id={`project-${project.id}-terminals`} aria-label={`Terminals of ${project.name}`}>
