@@ -394,3 +394,16 @@ it("lets the user try when the count for a base cannot be told", async () => {
   expect(createButton().disabled).toBe(false);
   expect(host.textContent).not.toContain("No commits on");
 });
+
+it("mentions the repository's people from the description", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob"], labels: [] } });
+  await act(async () => root.render(<PullRequestCreate projectId={1} onCancel={() => {}} onCreated={() => {}} />));
+  const box = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(box, "cc @b");
+    box.setSelectionRange(5, 5);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect([...host.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toEqual(["bob"]);
+});

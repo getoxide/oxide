@@ -164,6 +164,20 @@ it("opens the issue form from New issue", async () => {
   await vi.waitFor(() => expect(host.querySelector(".issue-create h3")?.textContent).toBe("New issue"));
 });
 
+it("mentions the repository's people from the new issue's description", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob"], labels: [] } });
+  await render();
+  await act(async () => button("New issue").click());
+  const box = await vi.waitFor(() => host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!);
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(box, "cc @");
+    box.setSelectionRange(4, 4);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect([...host.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toEqual(["ana", "bob"]);
+});
+
 it("reloads by itself on focus and on a timer while visible", async () => {
   vi.useFakeTimers();
   try {

@@ -8,10 +8,13 @@ interface IssueTemplateFieldsProps {
   disabled: boolean;
   onChange: (id: string, value: string | string[] | boolean[]) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** Logins offered after `@` in the Markdown fields, and the hook to fetch them. */
+  mentions?: readonly string[];
+  onMentionOpen?: () => void;
 }
 
 /** The fields of a GitHub issue form, laid out like the web draws them. */
-export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDown }: IssueTemplateFieldsProps) {
+export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDown, mentions, onMentionOpen }: IssueTemplateFieldsProps) {
   return (
     <>
       {form.map((el, i) => {
@@ -73,6 +76,8 @@ export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDo
                   disabled={disabled}
                   onChange={(value) => onChange(el.id, value)}
                   onKeyDown={onKeyDown}
+                  mentions={mentions}
+                  onMentionOpen={onMentionOpen}
                 />
               ))}
             {el.type === "dropdown" &&
