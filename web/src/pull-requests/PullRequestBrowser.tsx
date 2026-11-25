@@ -463,7 +463,7 @@ export function PullRequestReview({
           )}
         </header>
 
-        {(detail.body.trim() || detail.reactions.length > 0) && (
+        {(detail.body.trim() || detail.reactions.length > 0 || detail.nodeId !== "") && (
           <Description body={detail.body} projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
         )}
         {live && <MergeStatus
@@ -696,13 +696,19 @@ function Description({ body, projectId, subjectId, reactions, onError }: {
   const [open, setOpen] = useState(false);
   return (
     <section className="pr-section pr-description" aria-label="Description">
-      <button className="pr-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      {body.trim() ? (
+        <>
+          <button className="pr-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+            <h4>Description</h4>
+            <ChevronDownIcon size={14} className="pr-chev" />
+          </button>
+          <Collapsible open={open}>
+            <Markdown source={body} />
+          </Collapsible>
+        </>
+      ) : (
         <h4>Description</h4>
-        <ChevronDownIcon size={14} className="pr-chev" />
-      </button>
-      <Collapsible open={open}>
-        <Markdown source={body} />
-      </Collapsible>
+      )}
       <Reactions projectId={projectId} subjectId={subjectId} reactions={reactions} onError={onError} />
     </section>
   );

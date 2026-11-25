@@ -100,6 +100,14 @@ it("renders a cached pull request at once on remount without asking GitHub again
   expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
 });
 
+it("offers the first reaction on a pull request with no description and no reactions yet", async () => {
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ body: "", reactions: [] }) });
+  await render();
+  const description = host.querySelector('section[aria-label="Description"]');
+  expect(description).not.toBeNull();
+  expect(description!.querySelector('[aria-label="Add reaction"]')).not.toBeNull();
+});
+
 it("links to the pull request on GitHub when its timeline holds more activity than was read", async () => {
   const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
   await render();
