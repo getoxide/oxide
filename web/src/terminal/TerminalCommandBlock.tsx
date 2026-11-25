@@ -55,7 +55,7 @@ export function TerminalCommandBlock(props: Props) {
     const toolbar = workspace.querySelector<HTMLElement>(
       ".workbench-terminal-header",
     )!;
-    const initial = terminalAppearance();
+    const initial = terminalAppearance({ failed: isFailed(callbacks.current) });
     const term = new Terminal({
       ...initial,
       cursorBlink: true,
@@ -128,7 +128,7 @@ export function TerminalCommandBlock(props: Props) {
     };
     fitSurface.current = scheduleFit;
     const appearance = () => {
-      const options = terminalAppearance();
+      const options = terminalAppearance({ failed: isFailed(callbacks.current) });
       term.options.fontFamily = options.fontFamily;
       term.options.fontSize = options.fontSize;
       term.options.fontWeight = options.fontWeight;
@@ -212,6 +212,11 @@ export function TerminalCommandBlock(props: Props) {
     term.options.disableStdin = true;
     term.write("\x1b[?25l");
   }, [active]);
+  const failed = isFailed(props);
+  useEffect(() => {
+    const term = terminal.current;
+    if (term) term.options.theme = terminalAppearance({ failed }).theme;
+  }, [failed]);
   useEffect(() => {
     onScreen(active && screen);
   }, [active, screen, onScreen]);
@@ -223,7 +228,7 @@ export function TerminalCommandBlock(props: Props) {
   }, [visible, active, block.started]);
   return (
     <section
-      className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
+      className={`terminal-command-block${active ? " running" : ""}${failed ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
       onContextMenu={(event) => {
         const selectedText = (terminal.current?.hasSelection?.() ? terminal.current.getSelection() : "") || window.getSelection()?.toString() || "";
@@ -258,6 +263,11 @@ export function TerminalCommandBlock(props: Props) {
       </div>
     </section>
   );
+}
+
+/** Ended without a zero exit status: a non-zero exit, or the shell went away before it reported one. */
+function isFailed({ active, block }: { active: boolean; block: TerminalBlock }): boolean {
+  return !active && block.exitCode !== 0;
 }
 
 /** One status at the right of the header: a spinner while running, then how long it took. */

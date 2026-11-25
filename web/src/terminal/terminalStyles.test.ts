@@ -50,11 +50,18 @@ it("hangs both $ prompts in the gutter, so commands, their output and the comman
   );
 });
 
-it.each([".terminal-command-block.failed", ".terminal-command-block.running"])(
-  "paints no tint behind %s, so the opaque xterm canvas never shows as a dark box inside it",
-  (selector) => {
-    const rule = declarations(selector);
-    expect(paints(rule.background)).toBe(false);
-    expect(paints(rule["background-color"])).toBe(false);
-  },
-);
+it("paints no tint behind a running block, whose xterm canvas has the plain Terminal background", () => {
+  const rule = declarations(".terminal-command-block.running");
+  expect(paints(rule.background)).toBe(false);
+  expect(paints(rule["background-color"])).toBe(false);
+});
+
+it("tints a failed block with the variable its xterm canvas background is set from, so the two always match", () => {
+  expect(declarations(".terminal-command-block.failed").background).toBe("var(--terminal-failed-background)");
+});
+
+it("draws the red text of a failed block toward the bright text, the tone its contrast test checks", () => {
+  const tone = "color-mix(in srgb, var(--red) 85%, var(--fg-bright))";
+  expect(declarations(".terminal-command-block.failed .terminal-block-prompt").color).toBe(tone);
+  expect(declarations(".terminal-command-block.failed .terminal-block-status.error").color).toBe(tone);
+});

@@ -367,15 +367,12 @@ it("prefixes the Command block header with a $ prompt cue, keeping the command t
   expect(header.querySelector("code")?.textContent).toBe("cd ..");
 });
 
-it.each([
-  ["failed", { ended: true, exitCode: 2 }, false],
-  ["running", { ended: false, exitCode: null }, true],
-] as const)("keeps xterm opaque on the Terminal background in a %s block", async (state, overrides, active) => {
+it("keeps xterm opaque on the Terminal background in a running block", async () => {
   await act(async () =>
     root.render(
       createElement(TerminalCommandBlock, {
-        block: baseBlock({ output: "boom\r\n", outputOffset: 0, ...overrides }),
-        active,
+        block: baseBlock({ output: "boom\r\n", outputOffset: 0 }),
+        active: true,
         visible: true,
         onInput: () => {},
         onReady: () => {},
@@ -385,14 +382,76 @@ it.each([
     ),
   );
   const section = mount.querySelector("section.terminal-command-block")!;
-  expect(section.classList.contains(state)).toBe(true);
+  expect(section.classList.contains("running")).toBe(true);
   const term = instances[0];
   expect((term.options.theme as { background: string }).background).toBe(terminalAppearance().theme.background);
   expect(term.options.allowTransparency).not.toBe(true);
-  if (state === "failed") {
+});
+
+it.each([
+  // 10% of the error red over the Terminal background, as one solid colour.
+  ["Oxide Dark", "#312526"],
+  ["Oxide Light", "#F6E6E4"],
+])("tints a failed block on %s with one opaque colour shared by the block and its xterm canvas", async (themeName, tint) => {
+  const initial = getAppearance();
+  saveAppearance({ ...initial, themeName });
+  try {
+    const render = (ended: boolean) =>
+      act(async () =>
+        root.render(
+          createElement(TerminalCommandBlock, {
+            block: baseBlock({ output: "boom\r\n", ended, exitCode: ended ? 2 : null }),
+            active: !ended,
+            visible: true,
+            onInput: () => {},
+            onReady: () => {},
+            onResize: () => {},
+            onScreen: () => {},
+          }),
+        ),
+      );
+    await render(false);
+    const term = instances[0];
+    await render(true);
+    const section = mount.querySelector("section.terminal-command-block")!;
+    expect(section.classList.contains("failed")).toBe(true);
     const status = section.querySelector(".terminal-block-status")!;
     expect(status.classList.contains("error")).toBe(true);
     expect(status.textContent).toContain("exit 2");
+    expect((term.options.theme as { background: string }).background.toUpperCase()).toBe(tint);
+    expect(terminalAppearance({ failed: true }).theme.background.toUpperCase()).toBe(tint);
+    // The block paints var(--terminal-failed-background): the same colour, so no box shows around the canvas.
+    expect(document.documentElement.style.getPropertyValue("--terminal-failed-background").toUpperCase()).toBe(tint);
+    expect(term.options.allowTransparency).not.toBe(true);
+  } finally {
+    saveAppearance(initial);
+  }
+});
+
+it("keeps a failed block tinted when the appearance changes", async () => {
+  const initial = getAppearance();
+  saveAppearance({ ...initial, themeName: "Oxide Dark" });
+  try {
+    await act(async () =>
+      root.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ output: "boom\r\n", ended: true, exitCode: 1 }),
+          active: false,
+          visible: true,
+          onInput: () => {},
+          onReady: () => {},
+          onResize: () => {},
+          onScreen: () => {},
+        }),
+      ),
+    );
+    await act(async () => {
+      saveAppearance({ ...initial, themeName: "Oxide Light" });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect((instances[0].options.theme as { background: string }).background.toUpperCase()).toBe("#F6E6E4");
+  } finally {
+    saveAppearance(initial);
   }
 });
 
@@ -405,18 +464,33 @@ function contrast(a: string, b: string) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-it.each(["Oxide Dark", "Oxide Light"])("keeps failed-block red text at WCAG AA contrast on %s", (themeName) => {
+function mixHex(base: string, other: string, share: number) {
+  const channel = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return `#${[0, 1, 2]
+    .map((i) => Math.round(channel(base, i) * (1 - share) + channel(other, i) * share).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+it.each([
+  ["Oxide Dark", "#FFFFFF"],
+  ["Oxide Light", "#1C1C1E"],
+])("keeps failed-block text at WCAG AA contrast on its red tint on %s", (themeName, brightText) => {
   const initial = getAppearance();
   saveAppearance({ ...initial, themeName });
   try {
-    const { theme } = terminalAppearance() as { theme: Record<string, string> };
+    const { theme } = terminalAppearance({ failed: true }) as { theme: Record<string, string> };
     // A theme without an error colour falls back to the --red of styles.css.
     const errorRed =
       document.documentElement.style.getPropertyValue("--red") || /--red:\s*(#[\da-f]{6})/i.exec(stylesCss)![1];
-    for (const red of [errorRed, theme.red, theme.brightRed]) {
-      expect(red, themeName).toMatch(/^#[\da-f]{6}$/i);
-      expect(contrast(red, theme.background), `${red} on ${theme.background}`).toBeGreaterThanOrEqual(4.5);
+    for (const color of [theme.foreground, theme.red, theme.brightRed]) {
+      expect(color, themeName).toMatch(/^#[\da-f]{6}$/i);
+      expect(contrast(color, theme.background), `${color} on ${theme.background}`).toBeGreaterThanOrEqual(4.5);
     }
+    // The exit badge and $ of a failed block (red 85% toward the bright text) on its header band
+    // (the bright text at 4% over the tint): see the failed-block rules in workbench.css.
+    const badge = mixHex(errorRed, brightText, 0.15);
+    const band = mixHex(theme.background, brightText, 0.04);
+    expect(contrast(badge, band), `${badge} on ${band}`).toBeGreaterThanOrEqual(4.5);
   } finally {
     saveAppearance(initial);
   }

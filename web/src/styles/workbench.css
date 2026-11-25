@@ -458,6 +458,10 @@
 .terminal-command-block.failed::before {
   background: var(--red);
 }
+/* Solid, and the colour the xterm theme of a failed block is given too: canvas and block match. */
+.terminal-command-block.failed {
+  background: var(--terminal-failed-background);
+}
 .terminal-command-block > header {
   display: flex;
   align-items: baseline;
@@ -480,7 +484,7 @@
   color: var(--acc2);
 }
 .terminal-command-block.failed .terminal-block-prompt {
-  color: var(--red);
+  color: color-mix(in srgb, var(--red) 85%, var(--fg-bright));
 }
 .terminal-command-block > header > code {
   min-width: 0;
@@ -503,6 +507,9 @@
 }
 .terminal-block-status.error {
   color: var(--red);
+}
+.terminal-command-block.failed .terminal-block-status.error {
+  color: color-mix(in srgb, var(--red) 85%, var(--fg-bright));
 }
 .terminal-block-spinner {
   width: 10px;

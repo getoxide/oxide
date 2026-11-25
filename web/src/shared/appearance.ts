@@ -488,6 +488,7 @@ export function applyAppearance(): void {
     "--terminal-background",
     themeColor("terminal.background", String(colors.background ?? TITANIUM_DARK["terminal.background"])),
   );
+  root.style.setProperty("--terminal-failed-background", terminalAppearance({ failed: true }).theme.background);
   for (const key of FONT_ROLES) {
     root.style.setProperty(`--font-${key}`, fontFamily(key));
     const style = fontStyle(key);
@@ -532,20 +533,37 @@ export function saveAppearance(value: Appearance) {
   applyAppearance();
   window.dispatchEvent(new Event("oxide-appearance-changed"));
 }
-export function terminalAppearance() {
+/** A failed Command block's share of the error red over the Terminal background. */
+const FAILED_TINT = 0.1;
+function rgb(hex: string): number[] {
+  const digits = hex.length <= 5 ? [...hex.slice(1, 4)].map((digit) => digit + digit).join("") : hex.slice(1, 7);
+  return [0, 2, 4].map((at) => parseInt(digits.slice(at, at + 2), 16));
+}
+/** One opaque colour: a canvas painted with it matches a container painted with it exactly. */
+function mixColors(base: string, other: string, share: number): string {
+  const top = rgb(other);
+  return `#${rgb(base)
+    .map((channel, i) => Math.round(channel * (1 - share) + top[i] * share).toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase()}`;
+}
+/** A failed block tints its xterm canvas and its container with the same solid colour (no transparency). */
+export function terminalAppearance({ failed = false }: { failed?: boolean } = {}) {
   const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
   const color = (token: string) => themeColor(token, String(fallbacks[token]));
+  const background = themeColor(
+    "terminal.background",
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--bg")
+      .trim() || String(fallbacks["terminal.background"]),
+  );
+  const red = themeColor("terminal.block.failed_rail", themeColor("error", color("terminal.ansi.red")));
   return {
     fontFamily: fontFamily("terminal"),
     fontSize: fontStyle("terminal").size,
     fontWeight: fontStyle("terminal").weight,
     theme: {
-      background: themeColor(
-        "terminal.background",
-        getComputedStyle(document.documentElement)
-          .getPropertyValue("--bg")
-          .trim() || String(fallbacks["terminal.background"]),
-      ),
+      background: failed && isColor(background) ? mixColors(background, red, FAILED_TINT) : background,
       foreground: color("terminal.foreground"),
       cursor: color("terminal.cursor"),
       selectionBackground: color("terminal.selection.background"),
