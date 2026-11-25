@@ -1373,7 +1373,7 @@ mod tests {
     fn within_seconds<T: Send + 'static>(ask: impl FnOnce() -> T + Send + 'static) -> Option<T> {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || tx.send(ask()));
-        rx.recv_timeout(std::time::Duration::from_secs(10)).ok()
+        rx.recv_timeout(Duration::from_secs(10)).ok()
     }
 
     #[test]
@@ -1397,16 +1397,7 @@ mod tests {
 
     /// A `Gh` that finds only the fake `gh` fixture, with the given state.
     fn fake_gh(dir: &Path, state: &serde_json::Value) -> Gh {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/gh");
-        let names: &[&str] = if cfg!(windows) {
-            &["gh", "gh.py", "gh.cmd"]
-        } else {
-            &["gh", "gh.py"]
-        };
-        for name in names {
-            std::fs::copy(fixture.join(name), dir.join(name)).unwrap();
-        }
-        std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+        crate::fake_gh::install(dir, state);
         let gh = Gh::default();
         gh.set_search_path(Some(vec![dir.to_path_buf()]));
         gh

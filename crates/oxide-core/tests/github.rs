@@ -13,7 +13,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-const FAKE_GH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh/gh");
+#[path = "../fixtures/gh/install.rs"]
+mod fake_gh;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -165,16 +166,7 @@ fn fixture() -> Fixture {
 }
 
 fn install_gh(f: &Fixture, state: &serde_json::Value) {
-    let names = if cfg!(windows) {
-        vec!["gh", "gh.py", "gh.cmd"]
-    } else {
-        vec!["gh", "gh.py"]
-    };
-    for name in names {
-        let from = Path::new(FAKE_GH).with_file_name(name);
-        std::fs::copy(from, f.gh_dir.join(name)).unwrap();
-    }
-    f.set_gh(state);
+    fake_gh::install(&f.gh_dir, state);
 }
 
 fn ok_state() -> serde_json::Value {

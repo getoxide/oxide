@@ -11,7 +11,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-const FAKE_GH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh/gh");
+#[path = "../fixtures/gh/install.rs"]
+mod fake_gh;
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -72,14 +73,7 @@ fn make_repo(dir: &Path) {
 fn install_gh(f: &Fixture, repos: &serde_json::Value) {
     let bin = f.root().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    for name in ["gh", "gh.py", "gh.cmd"] {
-        std::fs::copy(Path::new(FAKE_GH).with_file_name(name), bin.join(name)).unwrap();
-    }
-    std::fs::write(
-        bin.join("state.json"),
-        serde_json::json!({"auth": "ok", "repos": repos}).to_string(),
-    )
-    .unwrap();
+    fake_gh::install(&bin, &serde_json::json!({"auth": "ok", "repos": repos}));
     f.core.set_gh_search_path(Some(vec![bin]));
 }
 

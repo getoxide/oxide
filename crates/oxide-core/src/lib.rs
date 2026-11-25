@@ -6,6 +6,9 @@ mod db;
 pub mod desktop_tools;
 mod discovery;
 mod error;
+#[cfg(test)]
+#[path = "../fixtures/gh/install.rs"]
+mod fake_gh;
 mod files;
 mod git;
 mod git_command;
