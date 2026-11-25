@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
-const NO_CHECKSUM: &str = "Oxide has no verified checksum for this download, so it will not install it. Set a custom executable in language-servers.json.";
+const NO_CHECKSUM: &str = "Oxide has no verified checksum for this download, so it will not install it. Set a custom executable in ~/.oxide/language-servers.json.";
 #[allow(clippy::needless_pass_by_value)]
 fn error(message: impl ToString) -> Error {
     Error::Editor(message.to_string())
@@ -69,7 +69,7 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
             };
             let pin = pins::platform()
                 .and_then(|platform| pins::language_server(language, platform))
-                .ok_or_else(|| error("No official binary is available for this operating system / architecture. Set a custom executable in language-servers.json."))?;
+                .ok_or_else(|| error("No official binary is available for this operating system / architecture. Set a custom executable in ~/.oxide/language-servers.json."))?;
             let destination = tools.join(executable).join(pin.tag);
             let binary = if let Some(binary) =
                 reusable_install(&destination, &executable_name, pin.binary_sha256)
@@ -97,7 +97,7 @@ pub fn install(home: &Path, language: &str, progress: &impl Fn(&str)) -> Result<
                 })?;
                 if !file_matches(&found, pin.binary_sha256) {
                     return Err(error(
-                        "The unpacked language server failed checksum verification. Nothing was installed. Set a custom executable in language-servers.json.",
+                        "The unpacked language server failed checksum verification. Nothing was installed. Set a custom executable in ~/.oxide/language-servers.json.",
                     ));
                 }
                 let relative = found.strip_prefix(&extracted).map_err(error)?.to_path_buf();
@@ -179,7 +179,7 @@ fn download(
     if !hex(&hash.finalize()).eq_ignore_ascii_case(expected) {
         diag::best_effort("remove_file", std::fs::remove_file(destination));
         return Err(error(
-            "The downloaded file failed checksum verification. Nothing was installed. Set a custom executable in language-servers.json.",
+            "The downloaded file failed checksum verification. Nothing was installed. Set a custom executable in ~/.oxide/language-servers.json.",
         ));
     }
     Ok(())
@@ -377,7 +377,7 @@ fn install_npm(
         });
         if !file_matches(&unpacked, pin.binary_sha256) {
             return Err(error(
-                "The unpacked Node.js runtime failed checksum verification. Nothing was installed. Set a custom executable in language-servers.json.",
+                "The unpacked Node.js runtime failed checksum verification. Nothing was installed. Set a custom executable in ~/.oxide/language-servers.json.",
             ));
         }
         std::fs::rename(source, &node_root).map_err(error)?;

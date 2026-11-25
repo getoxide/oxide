@@ -1019,7 +1019,7 @@ pub fn edit_pull_request(gh: &Gh, cwd: &Path, number: u32, edit: &PullRequestEdi
     Ok(())
 }
 
-/// Documentation links Oxide itself ships (Language tools and developer tools). Matched whole.
+/// Documentation links Oxide itself ships (language servers and developer tools). Matched whole.
 const FIXED_DOCUMENTATION_URLS: [&str; 6] = [
     "https://github.com/microsoft/pyright/blob/main/docs/installation.md",
     "https://github.com/typescript-language-server/typescript-language-server",
