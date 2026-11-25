@@ -234,6 +234,9 @@ export function TerminalCommandBlock(props: Props) {
       }}
     >
       <header>
+        <span className="terminal-block-prompt" aria-hidden="true">
+          $
+        </span>
         <code>{block.command}</code>
         <span className="grow" />
         <BlockStatus block={block} running={active} />

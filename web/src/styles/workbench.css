@@ -464,6 +464,22 @@
   gap: 12px;
   padding-bottom: 6px;
 }
+/* The $ cue sits one character from the command, like a shell prompt, not a full header gap away. */
+.terminal-block-prompt {
+  flex: none;
+  margin-right: calc(1ch - 12px);
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--font-terminal-size, 13px);
+  font-weight: var(--font-terminal-weight, 400);
+  user-select: none;
+}
+.terminal-command-block.running .terminal-block-prompt {
+  color: var(--acc2);
+}
+.terminal-command-block.failed .terminal-block-prompt {
+  color: var(--red);
+}
 .terminal-command-block > header > code {
   min-width: 0;
   padding: 0;

@@ -209,7 +209,7 @@ it("renders only the command and its status: no cwd, Copy, Reuse or Collapse", a
   for (const block of blocks()) {
     expect(block.textContent).not.toContain("/test");
     expect(block.querySelectorAll("button")).toHaveLength(0);
-    expect(block.querySelector("header")?.textContent).toMatch(/^(ls|pwd)/);
+    expect(block.querySelector("header")?.textContent).toMatch(/^\$\s*(ls|pwd)/);
   }
 });
 

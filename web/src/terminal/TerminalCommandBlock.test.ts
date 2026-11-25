@@ -320,3 +320,25 @@ it("neither takes focus nor sends keys to the shell until the block has started"
   expect(onInput).toHaveBeenCalledExactlyOnceWith("y");
   expect(focused.length).toBeGreaterThan(0);
 });
+
+it("prefixes the Command block header with a $ prompt cue, keeping the command text itself clean", async () => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ command: "cd ..", ended: true, exitCode: 0 }),
+        active: false,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  const header = mount.querySelector("section.terminal-command-block > header")!;
+  const prompt = header.querySelector(".terminal-block-prompt")!;
+  expect(prompt.textContent).toBe("$");
+  expect(prompt.getAttribute("aria-hidden")).toBe("true");
+  expect(header.textContent).toMatch(/^\$\s*cd \.\./);
+  expect(header.querySelector("code")?.textContent).toBe("cd ..");
+});
