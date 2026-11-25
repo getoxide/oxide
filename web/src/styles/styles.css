@@ -576,13 +576,14 @@ html.macos .header,
 .pr-views .pr-branch { font-family: var(--mono); font-size: 11.5px; padding: 0 5px; border-radius: 4px; background: var(--bg3); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
 
 /* Review */
-.pr-views .pr-nav { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) 0 var(--pr-pad); flex: none; }
+/* One solid bar across the panel: the content scrolls under its hairline, never past a floating pill. */
+.pr-views .pr-nav { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-2) var(--pr-pad); flex: none; }
 /* Merged or closed: a faint line on the list, easing out on its own. */
 .pr-views .pr-outcome { margin: 0 0 var(--space-2); font-size: 12px; color: var(--faint); animation: pr-outcome-out 4s ease-in forwards; }
 @keyframes pr-outcome-out { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .pr-views .pr-outcome { animation: none; } }
-.pr-views .pr-back { color: var(--dim); min-height: var(--control-sm); margin-left: -6px; padding: 0 6px; border-radius: var(--radius-control); }
-.pr-views .pr-back:hover:not(:disabled) { color: var(--fg); background: var(--bg3); border: 0; }
+.pr-views .pr-back { color: var(--dim); min-height: var(--control-sm); margin-left: -6px; padding: 0 6px; border-radius: var(--radius-control); background: none; border-color: transparent; }
+.pr-views .pr-back:hover:not(:disabled) { color: var(--fg); background: var(--bg4); border-color: transparent; }
 .pr-views .pr-hero { display: grid; gap: var(--space-2); }
 .pr-views .pr-title { margin: 0; font-size: 16px; line-height: 1.3; font-weight: 650; color: var(--fg-bright); overflow-wrap: anywhere; text-wrap: balance; }
 .pr-views .pr-number { color: var(--faint); font-weight: 400; }
@@ -598,9 +599,7 @@ html.macos .header,
 .pr-views .pr-diffstat .add { color: var(--green); }
 .pr-views .pr-diffstat .del { color: var(--red); }
 .pr-views .pr-diffstat-files { font-family: inherit; }
-.pr-views .pr-github { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg3); color: var(--fg); }
-.pr-views .pr-github:hover { background: var(--bg4); color: var(--fg-bright); }
-.pr-views .pr-github[data-copied="true"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--line-strong)); }
+.icon-btn[data-copied="true"], .icon-btn[data-copied="true"]:hover:not(:disabled) { color: var(--green); }
 .avatar { flex: none; display: inline-block; border-radius: 50%; background: var(--bg4); object-fit: cover; vertical-align: middle; }
 .avatar-fallback { display: inline-grid; place-items: center; color: var(--dim); font-weight: 600; line-height: 1; }
 .pr-views .pr-row-meta .avatar { margin-right: -2px; }
