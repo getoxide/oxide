@@ -477,7 +477,8 @@
   width: 8px;
   margin-left: -20px;
   margin-right: 4px;
-  color: var(--faint);
+  /* A muted accent: the $ of a block reads as the prompt it ran at, a step under the live prompt's full accent. */
+  color: color-mix(in srgb, var(--acc2) 55%, var(--faint));
   font-family: var(--mono);
   font-size: var(--font-terminal-size, 13px);
   font-weight: var(--font-terminal-weight, 400);
@@ -548,6 +549,20 @@
 .terminal-block-output > .xterm {
   height: 100%;
   padding: 0;
+}
+/* xterm selects its own text and draws the selection in its theme colours. A native drag that runs
+   into the output (say, from a command above it) must not paint the system highlight, an opaque
+   blue, over the whole canvas and the text on it. */
+.terminal-block-output .xterm-screen {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Native selection in the Terminal (the command line, the accessible text): a soft tint under the
+   Terminal's own text colour, instead of the app's solid accent with white text. Not `inherit`:
+   with highlight inheritance that is the parent's ::selection colour, the app's white. */
+.terminal-workbench ::selection {
+  background: color-mix(in srgb, var(--acc2) 30%, transparent);
+  color: var(--fg);
 }
 .terminal-workbench[data-fullscreen="true"] .terminal-block-scroll {
   flex: 1;

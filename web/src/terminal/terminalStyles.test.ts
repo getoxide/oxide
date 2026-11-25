@@ -100,3 +100,46 @@ it("draws the red text of a failed block toward the bright text, the tone its co
   expect(declarations(".terminal-command-block.failed .terminal-block-prompt").color).toBe(tone);
   expect(declarations(".terminal-command-block.failed .terminal-block-status.error").color).toBe(tone);
 });
+
+
+// Titanium tokens: --acc2, --faint and the Terminal background, dark (styles.css) and light (appearance.ts).
+const hexLuminance = (hex: string) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const ratio = (a: string, b: string) => {
+  const [hi, lo] = [hexLuminance(a), hexLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+const mix = (a: string, b: string, share: number) =>
+  `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * share + parseInt(b.slice(i, i + 2), 16) * (1 - share)).toString(16).padStart(2, "0")).join("")}`;
+
+it("leaves selecting output to xterm: a native drag never paints the system highlight over its canvas", () => {
+  const screen = declarations(".terminal-block-output .xterm-screen");
+  expect(screen["user-select"]).toBe("none");
+  expect(screen["-webkit-user-select"]).toBe("none");
+});
+
+it.each([
+  ["dark", "#58A6FF", "#E8E6E1", "#1C1C1E"],
+  ["light", "#0860C7", "#2C2C2E", "#FBFBFA"],
+])("selects other Terminal text with a soft accent tint under the Terminal text colour on %s", (_, accent, text, background) => {
+  const selection = declarations(".terminal-workbench ::selection");
+  const match = /^color-mix\(in srgb, var\(--acc2\) (\d+)%, transparent\)$/.exec(selection.background);
+  expect(match, selection.background).not.toBeNull();
+  expect(selection.color).toBe("var(--fg)");
+  const tint = mix(accent, background, Number(match![1]) / 100);
+  expect(ratio(text, tint), `${text} on ${tint}`).toBeGreaterThanOrEqual(4.5);
+});
+
+it.each([
+  ["dark", "#58A6FF", "#9A9892", "#1C1C1E"],
+  ["light", "#0860C7", "#62615C", "#FBFBFA"],
+])("tints the $ of a block with a muted accent, set apart from the live prompt's full accent, on %s", (_, accent, faint, background) => {
+  const color = declarations(".terminal-block-prompt").color;
+  const match = /^color-mix\(in srgb, var\(--acc2\) (\d+)%, var\(--faint\)\)$/.exec(color);
+  expect(match, color).not.toBeNull();
+  const tint = mix(accent, faint, Number(match![1]) / 100);
+  expect(ratio(tint, background), `${tint} on ${background}`).toBeGreaterThanOrEqual(4.5);
+  expect(declarations(".terminal-command-composer:focus-within .terminal-prompt-symbol").color).toBe("var(--acc2)");
+});
