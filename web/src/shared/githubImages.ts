@@ -4,6 +4,7 @@
 import { commands } from "../bindings";
 import { LruCache } from "./lru";
 
+/** Core's `IMAGE_HOSTS` without `github.com`; a test in `image.rs` keeps the two equal. */
 const HOSTS = new Set([
   "user-images.githubusercontent.com",
   "private-user-images.githubusercontent.com",

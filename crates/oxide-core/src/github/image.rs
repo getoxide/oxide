@@ -551,6 +551,26 @@ mod tests {
         }
     }
 
+    /// The webview skips URLs Core would refuse, by its own copy of the host list: they must agree.
+    #[test]
+    fn the_webview_allows_the_same_image_hosts() {
+        let ts = include_str!("../../../../web/src/shared/githubImages.ts");
+        let list = ts
+            .split_once("const HOSTS = new Set([")
+            .and_then(|(_, rest)| rest.split_once("]);"))
+            .map(|(list, _)| list)
+            .expect("the HOSTS set in githubImages.ts");
+        let mut web: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
+        web.sort_unstable();
+        let mut core: Vec<&str> = IMAGE_HOSTS
+            .iter()
+            .copied()
+            .filter(|host| *host != "github.com")
+            .collect();
+        core.sort_unstable();
+        assert_eq!(web, core);
+    }
+
     #[test]
     fn image_sources_survive_odd_and_non_ascii_tags() {
         let html = "<p>é<IMG alt=\"ü\" SRC='https://a/1.png'>ß<img data-src=\"x\" src=\"https://a/2.png?a=1&amp;b=2\">\
