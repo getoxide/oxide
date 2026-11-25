@@ -409,7 +409,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 ) : (
                   <>
                     {c.body.trim() && <Markdown source={c.body} />}
-                    <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />
+                    {c.reactions && <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />}
                   </>
                 )}
               </div>

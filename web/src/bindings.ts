@@ -610,12 +610,24 @@ export type TimelineClosed = {
 	stateReason: string,
 };
 
-export type TimelineComment = {
+export type TimelineComment = TimelineComment_Serialize | TimelineComment_Deserialize;
+
+export type TimelineComment_Deserialize = {
 	id: string,
 	author: string,
 	body: string,
 	createdAt: string,
-	reactions: ReactionGroup[],
+	/**  `null` when only `gh` gave the comment: its reactions are unknown, so not offered. */
+	reactions?: ReactionGroup[] | null,
+};
+
+export type TimelineComment_Serialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	/**  `null` when only `gh` gave the comment: its reactions are unknown, so not offered. */
+	reactions: ReactionGroup[] | null,
 };
 
 export type TimelineCommit = TimelineCommit_Serialize | TimelineCommit_Deserialize;
@@ -657,9 +669,9 @@ export type TimelineItem = TimelineItem_Serialize | TimelineItem_Deserialize;
 /**  One entry of an issue's or pull request's Activity Timeline. */
 export type TimelineItem_Deserialize = {
 	kind: "comment",
-} & TimelineComment | {
+} & TimelineComment_Deserialize | {
 	kind: "review",
-} & TimelineReview | {
+} & TimelineReview_Deserialize | {
 	kind: "commit",
 } & TimelineCommit_Deserialize | {
 	kind: "forcePush",
@@ -698,9 +710,9 @@ export type TimelineItem_Deserialize = {
 /**  One entry of an issue's or pull request's Activity Timeline. */
 export type TimelineItem_Serialize = {
 	kind: "comment",
-} & TimelineComment | {
+} & TimelineComment_Serialize | {
 	kind: "review",
-} & TimelineReview | {
+} & TimelineReview_Serialize | {
 	kind: "commit",
 } & TimelineCommit_Serialize | {
 	kind: "forcePush",
@@ -774,13 +786,26 @@ export type TimelineRename = {
 	to: string,
 };
 
-export type TimelineReview = {
+export type TimelineReview = TimelineReview_Serialize | TimelineReview_Deserialize;
+
+export type TimelineReview_Deserialize = {
 	id: string,
 	author: string,
 	body: string,
 	createdAt: string,
 	state: ReviewState,
-	reactions: ReactionGroup[],
+	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
+	reactions?: ReactionGroup[] | null,
+};
+
+export type TimelineReview_Serialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	state: ReviewState,
+	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
+	reactions: ReactionGroup[] | null,
 };
 
 /* Tauri Specta runtime */

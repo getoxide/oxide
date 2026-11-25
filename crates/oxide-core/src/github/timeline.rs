@@ -21,7 +21,9 @@ pub struct TimelineComment {
     pub author: String,
     pub body: String,
     pub created_at: String,
-    pub reactions: Vec<ReactionGroup>,
+    /// `None` when only `gh` gave the comment (it was missing from the timeline read): its
+    /// reactions are then unknown, so they are neither shown nor offered.
+    pub reactions: Option<Vec<ReactionGroup>>,
 }
 
 /// A submitted review. Its node id is kept (to react to it), but it is never edited here.
@@ -33,7 +35,8 @@ pub struct TimelineReview {
     pub body: String,
     pub created_at: String,
     pub state: ReviewState,
-    pub reactions: Vec<ReactionGroup>,
+    /// `None` when only `gh` gave the review, as for [`TimelineComment::reactions`].
+    pub reactions: Option<Vec<ReactionGroup>>,
 }
 
 /// A commit pushed to a pull request.
@@ -573,7 +576,7 @@ fn item_from(v: &serde_json::Value, repository: &str) -> Option<TimelineItem> {
             author: login(&v["author"]),
             body: text(&v["body"]),
             created_at: created_at(),
-            reactions: reactions_from(v),
+            reactions: Some(reactions_from(v)),
         }),
         "PullRequestReview" => {
             let state = review_state_from(v["state"].as_str())?;
@@ -591,7 +594,7 @@ fn item_from(v: &serde_json::Value, repository: &str) -> Option<TimelineItem> {
                     .map(str::to_string)
                     .unwrap_or_else(created_at),
                 state,
-                reactions: reactions_from(v),
+                reactions: Some(reactions_from(v)),
             })
         }
         "PullRequestCommit" => {

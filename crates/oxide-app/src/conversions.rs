@@ -261,7 +261,7 @@ impl From<oxide_core::TimelineComment> for TimelineComment {
             author: x.author,
             body: x.body,
             created_at: x.created_at,
-            reactions: x.reactions.into_iter().map(Into::into).collect(),
+            reactions: x.reactions.map(|r| r.into_iter().map(Into::into).collect()),
         }
     }
 }
@@ -274,7 +274,7 @@ impl From<oxide_core::TimelineReview> for TimelineReview {
             body: x.body,
             created_at: x.created_at,
             state: x.state.into(),
-            reactions: x.reactions.into_iter().map(Into::into).collect(),
+            reactions: x.reactions.map(|r| r.into_iter().map(Into::into).collect()),
         }
     }
 }

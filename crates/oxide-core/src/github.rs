@@ -242,7 +242,8 @@ pub struct PullRequestDetail {
     /// when GitHub refused the timeline query.
     pub timeline: Vec<TimelineItem>,
     /// Whether GitHub has more activity than Oxide read; every comment and review is still in
-    /// `timeline`.
+    /// `timeline`, but those only `gh` gave carry no reactions (`None`) and no signed images,
+    /// so their private attachments stay unresolved.
     pub timeline_truncated: bool,
     /// The reactions on the description; none when GitHub refused the timeline query.
     pub reactions: Vec<ReactionGroup>,
@@ -821,7 +822,7 @@ fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
                 author: text(&c["author"]["login"]),
                 body: text(&c["body"]),
                 created_at: text(&c["createdAt"]),
-                reactions: Vec::new(),
+                reactions: None,
             })
         })
         .collect();
@@ -839,7 +840,7 @@ fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
             body,
             created_at: text(&review["submittedAt"]),
             state,
-            reactions: Vec::new(),
+            reactions: None,
         }));
     }
     let at = |item: &TimelineItem| match item {
@@ -1769,7 +1770,9 @@ pub struct IssueDetail {
     /// Comments and activity, oldest first. Only the comments when GitHub refused the
     /// timeline query.
     pub timeline: Vec<TimelineItem>,
-    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`.
+    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`,
+    /// but those only `gh` gave carry no reactions (`None`) and no signed images, so their
+    /// private attachments stay unresolved.
     pub timeline_truncated: bool,
     /// The reactions on the description; none when GitHub refused the timeline query.
     pub reactions: Vec<ReactionGroup>,

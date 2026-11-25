@@ -616,6 +616,23 @@ it("asks for the whole timeline on load and on refresh, but only its first page 
   }
 });
 
+it("offers no reactions on an entry only gh gave, whose reactions GitHub's timeline did not tell", async () => {
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        { kind: "comment", id: "c1", author: "ana", body: "Read from the timeline", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
+        { kind: "comment", id: "c2", author: "ana", body: "Read from gh alone", createdAt: "2026-10-27T12:00:00Z", reactions: null },
+      ],
+    }),
+  });
+  await render();
+  const entries = [...host.querySelectorAll<HTMLElement>("article")];
+  const entry = (text: string) => entries.find((e) => e.textContent?.includes(text))!;
+  expect(entry("Read from the timeline").querySelector('[aria-label="Add reaction"]')).not.toBeNull();
+  expect(entry("Read from gh alone").querySelector(".reactions")).toBeNull();
+});
+
 const detailCalls = () => vi.mocked(commands.pullRequestDetail).mock.calls.length;
 /** One check interval at a time, letting each poll's `gh` call settle before the next tick. */
 async function tickChecks(times = 1) {

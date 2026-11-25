@@ -682,7 +682,7 @@ function Entry({ entry, author, viewer, projectId, mentions, onMentionOpen, onCh
         ) : (
           <>
             {entry.body.trim() && <Markdown source={entry.body} />}
-            <Reactions projectId={projectId} subjectId={entry.id} reactions={entry.reactions} onError={onError} />
+            {entry.reactions && <Reactions projectId={projectId} subjectId={entry.id} reactions={entry.reactions} onError={onError} />}
           </>
         )}
       </div>

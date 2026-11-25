@@ -39,7 +39,7 @@ export function withReaction<T extends { nodeId: string; reactions: ReactionGrou
     ...detail,
     reactions: detail.nodeId === subjectId ? toggled(detail.reactions, content, add) : detail.reactions,
     timeline: detail.timeline.map((item) =>
-      (item.kind === "comment" || item.kind === "review") && item.id === subjectId
+      (item.kind === "comment" || item.kind === "review") && item.id === subjectId && item.reactions
         ? { ...item, reactions: toggled(item.reactions, content, add) }
         : item,
     ),

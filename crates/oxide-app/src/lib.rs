@@ -730,7 +730,8 @@ pub struct TimelineComment {
     pub author: String,
     pub body: String,
     pub created_at: String,
-    pub reactions: Vec<ReactionGroup>,
+    /// `null` when only `gh` gave the comment: its reactions are unknown, so not offered.
+    pub reactions: Option<Vec<ReactionGroup>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -741,7 +742,8 @@ pub struct TimelineReview {
     pub body: String,
     pub created_at: String,
     pub state: ReviewState,
-    pub reactions: Vec<ReactionGroup>,
+    /// `null` when only `gh` gave the review: its reactions are unknown, so not offered.
+    pub reactions: Option<Vec<ReactionGroup>>,
 }
 
 /// One of the eight reactions GitHub offers.

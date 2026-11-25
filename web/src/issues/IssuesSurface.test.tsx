@@ -642,7 +642,7 @@ it("shows reactions under the description and comments and toggles them optimist
   const cached = getQueryData<IssueDetail>(githubKeys.issueDetail(1, 7))!;
   expect(cached.reactions).toEqual([{ content: "thumbsUp", count: 1, viewerHasReacted: false }]);
   const cachedComment = cached.timeline[0] as Extract<IssueDetail["timeline"][number], { kind: "comment" }>;
-  expect(cachedComment.reactions.map((r) => r.content)).toEqual(["rocket", "eyes"]);
+  expect(cachedComment.reactions?.map((r) => r.content)).toEqual(["rocket", "eyes"]);
 });
 
 it("shows the description's private attachment through its signed URL and other hosts as a link", async () => {

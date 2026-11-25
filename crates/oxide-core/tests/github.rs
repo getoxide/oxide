@@ -1280,7 +1280,7 @@ fn pull_request_detail_interleaves_commits_force_pushes_reviews_and_events() {
                 body: "Rename it".into(),
                 created_at: "2026-05-01T09:30:00Z".into(),
                 state: ReviewState::ChangesRequested,
-                reactions: vec![],
+                reactions: Some(vec![]),
             }),
             TimelineItem::ForcePush(TimelineForcePush {
                 actor: "other".into(),
@@ -1327,14 +1327,14 @@ fn pull_request_detail_falls_back_to_comments_and_reviews_when_the_timeline_quer
                 body: "Ship it".into(),
                 created_at: "2026-05-01T09:00:00Z".into(),
                 state: ReviewState::Approved,
-                reactions: vec![],
+                reactions: None,
             }),
             TimelineItem::Comment(TimelineComment {
                 id: "IC_1".into(),
                 author: "reviewer".into(),
                 body: "Looks good".into(),
                 created_at: "2026-05-01T10:00:00Z".into(),
-                reactions: vec![],
+                reactions: None,
             }),
         ]
     );
@@ -2178,7 +2178,7 @@ fn issue_detail_interleaves_activity_with_comments_from_graphql() {
                 author: "dave".into(),
                 body: "Can confirm".into(),
                 created_at: "2026-01-03T10:30:00Z".into(),
-                reactions: vec![],
+                reactions: Some(vec![]),
             }),
             TimelineItem::Unlabeled(TimelineLabel {
                 actor: "dave".into(),
@@ -2239,7 +2239,7 @@ fn issue_detail_falls_back_to_its_comments_when_the_timeline_query_fails() {
             author: "dave".into(),
             body: "Can confirm".into(),
             created_at: "2026-01-03T10:30:00Z".into(),
-            reactions: vec![],
+            reactions: None,
         })]
     );
 }
@@ -2513,11 +2513,11 @@ fn issue_detail_reads_the_reactions_on_the_issue_and_its_comments() {
     };
     assert_eq!(
         comment.reactions,
-        vec![ReactionGroup {
+        Some(vec![ReactionGroup {
             content: ReactionContent::Eyes,
             count: 1,
             viewer_has_reacted: false,
-        }]
+        }])
     );
     let call = f
         .gh_calls()
@@ -2562,11 +2562,11 @@ fn pull_request_detail_reads_the_reactions_on_the_description_and_reviews() {
     };
     assert_eq!(
         review.reactions,
-        vec![ReactionGroup {
+        Some(vec![ReactionGroup {
             content: ReactionContent::Confused,
             count: 1,
             viewer_has_reacted: true,
-        }]
+        }])
     );
 }
 
