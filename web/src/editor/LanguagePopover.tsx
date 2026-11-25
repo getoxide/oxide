@@ -144,7 +144,7 @@ export function LanguagePopover({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const modes = useMemo(languageModes, []);
+  const modes = useMemo(() => languageModes(), []);
   const shown = modes.filter((mode) =>
     `${mode.label} ${mode.id}`.toLowerCase().includes(query.trim().toLowerCase()),
   );

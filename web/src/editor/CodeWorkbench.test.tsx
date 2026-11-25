@@ -166,7 +166,7 @@ vi.mock("./editorRuntime", () => ({
 const lsp = vi.hoisted(() => ({
   events: [] as string[],
   reconnects: 0,
-  report: (_language: string, _state: string) => {},
+  report: (() => {}) as (language: string, state: string) => void,
   reset() {
     this.events.length = 0;
     this.reconnects = 0;

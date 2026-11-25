@@ -334,6 +334,71 @@
   background: var(--bg4);
 }
 
+.language-popover {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+}
+.language-server {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.language-server > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.language-server > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.language-server-state {
+  color: var(--dim);
+  white-space: nowrap;
+}
+.language-server-state.ready {
+  color: var(--green, var(--fg));
+}
+.language-server-state.stopped {
+  color: var(--red, var(--fg));
+}
+.language-server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+.language-modes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 6px;
+  gap: 4px;
+}
+.language-modes [role="listbox"] {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow: auto;
+}
+.language-modes [role="option"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+.language-modes [role="option"][aria-selected="true"] {
+  color: var(--fg);
+  font-weight: 600;
+}
 .language-download {
   display: flex;
   align-items: center;
