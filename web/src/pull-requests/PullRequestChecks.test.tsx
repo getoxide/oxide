@@ -39,27 +39,32 @@ const rowState = (name: string) =>
 
 it("agrees with GitHub on 1 neutral, 1 in progress and 1 successful check", () => {
   render([check("lint", "neutral"), check("rust", "pending", true), check("web", "success", true)]);
-  expect(summary()).toBe("1 running · 1 passed · 1 neutral");
-  expect(folded()).toBe("1 passed · 1 neutral");
+  expect(summary()).toBe("1 neutral · 1 running · 1 passed");
+  expect(folded()).toBe("1 neutral · 1 passed");
   expect(rowState("lint")).toBe("Neutral");
   expect(rowState("rust")).toBe("Running");
-  expect(host.querySelector(".pr-bar")?.getAttribute("aria-label")).toBe("1 running, 1 passed, 1 neutral");
+  expect(host.querySelector(".pr-bar")?.getAttribute("aria-label")).toBe("1 neutral, 1 running, 1 passed");
 });
 
 it("labels skipped checks apart from passed ones, with a muted bar segment of their own", () => {
   render([check("docs", "skipped"), check("web", "success"), check("audit", "skipped")]);
-  expect(summary()).toBe("1 passed · 2 skipped");
+  expect(summary()).toBe("2 skipped · 1 passed");
   expect(rowState("docs")).toBe("Skipped");
   expect(rowState("web")).toBe("Passed");
   const segments = [...host.querySelectorAll(".pr-bar > i")].map((i) => [i.className, (i as HTMLElement).style.flexGrow]);
   expect(segments).toEqual([
-    ["success", "1"],
     ["skipped", "2"],
+    ["success", "1"],
   ]);
 });
 
 it("folds many completed checks under one row that names each outcome", () => {
   render([check("a", "success"), check("b", "success"), check("c", "skipped"), check("d", "neutral")]);
-  expect(summary()).toBe("2 passed · 1 neutral · 1 skipped");
-  expect(folded()).toBe("All 4 completed: 2 passed · 1 neutral · 1 skipped");
+  expect(summary()).toBe("1 neutral · 1 skipped · 2 passed");
+  expect(folded()).toBe("All 4 completed: 1 neutral · 1 skipped · 2 passed");
+});
+
+it("keeps failing checks first in the header", () => {
+  render([check("a", "success"), check("b", "failure"), check("c", "neutral"), check("d", "pending")]);
+  expect(summary()).toBe("1 failing · 1 neutral · 1 running · 1 passed");
 });

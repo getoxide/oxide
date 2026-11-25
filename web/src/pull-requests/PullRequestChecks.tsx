@@ -18,14 +18,15 @@ export const CHECK_WORD = {
   skipped: "Skipped",
 } as const;
 
-/** The order and wording of the counts, as GitHub's checks summary words them. The class names
- *  the bar segment and matches the check state it counts. */
+/** The order and wording of the counts, in the order GitHub's checks summary lists them:
+ *  failing first, then neutral, skipped, running and passed. The class names the bar segment and
+ *  matches the check state it counts. */
 const PARTS: { key: keyof CheckCounts; word: string; state: PullRequestCheck["state"] }[] = [
   { key: "failing", word: "failing", state: "failure" },
-  { key: "pending", word: "running", state: "pending" },
-  { key: "passing", word: "passed", state: "success" },
   { key: "neutral", word: "neutral", state: "neutral" },
   { key: "skipped", word: "skipped", state: "skipped" },
+  { key: "pending", word: "running", state: "pending" },
+  { key: "passing", word: "passed", state: "success" },
 ];
 
 const describe = (counts: CheckCounts, separator: string) =>
