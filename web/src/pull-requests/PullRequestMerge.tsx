@@ -190,6 +190,7 @@ export function MergeFooter(p: MergeFooterProps) {
                 title={mergeLabel(m)}
                 help={pickHelp(m)}
                 checked={m === method}
+                disabled={p.autoMerge}
                 onSelect={() => (p.canMerge ? p.onMerge(m) : arms ? p.onAutoMerge(m) : p.onMethod(m))}
               />
             ))}

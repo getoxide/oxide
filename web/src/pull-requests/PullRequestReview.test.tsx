@@ -225,6 +225,21 @@ it("runs Merge when ready from the menu with the method shown as chosen", async 
   expect(merge).toHaveBeenCalledWith(1, 174, "squash", false, true);
 });
 
+it("locks the merge methods once auto-merge is on, but keeps Delete branch usable", async () => {
+  vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+  blocked();
+  await render();
+  await click(host.querySelector<HTMLButtonElement>(".split-btn-main")!);
+  await openMergeMenu();
+  const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')];
+  expect(items.length).toBeGreaterThan(0);
+  expect(items.every((b) => b.disabled)).toBe(true);
+  const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]')!;
+  expect(toggle.disabled).toBe(false);
+  await click(toggle);
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+});
+
 it("does not offer auto-merge when nothing is waiting", async () => {
   await render();
   await openMergeMenu();
