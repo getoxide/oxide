@@ -22,7 +22,7 @@ import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
 import { changeDirectoryLine, readTerminalSession, writeTerminalSession } from "../shared/session";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
-import { copyTextToClipboard } from "../shared/platform";
+import { copyTextToClipboard, currentPlatform } from "../shared/platform";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -37,7 +37,7 @@ interface Props {
   /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
   headerAction?: ReactNode;
 }
-const isWindows = () => /Windows/i.test(navigator.userAgent);
+const isWindows = () => currentPlatform() === "windows";
 const OUTPUT_LIMIT = 256 * 1024;
 const now = () => Date.now();
 

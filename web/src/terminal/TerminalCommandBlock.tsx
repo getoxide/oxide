@@ -165,8 +165,8 @@ export function TerminalCommandBlock(props: Props) {
     // Until the shell marks the start, it is still reading the block's own command line: a key
     // (or a terminal reply) sent then would land in that line instead of reaching the program.
     const input = term.onData((data) => {
-      const { active: running, block: current } = callbacks.current;
-      if (running && current.started) callbacks.current.onInput(data);
+      const { active, block } = callbacks.current;
+      if (active && block.started) callbacks.current.onInput(data);
     });
     const parsed = term.onWriteParsed(() => {
       setHeight(
