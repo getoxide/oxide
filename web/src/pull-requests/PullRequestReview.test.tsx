@@ -530,8 +530,8 @@ it("offers the conversation's people before collaborators in the comment box and
     data: detail({
       participants: ["erin"],
       timeline: [
-        { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
-        { kind: "comment", id: "c2", author: "me", body: "Done", createdAt: "2026-10-27T12:00:00Z" },
+        { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
+        { kind: "comment", id: "c2", author: "me", body: "Done", createdAt: "2026-10-27T12:00:00Z", reactions: [] },
       ],
     }),
   });
