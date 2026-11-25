@@ -616,9 +616,9 @@ fn a_program_reading_raw_keys_receives_ctrl_c_as_a_key() {
 }
 
 /// A long block sent as soon as the shell starts, while its startup files still run and the
-/// terminal reads input a line at a time, must still run: Core holds it until the first prompt.
+/// terminal reads input a line at a time (cutting a line past 1024 bytes on macOS), must still run.
 #[test]
-fn a_long_block_sent_at_startup_waits_for_the_shell_and_ends() {
+fn a_long_block_sent_at_startup_runs_and_ends() {
     let (_temporary, core, id) = fixture();
     let core = Arc::new(core);
     for shell in block_shells(&core) {

@@ -31,36 +31,6 @@ pub struct TerminalSession {
     live_cwd: Arc<Mutex<String>>,
     /// The token of the block that runs now: only its `end` marker may move `live_cwd`.
     block_token: Arc<Mutex<Option<String>>>,
-    /// Holds blocks until the shell's first prompt (see [`Gate`]).
-    gate: Arc<Mutex<Gate>>,
-}
-
-/// Until its first prompt a shell still runs its startup files and the terminal reads input a
-/// line at a time, where a line past the TTY's limit (1024 bytes on macOS) loses its end: a long
-/// block script would never run. Blocks wait here for the first `prompt` marker, or for
-/// [`SHELL_READY_TIMEOUT`] when a shell never prints one.
-#[derive(Default)]
-struct Gate {
-    open: bool,
-    queued: Vec<Vec<u8>>,
-}
-
-/// How long blocks wait for a shell's first prompt before they are sent anyway.
-const SHELL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// Sends the blocks that waited for the shell's first prompt, in order; later ones go straight.
-fn open_gate(gate: &Mutex<Gate>, commands: &Sender<SessionCommand>) {
-    let mut gate = gate.lock_recover();
-    if gate.open {
-        return;
-    }
-    gate.open = true;
-    for input in gate.queued.drain(..) {
-        let (reply, _) = bounded(1);
-        if commands.send(SessionCommand::Write(input, reply)).is_err() {
-            break;
-        }
-    }
 }
 
 enum SessionCommand {
@@ -84,21 +54,7 @@ impl TerminalSession {
         let script =
             os::block_script(token, command).map_err(|error| Error::Terminal(error.to_string()))?;
         *self.block_token.lock_recover() = Some(token.to_string());
-        let mut gate = self.gate.lock_recover();
-        if !gate.open {
-            gate.queued.push(script.into_bytes());
-            return Ok(());
-        }
-        // Queued under the lock, so it follows any block the gate sends; written outside it.
-        let (reply, result) = bounded(1);
-        self.commands
-            .send(SessionCommand::Write(script.into_bytes(), reply))
-            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?;
-        drop(gate);
-        result
-            .recv()
-            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?
-            .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))
+        self.write(script.as_bytes())
     }
 
     pub fn start(
@@ -207,28 +163,14 @@ impl TerminalSession {
         let output_cwd = Arc::clone(&live_cwd);
         let block_token = Arc::new(Mutex::new(None::<String>));
         let output_token = Arc::clone(&block_token);
-        let gate = Arc::new(Mutex::new(Gate {
-            open: !blocks,
-            queued: Vec::new(),
-        }));
         let (commands, receiver) = unbounded();
         let output = OutputState {
             subscribers: output_subscribers,
             blocks,
             cwd: output_cwd,
             block_token: output_token,
-            gate: Arc::clone(&gate),
-            commands: commands.clone(),
         };
         std::thread::spawn(move || read_output(reader, &output));
-        if blocks {
-            let gate = Arc::clone(&gate);
-            let commands = commands.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(SHELL_READY_TIMEOUT);
-                open_gate(&gate, &commands);
-            });
-        }
         std::thread::spawn(move || {
             let mut writer = writer;
             let master = pair.master;
@@ -275,7 +217,6 @@ impl TerminalSession {
             subscribers,
             live_cwd,
             block_token,
-            gate,
         })
     }
 
@@ -411,8 +352,6 @@ struct OutputState {
     blocks: bool,
     cwd: Arc<Mutex<String>>,
     block_token: Arc<Mutex<Option<String>>>,
-    gate: Arc<Mutex<Gate>>,
-    commands: Sender<SessionCommand>,
 }
 
 fn read_output(mut reader: Box<dyn Read + Send>, state: &OutputState) {
@@ -443,7 +382,6 @@ fn follow(state: &OutputState, marker: ShellMarker) {
     let mut token = state.block_token.lock_recover();
     let folder = match marker {
         ShellMarker::Prompt { folder } => {
-            open_gate(&state.gate, &state.commands);
             if token.is_some() {
                 return;
             }
@@ -566,17 +504,13 @@ mod tests {
         );
     }
 
-    fn state(token: Option<&str>) -> (OutputState, Receiver<SessionCommand>) {
-        let (commands, receiver) = unbounded();
-        let state = OutputState {
+    fn state(token: Option<&str>) -> OutputState {
+        OutputState {
             subscribers: Arc::default(),
             blocks: true,
             cwd: Arc::new(Mutex::new("start".into())),
             block_token: Arc::new(Mutex::new(token.map(str::to_string))),
-            gate: Arc::default(),
-            commands,
-        };
-        (state, receiver)
+        }
     }
 
     #[test]
@@ -589,7 +523,7 @@ mod tests {
         let prompt = |folder: &str| ShellMarker::Prompt {
             folder: folder.into(),
         };
-        let (state, _commands) = state(Some("mine"));
+        let state = state(Some("mine"));
         let cwd = || state.cwd.lock_recover().clone();
         // A program inside the block prints markers: neither moves the folder.
         follow(&state, end("other", &here));
@@ -599,7 +533,7 @@ mod tests {
         follow(&state, end("mine", "/no/such/oxide/folder"));
         assert_eq!(cwd(), "start");
         // The block's end counts once; then a prompt outside a block counts.
-        let (state, _commands) = self::state(Some("mine"));
+        let state = self::state(Some("mine"));
         let cwd = || state.cwd.lock_recover().clone();
         follow(&state, end("mine", &here));
         assert_eq!(cwd(), here);
@@ -614,28 +548,6 @@ mod tests {
             .into_owned();
         follow(&state, prompt(&root));
         assert_eq!(cwd(), root);
-    }
-
-    #[test]
-    fn blocks_wait_for_the_first_prompt_and_keep_their_order() {
-        let (state, commands) = state(None);
-        state.gate.lock_recover().queued = vec![b"one".to_vec(), b"two".to_vec()];
-        assert!(commands.try_recv().is_err());
-        follow(
-            &state,
-            ShellMarker::Prompt {
-                folder: "relative".into(),
-            },
-        );
-        let written: Vec<Vec<u8>> = commands
-            .try_iter()
-            .map(|command| match command {
-                SessionCommand::Write(input, _) => input,
-                _ => panic!("only writes"),
-            })
-            .collect();
-        assert_eq!(written, vec![b"one".to_vec(), b"two".to_vec()]);
-        assert!(state.gate.lock_recover().open);
     }
 
     #[test]

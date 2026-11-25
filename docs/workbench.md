@@ -28,8 +28,8 @@ exit status together. `cd` and shell variables carry over between commands.
   own end as soon as its command finishes; the shell prompt marks the end only of
   a block stopped by Ctrl+C, so Ctrl+C leaves the shell usable. Tab completes in
   the folder the shell last reported: at the end of the running block, or at a
-  prompt outside any block. Core holds blocks until the shell's first prompt, so
-  a long command sent while startup files run is not cut at the TTY line limit.
+  prompt outside any block. A long command is typed in short lines, so one sent
+  while startup files run is not cut at the terminal's line limit.
 - The Terminal header shows the shell and its current directory, which follows
   every `cd`. A Command block shows only its command and one status: a spinner
   while it runs, then its duration, or `exit N` beside the duration when it

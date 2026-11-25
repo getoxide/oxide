@@ -354,40 +354,75 @@ pub fn shell_launch(
 /// hook only marks the end of a command that never got back to the wrapper (Ctrl+C). The leading
 /// space keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`). A
 /// token other than ASCII letters, digits and `-` is refused.
+///
+/// Until the line editor takes over (while startup files run, or between its prompt hook and
+/// reading), the terminal reads input a line at a time and cuts a line past its limit (1024 bytes
+/// on macOS), end of line included: the block would never run. A long command is therefore first
+/// stored in `_oxide_cmd` by lines of at most [`BLOCK_LINE_LIMIT`] bytes, each a complete
+/// statement, and the wrapper runs that variable.
 pub fn block_script(token: &str, command: &str) -> io::Result<String> {
     let token = crate::block_token(token)?;
-    let command = ansi_c_quoted(command);
+    let units = ansi_c_units(command);
+    let length: usize = units.iter().map(String::len).sum();
+    let (prelude, command) = if length + 3 <= BLOCK_LINE_LIMIT - BLOCK_WRAPPER_LENGTH {
+        (String::new(), format!("$'{}'", units.concat()))
+    } else {
+        let mut prelude = String::new();
+        let mut chunk = String::new();
+        let mut first = true;
+        let mut flush = |chunk: &mut String, prelude: &mut String| {
+            let operator = if first { "=" } else { "+=" };
+            first = false;
+            prelude.push_str(&format!("\x15 _oxide_cmd{operator}$'{chunk}'\n"));
+            chunk.clear();
+        };
+        for unit in &units {
+            if chunk.len() + unit.len() > BLOCK_CHUNK {
+                flush(&mut chunk, &mut prelude);
+            }
+            chunk.push_str(unit);
+        }
+        flush(&mut chunk, &mut prelude);
+        (prelude, "\"$_oxide_cmd\"".to_string())
+    };
     Ok(format!(
         concat!(
-            "\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf ",
+            "{prelude}\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf ",
             end_marker!(),
-            " \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
+            " \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; _oxide_cmd=; {{ _oxide_rearm; }} 2>/dev/null\n"
         ),
+        prelude = prelude,
         token = token,
         command = command,
     ))
 }
 
-/// `text` as one `$'...'` word, which bash and zsh both read back unchanged, with every line
-/// break and ASCII control character escaped so the word stays on one line. `!` is escaped too:
-/// bash before 4.4 (macOS's /bin/bash) expands history inside `$'...'` once a quote precedes it.
-fn ansi_c_quoted(text: &str) -> String {
-    let mut quoted = String::with_capacity(text.len() + 3);
-    quoted.push_str("$'");
-    for character in text.chars() {
-        match character {
-            '\\' => quoted.push_str("\\\\"),
-            '\'' => quoted.push_str("\\'"),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            '\t' => quoted.push_str("\\t"),
-            '!' => quoted.push_str("\\041"),
-            c if c.is_ascii_control() => quoted.push_str(&format!("\\{:03o}", c as u32)),
-            c => quoted.push(c),
-        }
-    }
-    quoted.push('\'');
-    quoted
+/// The longest line `block_script` types, end of line included: under the 1024 bytes a terminal
+/// holds per line before the line editor reads input.
+const BLOCK_LINE_LIMIT: usize = 900;
+/// The wrapper's own length around the command, with a token as long as a UUID.
+const BLOCK_WRAPPER_LENGTH: usize = 400;
+/// At most this many bytes of quoted command per `_oxide_cmd` line.
+const BLOCK_CHUNK: usize = 512;
+
+/// `text` as the pieces of one `$'...'` word (without its quotes), which bash and zsh both read
+/// back unchanged, with every line break and ASCII control character escaped so the word stays
+/// on one line. `!` is escaped too: bash before 4.4 (macOS's /bin/bash) expands history inside
+/// `$'...'` once a quote precedes it. A piece is one character, so the word can be split between
+/// any two pieces.
+fn ansi_c_units(text: &str) -> Vec<String> {
+    text.chars()
+        .map(|character| match character {
+            '\\' => "\\\\".to_string(),
+            '\'' => "\\'".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            '!' => "\\041".to_string(),
+            c if c.is_ascii_control() => format!("\\{:03o}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 /// A script that asks the shell itself for completions, or `None` when the shell cannot (the
@@ -715,6 +750,41 @@ mod tests {
     fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
         for token in ["", "a'b", "a;b", "a\"b", "a b", "$(x)"] {
             assert!(block_script(token, "echo hi").is_err(), "{token:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_command_is_typed_in_short_lines_and_runs_unchanged() {
+        let lines: Vec<String> = (0..60)
+            .map(|line| format!("printf '%s\\n' 'l{line:02}_{}é!'", "x".repeat(30)))
+            .collect();
+        let command = lines.join("\n");
+        let script = block_script("tok", &command).expect("script");
+        for line in script.split_inclusive('\n') {
+            assert!(
+                line.len() <= BLOCK_LINE_LIMIT,
+                "{} bytes: {line}",
+                line.len()
+            );
+            assert!(line.starts_with("\u{15} "), "{line}");
+        }
+        assert!(script.matches('\n').count() > 2, "{script}");
+        let expected: String = (0..60)
+            .map(|line| format!("l{line:02}_{}é!\n", "x".repeat(30)))
+            .collect();
+        for shell in [resolve_zsh(), resolve_bash()].into_iter().flatten() {
+            let output = crate::command::resolved_command(&shell)
+                .arg("-c")
+                .arg(script.replace('\u{15}', ""))
+                .output()
+                .expect("run shell");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains(&format!(
+                    "\x1b]633;Oxide;tok;start\x07{expected}\x1b]633;Oxide;tok;end;0;"
+                )),
+                "{shell:?}: {stdout:?}"
+            );
         }
     }
 
