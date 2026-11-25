@@ -1356,7 +1356,14 @@ pub fn merge_pull_request(
     auto: bool,
 ) -> Result<()> {
     gh.require_ready(cwd)?;
-    if !merge_settings(gh, cwd)?.0.contains(&method) {
+    // The cached settings may predate a change on GitHub: read them again once before refusing.
+    let allowed = |gh: &Gh| merge_settings(gh, cwd).map(|(methods, _)| methods.contains(&method));
+    let mut ok = allowed(gh)?;
+    if !ok {
+        gh.merge_settings.remove(&cwd.to_path_buf());
+        ok = allowed(gh)?;
+    }
+    if !ok {
         return Err(Error::Github(format!(
             "The repository does not allow {} merges.",
             method.name()

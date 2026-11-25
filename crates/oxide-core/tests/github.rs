@@ -974,6 +974,28 @@ fn after_a_merge_the_next_pull_request_preselects_the_method_just_used() {
 }
 
 #[test]
+fn merge_rereads_the_repository_settings_before_refusing_a_method() {
+    use oxide_core::MergeMethod;
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    state["repo"] = serde_json::json!({"rebaseMergeAllowed": false});
+    install_gh(&f, &state);
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+
+    // The repository allows rebase merges since the detail was read.
+    state["repo"] = serde_json::json!({"rebaseMergeAllowed": true});
+    f.set_gh(&state);
+    f.core
+        .merge_pull_request(f.project.id, 5, MergeMethod::Rebase, false, false)
+        .unwrap();
+    assert!(
+        f.gh_calls()
+            .iter()
+            .any(|c| c[..] == ["pr", "merge", "5", "--rebase"])
+    );
+}
+
+#[test]
 fn a_draft_is_marked_ready_and_back_through_gh() {
     let f = fixture();
     let mut pr = detailed_pr();
