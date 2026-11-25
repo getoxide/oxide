@@ -24,7 +24,7 @@ import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from ".
 import { MarkdownEditor } from "../shared/MarkdownEditor";
 import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
-import { Markdown } from "../pull-requests/PullRequestMarkdown";
+import { Markdown, MarkdownImages } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
 import { ActivityRow, isConversationItem } from "../pull-requests/PullRequestTimeline";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
@@ -182,6 +182,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   }
 
   return (
+    <MarkdownImages projectId={projectId} signed={detail.signedImages}>
     <div className="pr-review">
       <RefreshNotice query={query} />
       {nav}
@@ -496,5 +497,6 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         )}
       </footer>
     </div>
+    </MarkdownImages>
   );
 }

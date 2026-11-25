@@ -568,3 +568,32 @@ it("stops polling while the Surface is hidden, and revalidates silently once sho
     vi.useRealTimers();
   }
 });
+
+it("shows the description's private attachment through its signed URL and other hosts as a link", async () => {
+  const asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+  const signed = "https://private-user-images.githubusercontent.com/7/9-84ccda0a-5c4a-4fe4-b897-ed3f90e852b2.png?jwt=abc";
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: "data:image/png;base64,iVBORw0KGgo=" });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      body: `It crashes:\n\n<img width="600" alt="Crash dialog" src="${asset}" />`,
+      signedImages: [{ url: asset, signedUrl: signed }],
+      timeline: [
+        { kind: "comment", id: "IC_1", author: "dave", body: "![tracker](https://tracker.example/pixel.png)", createdAt: "2026-01-01T03:00:00Z" },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('[aria-label="Description"]')!;
+  const img = description.querySelector("img.md-image") as HTMLImageElement;
+  expect(img.alt).toBe("Crash dialog");
+  expect(img.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+  expect(fetch).toHaveBeenCalledWith(1, signed);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const conversation = host.querySelector('[aria-label="Conversation"]')!;
+  expect(conversation.querySelector(".md img")).toBeNull();
+  expect(conversation.textContent).toContain("tracker");
+  expect(conversation.textContent).toContain("Open image");
+});
