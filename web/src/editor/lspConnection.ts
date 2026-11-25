@@ -6,6 +6,16 @@ import type {
   ServerCapabilities,
 } from "vscode-languageserver-protocol";
 
+/** Where the user manages a language's server: the language button in the Code status bar. */
+export const LANGUAGE_BUTTON = "the language button in the status bar";
+
+export type LanguageServerStatus = "Ready" | "Connecting" | "Not installed" | "Stopped";
+/** A language server's state, and the message that explains it. */
+export interface LanguageServerState {
+  status: LanguageServerStatus;
+  message: string;
+}
+
 type Message = {
   id?: number | string;
   method?: string;
@@ -30,11 +40,11 @@ export class LspConnection {
     private projectId: number,
     readonly tool: LanguageTool,
     private onDiagnostics: (uri: string, diagnostics: Diagnostic[]) => void,
-    private onState: (state: string) => void,
+    private onState: (state: LanguageServerState) => void,
   ) {}
 
   async start(toUri: (path: string) => string) {
-    this.onState("Connecting…");
+    this.onState({ status: "Connecting", message: "Connecting…" });
     const channel = new Channel<string>();
     channel.onmessage = (raw) => {
       try {
@@ -85,7 +95,7 @@ export class LspConnection {
     await this.notify("workspace/didChangeConfiguration", {
       settings: this.settings(),
     });
-    this.onState("Ready");
+    this.onState({ status: "Ready", message: "Ready" });
   }
   private settings() {
     return {
@@ -132,7 +142,10 @@ export class LspConnection {
         };
         this.onDiagnostics(params.uri, params.diagnostics);
       } else if (message.method === "$/oxide/serverExited") {
-        this.onState("Server stopped. Restart it from the language button in the status bar.");
+        this.onState({
+          status: "Stopped",
+          message: `Server stopped. Restart it from ${LANGUAGE_BUTTON}.`,
+        });
         this.rejectPending("Language server exited.");
       }
       return;

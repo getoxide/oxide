@@ -10,20 +10,11 @@ import { commands, type LanguageTool } from "../bindings";
 import { Popover } from "../shared/Popover";
 import { monaco } from "./editorRuntime";
 import { InstallLanguageButton } from "./LanguageSupport";
+import type { LanguageServerState } from "./editorLanguages";
 
-type ServerStatus = "Ready" | "Connecting" | "Not installed" | "Stopped";
-
-/** Reads a language server's reported state (Ready, Connecting…, or an error message) as one of four. */
-function serverStatus(state: string | undefined): ServerStatus {
-  if (state === "Ready") return "Ready";
-  if (state === undefined || state.startsWith("Connecting")) return "Connecting";
-  if (state.startsWith("Not installed")) return "Not installed";
-  return "Stopped";
-}
-
-/** The status bar's short form of a language server's state. */
-export function serverStatusLabel(state: string | undefined): string {
-  return `LSP ${serverStatus(state).toLowerCase()}`;
+/** The status bar's short form of a language server's state; one not reported yet is coming up. */
+export function serverStatusLabel(state: LanguageServerState | undefined): string {
+  return `LSP ${(state?.status ?? "Connecting").toLowerCase()}`;
 }
 
 interface LanguageMode {
@@ -74,7 +65,7 @@ function LanguageServer({
   onRestart,
 }: {
   language: string;
-  state: string | undefined;
+  state: LanguageServerState | undefined;
   onRestart: () => void;
 }) {
   const [tool, setTool] = useState<LanguageTool | null>(null);
@@ -99,7 +90,9 @@ function LanguageServer({
   // A server that is installed by now is coming up, whatever it said before the install.
   const status = !tool.installed
     ? "Not installed"
-    : serverStatus(state?.startsWith("Not installed") ? undefined : state);
+    : !state || state.status === "Not installed"
+      ? "Connecting"
+      : state.status;
   return (
     <section className="language-server" aria-label="Language server">
       <header>
@@ -108,7 +101,7 @@ function LanguageServer({
           {status}
         </span>
       </header>
-      {status === "Stopped" && state && <p className="dim">{state}</p>}
+      {status === "Stopped" && state && <p className="dim">{state.message}</p>}
       <div className="language-server-actions">
         <InstallLanguageButton
           tool={tool}
@@ -138,7 +131,7 @@ export function LanguagePopover({
   languageId: string;
   /** The managed language server of the mode, if it has one. */
   server: string | null;
-  serverState: string | undefined;
+  serverState: LanguageServerState | undefined;
   onSelect: (languageId: string) => void;
   onRestart: () => void;
   onClose: () => void;

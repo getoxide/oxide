@@ -3,7 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { Channel } from "@tauri-apps/api/core";
 import type { LanguageTool } from "../bindings";
-import { LspConnection } from "./lspConnection";
+import { LspConnection, type LanguageServerState } from "./lspConnection";
 
 const tool: LanguageTool = {
   language: "typescript",
@@ -137,10 +137,13 @@ it("points to the status-bar language button when the server stops", async () =>
     }
     return null;
   });
-  const states: string[] = [];
+  const states: LanguageServerState[] = [];
   const connection = new LspConnection(1, tool, () => {}, (state) => states.push(state));
   await connection.start((path) => `file://${path}`);
   channel.onmessage(JSON.stringify({ method: "$/oxide/serverExited" }));
-  expect(states.at(-1)).toBe("Server stopped. Restart it from the language button in the status bar.");
+  expect(states.at(-1)).toEqual({
+    status: "Stopped",
+    message: "Server stopped. Restart it from the language button in the status bar.",
+  });
   connection.dispose();
 });

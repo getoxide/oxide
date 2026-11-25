@@ -78,10 +78,10 @@ beforeEach(() => {
   mockIPC(async (command, args) => {
     const a = args as Record<string, unknown>;
     if (command === "language_tools")
-      return ["typescript", "python"].map((language) => ({
+      return ["typescript", "python", "rust"].map((language) => ({
         language,
         name: language,
-        installed: true,
+        installed: language !== "rust",
         installCommand: "",
         documentation: "",
         config: { command: language, args: [] },
@@ -186,5 +186,26 @@ it("restarts one language's server and reopens only its buffers there", async ()
   expect(server("python")).toHaveLength(1);
   expect(server("python")[0].stopped).toBe(false);
   expect(received("python", "textDocument/didOpen")).toHaveLength(1);
+  languages.dispose();
+});
+
+it("reports each language server's state as a status with its message", async () => {
+  const states: [string, unknown][] = [];
+  const languages = new EditorLanguages(1, (language, state) => states.push([language, state]), async () => {});
+  languages.add(model("/project/app.ts", "typescript"));
+  languages.add(model("/project/main.rs", "rust"));
+  await settle();
+  expect(states).toContainEqual(["typescript", { status: "Connecting", message: "Connecting…" }]);
+  expect(states).toContainEqual(["typescript", { status: "Ready", message: "Ready" }]);
+  expect(states).toContainEqual([
+    "rust",
+    { status: "Not installed", message: "Not installed · install it from the language button in the status bar" },
+  ]);
+
+  server("typescript")[0].channel.onmessage(JSON.stringify({ method: "$/oxide/serverExited" }));
+  expect(states.at(-1)).toEqual([
+    "typescript",
+    { status: "Stopped", message: "Server stopped. Restart it from the language button in the status bar." },
+  ]);
   languages.dispose();
 });

@@ -167,7 +167,7 @@ const lsp = vi.hoisted(() => ({
   events: [] as string[],
   /** Each reconnect's language; "all" for every server. */
   reconnects: [] as string[],
-  report: (() => {}) as (language: string, state: string) => void,
+  report: (() => {}) as (language: string, state: { status: string; message: string }) => void,
   reset() {
     this.events.length = 0;
     this.reconnects.length = 0;
@@ -175,7 +175,7 @@ const lsp = vi.hoisted(() => ({
 }));
 vi.mock("./editorLanguages", () => ({
   EditorLanguages: class {
-    constructor(_projectId: number, onState: (language: string, state: string) => void) {
+    constructor(_projectId: number, onState: (language: string, state: { status: string; message: string }) => void) {
       lsp.report = onState;
     }
     add(model: MockModel) { lsp.events.push(`add ${model.getLanguageId()}`); }
@@ -481,7 +481,7 @@ describe("CodeWorkbench performance", () => {
       ),
     );
     await settle();
-    await act(async () => lsp.report("typescript", "Not installed · install it from the language button in the status bar"));
+    await act(async () => lsp.report("typescript", { status: "Not installed", message: "Not installed · install it from the language button in the status bar" }));
     const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
     expect(indicator.textContent).toContain("LSP not installed");
     await act(async () => indicator.click());
@@ -499,9 +499,9 @@ describe("CodeWorkbench performance", () => {
     // A finished install reconnects the language servers of the open files.
     expect(lsp.reconnects).toEqual(["all"]);
 
-    await act(async () => lsp.report("typescript", "Connecting…"));
+    await act(async () => lsp.report("typescript", { status: "Connecting", message: "Connecting…" }));
     expect(server().textContent).toContain("Connecting");
-    await act(async () => lsp.report("typescript", "Ready"));
+    await act(async () => lsp.report("typescript", { status: "Ready", message: "Ready" }));
     expect(server().textContent).toContain("Ready");
     expect(indicator.textContent).toContain("LSP ready");
     expect(button("Reinstall support")).toBeDefined();
@@ -510,7 +510,7 @@ describe("CodeWorkbench performance", () => {
     await act(async () => button("Restart server")!.click());
     expect(lsp.reconnects).toEqual(["all", "typescript"]);
 
-    await act(async () => lsp.report("typescript", "Server stopped. Reconnect from the language button in the status bar."));
+    await act(async () => lsp.report("typescript", { status: "Stopped", message: "Server stopped. Restart it from the language button in the status bar." }));
     expect(server().textContent).toContain("Stopped");
     expect(server().textContent).toContain("Server stopped.");
   });

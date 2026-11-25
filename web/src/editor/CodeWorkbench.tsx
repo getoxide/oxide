@@ -21,7 +21,7 @@ import {
 } from "@primer/octicons-react";
 import { commands } from "../bindings";
 import { monaco, editorLanguage, serverLanguage } from "./editorRuntime";
-import { EditorLanguages } from "./editorLanguages";
+import { EditorLanguages, type LanguageServerState } from "./editorLanguages";
 import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
 import { LanguagePopover, languageLabel, serverStatusLabel } from "./LanguagePopover";
@@ -117,7 +117,7 @@ export function CodeWorkbench({
   const filesMenuWrap = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
-  const [states, setStates] = useState<Record<string, string>>({});
+  const [states, setStates] = useState<Record<string, LanguageServerState>>({});
   const [languageMenu, setLanguageMenu] = useState(false);
   const languageButton = useRef<HTMLButtonElement>(null);
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -959,7 +959,7 @@ export function CodeWorkbench({
           <CursorReadout editor={editorInstance} />
           <button
             ref={languageButton}
-            title={language ? states[language] : undefined}
+            title={language ? states[language]?.message : undefined}
             aria-haspopup="dialog"
             aria-expanded={languageMenu}
             disabled={!current}

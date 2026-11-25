@@ -11,7 +11,16 @@ import type {
 } from "vscode-languageserver-protocol";
 import { commands } from "../bindings";
 import { monaco, serverLanguage } from "./editorRuntime";
-import { LspConnection } from "./lspConnection";
+import {
+  LANGUAGE_BUTTON,
+  LspConnection,
+  type LanguageServerState,
+} from "./lspConnection";
+
+export type { LanguageServerState, LanguageServerStatus } from "./lspConnection";
+
+/** The language's server is not installed. */
+class NotInstalled extends Error {}
 
 const range = (r: Range) =>
   new monaco.Range(
@@ -41,7 +50,7 @@ export class EditorLanguages {
   private disposed = false;
   constructor(
     private projectId: number,
-    private onState: (language: string, state: string) => void,
+    private onState: (language: string, state: LanguageServerState) => void,
     private ensureModel: (uri: monaco.Uri) => Promise<void>,
   ) {
     this.register();
@@ -61,7 +70,7 @@ export class EditorLanguages {
         const result = await commands.languageTools();
         const tool = result.find((t) => t.language === language);
         if (!tool?.installed)
-          throw new Error("Not installed · install it from the language button in the status bar");
+          throw new NotInstalled(`Not installed · install it from ${LANGUAGE_BUTTON}`);
         const connection = new LspConnection(
           this.projectId,
           tool,
@@ -96,10 +105,10 @@ export class EditorLanguages {
   }
   private report(language: string, error: unknown) {
     if (!this.disposed)
-      this.onState(
-        language,
-        error instanceof Error ? error.message : String(error),
-      );
+      this.onState(language, {
+        status: error instanceof NotInstalled ? "Not installed" : "Stopped",
+        message: error instanceof Error ? error.message : String(error),
+      });
   }
   add(model: monaco.editor.ITextModel) {
     const uri = model.uri.toString();
@@ -481,7 +490,7 @@ export class EditorLanguages {
             }
             return {
               edits: [],
-              rejectReason: "Rename is unavailable. Check the language button in the status bar.",
+              rejectReason: `Rename is unavailable. Check ${LANGUAGE_BUTTON}.`,
             };
           },
         }),
