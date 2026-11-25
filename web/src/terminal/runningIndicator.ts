@@ -10,12 +10,13 @@ export const RUNNING_INDICATOR_DELAY_MS = 300;
 export function useRunningIndicator(running: boolean): boolean {
   const [overdue, setOverdue] = useState(false);
   useEffect(() => {
-    if (!running) {
-      setOverdue(false);
-      return;
-    }
+    if (!running) return;
     const timer = window.setTimeout(() => setOverdue(true), RUNNING_INDICATOR_DELAY_MS);
-    return () => clearTimeout(timer);
+    // Reset when it stops, so the next run waits out the delay again (`running &&` covers the render between).
+    return () => {
+      clearTimeout(timer);
+      setOverdue(false);
+    };
   }, [running]);
   return running && overdue;
 }
