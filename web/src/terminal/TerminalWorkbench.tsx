@@ -37,7 +37,7 @@ interface Props {
   /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
   headerAction?: ReactNode;
 }
-const WINDOWS = /Windows/i.test(navigator.userAgent);
+const isWindows = () => /Windows/i.test(navigator.userAgent);
 const OUTPUT_LIMIT = 256 * 1024;
 const now = () => Date.now();
 
@@ -83,7 +83,7 @@ export function TerminalWorkbench({
   );
   const [sessionId, setSessionId] = useState<number | null>(null);
   // The shell Core started (zsh, bash or PowerShell); a generic name until it answers.
-  const [shellName, setShellName] = useState(WINDOWS ? "PowerShell" : "Shell");
+  const [shellName, setShellName] = useState(isWindows() ? "PowerShell" : "Shell");
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -123,6 +123,7 @@ export function TerminalWorkbench({
     const parser = new BlockParser();
     let inCommand = false;
     let probeBuffer = "";
+    const windows = isWindows();
     const pendingReplies: string[] = [];
     const reply = (text: string) => {
       if (id === null) pendingReplies.push(text);
@@ -136,7 +137,9 @@ export function TerminalWorkbench({
       );
       if (active) {
         for (const event of events) {
-          if (event.type === "output" && !inCommand) {
+          // ConPTY asks for the cursor position at startup and waits for the answer. A POSIX shell
+          // never needs one, and an answer would land in its line editor as typed text.
+          if (event.type === "output" && !inCommand && windows) {
             probeBuffer += event.text;
             while (probeBuffer.includes("\x1b[6n")) {
               reply("\x1b[1;1R");
@@ -223,7 +226,7 @@ export function TerminalWorkbench({
         if (result.data.shell) setShellName(result.data.shell);
         // A restored Terminal's new shell moves to the folder the old one was in, before any block.
         if (restoreCwd.current) {
-          const line = changeDirectoryLine(restoreCwd.current, WINDOWS);
+          const line = changeDirectoryLine(restoreCwd.current, isWindows());
           restoreCwd.current = null;
           void commands.writeTerminal(id, [...new TextEncoder().encode(line)]);
         }

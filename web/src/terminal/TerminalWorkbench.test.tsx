@@ -299,3 +299,23 @@ it("offers context actions on Command blocks and Terminal workbench (Copy, Paste
   await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[2]!.click(); });
   expect(newTerminal).toHaveBeenCalledOnce();
 });
+
+it.each([
+  ["macOS", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", false],
+  ["Linux", "Mozilla/5.0 (X11; Linux x86_64)", false],
+  ["Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", true],
+])("answers the shell's cursor-position probe only on Windows, where ConPTY waits for it (%s)", async (_os, userAgent, answers) => {
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+  const written: string[] = [];
+  let channel: Channel<number[]>;
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "write_terminal") written.push(new TextDecoder().decode(new Uint8Array((args as { input: number[] }).input)));
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  await settle();
+  await act(async () => channel.onmessage([...new TextEncoder().encode("\x1b[6n")]));
+  await settle();
+  expect(written.includes("\x1b[1;1R")).toBe(answers);
+});
