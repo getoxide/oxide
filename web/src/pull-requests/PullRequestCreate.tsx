@@ -97,9 +97,9 @@ export function PullRequestCreate({
     return () => window.removeEventListener("focus", onFocus);
   }, [loading, base, recount]);
   // Why no pull request can be opened from here, if it cannot.
-  // A protected branch is fine as a head as long as it has something to compare.
+  // Core refuses to push or open a pull request from a protected head, whatever it holds.
   const blocker =
-    (head !== "" && head === base) || (isProtected && ahead[base] === 0)
+    (head !== "" && head === base) || isProtected
       ? "switch"
       : ahead[base] === 0
         ? "noDiff"

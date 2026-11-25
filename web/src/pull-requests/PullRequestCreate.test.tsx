@@ -183,11 +183,18 @@ it("keeps Create disabled and asks for a feature branch when checked out on the 
   expect(create).not.toHaveBeenCalled();
 });
 
-it("lets a protected branch with commits beyond the base open a pull request", async () => {
+it("keeps Create disabled on a protected branch even with commits beyond the base", async () => {
+  // Core refuses to push or open a pull request from a protected head, so the form never offers it.
   mockDraft({ head: "master", base: "main", commitsBeyond: 3, protected: true });
+  const create = vi.spyOn(commands, "createPullRequest");
   await open();
-  expect(createButton().disabled).toBe(false);
-  expect(host.textContent).not.toContain("Switch from");
+  expect(createButton().disabled).toBe(true);
+  expect(host.textContent).toContain(
+    "Switch from master to a feature branch to open a pull request.",
+  );
+  expect(host.textContent).not.toContain("No commits on");
+  await submit();
+  expect(create).not.toHaveBeenCalled();
 });
 
 it("asks for a feature branch on a protected branch with nothing to compare", async () => {
@@ -197,6 +204,7 @@ it("asks for a feature branch on a protected branch with nothing to compare", as
   expect(host.textContent).toContain(
     "Switch from master to a feature branch to open a pull request.",
   );
+  expect(host.textContent).not.toContain("No commits on");
 });
 
 async function chooseBase(name: string) {
