@@ -181,6 +181,198 @@ fn a_stalled_terminal_view_never_stalls_the_shell() {
     core.close_terminal(terminal.id).unwrap();
 }
 
+/// The shells a Command block runs in on this OS: zsh and bash where installed, else PowerShell.
+fn block_shells(core: &Core) -> Vec<oxide_core::ShellKind> {
+    use oxide_core::ShellKind;
+    if cfg!(windows) {
+        return vec![ShellKind::Default];
+    }
+    core.available_shells()
+        .into_iter()
+        .map(|shell| shell.kind)
+        .filter(|kind| matches!(kind, ShellKind::Zsh | ShellKind::Bash))
+        .collect()
+}
+
+fn start_terminal_in(core: &Core, project_id: u32, shell: oxide_core::ShellKind) -> u32 {
+    core.set_terminal_settings(oxide_core::TerminalSettings {
+        shell,
+        load_user_config: true,
+    })
+    .unwrap();
+    core.start_block_terminal(project_id).unwrap().id
+}
+
+/// The exit code and folder a block's `end` marker reports, once it has arrived.
+fn block_end(view: &Drained, token: &str) -> (String, String) {
+    let needle = format!("{token};end;");
+    let output = view.wait_for(&needle);
+    let rest = &output[output.find(&needle).unwrap() + needle.len()..];
+    let marker = rest.split('\x07').next().unwrap();
+    let (code, cwd) = marker.split_once(';').unwrap();
+    (code.to_string(), cwd.to_string())
+}
+
+/// Keystrokes and terminal replies that reach the shell's line editor before a block is typed
+/// (typeahead, a cursor-position reply) must not break the block's wrapper.
+#[test]
+fn stray_input_before_a_block_cannot_leave_it_running() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo READY", "ready")
+            .unwrap();
+        block_end(&view, "ready");
+        let stray: &[u8] = if cfg!(windows) {
+            b"stray\x1b[1;1R"
+        } else {
+            b"stray'\x1b[1;1R"
+        };
+        core.write_terminal(terminal, stray).unwrap();
+        core.run_terminal_block(terminal, "printf 'AFTER_%s\\n' STRAY", "after")
+            .unwrap();
+        let (code, _) = block_end(&view, "after");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(view.text().contains("AFTER_STRAY"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// Built-ins that finish at once (`cd`, `ls`) close every block, one right after the other,
+/// and each block reports the folder the shell is in.
+#[test]
+fn rapid_built_in_commands_close_every_block_with_the_new_directory() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        let steps = [
+            ("ls", "project"),
+            ("cd subdir", "subdir"),
+            ("cd ..", "project"),
+            ("cd ..", ""),
+        ];
+        for (index, (command, folder)) in steps.into_iter().enumerate() {
+            let token = format!("rapid-{index}");
+            core.run_terminal_block(terminal, command, &token).unwrap();
+            let (code, cwd) = block_end(&view, &token);
+            assert_eq!(code, "0", "{shell:?} {command}");
+            let name = std::path::Path::new(&cwd)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if folder.is_empty() {
+                assert_ne!(name, "project", "{shell:?} {command}: {cwd}");
+            } else {
+                assert_eq!(name, folder, "{shell:?} {command}: {cwd}");
+            }
+        }
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A command the shell cannot parse fails its block instead of waiting at a continuation prompt.
+#[test]
+fn a_syntax_error_fails_the_block_and_keeps_the_shell_usable() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo 'unclosed", "broken")
+            .unwrap();
+        let (code, _) = block_end(&view, "broken");
+        assert_ne!(code, "0", "{shell:?}");
+        core.run_terminal_block(terminal, "echo STILL_''USABLE", "after")
+            .unwrap();
+        let (code, _) = block_end(&view, "after");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(view.text().contains("STILL_USABLE"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A command with a quote and a later `!` runs as typed: bash before 4.4 (macOS's /bin/bash)
+/// expands history inside the wrapper's quoting, which would fail with "event not found" and
+/// leave the block without a start or an end.
+#[test]
+fn an_exclamation_mark_after_a_quote_runs_as_typed() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo 'fix!'", "bang")
+            .unwrap();
+        let (code, _) = block_end(&view, "bang");
+        assert_eq!(code, "0", "{shell:?}: {}", view.text());
+        assert!(
+            view.text().contains("fix!\r\n"),
+            "{shell:?}: {}",
+            view.text()
+        );
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A user's own hooks and options (a cleared `precmd_functions` or `PROMPT_COMMAND`, a prompt
+/// theme, `nounset`) never stop blocks from ending, Ctrl+C included, and their prompt never
+/// shows up in the Terminal.
+#[test]
+fn user_hooks_and_prompts_never_stop_blocks_from_ending() {
+    use oxide_core::ShellKind;
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        // The prompt text is split in the typed command, so only a printed prompt contains it.
+        let clobber = match shell {
+            ShellKind::Zsh => {
+                "precmd_functions=(); chpwd() { echo CHPWD_RAN; }; PROMPT='OXIDE_''BLEED> '; RPROMPT='OXIDE_''BLEED'; PS2='OXIDE_''BLEED> '; setopt nounset"
+            }
+            ShellKind::Bash => {
+                "PROMPT_COMMAND=':'; PS1='OXIDE_''BLEED> '; PS2='OXIDE_''BLEED> '; set -u"
+            }
+            _ => "function global:prompt { 'OXIDE_' + 'BLEED> ' }",
+        };
+        core.run_terminal_block(terminal, clobber, "clobber")
+            .unwrap();
+        assert_eq!(block_end(&view, "clobber").0, "0", "{shell:?}");
+        let cd = if cfg!(windows) {
+            "Set-Location subdir"
+        } else {
+            "cd subdir"
+        };
+        core.run_terminal_block(terminal, cd, "cd").unwrap();
+        let (code, cwd) = block_end(&view, "cd");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(cwd.ends_with("subdir"), "{shell:?}: {cwd}");
+        core.run_terminal_block(
+            terminal,
+            "python -c \"import time; print('WAITING_FOR_' + 'INTERRUPT',flush=True); time.sleep(30)\"",
+            "wait",
+        )
+        .unwrap();
+        view.wait_for("WAITING_FOR_INTERRUPT");
+        core.write_terminal(terminal, b"\x03").unwrap();
+        block_end(&view, "wait");
+        core.run_terminal_block(terminal, "echo AFTER_''HOOKS", "after")
+            .unwrap();
+        assert_eq!(block_end(&view, "after").0, "0", "{shell:?}");
+        assert!(view.text().contains("AFTER_HOOKS"), "{shell:?}");
+        assert!(
+            !view.text().contains("OXIDE_BLEED"),
+            "{shell:?}: {}",
+            view.text()
+        );
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
 #[test]
 fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
     let (_temporary, core, id) = fixture();
@@ -311,12 +503,7 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
     until(&core, terminal.id, &rx, "change;end;0;");
     let line = "cat comp";
     let result = core
-        .complete_terminal(
-            terminal.id,
-            line,
-            line.len(),
-            &temporary.path().join("project/subdir").to_string_lossy(),
-        )
+        .complete_terminal(terminal.id, line, line.len())
         .unwrap();
     assert_eq!(result.replacement_index, 4);
     assert!(
@@ -327,9 +514,83 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
         "{result:?}"
     );
     let absent = core
-        .complete_terminal(terminal.id, "cat no-such-file-oxide-123", 25, &terminal.cwd)
+        .complete_terminal(terminal.id, "cat no-such-file-oxide-123", 25)
         .unwrap();
     assert!(absent.matches.is_empty());
+    core.close_terminal(terminal.id).unwrap();
+}
+
+#[test]
+fn a_failing_block_keeps_the_error_the_shell_printed() {
+    let (_temporary, core, id) = fixture();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    core.run_terminal_block(terminal.id, "cd missing-oxide-dir/", "fails")
+        .unwrap();
+    let output = until(&core, terminal.id, &rx, "fails;end;");
+    // The markers themselves: PowerShell's line editor echoes the wrapper, which spells them out.
+    let start = output.find("\x1b]633;Oxide;fails;start\x07").unwrap();
+    let end = output.find("\x1b]633;Oxide;fails;end;").unwrap();
+    let block = output[start..end].to_lowercase();
+    // zsh and bash: "no such file or directory"; PowerShell: "... because it does not exist."
+    assert!(
+        block.contains("no such file") || block.contains("does not exist"),
+        "{block:?}"
+    );
+    // PowerShell counts a block whose last cmdlet wrote a non-terminating error as a success
+    // (`$?` after the script block), as it did before inline ends: exit 1 is a POSIX promise.
+    if !cfg!(windows) {
+        assert!(
+            output[end..].starts_with("\x1b]633;Oxide;fails;end;1;"),
+            "{output:?}"
+        );
+    }
+    core.close_terminal(terminal.id).unwrap();
+}
+
+#[test]
+fn shell_completion_follows_the_directory_a_block_moved_the_shell_to() {
+    let (temporary, core, id) = fixture();
+    // Outside every open checkout, as `cd /Users` is.
+    let elsewhere = temporary.path().join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("only-here-dir")).unwrap();
+    std::fs::write(elsewhere.join("only-here.txt"), "fixture").unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    let change = format!("cd '{}'", elsewhere.to_string_lossy());
+    core.run_terminal_block(terminal.id, &change, "away")
+        .unwrap();
+    until(&core, terminal.id, &rx, "away;end;0;");
+    // Folders end in `/` on POSIX only, and PowerShell lists files first: compare names.
+    let names = |result: &oxide_core::TerminalCompletion| {
+        let mut names: Vec<String> = result
+            .matches
+            .iter()
+            .map(|item| item.label.trim_end_matches(['/', '\\']).to_string())
+            .collect();
+        names.sort();
+        names
+    };
+    let result = core.complete_terminal(terminal.id, "ls only", 7).unwrap();
+    assert_eq!(
+        names(&result),
+        ["only-here-dir", "only-here.txt"],
+        "{result:?}"
+    );
+    // Back in the project, its files again (`cd -` is not in Windows PowerShell 5.1).
+    let project = temporary.path().join("project");
+    core.run_terminal_block(
+        terminal.id,
+        &format!("cd '{}'", project.to_string_lossy()),
+        "back",
+    )
+    .unwrap();
+    until(&core, terminal.id, &rx, "back;end;0;");
+    let result = core.complete_terminal(terminal.id, "ls sub", 6).unwrap();
+    assert!(
+        names(&result).iter().any(|name| name == "subdir"),
+        "{result:?}"
+    );
     core.close_terminal(terminal.id).unwrap();
 }
 
@@ -377,5 +638,61 @@ fn a_program_reading_raw_keys_receives_ctrl_c_as_a_key() {
     let output = until(&core, terminal.id, &rx, "raw;end;");
     assert!(output.contains("KEY_3"), "{output}");
     assert!(output.contains("raw;end;0;"), "{output}");
+    core.close_terminal(terminal.id).unwrap();
+}
+
+/// A long block sent as soon as the shell starts, while its startup files still run and the
+/// terminal reads input a line at a time (cutting a line past 1024 bytes on macOS), must still run.
+#[test]
+fn a_long_block_sent_at_startup_runs_and_ends() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        // Over 2 KiB on 41 lines: past what a terminal line holds before the line editor reads.
+        let echo = if cfg!(windows) {
+            "Write-Output"
+        } else {
+            "echo"
+        };
+        let mut command: Vec<String> = (0..40)
+            .map(|line| format!("{echo} long_line_{line:02}_{}", "x".repeat(40)))
+            .collect();
+        command.push(format!("{echo} LONG_''DONE"));
+        core.run_terminal_block(terminal, &command.join("\n"), "long")
+            .unwrap();
+        assert_eq!(block_end(&view, "long").0, "0", "{shell:?}");
+        assert!(view.text().contains("LONG_DONE"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A restored Terminal's shell moves to the old folder with a plain `cd` before any block;
+/// completion follows it there from the prompt that comes after.
+#[test]
+fn completion_follows_a_cd_typed_outside_a_block() {
+    let (temporary, core, id) = fixture();
+    let elsewhere = temporary.path().join("restored");
+    std::fs::create_dir_all(elsewhere.join("only-restored-dir")).unwrap();
+    let elsewhere = elsewhere.canonicalize().unwrap();
+    let elsewhere = dunce::simplified(&elsewhere).to_string_lossy().into_owned();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    let line = if cfg!(windows) {
+        format!(" Set-Location -LiteralPath '{elsewhere}'\r")
+    } else {
+        format!(" cd -- '{elsewhere}' 2>/dev/null\n")
+    };
+    core.write_terminal(terminal.id, line.as_bytes()).unwrap();
+    until(&core, terminal.id, &rx, &format!("prompt;{elsewhere}"));
+    let result = core.complete_terminal(terminal.id, "ls only", 7).unwrap();
+    assert!(
+        result
+            .matches
+            .iter()
+            .any(|item| item.label == "only-restored-dir/" || item.label == "only-restored-dir"),
+        "{result:?}"
+    );
     core.close_terminal(terminal.id).unwrap();
 }

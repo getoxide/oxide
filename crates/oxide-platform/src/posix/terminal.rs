@@ -13,10 +13,68 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-const BLOCK_PROMPT: &str = r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#;
+/// The `printf` format of a block's end marker: its token, exit code and folder.
+macro_rules! end_marker {
+    () => {
+        r"'\033]633;Oxide;%s;end;%s;%s\007'"
+    };
+}
+
+/// The `printf` format of the marker a prompt prints outside a block: the shell's folder. Its
+/// first one tells Core the startup files have run and the line editor reads input.
+macro_rules! prompt_marker {
+    () => {
+        r"'\033]633;Oxide;prompt;%s\007'"
+    };
+}
+
+const BLOCK_PROMPT: &str = concat!(
+    r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then builtin printf "#,
+    end_marker!(),
+    r#" "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#
+);
 
 /// The suffix of the `ZDOTDIR` a zsh block terminal starts with; any other init file is bash's.
 const ZSH_INIT_SUFFIX: &str = ".zsh";
+
+/// What every zsh block terminal's `.zshrc` ends with: the hook that marks the end of a block the
+/// wrapper could not finish (Ctrl+C), and empty prompts, as a block shows only what its command
+/// prints. `_oxide_rearm` puts both back first and last in `precmd_functions` after user files,
+/// themes or commands replaced them; it runs here, after `.zlogin` and around every block.
+/// `emulate -L zsh` keeps a user's `nounset` (or any other option) out of them.
+macro_rules! zsh_block_hooks {
+    () => {
+        concat!(
+            r#"# The output of a block ends where the block ends: no reverse-video % for a missing newline.
+setopt hist_ignore_space
+unsetopt prompt_cr prompt_sp
+_oxide_precmd() {
+  local _oxide_status=$?
+  emulate -L zsh
+  if [[ -n ${_oxide_token-} ]]; then
+    builtin printf "#,
+            end_marker!(),
+            r#" "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
+    _oxide_token=
+  else
+    builtin printf "#,
+            prompt_marker!(),
+            r#" "$PWD"
+  fi
+}
+_oxide_quiet_prompt() {
+  PROMPT= RPROMPT= PS2=
+}
+_oxide_rearm() {
+  emulate -L zsh
+  precmd_functions=(_oxide_precmd ${precmd_functions:#(_oxide_precmd|_oxide_quiet_prompt)} _oxide_quiet_prompt)
+  _oxide_quiet_prompt
+}
+_oxide_rearm
+"#
+        )
+    };
+}
 
 /// Each startup file zsh reads from the block terminal's `ZDOTDIR` runs the user's own file of
 /// that name (from their `ZDOTDIR`, else the home), so aliases, `PATH` and plugins load as in
@@ -46,24 +104,16 @@ fi
     ),
     (
         ".zshrc",
-        r#"[[ $HISTFILE == "$_oxide_zdotdir/.zsh_history" ]] && HISTFILE="$OXIDE_USER_ZDOTDIR/.zsh_history"
+        concat!(
+            r#"[[ $HISTFILE == "$_oxide_zdotdir/.zsh_history" ]] && HISTFILE="$OXIDE_USER_ZDOTDIR/.zsh_history"
 if [[ -f "$OXIDE_USER_ZDOTDIR/.zshrc" ]]; then
   ZDOTDIR=$OXIDE_USER_ZDOTDIR
   builtin source "$OXIDE_USER_ZDOTDIR/.zshrc"
   ZDOTDIR=$_oxide_zdotdir
 fi
-# The output of a block ends where the block ends: no reverse-video % for a missing newline.
-setopt hist_ignore_space
-unsetopt prompt_cr prompt_sp
-_oxide_precmd() {
-  local _oxide_status=$?
-  if [[ -n ${_oxide_token-} ]]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
-    _oxide_token=
-  fi
-}
-precmd_functions=(_oxide_precmd ${precmd_functions[@]})
 "#,
+            zsh_block_hooks!()
+        ),
     ),
     (
         ".zlogin",
@@ -71,26 +121,14 @@ precmd_functions=(_oxide_precmd ${precmd_functions[@]})
   ZDOTDIR=$OXIDE_USER_ZDOTDIR
   builtin source "$OXIDE_USER_ZDOTDIR/.zlogin"
 fi
+_oxide_rearm
 export ZDOTDIR=$OXIDE_USER_ZDOTDIR
 unset _oxide_zdotdir OXIDE_USER_ZDOTDIR
 "#,
     ),
 ];
 
-const ZSH_CLEAN_STARTUP_FILES: [(&str, &str); 1] = [(
-    ".zshrc",
-    r#"setopt hist_ignore_space
-unsetopt prompt_cr prompt_sp
-_oxide_precmd() {
-  local _oxide_status=$?
-  if [[ -n ${_oxide_token-} ]]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
-    _oxide_token=
-  fi
-}
-precmd_functions=(_oxide_precmd ${precmd_functions[@]})
-"#,
-)];
+const ZSH_CLEAN_STARTUP_FILES: [(&str, &str); 1] = [(".zshrc", zsh_block_hooks!())];
 
 const BASH_USER_CONFIG_INIT: &str = r#"if [ -f "$HOME/.bash_profile" ]; then
   . "$HOME/.bash_profile"
@@ -104,7 +142,8 @@ if [ -f "$HOME/.bashrc" ]; then
 fi
 "#;
 
-const BASH_BLOCK_HOOKS: &str = r#"case ":${HISTCONTROL-}:" in
+const BASH_BLOCK_HOOKS: &str = concat!(
+    r#"case ":${HISTCONTROL-}:" in
   *:ignorespace:*|*:ignoreboth:*) ;;
   *) HISTCONTROL="${HISTCONTROL:+$HISTCONTROL:}ignorespace" ;;
 esac
@@ -112,20 +151,37 @@ export HISTCONTROL
 _oxide_prompt_command() {
   local _oxide_prompt_status=$?
   if [ -n "${_oxide_token-}" ]; then
-    printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
+    builtin printf "#,
+    end_marker!(),
+    r#" "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
     _oxide_token=
+  else
+    builtin printf "#,
+    prompt_marker!(),
+    r#" "$PWD"
   fi
 }
-if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
-  PROMPT_COMMAND=(_oxide_prompt_command "${PROMPT_COMMAND[@]}")
-elif [ -n "${PROMPT_COMMAND-}" ]; then
-  PROMPT_COMMAND="_oxide_prompt_command; $PROMPT_COMMAND"
-else
-  PROMPT_COMMAND="_oxide_prompt_command"
-fi
+_oxide_quiet_prompt() {
+  PS1= PS2=
+}
+_oxide_rearm() {
+  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+    if [[ "${PROMPT_COMMAND[0]-}" != _oxide_prompt_command || "${PROMPT_COMMAND[${#PROMPT_COMMAND[@]}-1]}" != _oxide_quiet_prompt ]]; then
+      PROMPT_COMMAND=(_oxide_prompt_command "${PROMPT_COMMAND[@]}" _oxide_quiet_prompt)
+    fi
+  else
+    case "${PROMPT_COMMAND-}" in
+      "_oxide_prompt_command; "*"_oxide_quiet_prompt") ;;
+      *) PROMPT_COMMAND="_oxide_prompt_command; ${PROMPT_COMMAND:+$PROMPT_COMMAND; }_oxide_quiet_prompt" ;;
+    esac
+  fi
+  _oxide_quiet_prompt
+}
+_oxide_rearm
 stty isig -echo
 trap ':' INT
-"#;
+"#
+);
 
 fn resolve_unix_shell(name: &str, fallbacks: &[&str]) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH")
@@ -289,12 +345,84 @@ pub fn shell_launch(
     launch
 }
 
-/// What to type into the shell to run `command` as a block marked by `token`.
-/// The leading space keeps the wrapper out of the user's zsh history (`hist_ignore_space`).
-pub fn block_script(token: &str, command: &str) -> String {
-    format!(
-        " _oxide_token='{token}'; _oxide_exit=; printf '\\033]633;Oxide;{token};start\\007'; __oxide_run_block() {{\n{command}\n}}; __oxide_run_block; _oxide_exit=$?; unset -f __oxide_run_block\n"
-    )
+/// What to type into the shell to run `command` as a block marked by `token`: one line, so a
+/// syntax error in `command` is reported by `eval` instead of leaving the shell at a continuation
+/// prompt. Ctrl+U first empties the line editor of anything typed or replied before it. The
+/// wrapper re-arms the prompt hooks, marks the start, runs the command at the top level of the
+/// live shell through `eval`, exactly as typed (its `cd`, variables, aliases and functions stay,
+/// and `return` or bash's `local` behave as at the prompt), and marks the end itself; the prompt
+/// hook only marks the end of a command that never got back to the wrapper (Ctrl+C). The leading
+/// space keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`). A
+/// token other than ASCII letters, digits and `-` is refused.
+///
+/// Until the line editor takes over (while startup files run, or between its prompt hook and
+/// reading), the terminal reads input a line at a time and cuts a line past its limit (1024 bytes
+/// on macOS), end of line included: the block would never run. A long command is therefore first
+/// stored in `_oxide_cmd` by lines of at most [`BLOCK_LINE_LIMIT`] bytes, each a complete
+/// statement, and the wrapper runs that variable.
+pub fn block_script(token: &str, command: &str) -> io::Result<String> {
+    let token = crate::block_token(token)?;
+    let units = ansi_c_units(command);
+    let length: usize = units.iter().map(String::len).sum();
+    let (prelude, command) = if length + 3 <= BLOCK_LINE_LIMIT - BLOCK_WRAPPER_LENGTH {
+        (String::new(), format!("$'{}'", units.concat()))
+    } else {
+        let mut prelude = String::new();
+        let mut chunk = String::new();
+        let mut first = true;
+        let mut flush = |chunk: &mut String, prelude: &mut String| {
+            let operator = if first { "=" } else { "+=" };
+            first = false;
+            prelude.push_str(&format!("\x15 _oxide_cmd{operator}$'{chunk}'\n"));
+            chunk.clear();
+        };
+        for unit in &units {
+            if chunk.len() + unit.len() > BLOCK_CHUNK {
+                flush(&mut chunk, &mut prelude);
+            }
+            chunk.push_str(unit);
+        }
+        flush(&mut chunk, &mut prelude);
+        (prelude, "\"$_oxide_cmd\"".to_string())
+    };
+    Ok(format!(
+        concat!(
+            "{prelude}\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf ",
+            end_marker!(),
+            " \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; _oxide_cmd=; {{ _oxide_rearm; }} 2>/dev/null\n"
+        ),
+        prelude = prelude,
+        token = token,
+        command = command,
+    ))
+}
+
+/// The longest line `block_script` types, end of line included: under the 1024 bytes a terminal
+/// holds per line before the line editor reads input.
+const BLOCK_LINE_LIMIT: usize = 900;
+/// The wrapper's own length around the command, with a token as long as a UUID.
+const BLOCK_WRAPPER_LENGTH: usize = 400;
+/// At most this many bytes of quoted command per `_oxide_cmd` line.
+const BLOCK_CHUNK: usize = 512;
+
+/// `text` as the pieces of one `$'...'` word (without its quotes), which bash and zsh both read
+/// back unchanged, with every line break and ASCII control character escaped so the word stays
+/// on one line. `!` is escaped too: bash before 4.4 (macOS's /bin/bash) expands history inside
+/// `$'...'` once a quote precedes it. A piece is one character, so the word can be split between
+/// any two pieces.
+fn ansi_c_units(text: &str) -> Vec<String> {
+    text.chars()
+        .map(|character| match character {
+            '\\' => "\\\\".to_string(),
+            '\'' => "\\'".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            '!' => "\\041".to_string(),
+            c if c.is_ascii_control() => format!("\\{:03o}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 /// A script that asks the shell itself for completions, or `None` when the shell cannot (the
@@ -518,6 +646,99 @@ mod tests {
         assert!(content.contains("_oxide_prompt_command"));
     }
 
+    /// The user's own startup files run first; whatever they do to the hooks and prompts
+    /// (`nounset`, a theme in `precmd_functions`, a `.zlogin` that clears it), the block hooks
+    /// come out first and last and the prompts empty.
+    #[test]
+    fn user_startup_files_cannot_unhook_a_zsh_block_terminal() {
+        let Some(zsh) = resolve_zsh() else { return };
+        let home = tempfile::tempdir().expect("temporary home");
+        let user = home.path().join("user");
+        std::fs::create_dir(&user).expect("user zdotdir");
+        std::fs::write(
+            user.join(".zshrc"),
+            "setopt nounset\ntheme() { PROMPT='$ '; }\nprecmd_functions=(theme)\nPROMPT='$ '\n",
+        )
+        .expect("user zshrc");
+        std::fs::write(user.join(".zlogin"), "precmd_functions=()\nPS2='> '\n")
+            .expect("user zlogin");
+        let zdotdir = create_shell_init_file(home.path(), 4, ShellKind::Zsh, true)
+            .expect("init")
+            .expect("zdotdir");
+        let output = crate::command::resolved_command(&zsh)
+            .args(["-l", "-i", "-c"])
+            .arg(r#"print -r -- "[${precmd_functions[1]}|${precmd_functions[-1]}|$PROMPT|$PS2]""#)
+            .env("ZDOTDIR", &zdotdir)
+            .env("OXIDE_USER_ZDOTDIR", &user)
+            .env("HOME", home.path())
+            .output()
+            .expect("run zsh");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("[_oxide_precmd|_oxide_quiet_prompt||]"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn user_startup_files_cannot_unhook_a_bash_block_terminal() {
+        let Some(bash) = resolve_bash() else { return };
+        let home = tempfile::tempdir().expect("temporary home");
+        std::fs::write(
+            home.path().join(".bashrc"),
+            "set -u\nPROMPT_COMMAND='theme=1'\nPS1='$ '\nPS2='> '\n",
+        )
+        .expect("user bashrc");
+        let rc = create_shell_init_file(home.path(), 5, ShellKind::Bash, true)
+            .expect("init")
+            .expect("rcfile");
+        let output = crate::command::resolved_command(&bash)
+            .args(["--noprofile", "--rcfile"])
+            .arg(&rc)
+            .args([
+                "-i",
+                "-c",
+                r#"printf '[%s|%s|%s]' "$PROMPT_COMMAND" "$PS1" "$PS2""#,
+            ])
+            .env("HOME", home.path())
+            .output()
+            .expect("run bash");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("[_oxide_prompt_command; theme=1; _oxide_quiet_prompt||]"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// The wrapper is one line whatever the command holds, and the shell reads the command
+    /// back unchanged: quotes, backslashes, line breaks and control characters.
+    #[test]
+    fn the_block_wrapper_is_one_line_that_runs_the_command_unchanged() {
+        let command = "printf '%s|' \"it's\" 'a\\b' \"$(printf 'x\\001y' | od -An -c | tr -s ' ')\"\nprintf 'second line\\n'";
+        let script = block_script("tok", command).expect("script");
+        assert_eq!(script.matches('\n').count(), 1, "{script}");
+        assert!(script.ends_with('\n'));
+        for shell in [resolve_zsh(), resolve_bash()].into_iter().flatten() {
+            let line = script.strip_prefix('\u{15}').expect("line editor clear");
+            let output = crate::command::resolved_command(&shell)
+                .arg("-c")
+                .arg(line)
+                .output()
+                .expect("run shell");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("\x1b]633;Oxide;tok;start\x07it's|a\\b|"),
+                "{shell:?}: {stdout:?}"
+            );
+            assert!(
+                stdout.contains("second line\n\x1b]633;Oxide;tok;end;0;"),
+                "{shell:?}: {stdout:?}"
+            );
+        }
+    }
+
     #[test]
     fn unix_allowlist_rejects_windows_shells() {
         assert!(is_shell_supported(ShellKind::Default));
@@ -526,7 +747,51 @@ mod tests {
     }
 
     #[test]
+    fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
+        for token in ["", "a'b", "a;b", "a\"b", "a b", "$(x)"] {
+            assert!(block_script(token, "echo hi").is_err(), "{token:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_command_is_typed_in_short_lines_and_runs_unchanged() {
+        let lines: Vec<String> = (0..60)
+            .map(|line| format!("printf '%s\\n' 'l{line:02}_{}é!'", "x".repeat(30)))
+            .collect();
+        let command = lines.join("\n");
+        let script = block_script("tok", &command).expect("script");
+        for line in script.split_inclusive('\n') {
+            assert!(
+                line.len() <= BLOCK_LINE_LIMIT,
+                "{} bytes: {line}",
+                line.len()
+            );
+            assert!(line.starts_with("\u{15} "), "{line}");
+        }
+        assert!(script.matches('\n').count() > 2, "{script}");
+        let expected: String = (0..60)
+            .map(|line| format!("l{line:02}_{}é!\n", "x".repeat(30)))
+            .collect();
+        for shell in [resolve_zsh(), resolve_bash()].into_iter().flatten() {
+            let output = crate::command::resolved_command(&shell)
+                .arg("-c")
+                .arg(script.replace('\u{15}', ""))
+                .output()
+                .expect("run shell");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains(&format!(
+                    "\x1b]633;Oxide;tok;start\x07{expected}\x1b]633;Oxide;tok;end;0;"
+                )),
+                "{shell:?}: {stdout:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_block_wrapper_stays_out_of_the_shell_history() {
-        assert!(block_script("token", "echo hi").starts_with(' '));
+        // Ctrl+U clears the line editor; the line it then reads starts with a space.
+        let script = block_script("token", "echo hi").expect("script");
+        assert!(script.strip_prefix('\u{15}').unwrap().starts_with(' '));
     }
 }

@@ -76,23 +76,14 @@ kbd {
 .workbench-terminal-header {
   background: var(--terminal-header-background, var(--bg2));
 }
-.terminal-command-composer {
-  background: var(--terminal-composer-background, var(--bg2));
-}
 .terminal-command-block {
   border-color: var(--terminal-block-border, var(--line));
 }
 .terminal-command-block.running::before {
   background: var(--terminal-block-running-rail, var(--acc2));
 }
-.terminal-command-block.running {
-  background: var(--terminal-block-running-tint, color-mix(in srgb, var(--acc2) 8%, transparent));
-}
 .terminal-command-block.failed::before {
   background: var(--terminal-block-failed-rail, var(--red));
-}
-.terminal-command-block.failed {
-  background: var(--terminal-block-failed-tint, color-mix(in srgb, var(--red) 8%, transparent));
 }
 .settings-note { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.6; max-width: 75ch; }
 :root[data-appearance="light"] .icon-btn {

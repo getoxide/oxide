@@ -6,12 +6,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import {
-  HistoryIcon,
-  PlayIcon,
-  SearchIcon,
-  XIcon,
-} from "@primer/octicons-react";
+import { SearchIcon } from "@primer/octicons-react";
 import { commands, type TerminalCompletion } from "../bindings";
 import type { CommandHistory } from "./terminalBlocks";
 import { historyMatches } from "./terminalBlocks";
@@ -27,20 +22,21 @@ interface Props {
   ref: Ref<TerminalInputHandle>;
   history: CommandHistory[];
   sessionId: number | null;
-  /** Where shell completion resolves paths. */
-  cwd: string;
   disabled: boolean;
+  /** Kept mounted but not shown, so a half-typed command survives a running one. */
+  hidden?: boolean;
   visible: boolean;
   /** No Command has run yet: show the shortcut hint. */
   fresh: boolean;
-  onRun: (command: string) => void;
+  /** Runs `command`; `false` when it was refused (another one runs), so the line keeps it. */
+  onRun: (command: string) => boolean | void;
 }
 export function TerminalInput({
   ref,
   history,
   sessionId,
-  cwd,
   disabled,
+  hidden = false,
   visible,
   fresh,
   onRun,
@@ -157,7 +153,6 @@ export function TerminalInput({
         sessionId,
         input,
         cursor,
-        cwd,
       );
       if (captured !== version.current) return;
       if (result.status === "error") throw new Error(result.error.message);
@@ -235,12 +230,15 @@ export function TerminalInput({
   return (
     <form
       className="terminal-command-composer"
+      hidden={hidden}
+      style={hidden ? { display: "none" } : undefined}
+      onBlur={(event) => {
+        // Focus left the command line (a click elsewhere, another window): the list goes with it.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenu(null);
+      }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!disabled && input.trim()) {
-          onRun(input);
-          change("");
-        }
+        if (!disabled && input.trim() && onRun(input) !== false) change("");
       }}
     >
       {menu && (
@@ -250,40 +248,30 @@ export function TerminalInput({
           aria-label={
             menu === "history" ? "Command history" : "Shell completions"
           }
+          style={
+            menu === "completion" && completion
+              ? ({ "--terminal-menu-column": String(column(input, completion.replacementIndex)) } as React.CSSProperties)
+              : undefined
+          }
         >
-          <header>
-            {menu === "history" ? (
-              <>
-                <SearchIcon size={14} />
-                <input
-                  ref={search}
-                  aria-label="Search command history"
-                  placeholder="Search history…"
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setPrefixSearch(false);
-                    setIndex(0);
-                  }}
-                  onKeyDown={navigate}
-                />
-              </>
-            ) : (
-              <strong>Shell completions</strong>
-            )}
-            <span className="grow" />
-            <button
-              type="button"
-              className="icon-btn sm"
-              aria-label="Close suggestions"
-              onClick={() => {
-                setMenu(null);
-                textarea.current?.focus();
-              }}
-            >
-              <XIcon size={14} />
-            </button>
-          </header>
+          {menu === "history" && (
+            <div className="terminal-menu-search">
+              <SearchIcon size={12} />
+              <input
+                ref={search}
+                aria-label="Search command history"
+                placeholder="Search history…"
+                spellCheck={false}
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPrefixSearch(false);
+                  setIndex(0);
+                }}
+                onKeyDown={navigate}
+              />
+            </div>
+          )}
           <div
             id={`${id}-options`}
             role="listbox"
@@ -302,16 +290,10 @@ export function TerminalInput({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => apply(i)}
                   >
-                    <HistoryIcon size={13} />
                     <code>{entry.command}</code>
-                    <span>
-                      {entry.exitCode !== null && entry.exitCode !== 0
-                        ? `exit ${entry.exitCode}`
-                        : new Date(entry.at).toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                    </span>
+                    {entry.exitCode !== null && entry.exitCode !== 0 && (
+                      <span className="terminal-menu-note">exit {entry.exitCode}</span>
+                    )}
                   </button>
                 ))
               : completion?.matches.map((entry, i) => (
@@ -325,20 +307,19 @@ export function TerminalInput({
                     onClick={() => apply(i)}
                   >
                     <code>{entry.label}</code>
-                    <span title={entry.detail}>{entry.detail}</span>
+                    {/* Paths speak for themselves (a directory ends in /); other kinds get a muted note. */}
+                    {entry.detail !== "File" && entry.detail !== "Directory" && entry.detail && (
+                      <span className="terminal-menu-note">{entry.detail}</span>
+                    )}
                   </button>
                 ))}
-            {count === 0 && <p className="dim">No matching commands.</p>}
+            {count === 0 && <p className="terminal-menu-empty">No matching commands</p>}
           </div>
-          <footer>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> navigate <kbd>Enter</kbd> insert <kbd>Esc</kbd> dismiss
-          </footer>
         </div>
       )}
       <div className="terminal-command-entry">
         <span className="terminal-prompt-symbol" aria-hidden="true">
-          {/Windows/i.test(navigator.userAgent) ? "PS>" : "$"}
+          $
         </span>
         <div className="terminal-input-editor">
           {suggestion && selection === input.length && (
@@ -390,14 +371,6 @@ export function TerminalInput({
             }}
           />
         </div>
-        <button
-          type="submit"
-          className="icon-btn"
-          disabled={disabled || !input.trim()}
-          aria-label="Run command"
-        >
-          <PlayIcon size={16} />
-        </button>
       </div>
       {fresh && (
         <div className="terminal-command-hint">
@@ -406,7 +379,7 @@ export function TerminalInput({
               ? "Completing…"
               : suggestion
                 ? "→ accept suggestion · Tab complete · ↑ history"
-                : "Tab complete · ↑ history · Shift+Enter new line"}
+                : "Enter run · Tab complete · ↑ history · Shift+Enter new line"}
           </span>
           <button
             type="button"
@@ -425,4 +398,9 @@ export function TerminalInput({
       )}
     </form>
   );
+}
+
+/** The column `at` falls on, within its own line of a multi-line command. */
+function column(line: string, at: number): number {
+  return at - (line.lastIndexOf("\n", at - 1) + 1);
 }

@@ -378,17 +378,6 @@ impl Core {
         )?)
     }
 
-    /// Every folder of an open Project.
-    fn open_checkouts(&self) -> Result<Vec<PathBuf>> {
-        let db = self.db.lock_recover();
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut projects = db.prepare("SELECT path FROM projects WHERE opened_at IS NOT NULL")?;
-        for path in projects.query_map([], |r| r.get::<_, String>(0))? {
-            paths.push(PathBuf::from(path?));
-        }
-        Ok(paths)
-    }
-
     /// Title, body and base prefilled for a new pull request of the Project's current branch.
     pub fn pull_request_draft(&self, project_id: u32) -> Result<PullRequestDraft> {
         let cwd = self.main_checkout(project_id)?;
@@ -899,16 +888,15 @@ impl Core {
         }
     }
 
+    /// Completes `line` at `cursor` in the folder the terminal's shell is in now.
     pub fn complete_terminal(
         &self,
         terminal_id: u32,
         line: &str,
         cursor: usize,
-        cwd: &str,
     ) -> Result<TerminalCompletion> {
         let session = self.terminal(terminal_id)?;
-        let cwd =
-            terminal_completion::trusted_cwd(cwd, &self.open_checkouts()?, &session.summary.cwd);
+        let cwd = session.live_cwd();
         terminal_completion::complete(&session, line, cursor, &cwd)
     }
 

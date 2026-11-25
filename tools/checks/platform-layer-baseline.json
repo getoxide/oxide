@@ -5,7 +5,6 @@
   "crates/oxide-core/src/github.rs": 7,
   "crates/oxide-core/src/language_install.rs": 3,
   "crates/oxide-core/src/language_server.rs": 4,
-  "crates/oxide-core/src/terminal_completion.rs": 2,
   "crates/oxide-core/tests/acted_upon.rs": 1,
   "crates/oxide-core/tests/core_api.rs": 6,
   "crates/oxide-core/tests/files.rs": 7,

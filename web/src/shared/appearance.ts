@@ -229,12 +229,9 @@ export const SURFACE_TOKENS: Record<string, string> = {
   "status_bar.background": "--editor-status-bar-background",
   "status_bar.foreground": "--editor-status-bar-foreground",
   "terminal.header.background": "--terminal-header-background",
-  "terminal.composer.background": "--terminal-composer-background",
   "terminal.block.border": "--terminal-block-border",
   "terminal.block.running_rail": "--terminal-block-running-rail",
-  "terminal.block.running_tint": "--terminal-block-running-tint",
   "terminal.block.failed_rail": "--terminal-block-failed-rail",
-  "terminal.block.failed_tint": "--terminal-block-failed-tint",
 };
 const LIGHT: Record<string, string> = {
   background: "#FBFBFA",
@@ -491,6 +488,7 @@ export function applyAppearance(): void {
     "--terminal-background",
     themeColor("terminal.background", String(colors.background ?? TITANIUM_DARK["terminal.background"])),
   );
+  root.style.setProperty("--terminal-failed-background", terminalAppearance({ failed: true }).theme.background);
   for (const key of FONT_ROLES) {
     root.style.setProperty(`--font-${key}`, fontFamily(key));
     const style = fontStyle(key);
@@ -535,23 +533,57 @@ export function saveAppearance(value: Appearance) {
   applyAppearance();
   window.dispatchEvent(new Event("oxide-appearance-changed"));
 }
-export function terminalAppearance() {
+/** A failed Command block's share of the error red over the Terminal background. */
+const FAILED_TINT = 0.1;
+/** Plain block output sits a step under its command: the Terminal foreground this share of the way to the background. */
+const OUTPUT_SOFTEN = 0.18;
+/** Selected text stays legible: the selection colour at this opacity over the block (xterm's WebGL renderer blends it). */
+const SELECTION_OPACITY = 0.6;
+const INACTIVE_SELECTION_OPACITY = 0.35;
+function rgb(hex: string): number[] {
+  const digits = hex.length <= 5 ? [...hex.slice(1, 4)].map((digit) => digit + digit).join("") : hex.slice(1, 7);
+  return [0, 2, 4].map((at) => parseInt(digits.slice(at, at + 2), 16));
+}
+/** One opaque colour: a canvas painted with it matches a container painted with it exactly. */
+function mixColors(base: string, other: string, share: number): string {
+  const top = rgb(other);
+  return `#${rgb(base)
+    .map((channel, i) => Math.round(channel * (1 - share) + top[i] * share).toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase()}`;
+}
+/** A colour at an opacity; a theme colour that already has an alpha channel keeps its own. */
+function translucent(hex: string, opacity: number): string {
+  if (hex.length === 5 || hex.length === 9) return hex;
+  const digits = rgb(hex).map((channel) => channel.toString(16).padStart(2, "0")).join("");
+  return `#${digits}${Math.round(opacity * 255).toString(16).padStart(2, "0")}`.toUpperCase();
+}
+/**
+ * A failed block tints its xterm canvas and its container with the same solid colour (no transparency).
+ * Plain output is drawn a step softer than the command above it; colours programs emit are untouched.
+ */
+export function terminalAppearance({ failed = false }: { failed?: boolean } = {}) {
   const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
   const color = (token: string) => themeColor(token, String(fallbacks[token]));
+  const background = themeColor(
+    "terminal.background",
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--bg")
+      .trim() || String(fallbacks["terminal.background"]),
+  );
+  const red = themeColor("terminal.block.failed_rail", themeColor("error", color("terminal.ansi.red")));
   return {
     fontFamily: fontFamily("terminal"),
     fontSize: fontStyle("terminal").size,
     fontWeight: fontStyle("terminal").weight,
     theme: {
-      background: themeColor(
-        "terminal.background",
-        getComputedStyle(document.documentElement)
-          .getPropertyValue("--bg")
-          .trim() || String(fallbacks["terminal.background"]),
-      ),
-      foreground: color("terminal.foreground"),
+      background: failed && isColor(background) ? mixColors(background, red, FAILED_TINT) : background,
+      foreground: isColor(background)
+        ? mixColors(color("terminal.foreground"), background, OUTPUT_SOFTEN)
+        : color("terminal.foreground"),
       cursor: color("terminal.cursor"),
-      selectionBackground: color("terminal.selection.background"),
+      selectionBackground: translucent(color("terminal.selection.background"), SELECTION_OPACITY),
+      selectionInactiveBackground: translucent(color("terminal.selection.background"), INACTIVE_SELECTION_OPACITY),
       ...Object.fromEntries(
         [
           "black",

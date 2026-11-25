@@ -20,9 +20,10 @@ import { commands } from "../bindings";
 import { BlockParser, type CommandHistory } from "./terminalBlocks";
 import { takeFrameBatch } from "./terminalOutput";
 import { useTerminalTransfer } from "./useTerminalTransfer";
+import { useRunningIndicator } from "./runningIndicator";
 import { changeDirectoryLine, readTerminalSession, writeTerminalSession } from "../shared/session";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
-import { copyTextToClipboard } from "../shared/platform";
+import { copyTextToClipboard, currentPlatform } from "../shared/platform";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -37,7 +38,7 @@ interface Props {
   /** Shown at the right end of the header, where the host puts its Maximize/Restore control. */
   headerAction?: ReactNode;
 }
-const WINDOWS = /Windows/i.test(navigator.userAgent);
+const isWindows = () => currentPlatform() === "windows";
 const OUTPUT_LIMIT = 256 * 1024;
 const now = () => Date.now();
 
@@ -83,7 +84,7 @@ export function TerminalWorkbench({
   );
   const [sessionId, setSessionId] = useState<number | null>(null);
   // The shell Core started (zsh, bash or PowerShell); a generic name until it answers.
-  const [shellName, setShellName] = useState(WINDOWS ? "PowerShell" : "Shell");
+  const [shellName, setShellName] = useState(isWindows() ? "PowerShell" : "Shell");
   const [error, setError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -91,12 +92,18 @@ export function TerminalWorkbench({
   const [fullscreen, setFullscreen] = useState<string | null>(null);
   const launched = useRef(new Set<string>());
   const [running, setRunning] = useState(false);
+  // Interrupt replaces the command line only once a command has run past the indicator delay.
+  const showRunning = useRunningIndicator(running);
   const activeBlock = useRef<string | null>(null);
   const runningCommand = useRef("");
   const reportRunning = useRef(onRunningChange);
   useEffect(() => { reportRunning.current = onRunningChange; });
-  useEffect(() => { reportRunning.current?.(running ? runningCommand.current : null); }, [running]);
+  useEffect(() => { reportRunning.current?.(showRunning ? runningCommand.current : null); }, [showRunning]);
   const composer = useRef<TerminalInputHandle>(null);
+  // Read by the output listener, which lives as long as the shell and would otherwise keep the
+  // visibility the Terminal had when the shell started.
+  const visibleRef = useRef(visible);
+  useLayoutEffect(() => { visibleRef.current = visible; });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -123,6 +130,7 @@ export function TerminalWorkbench({
     const parser = new BlockParser();
     let inCommand = false;
     let probeBuffer = "";
+    const windows = isWindows();
     const pendingReplies: string[] = [];
     const reply = (text: string) => {
       if (id === null) pendingReplies.push(text);
@@ -136,7 +144,9 @@ export function TerminalWorkbench({
       );
       if (active) {
         for (const event of events) {
-          if (event.type === "output" && !inCommand) {
+          // ConPTY asks for the cursor position at startup and waits for the answer. A POSIX shell
+          // never needs one, and an answer would land in its line editor as typed text.
+          if (event.type === "output" && !inCommand && windows) {
             probeBuffer += event.text;
             while (probeBuffer.includes("\x1b[6n")) {
               reply("\x1b[1;1R");
@@ -200,7 +210,7 @@ export function TerminalWorkbench({
             activeBlock.current = null;
             setRunning(false);
             inCommand = false;
-            if (visible) requestAnimationFrame(() => composer.current?.focus());
+            if (visibleRef.current) requestAnimationFrame(() => composer.current?.focus());
           }
         }
       }
@@ -223,7 +233,7 @@ export function TerminalWorkbench({
         if (result.data.shell) setShellName(result.data.shell);
         // A restored Terminal's new shell moves to the folder the old one was in, before any block.
         if (restoreCwd.current) {
-          const line = changeDirectoryLine(restoreCwd.current, WINDOWS);
+          const line = changeDirectoryLine(restoreCwd.current, isWindows());
           restoreCwd.current = null;
           void commands.writeTerminal(id, [...new TextEncoder().encode(line)]);
         }
@@ -240,7 +250,6 @@ export function TerminalWorkbench({
       if (id !== null) void commands.closeTerminal(id);
     };
     // A mode switch must never start a new shell.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, generation]);
 
   useEffect(() => {
@@ -312,10 +321,10 @@ export function TerminalWorkbench({
       sessionId === null ||
       activeBlock.current
     )
-      return;
+      return false;
     if (/^(clear|cls|clear-host)\s*$/i.test(command.trim())) {
       clearTerminal();
-      return;
+      return true;
     }
     const token = crypto.randomUUID();
     setFullscreen(null);
@@ -340,6 +349,7 @@ export function TerminalWorkbench({
     setHistory((old) =>
       [...old, { command, at: block.at, exitCode: null }].slice(-300),
     );
+    return true;
   }
 
   function launch(block: Block, rows: number, cols: number) {
@@ -388,6 +398,7 @@ export function TerminalWorkbench({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [visible, running]);
+  const interrupting = running && (showRunning || Boolean(fullscreen));
   return (
     <main
       className="terminal-workbench"
@@ -490,28 +501,26 @@ export function TerminalWorkbench({
           </button>
         </div>
       )}
-      {running ? (
-        !fullscreen && (
-          <button
-            className="terminal-interrupt"
-            onClick={() => void write("\x03")}
-            aria-label="Interrupt command"
-          >
-            <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
-          </button>
-        )
-      ) : (
-        <TerminalInput
-          ref={composer}
-          history={history}
-          sessionId={sessionId}
-          cwd={cwd}
-          disabled={closed || sessionId === null}
-          visible={visible}
-          fresh={blocks.length === 0}
-          onRun={run}
-        />
+      {interrupting && !fullscreen && (
+        <button
+          className="terminal-interrupt"
+          onClick={() => void write("\x03")}
+          aria-label="Interrupt command"
+        >
+          <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
+        </button>
       )}
+      {/* Hidden, not unmounted, while a command runs: what was typed meanwhile is still there after. */}
+      <TerminalInput
+        ref={composer}
+        history={history}
+        sessionId={sessionId}
+        disabled={closed || sessionId === null}
+        hidden={interrupting}
+        visible={visible && !interrupting}
+        fresh={blocks.length === 0}
+        onRun={run}
+      />
     </main>
   );
 }

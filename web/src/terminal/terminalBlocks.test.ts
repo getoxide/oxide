@@ -30,3 +30,9 @@ it("keeps non-Oxide ANSI sequences for the terminal emulator", () => {
     { type: "output", text: "\x1b[6n\x1b[31mred\x1b[0m" },
   ]);
 });
+it("drops the prompt markers Core reads the shell's folder from", () => {
+  expect(new BlockParser().push("a\x1b]633;Oxide;prompt;/end;start\x07b\x1b]633;Oxide;prompt;C:\\x\x07")).toEqual([
+    { type: "output", text: "a" },
+    { type: "output", text: "b" },
+  ]);
+});

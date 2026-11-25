@@ -5,6 +5,7 @@ import { terminalAppearance } from "../shared/appearance";
 import { formatAccelerator, showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard } from "../shared/platform";
 import { attachGpuRenderer } from "./gpuRenderer";
+import { useRunningIndicator } from "./runningIndicator";
 
 export interface TerminalBlock {
   token: string;
@@ -44,8 +45,13 @@ export function TerminalCommandBlock(props: Props) {
   const callbacks = useRef(props);
   const written = useRef(0);
   const fitSurface = useRef<() => void>(() => {});
+  const measure = useRef<() => void>(() => {});
   const [screen, setScreen] = useState(false);
-  const [height, setHeight] = useState(16);
+  const [height, setHeight] = useState(0);
+  // A running command shows as running once it runs past the running indicator delay; from then on
+  // its block also keeps xterm's cursor row, where a program may be waiting for input on a blank line.
+  const showRunning = useRunningIndicator(active);
+  const keepCursorRow = useRef(false);
   useLayoutEffect(() => {
     callbacks.current = props;
   });
@@ -55,7 +61,7 @@ export function TerminalCommandBlock(props: Props) {
     const toolbar = workspace.querySelector<HTMLElement>(
       ".workbench-terminal-header",
     )!;
-    const initial = terminalAppearance();
+    const initial = terminalAppearance({ failed: isFailed(callbacks.current) });
     const term = new Terminal({
       ...initial,
       cursorBlink: true,
@@ -77,18 +83,25 @@ export function TerminalCommandBlock(props: Props) {
       last = "",
       interactive = false,
       settle = 0;
-    const contentHeight = () => {
+    // `trim`: the height the reader sees. Only rows with text count, never a bare cursor row, so
+    // a command's block grows with its output and never shrinks when it ends: blocks sit on the
+    // command line, and a row that came and went would move every block above it. The one
+    // exception is a command still running past the running indicator delay, which keeps its
+    // cursor row for a program reading input there (a row with a prompt on it has text anyway).
+    // The xterm itself keeps every row through the cursor's: fitted any shorter, xterm scrolls to
+    // keep the cursor on screen and the text with it out of view (a one-line error would show as
+    // an empty row and a scrollbar).
+    const contentHeight = (trim = true) => {
       const { active: isActive, block: current } = callbacks.current;
-      if (!isActive && !current.output && current.outputOffset === 0) return 0;
-      return (
-        Math.max(
-          1,
-          Math.min(
-            200,
-            term.buffer.active.baseY + term.buffer.active.cursorY + 1,
-          ),
-        ) * cell
-      );
+      const cursorRow = isActive && keepCursorRow.current;
+      if (!cursorRow && !current.output && current.outputOffset === 0) return 0;
+      const buffer = term.buffer.active;
+      let rows = buffer.baseY + buffer.cursorY + 1;
+      if (!cursorRow && trim) {
+        while (rows > 0 && !buffer.getLine(rows - 1)?.translateToString(true).trim()) rows--;
+        if (!rows) return 0;
+      }
+      return Math.max(1, Math.min(200, rows)) * cell;
     };
     const fit = () => {
       if (
@@ -98,7 +111,7 @@ export function TerminalCommandBlock(props: Props) {
       )
         return;
       viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
-      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight())}px`;
+      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
       addon.fit();
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
       if (screenElement && term.rows)
@@ -129,7 +142,7 @@ export function TerminalCommandBlock(props: Props) {
     };
     fitSurface.current = scheduleFit;
     const appearance = () => {
-      const options = terminalAppearance();
+      const options = terminalAppearance({ failed: isFailed(callbacks.current) });
       term.options.fontFamily = options.fontFamily;
       term.options.fontSize = options.fontSize;
       term.options.fontWeight = options.fontWeight;
@@ -162,16 +175,19 @@ export function TerminalCommandBlock(props: Props) {
       return false;
     });
     const cursorUp = term.parser.registerCsiHandler({ final: "A" }, markScreen);
+    // Until the shell marks the start, it is still reading the block's own command line: a key
+    // (or a terminal reply) sent then would land in that line instead of reaching the program.
     const input = term.onData((data) => {
-      if (callbacks.current.active) callbacks.current.onInput(data);
+      const { active, block } = callbacks.current;
+      if (active && block.started) callbacks.current.onInput(data);
     });
-    const parsed = term.onWriteParsed(() => {
+    measure.current = () =>
       setHeight(
         interactive && callbacks.current.active
           ? viewport
           : Math.min(viewport || 800, contentHeight()),
       );
-    });
+    const parsed = term.onWriteParsed(() => measure.current());
     scheduleFit();
     return () => {
       cancelAnimationFrame(frame);
@@ -202,18 +218,35 @@ export function TerminalCommandBlock(props: Props) {
     if (delta) term.write(delta);
     written.current = block.outputOffset + block.output.length;
   }, [block.output, block.outputOffset]);
+  // An ended block is a record: no cursor (DECTCEM hide, which every renderer honours, WebGL
+  // included) and no input, while its output stays selectable, scrollable and copyable.
+  useEffect(() => {
+    const term = terminal.current;
+    if (!term || active) return;
+    term.options.disableStdin = true;
+    term.write("\x1b[?25l");
+  }, [active]);
+  const failed = isFailed(props);
+  useEffect(() => {
+    keepCursorRow.current = showRunning;
+    measure.current();
+  }, [showRunning]);
+  useEffect(() => {
+    const term = terminal.current;
+    if (term) term.options.theme = terminalAppearance({ failed }).theme;
+  }, [failed]);
   useEffect(() => {
     onScreen(active && screen);
   }, [active, screen, onScreen]);
   useEffect(() => {
     if (!visible) return;
     fitSurface.current();
-    if (active) terminal.current?.focus();
+    if (active && block.started) terminal.current?.focus();
     else terminal.current?.blur();
-  }, [visible, active]);
+  }, [visible, active, block.started]);
   return (
     <section
-      className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
+      className={`terminal-command-block${showRunning ? " running" : ""}${failed ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}
       aria-label={`Command: ${block.command}`}
       onContextMenu={(event) => {
         const selectedText = (terminal.current?.hasSelection?.() ? terminal.current.getSelection() : "") || window.getSelection()?.toString() || "";
@@ -231,29 +264,40 @@ export function TerminalCommandBlock(props: Props) {
       }}
     >
       <header>
+        <span className="terminal-block-prompt" aria-hidden="true">
+          $
+        </span>
         <code>{block.command}</code>
         <span className="grow" />
-        <BlockStatus block={block} running={active} />
+        <BlockStatus block={block} running={active} showRunning={showRunning} />
       </header>
       {block.truncated && (
         <p className="terminal-truncated">
           Showing the last 256 KiB of output.
         </p>
       )}
-      <div className="terminal-output-clip" style={{ height }}>
+      <div className={`terminal-output-clip${height ? "" : " empty"}`} style={{ height }}>
         <div className="terminal-block-output" ref={host} />
       </div>
     </section>
   );
 }
 
-/** One status at the right of the header: a spinner while running, then how long it took. */
-function BlockStatus({ block, running }: { block: TerminalBlock; running: boolean }) {
+/** Ended without a zero exit status: a non-zero exit, or the shell went away before it reported one. */
+function isFailed({ active, block }: { active: boolean; block: TerminalBlock }): boolean {
+  return !active && block.exitCode !== 0;
+}
+
+/**
+ * One status at the right of the header: a spinner once the command has run past the running
+ * indicator delay (nothing before that), then how long it took.
+ */
+function BlockStatus({ block, running, showRunning }: { block: TerminalBlock; running: boolean; showRunning: boolean }) {
   // One live region per block: the spinner is mounted with it, so only the outcome is announced.
   return (
     <span className={`terminal-block-status${!running && block.exitCode !== 0 ? " error" : ""}`} role="status">
       {running ? (
-        <span className="terminal-block-spinner" role="img" aria-label="Running" />
+        showRunning && <span className="terminal-block-spinner" role="img" aria-label="Running" />
       ) : (
         <BlockOutcome block={block} />
       )}

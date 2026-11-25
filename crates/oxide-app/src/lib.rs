@@ -226,11 +226,10 @@ async fn complete_terminal(
     terminal_id: u32,
     line: String,
     cursor: u32,
-    cwd: String,
 ) -> Result<TerminalCompletion, AppError> {
     let core = Arc::clone(core.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        let result = core.complete_terminal(terminal_id, &line, cursor as usize, &cwd)?;
+        let result = core.complete_terminal(terminal_id, &line, cursor as usize)?;
         Ok(TerminalCompletion {
             replacement_index: result.replacement_index as u32,
             replacement_length: result.replacement_length as u32,

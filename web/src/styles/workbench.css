@@ -396,6 +396,8 @@
   display: flex;
   flex-direction: column;
   background: var(--terminal-background, var(--bg));
+  /* The text edge of commands, output and the command line; the $ cues hang left of it. */
+  --terminal-gutter: 34px;
 }
 .workbench-terminal-header {
   display: flex;
@@ -427,7 +429,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 4px 0 8px;
+  padding: 4px 0 0;
 }
 /* Anchor Command blocks to the bottom; margin (not justify-content) keeps overflow scrollable. */
 .terminal-block-scroll > :first-child {
@@ -436,7 +438,6 @@
 .terminal-command-block {
   position: relative;
   flex: none;
-  padding: 12px 20px 10px;
 }
 .terminal-command-block::before {
   content: "";
@@ -458,11 +459,36 @@
 .terminal-command-block.failed::before {
   background: var(--red);
 }
+/* Solid, and the colour the xterm theme of a failed block is given too: canvas and block match. */
+.terminal-command-block.failed {
+  background: var(--terminal-failed-background);
+}
+/* The command line of a block stays flush with the Terminal: the command reads apart from its
+   output by type alone (the bright text, heavier), with a hairline between blocks. */
 .terminal-command-block > header {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  padding-bottom: 6px;
+  gap: 8px;
+  padding: 8px 20px 8px var(--terminal-gutter);
+}
+/* The $ cue hangs in the gutter, clear of the rail, so the command keeps its output's text edge. */
+.terminal-block-prompt {
+  flex: none;
+  width: 8px;
+  margin-left: -20px;
+  margin-right: 4px;
+  /* A muted accent: the $ of a block reads as the prompt it ran at, a step under the live prompt's full accent. */
+  color: color-mix(in srgb, var(--acc2) 55%, var(--faint));
+  font-family: var(--mono);
+  font-size: var(--font-terminal-size, 13px);
+  font-weight: var(--font-terminal-weight, 400);
+  user-select: none;
+}
+.terminal-command-block.running .terminal-block-prompt {
+  color: var(--acc2);
+}
+.terminal-command-block.failed .terminal-block-prompt {
+  color: color-mix(in srgb, var(--red) 85%, var(--fg-bright));
 }
 .terminal-command-block > header > code {
   min-width: 0;
@@ -472,7 +498,7 @@
   overflow-wrap: anywhere;
   font-family: var(--mono);
   font-size: var(--font-terminal-size, 13px);
-  font-weight: var(--font-terminal-weight, 400);
+  font-weight: calc(var(--font-terminal-weight, 400) + 200);
 }
 .terminal-block-status {
   display: inline-flex;
@@ -485,6 +511,9 @@
 }
 .terminal-block-status.error {
   color: var(--red);
+}
+.terminal-command-block.failed .terminal-block-status.error {
+  color: color-mix(in srgb, var(--red) 85%, var(--fg-bright));
 }
 .terminal-block-spinner {
   width: 10px;
@@ -500,12 +529,16 @@
   }
 }
 .terminal-truncated {
-  margin: 0 0 6px;
+  margin: 6px 20px 0 var(--terminal-gutter);
   font-size: 11px;
   color: var(--dim);
 }
 .terminal-output-clip {
   overflow: hidden;
+  margin: 0 20px 8px var(--terminal-gutter);
+}
+.terminal-output-clip.empty {
+  margin: 0;
 }
 .terminal-block-output {
   margin: 0;
@@ -516,6 +549,20 @@
 .terminal-block-output > .xterm {
   height: 100%;
   padding: 0;
+}
+/* xterm selects its own text and draws the selection in its theme colours. A native drag that runs
+   into the output (say, from a command above it) must not paint the system highlight, an opaque
+   blue, over the whole canvas and the text on it. */
+.terminal-block-output .xterm-screen {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Native selection in the Terminal (the command line, the accessible text): a soft tint under the
+   Terminal's own text colour, instead of the app's solid accent with white text. Not `inherit`:
+   with highlight inheritance that is the parent's ::selection colour, the app's white. */
+.terminal-workbench ::selection {
+  background: color-mix(in srgb, var(--acc2) 30%, transparent);
+  color: var(--fg);
 }
 .terminal-workbench[data-fullscreen="true"] .terminal-block-scroll {
   flex: 1;
@@ -533,6 +580,9 @@
   border: 0;
   background: none;
 }
+.terminal-command-block.fullscreen > .terminal-output-clip {
+  margin: 0;
+}
 .terminal-command-block.fullscreen::before {
   display: none;
 }
@@ -545,30 +595,35 @@
   font-size: 12px;
   border-top: 1px solid var(--line);
 }
+/* The command line is the next prompt of the Terminal itself: no card, fill or focus halo, and its
+   $ lines up with the $ of the Command block headers above. A hairline closes the last block, so the
+   accent $ under it reads as the command about to run. */
 .terminal-command-composer {
   position: relative;
   flex: none;
-  margin: 6px 16px 10px;
-  background: transparent;
+  padding: 6px 20px 6px var(--terminal-gutter);
+  border-top: 1px solid var(--line);
+  background: none;
 }
-/* The command field: one rounded surface that lifts when it has focus. */
 .terminal-command-entry {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 4px 6px 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg2);
-  transition: border-color var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
-}
-.terminal-command-composer:focus-within .terminal-command-entry {
-  border-color: var(--line-strong);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc2) 14%, transparent);
+  gap: 8px;
+  font: 13px/20px var(--mono);
+  background: none;
 }
 .terminal-prompt-symbol {
+  flex: none;
+  width: 8px;
+  margin-left: -20px;
+  margin-right: 4px;
   padding: 4px 0;
   font: 13px/20px var(--mono);
+  color: var(--faint);
+  user-select: none;
+  transition: color var(--motion-fast) ease-out;
+}
+.terminal-command-composer:focus-within .terminal-prompt-symbol {
   color: var(--acc2);
 }
 .terminal-input-editor {
@@ -601,24 +656,12 @@
 .terminal-ghost > span {
   visibility: hidden;
 }
-/* The run button is quiet until there is a command to run. */
-.terminal-command-entry > .icon-btn {
-  min-width: 28px;
-  height: 28px;
-  color: var(--acc2);
-}
-.terminal-command-entry > .icon-btn:disabled {
-  opacity: 1;
-  color: var(--line-strong);
-  background: none;
-  border-color: transparent;
-}
 .terminal-command-hint {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 4px 0;
+  padding: 2px 0 0;
   color: var(--dim);
   font-size: 10.5px;
   opacity: 0;
@@ -642,11 +685,13 @@
   .workbench-terminal-header {
     padding: 0 12px;
   }
-  .terminal-command-block {
-    padding-inline: 12px;
-  }
+  .terminal-command-block > header,
   .terminal-command-composer {
-    margin: 6px 10px 8px;
+    padding-right: 12px;
+  }
+  .terminal-output-clip:not(.empty),
+  .terminal-truncated {
+    margin-right: 12px;
   }
   .terminal-command-hint > span:last-child {
     display: none;
@@ -662,72 +707,101 @@
   }
 }
 
+/* Completions and history: a compact list right above the command line, starting at the word it
+   completes, drawn in the terminal's own type. No title, close button or key hints. */
 .terminal-input-menu {
+  --terminal-menu-column: 0;
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: min(760px, 100%);
+  bottom: calc(100% - 2px);
+  left: min(
+    calc(var(--terminal-gutter) + var(--terminal-menu-column) * 1ch - 10px),
+    calc(100% - 20px - min(360px, 100% - var(--terminal-gutter) - 20px))
+  );
+  width: max-content;
+  min-width: min(220px, calc(100% - var(--terminal-gutter) - 20px));
+  max-width: min(360px, calc(100% - var(--terminal-gutter) - 20px));
   z-index: 30;
+  padding: 3px;
+  font-family: var(--font-terminal, var(--mono));
+  font-size: var(--font-terminal-size, 13px);
   background: var(--bg2);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.22);
   overflow: hidden;
 }
-.terminal-input-menu > header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.terminal-input-menu header input {
-  background: transparent;
-  border: 0;
-  flex: 1;
-  min-width: 0;
-}
-.terminal-input-menu > [role="listbox"] {
-  max-height: min(320px, 45vh);
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-}
-.terminal-input-menu [role="option"] {
-  width: 100%;
-  background: none;
-  border: 0;
-  border-radius: 4px;
-  padding: 6px 10px;
-  justify-content: flex-start;
-  gap: 10px;
-  text-align: left;
-}
-.terminal-input-menu [role="option"][aria-selected="true"] {
-  background: var(--bg4);
-}
-.terminal-input-menu [role="option"] code {
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-.terminal-input-menu [role="option"] > span {
-  max-width: 40%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 11px;
-  color: var(--dim);
-}
-.terminal-input-menu footer {
-  padding: 8px 12px;
-  font-size: 11px;
-  color: var(--dim);
+.terminal-menu-search {
   display: flex;
   align-items: center;
   gap: 6px;
-  border-top: 1px solid var(--line);
+  padding: 3px 6px 5px;
+  margin-bottom: 3px;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line);
+}
+.terminal-menu-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: 0;
+}
+.terminal-input-menu > [role="listbox"] {
+  max-height: min(264px, 40vh);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-input-menu [role="option"] {
+  width: 100%;
+  min-height: 0;
+  height: 22px;
+  padding: 0 6px;
+  gap: 12px;
+  justify-content: flex-start;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+.terminal-input-menu [role="option"]:hover {
+  background: color-mix(in srgb, var(--fg-bright) 5%, transparent);
+}
+.terminal-input-menu [role="option"][aria-selected="true"] {
+  color: var(--fg-bright);
+  background: color-mix(in srgb, var(--fg-bright) 10%, transparent);
+}
+.terminal-input-menu [role="option"] code {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terminal-menu-note {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.terminal-menu-empty {
+  margin: 0;
+  padding: 3px 6px;
+  color: var(--faint);
 }
 .editor-loading-skeleton {
   position: absolute;

@@ -69,7 +69,6 @@ fn main() {
                         id,
                         args["line"].as_str().unwrap(),
                         args["cursor"].as_u64().unwrap() as usize,
-                        args["cwd"].as_str().unwrap(),
                     )
                     .map(|value| serde_json::to_value(value).unwrap()),
                 "close_terminal" => core.close_terminal(id).map(|_| Value::Null),

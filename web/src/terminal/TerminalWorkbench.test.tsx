@@ -5,9 +5,11 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { TerminalWorkbench } from "./TerminalWorkbench";
+import { RUNNING_INDICATOR_DELAY_MS } from "./runningIndicator";
 import { ContextMenu } from "../shared/ContextMenu";
 
 const xtermSelection = { text: "" };
+const dataListeners: Array<(data: string) => void> = [];
 
 // xterm needs a real canvas and layout; the Command block around it is what is under test.
 vi.mock("@xterm/xterm", () => ({
@@ -26,7 +28,7 @@ vi.mock("@xterm/xterm", () => ({
     focus() {}
     blur() {}
     dispose() {}
-    onData() { return { dispose() {} }; }
+    onData(listener: (data: string) => void) { dataListeners.push(listener); return { dispose() {} }; }
     onWriteParsed() { return { dispose() {} }; }
   },
 }));
@@ -42,6 +44,7 @@ const writes: string[] = [];
 let now = 0;
 beforeEach(() => {
   writes.length = 0;
+  dataListeners.length = 0;
   xtermSelection.text = "";
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
@@ -135,7 +138,10 @@ it("shows a Running indicator while a command runs and only its duration once it
   await shell.submit("ls");
   await shell.start();
   const [block] = blocks();
+  // Past the running indicator delay, so the command shows as running and can be interrupted.
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
   expect(block.querySelector('[role="img"][aria-label="Running"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
   expect(block.textContent).not.toMatch(/\d\s?ms|\d\s?s\b/);
   now = 1_017;
   await shell.output("a.txt\r\n");
@@ -144,6 +150,48 @@ it("shows a Running indicator while a command runs and only its duration once it
   expect(block.textContent).toContain("17 ms");
   expect(spoken(block)).toContain("Command duration: 17 ms");
   expect(block.textContent).not.toContain("Done");
+});
+
+it("keeps the command line in place of Interrupt for a command that ends before the running indicator delay", async () => {
+  const shell = await openShell();
+  await shell.submit("cd sub");
+  await shell.start();
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  await shell.end(0, "/test/sub");
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  expect(container.querySelector("textarea")).not.toBeNull();
+});
+
+it("reports a command as running to the Terminal row only once it runs past the running indicator delay", async () => {
+  const reported: Array<string | null> = [];
+  let channel: Channel<number[]>;
+  const tokens: string[] = [];
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") tokens.push((args as { token: string }).token);
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible onRunningChange={(command) => reported.push(command)} />));
+  const send = (text: string) => act(async () => channel.onmessage([...new TextEncoder().encode(text)]));
+  const submit = async (value: string) => {
+    const input = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector("form")!.requestSubmit());
+    await settle();
+  };
+  const wait = () => act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  await submit("cd sub");
+  await send(`\x1b]633;Oxide;${tokens[0]};start\x07\x1b]633;Oxide;${tokens[0]};end;0;/test/sub\x07`);
+  await wait();
+  expect(reported.filter(Boolean)).toEqual([]);
+  await submit("sleep 5");
+  await send(`\x1b]633;Oxide;${tokens[1]};start\x07`);
+  await wait();
+  expect(reported.at(-1)).toBe("sleep 5");
 });
 
 it("shows the exit code beside the duration when a command fails", async () => {
@@ -207,7 +255,7 @@ it("renders only the command and its status: no cwd, Copy, Reuse or Collapse", a
   for (const block of blocks()) {
     expect(block.textContent).not.toContain("/test");
     expect(block.querySelectorAll("button")).toHaveLength(0);
-    expect(block.querySelector("header")?.textContent).toMatch(/^(ls|pwd)/);
+    expect(block.querySelector("header")?.textContent).toMatch(/^\$\s*(ls|pwd)/);
   }
 });
 
@@ -298,4 +346,122 @@ it("offers context actions on Command blocks and Terminal workbench (Copy, Paste
   await act(async () => { scrollArea.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })); });
   await act(async () => { container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[2]!.click(); });
   expect(newTerminal).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["macOS", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", false],
+  ["Linux", "Mozilla/5.0 (X11; Linux x86_64)", false],
+  ["Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", true],
+])("answers the shell's cursor-position probe only on Windows, where ConPTY waits for it (%s)", async (_os, userAgent, answers) => {
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+  const written: string[] = [];
+  let channel: Channel<number[]>;
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "write_terminal") written.push(new TextDecoder().decode(new Uint8Array((args as { input: number[] }).input)));
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  await settle();
+  await act(async () => channel.onmessage([...new TextEncoder().encode("\x1b[6n")]));
+  await settle();
+  expect(written.includes("\x1b[1;1R")).toBe(answers);
+});
+
+it("keeps keys typed during a block's launch out of the shell until the block starts", async () => {
+  const written: string[] = [];
+  let channel: Channel<number[]>;
+  let token = "";
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") token = (args as { token: string }).token;
+    if (name === "write_terminal") written.push(new TextDecoder().decode(new Uint8Array((args as { input: number[] }).input)));
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "cat");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await settle();
+  const type = (data: string) => act(async () => { for (const listener of dataListeners) listener(data); });
+  await type("early");
+  await settle();
+  expect(written).not.toContain("early");
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};start\x07`)]));
+  await settle();
+  await type("late");
+  await settle();
+  expect(written).toContain("late");
+});
+
+it("leaves focus alone when a block ends in a Terminal that has been hidden since", async () => {
+  let channel: Channel<number[]>;
+  let token = "";
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") token = (args as { token: string }).token;
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "sleep 1");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await settle();
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};start\x07`)]));
+  await settle();
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  elsewhere.focus();
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible={false} />));
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};end;0;/test\x07`)]));
+  await settle();
+  expect(document.activeElement).toBe(elsewhere);
+  elsewhere.remove();
+});
+
+
+it("keeps the command line the same element, unchanged, from the start to the end of a fast command", async () => {
+  const shell = await openShell();
+  await shell.submit("ls");
+  await shell.start();
+  await shell.end(0);
+  const composer = container.querySelector("form.terminal-command-composer")!;
+  const seen: string[] = [];
+  const look = () => {
+    expect(container.querySelector("form.terminal-command-composer")).toBe(composer);
+    seen.push(composer.outerHTML);
+  };
+  look();
+  await shell.submit("cd ..");
+  look();
+  await shell.start();
+  look();
+  await shell.end(0, "/");
+  look();
+  expect(new Set(seen).size).toBe(1);
+});
+
+it("keeps what was typed during a running command, and a refused Enter keeps it too", async () => {
+  const shell = await openShell();
+  await shell.submit("sleep 1");
+  await shell.start();
+  // Enter while the command runs is refused: the line keeps the command instead of dropping it.
+  await shell.submit("git sta");
+  const input = () => container.querySelector("textarea")!;
+  expect(input().value).toBe("git sta");
+  expect(shell.calls.filter((name) => name === "run_terminal_block")).toHaveLength(1);
+  // Past the running indicator delay the command line gives way to Interrupt, without losing its text.
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
+  expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(true);
+  await shell.end(0);
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(false);
+  expect(input().value).toBe("git sta");
 });

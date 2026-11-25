@@ -24,8 +24,12 @@ exit status together. `cd` and shell variables carry over between commands.
 - Interact with a running program directly in its output terminal; Ctrl+C
   interrupts it. A shell that exits offers "Start a new shell".
 - Cursor-addressed and alternate-screen applications use the central viewport.
-  Output redraws do not resize the PTY. On Windows a command finishes at the next
-  PowerShell prompt, so Ctrl+C leaves the shell usable.
+  Output redraws do not resize the PTY. On every shell a Command block marks its
+  own end as soon as its command finishes; the shell prompt marks the end only of
+  a block stopped by Ctrl+C, so Ctrl+C leaves the shell usable. Tab completes in
+  the folder the shell last reported: at the end of the running block, or at a
+  prompt outside any block. A long command is typed in short lines, so one sent
+  while startup files run is not cut at the terminal's line limit.
 - The Terminal header shows the shell and its current directory, which follows
   every `cd`. A Command block shows only its command and one status: a spinner
   while it runs, then its duration, or `exit N` beside the duration when it

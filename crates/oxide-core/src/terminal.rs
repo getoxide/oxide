@@ -27,6 +27,10 @@ pub struct TerminalSession {
     pub summary: TerminalSummary,
     commands: Sender<SessionCommand>,
     subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
+    /// The folder the shell reported at the end of its last block; `summary.cwd` until then.
+    live_cwd: Arc<Mutex<String>>,
+    /// The token of the block that runs now: only its `end` marker may move `live_cwd`.
+    block_token: Arc<Mutex<Option<String>>>,
 }
 
 enum SessionCommand {
@@ -47,7 +51,9 @@ impl TerminalSession {
                 "Invalid command block or command exceeds 64 KiB.".into(),
             ));
         }
-        let script = os::block_script(token, command);
+        let script =
+            os::block_script(token, command).map_err(|error| Error::Terminal(error.to_string()))?;
+        *self.block_token.lock_recover() = Some(token.to_string());
         self.write(script.as_bytes())
     }
 
@@ -152,10 +158,19 @@ impl TerminalSession {
             .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))?;
         let subscribers = Arc::new(Mutex::new(Vec::<Sender<Vec<u8>>>::new()));
         let output_subscribers = Arc::clone(&subscribers);
+        let start_cwd = dunce::simplified(cwd).to_string_lossy().into_owned();
+        let live_cwd = Arc::new(Mutex::new(start_cwd.clone()));
+        let output_cwd = Arc::clone(&live_cwd);
+        let block_token = Arc::new(Mutex::new(None::<String>));
+        let output_token = Arc::clone(&block_token);
         let (commands, receiver) = unbounded();
-        std::thread::spawn(move || {
-            read_output(reader, &output_subscribers, blocks);
-        });
+        let output = OutputState {
+            subscribers: output_subscribers,
+            blocks,
+            cwd: output_cwd,
+            block_token: output_token,
+        };
+        std::thread::spawn(move || read_output(reader, &output));
         std::thread::spawn(move || {
             let mut writer = writer;
             let master = pair.master;
@@ -195,12 +210,19 @@ impl TerminalSession {
             summary: TerminalSummary {
                 id,
                 pid,
-                cwd: dunce::simplified(cwd).to_string_lossy().into_owned(),
+                cwd: start_cwd,
                 shell: shell_name,
             },
             commands,
             subscribers,
+            live_cwd,
+            block_token,
         })
+    }
+
+    /// The shell's current folder, as its last block `end` marker reported it.
+    pub fn live_cwd(&self) -> String {
+        self.live_cwd.lock_recover().clone()
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<u8>> {
@@ -324,23 +346,132 @@ fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: &[u8]) {
     });
 }
 
-fn read_output(
-    mut reader: Box<dyn Read + Send>,
-    subscribers: &Mutex<Vec<Sender<Vec<u8>>>>,
+/// What the output thread shares with the session.
+struct OutputState {
+    subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
     blocks: bool,
-) {
+    cwd: Arc<Mutex<String>>,
+    block_token: Arc<Mutex<Option<String>>>,
+}
+
+fn read_output(mut reader: Box<dyn Read + Send>, state: &OutputState) {
     let mut buffer = [0_u8; 16 * 1024];
+    let mut markers = ShellMarkers::default();
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(count) => {
-                deliver(subscribers, &buffer[..count]);
+                if state.blocks {
+                    for marker in markers.push(&buffer[..count]) {
+                        follow(state, marker);
+                    }
+                }
+                deliver(&state.subscribers, &buffer[..count]);
             }
         }
     }
-    if blocks {
-        deliver(subscribers, b"\x1b]633;Oxide;closed\x07");
+    if state.blocks {
+        deliver(&state.subscribers, b"\x1b]633;Oxide;closed\x07");
     }
+}
+
+/// Moves the live folder to where the shell reports it is: at the end of the block that runs
+/// now, or at a prompt outside any block. A marker a program prints inside a block, without its
+/// random token, moves nothing.
+fn follow(state: &OutputState, marker: ShellMarker) {
+    let mut token = state.block_token.lock_recover();
+    let folder = match marker {
+        ShellMarker::Prompt { folder } => {
+            if token.is_some() {
+                return;
+            }
+            folder
+        }
+        ShellMarker::End {
+            token: marked,
+            folder,
+        } => {
+            if token.as_deref() != Some(marked.as_str()) {
+                return;
+            }
+            *token = None;
+            folder
+        }
+    };
+    if Path::new(&folder).is_absolute() && Path::new(&folder).is_dir() {
+        *state.cwd.lock_recover() = folder;
+    }
+}
+
+/// A marker the shell hooks print: `ESC ] 633;Oxide;<token>;end;<exit>;<folder> BEL` at the end
+/// of a block, `ESC ] 633;Oxide;prompt;<folder> BEL` at a prompt outside one.
+#[derive(Debug, PartialEq)]
+enum ShellMarker {
+    End { token: String, folder: String },
+    Prompt { folder: String },
+}
+
+/// Finds the `end` and `prompt` markers in PTY output, across reads.
+#[derive(Default)]
+struct ShellMarkers {
+    pending: Vec<u8>,
+}
+
+impl ShellMarkers {
+    const PREFIX: &'static [u8] = b"\x1b]633;Oxide;";
+    /// Longer than any marker a shell prints; an unterminated one past it is dropped.
+    const LIMIT: usize = 8 * 1024;
+
+    /// The markers this chunk completed, in order.
+    fn push(&mut self, chunk: &[u8]) -> Vec<ShellMarker> {
+        self.pending.extend_from_slice(chunk);
+        let mut found = Vec::new();
+        let mut rest = 0;
+        let mut open = false;
+        while let Some(start) = find(&self.pending[rest..], Self::PREFIX).map(|at| rest + at) {
+            let body = start + Self::PREFIX.len();
+            let Some(length) = self.pending[body..].iter().position(|&b| b == 0x07) else {
+                rest = start;
+                open = true;
+                break;
+            };
+            let marker = String::from_utf8_lossy(&self.pending[body..body + length]);
+            if let Some(folder) = marker.strip_prefix("prompt;") {
+                found.push(ShellMarker::Prompt {
+                    folder: folder.to_string(),
+                });
+            } else {
+                let mut fields = marker.splitn(4, ';');
+                if let (Some(token), Some("end"), Some(_exit), Some(folder)) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                {
+                    found.push(ShellMarker::End {
+                        token: token.to_string(),
+                        folder: folder.to_string(),
+                    });
+                }
+            }
+            rest = body + length + 1;
+        }
+        // Keep an open marker, or else only a tail that could start the next prefix.
+        let keep_from = if open {
+            rest
+        } else {
+            let tail = self.pending.len().saturating_sub(Self::PREFIX.len() - 1);
+            tail.max(rest)
+        };
+        self.pending.drain(..keep_from);
+        if self.pending.len() > Self::LIMIT {
+            self.pending.clear();
+        }
+        found
+    }
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 pub fn next_id(counter: &AtomicU32) -> u32 {
@@ -350,6 +481,74 @@ pub fn next_id(counter: &AtomicU32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markers_are_read_across_split_reads() {
+        let mut markers = ShellMarkers::default();
+        assert_eq!(
+            markers.push(b"out\x1b]633;Oxide;t1;start\x07error\r\n\x1b]63"),
+            vec![]
+        );
+        assert_eq!(markers.push(b"3;Oxide;t1;end;1;/Users/some;one"), vec![]);
+        assert_eq!(
+            markers.push(b"\x07\x1b]633;Oxide;prompt;/a;b\x07"),
+            vec![
+                ShellMarker::End {
+                    token: "t1".into(),
+                    folder: "/Users/some;one".into()
+                },
+                ShellMarker::Prompt {
+                    folder: "/a;b".into()
+                },
+            ]
+        );
+    }
+
+    fn state(token: Option<&str>) -> OutputState {
+        OutputState {
+            subscribers: Arc::default(),
+            blocks: true,
+            cwd: Arc::new(Mutex::new("start".into())),
+            block_token: Arc::new(Mutex::new(token.map(str::to_string))),
+        }
+    }
+
+    #[test]
+    fn only_the_running_block_or_a_prompt_outside_one_moves_the_folder() {
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        let end = |token: &str, folder: &str| ShellMarker::End {
+            token: token.into(),
+            folder: folder.into(),
+        };
+        let prompt = |folder: &str| ShellMarker::Prompt {
+            folder: folder.into(),
+        };
+        let state = state(Some("mine"));
+        let cwd = || state.cwd.lock_recover().clone();
+        // A program inside the block prints markers: neither moves the folder.
+        follow(&state, end("other", &here));
+        follow(&state, prompt(&here));
+        assert_eq!(cwd(), "start");
+        // A folder that is relative or does not exist is not one the shell is in.
+        follow(&state, end("mine", "/no/such/oxide/folder"));
+        assert_eq!(cwd(), "start");
+        // The block's end counts once; then a prompt outside a block counts.
+        let state = self::state(Some("mine"));
+        let cwd = || state.cwd.lock_recover().clone();
+        follow(&state, end("mine", &here));
+        assert_eq!(cwd(), here);
+        assert_eq!(*state.block_token.lock_recover(), None);
+        follow(&state, end("mine", "/"));
+        assert_eq!(cwd(), here);
+        let root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        follow(&state, prompt(&root));
+        assert_eq!(cwd(), root);
+    }
 
     #[test]
     fn a_pty_child_without_a_pid_fails_the_start() {
