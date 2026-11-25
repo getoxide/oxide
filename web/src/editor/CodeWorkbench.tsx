@@ -619,6 +619,8 @@ export function CodeWorkbench({
     publish();
   }
   const current = documents.find((doc) => doc.path === active);
+  // With no file left, the language popover closes rather than reopening on the next one.
+  if (!current && languageMenu) setLanguageMenu(false);
   const language = current
     ? serverLanguage(current.model.getLanguageId())
     : null;

@@ -511,6 +511,31 @@ describe("CodeWorkbench performance", () => {
     expect(server().textContent).toContain("Server stopped.");
   });
 
+  it("does not reopen the language popover on the next file after the last tab closes", async () => {
+    const render = (id: number) =>
+      act(async () =>
+        root.render(
+          <CodeWorkbench projectId={1} rootPath="/repo" contextKey="p1" visible openRequest={{ id, path: "src/app.ts" }} onChanged={vi.fn()} />,
+        ),
+      );
+    await render(1);
+    await settle();
+    const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
+    await act(async () => indicator.click());
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).not.toBeNull();
+
+    // A shortcut-like close that never touches the popover.
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close src/app.ts"]')!.click());
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
+
+    await render(2);
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
+    expect(indicator.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("shows no language server section for a language without one", async () => {
     await act(async () =>
       root.render(
