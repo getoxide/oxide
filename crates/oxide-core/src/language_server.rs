@@ -263,7 +263,7 @@ impl LanguageServers {
             .ok_or_else(|| failure(format!("{language} has no language server tool")))?;
         let executable = tool.resolved_path.ok_or_else(|| {
             failure(format!(
-                "{} is not installed. Open Language tools to install or configure it.",
+                "{} is not installed. Install it from the language button in the Code status bar.",
                 tool.name
             ))
         })?;

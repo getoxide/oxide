@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { LanguageSupportNotice } from "./LanguageSupport";
+import { InstallLanguageButton, LanguageSupportNotice } from "./LanguageSupport";
+import type { LanguageTool } from "../bindings";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const host = document.createElement("div");
 document.body.append(host);
@@ -66,4 +67,37 @@ it("allows Later without installing and remembers it", async () => {
   );
   expect(localStorage.getItem("oxide:language-dismissed:python")).toBe("true");
   expect(host.textContent).toBe("");
+});
+
+const rustTool: LanguageTool = {
+  language: "rust",
+  name: "Rust · rust-analyzer",
+  installed: true,
+  resolvedPath: "/tools/rust-analyzer",
+  installCommand: "",
+  documentation: "",
+  config: { command: "rust-analyzer", args: [], interpreter: null },
+};
+it("reinstalls installed support from the language popover and reports the result", async () => {
+  const installed = vi.fn();
+  const changed = vi.fn();
+  window.addEventListener("oxide-language-tools-changed", changed, { once: true });
+  let fail = false;
+  mockIPC((command) => {
+    if (command !== "install_language_support") return null;
+    if (fail) throw { kind: "failed", message: "No network." };
+    return rustTool;
+  });
+  await act(async () => root.render(<InstallLanguageButton tool={rustTool} onInstalled={installed} />));
+  const button = host.querySelector<HTMLButtonElement>("button")!;
+  expect(button.textContent).toBe("Reinstall support");
+  await act(async () => button.click());
+  expect(installed).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledOnce();
+  expect(button.disabled).toBe(false);
+
+  fail = true;
+  await act(async () => button.click());
+  expect(installed).toHaveBeenCalledOnce();
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe("No network.");
 });

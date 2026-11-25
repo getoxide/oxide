@@ -3,7 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { Channel } from "@tauri-apps/api/core";
 import type { LanguageTool } from "../bindings";
-import { LspConnection } from "./lspConnection";
+import { LspConnection, type LanguageServerState } from "./lspConnection";
 
 const tool: LanguageTool = {
   language: "typescript",
@@ -121,4 +121,29 @@ it("stops a process that finishes starting after its editor was closed", async (
   });
   await expect(starting).rejects.toThrow("closed");
   expect(stopped).toEqual([9]);
+});
+
+it("points to the status-bar language button when the server stops", async () => {
+  let channel!: Channel<string>;
+  mockIPC((command, args) => {
+    if (command === "start_language_server") {
+      channel = (args as { onMessage: Channel<string> }).onMessage;
+      return { id: 3, root: "/project", language: "typescript", initializationOptions: null };
+    }
+    if (command === "language_server_message") {
+      const message = JSON.parse((args as { message: string }).message);
+      if (message.method === "initialize")
+        queueMicrotask(() => channel.onmessage(JSON.stringify({ id: message.id, result: { capabilities: {} } })));
+    }
+    return null;
+  });
+  const states: LanguageServerState[] = [];
+  const connection = new LspConnection(1, tool, () => {}, (state) => states.push(state));
+  await connection.start((path) => `file://${path}`);
+  channel.onmessage(JSON.stringify({ method: "$/oxide/serverExited" }));
+  expect(states.at(-1)).toEqual({
+    status: "Stopped",
+    message: "Server stopped. Restart it from the language button in the status bar.",
+  });
+  connection.dispose();
 });

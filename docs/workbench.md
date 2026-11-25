@@ -67,6 +67,28 @@ Opening a supported file offers **Install support** when its server is missing.
 Choosing Later dismisses that language's offer. The download does not start
 merely by opening a file.
 
+The language button at the right of the Code status bar shows the buffer's
+language mode and, for a managed language, its server's state. Clicking it opens
+a popover that:
+
+- switches the buffer's language mode (filter the list, then pick one); moving
+  into or out of a managed language opens the buffer on that language's server or
+  closes it on the old one, so diagnostics and completion follow the mode;
+- shows the server's state: Ready, Connecting, Not installed or Stopped, with the
+  reason when it stopped;
+- offers **Install support** (or **Reinstall support** once installed) with live
+  progress, whether or not the first-use offer was dismissed;
+- offers **Restart server**, which restarts only that language's server and
+  reopens its buffers on it.
+
+Escape or a click outside closes it and returns focus to the button. Language
+server messages point here rather than to Settings.
+
+The editor has no Save or Format buttons and no file path row under the tabs:
+save with Ctrl+S / ⌘S, format with Shift+Alt+F, the command palette or the
+editor's context menu, and find the full path on the tab's tooltip, the open
+files list or the tab's Copy path.
+
 | Files | Server |
 | --- | --- |
 | Python | Pyright |
@@ -87,7 +109,7 @@ Python/TypeScript package versions are pinned to the tested versions. Updates ar
 explicit installs, not background activity.
 
 A server can also be named by hand in `language-servers.json` in the application
-home: an executable, a JSON array of arguments and an optional Python interpreter.
+home (`~/.oxide`): an executable, a JSON array of arguments and an optional Python interpreter.
 Rust project diagnostics need a Rust toolchain; Python imports depend on the
 selected environment. For C/C++ project flags, provide `compile_commands.json` or
 clangd arguments such as `--compile-commands-dir`.

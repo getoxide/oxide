@@ -14,18 +14,17 @@ import {
   FileCodeIcon,
   FileIcon,
   ChevronDownIcon,
-  FoldIcon,
   ListUnorderedIcon,
   PlusIcon,
   SearchIcon,
-  SyncIcon,
   XIcon,
 } from "@primer/octicons-react";
 import { commands } from "../bindings";
 import { monaco, editorLanguage, serverLanguage } from "./editorRuntime";
-import { EditorLanguages } from "./editorLanguages";
+import { EditorLanguages, type LanguageServerState } from "./editorLanguages";
 import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
+import { LanguagePopover, languageLabel, serverStatusLabel } from "./LanguagePopover";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
 import {
@@ -118,7 +117,9 @@ export function CodeWorkbench({
   const filesMenuWrap = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
-  const [states, setStates] = useState<Record<string, string>>({});
+  const [states, setStates] = useState<Record<string, LanguageServerState>>({});
+  const [languageMenu, setLanguageMenu] = useState(false);
+  const languageButton = useRef<HTMLButtonElement>(null);
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [showProblems, setShowProblems] = useState(false);
@@ -608,7 +609,18 @@ export function CodeWorkbench({
     publish();
     setError(null);
   }
+  /** Changes a buffer's language mode, moving it to the language server of the new mode (if any). */
+  function setLanguageMode(path: string, languageId: string) {
+    const doc = records.current.get(path);
+    if (!doc || doc.model.getLanguageId() === languageId) return;
+    languages.current?.remove(doc.model);
+    monaco.editor.setModelLanguage(doc.model, languageId);
+    languages.current?.add(doc.model);
+    publish();
+  }
   const current = documents.find((doc) => doc.path === active);
+  // With no file left, the language popover closes rather than reopening on the next one.
+  if (!current && languageMenu) setLanguageMenu(false);
   const language = current
     ? serverLanguage(current.model.getLanguageId())
     : null;
@@ -856,36 +868,6 @@ export function CodeWorkbench({
         </div>
         {headerAction && <div className="editor-tabs-actions">{headerAction}</div>}
         </div>
-        {current && (
-          <div className="editor-breadcrumb">
-            <span title={current.path}>{current.path}</span>
-            <span className="grow" />
-            <button
-              className="btn sm"
-              onClick={() =>
-                void editor.current
-                  ?.getAction("editor.action.formatDocument")
-                  ?.run()
-              }
-            >
-              <FoldIcon size={13} /> Format
-            </button>
-            <button
-              className="btn sm"
-              disabled={!current.dirty || current.saving}
-              onClick={() =>
-                void saveDocument(records.current.get(current.path)!)
-              }
-            >
-              {current.saving ? (
-                <SyncIcon size={13} className="spin" />
-              ) : (
-                <CheckIcon size={13} />
-              )}{" "}
-              Save
-            </button>
-          </div>
-        )}
         {language && (
           <LanguageSupportNotice
             key={language}
@@ -976,14 +958,43 @@ export function CodeWorkbench({
           <span className="grow" />
           <CursorReadout editor={editorInstance} />
           <button
-            title={language ? states[language] : undefined}
+            ref={languageButton}
+            title={language ? states[language]?.message : undefined}
+            aria-haspopup="dialog"
+            aria-expanded={languageMenu}
+            disabled={!current}
+            onClick={() => setLanguageMenu((open) => !open)}
           >
             <CodeIcon size={12} />{" "}
-            {current?.model.getLanguageId() ?? "Plain text"}
+            {current ? languageLabel(current.model.getLanguageId()) : languageLabel("plaintext")}
             {language &&
-              ` · ${states[language] === "Ready" ? "LSP ready" : "Language tools"}`}
+              ` · ${serverStatusLabel(states[language])}`}
           </button>
         </footer>
+        {languageMenu && current && (
+          <LanguagePopover
+            anchor={languageButton}
+            languageId={current.model.getLanguageId()}
+            server={language}
+            serverState={language ? states[language] : undefined}
+            onRestart={() => {
+              if (language) languages.current?.reconnect(language);
+            }}
+            onSelect={(languageId) => {
+              setLanguageMenu(false);
+              setLanguageMode(current.path, languageId);
+              languageButton.current?.focus();
+            }}
+            onClose={() => {
+              setLanguageMenu(false);
+              // An outside click on nothing focusable leaves focus on the page: give it back to the button.
+              setTimeout(() => {
+                const focused = document.activeElement;
+                if (!focused || focused === document.body) languageButton.current?.focus();
+              });
+            }}
+          />
+        )}
       </div>
       {quickOpen && (
         <QuickOpen

@@ -11,7 +11,16 @@ import type {
 } from "vscode-languageserver-protocol";
 import { commands } from "../bindings";
 import { monaco, serverLanguage } from "./editorRuntime";
-import { LspConnection } from "./lspConnection";
+import {
+  LANGUAGE_BUTTON,
+  LspConnection,
+  type LanguageServerState,
+} from "./lspConnection";
+
+export type { LanguageServerState, LanguageServerStatus } from "./lspConnection";
+
+/** The language's server is not installed. */
+class NotInstalled extends Error {}
 
 const range = (r: Range) =>
   new monaco.Range(
@@ -30,8 +39,10 @@ const markdown = (value: string) => ({ value, isTrusted: false });
 export class EditorLanguages {
   private documents = new Map<string, monaco.editor.ITextModel>();
   private clients = new Map<string, Promise<LspConnection>>();
-  private liveConnections = new Set<LspConnection>();
-  private generation = 0;
+  /** Every started connection, by its language. */
+  private liveConnections = new Map<LspConnection, string>();
+  /** Bumped by each restart of a language's server, so work begun before it is dropped. */
+  private generations = new Map<string, number>();
   private opened = new Set<string>();
   private sentVersions = new Map<string, number>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -39,32 +50,39 @@ export class EditorLanguages {
   private disposed = false;
   constructor(
     private projectId: number,
-    private onState: (language: string, state: string) => void,
+    private onState: (language: string, state: LanguageServerState) => void,
     private ensureModel: (uri: monaco.Uri) => Promise<void>,
   ) {
     this.register();
   }
+  private generation(language: string) {
+    return this.generations.get(language) ?? 0;
+  }
+  /** Whether work begun at a language's generation still counts. */
+  private current(language: string, generation: number) {
+    return !this.disposed && generation === this.generation(language);
+  }
   private async connect(language: string): Promise<LspConnection> {
     let client = this.clients.get(language);
     if (!client) {
-      const generation = this.generation;
+      const generation = this.generation(language);
       client = (async () => {
         const result = await commands.languageTools();
         const tool = result.find((t) => t.language === language);
         if (!tool?.installed)
-          throw new Error("Not installed · open Language tools");
+          throw new NotInstalled(`Not installed · install it from ${LANGUAGE_BUTTON}`);
         const connection = new LspConnection(
           this.projectId,
           tool,
           (uri, diagnostics) => {
-            if (generation === this.generation)
-              this.diagnostics(uri, diagnostics);
+            if (this.current(language, generation))
+              this.diagnostics(language, uri, diagnostics);
           },
           (state) => {
-            if (generation === this.generation) this.onState(language, state);
+            if (this.current(language, generation)) this.onState(language, state);
           },
         );
-        this.liveConnections.add(connection);
+        this.liveConnections.set(connection, language);
         if (this.disposed) {
           connection.dispose();
           throw new Error("Editor closed");
@@ -75,7 +93,7 @@ export class EditorLanguages {
           connection.dispose();
           throw error;
         }
-        if (this.disposed || generation !== this.generation) {
+        if (!this.current(language, generation)) {
           connection.dispose();
           throw new Error("Language server reconnected.");
         }
@@ -87,24 +105,25 @@ export class EditorLanguages {
   }
   private report(language: string, error: unknown) {
     if (!this.disposed)
-      this.onState(
-        language,
-        error instanceof Error ? error.message : String(error),
-      );
+      this.onState(language, {
+        status: error instanceof NotInstalled ? "Not installed" : "Stopped",
+        message: error instanceof Error ? error.message : String(error),
+      });
   }
   add(model: monaco.editor.ITextModel) {
-    const generation = this.generation;
     const uri = model.uri.toString();
     this.documents.set(uri, model);
     const language = serverLanguage(model.getLanguageId());
     if (!language) return;
+    const generation = this.generation(language);
     void this.connect(language)
       .then(async (client) => {
         if (
-          this.disposed ||
-          generation !== this.generation ||
+          !this.current(language, generation) ||
           this.documents.get(uri) !== model ||
-          model.isDisposed()
+          model.isDisposed() ||
+          // Its language changed while the server was starting: it belongs to another server now.
+          serverLanguage(model.getLanguageId()) !== language
         )
           return;
         const version = model.getVersionId();
@@ -124,7 +143,7 @@ export class EditorLanguages {
         this.sentVersions.set(uri, version);
       })
       .catch((error) => {
-        if (generation === this.generation) this.report(language, error);
+        if (this.current(language, generation)) this.report(language, error);
       });
   }
   changed(model: monaco.editor.ITextModel) {
@@ -138,17 +157,17 @@ export class EditorLanguages {
     );
   }
   private async flush(model: monaco.editor.ITextModel) {
-    const generation = this.generation;
     const uri = model.uri.toString();
     clearTimeout(this.timers.get(uri));
     this.timers.delete(uri);
     const language = serverLanguage(model.getLanguageId());
     if (!language || !this.opened.has(uri) || model.isDisposed()) return;
+    const generation = this.generation(language);
     if (this.sentVersions.get(uri) === model.getVersionId()) return;
     try {
       const client = await this.connect(language);
       if (
-        generation !== this.generation ||
+        !this.current(language, generation) ||
         model.isDisposed() ||
         !this.owns(model)
       )
@@ -191,18 +210,39 @@ export class EditorLanguages {
         .catch(() => {});
     monaco.editor.setModelMarkers(model, "oxide-lsp", []);
   }
-  reconnect() {
-    this.generation++;
-    for (const client of this.liveConnections) client.dispose();
-    this.liveConnections.clear();
-    this.clients.clear();
-    this.opened.clear();
-    this.sentVersions.clear();
-    for (const model of this.documents.values()) this.add(model);
+  /** Restarts one language's server (or every server), reopening its buffers on the new one. */
+  reconnect(language?: string) {
+    const restarting = new Set(
+      language
+        ? [language]
+        : [...this.clients.keys(), ...this.liveConnections.values()],
+    );
+    for (const l of restarting) {
+      this.generations.set(l, this.generation(l) + 1);
+      this.clients.delete(l);
+    }
+    for (const [connection, l] of this.liveConnections)
+      if (restarting.has(l)) {
+        connection.dispose();
+        this.liveConnections.delete(connection);
+      }
+    for (const [uri, model] of this.documents) {
+      const l = serverLanguage(model.getLanguageId());
+      if (!l || !restarting.has(l)) continue;
+      this.opened.delete(uri);
+      this.sentVersions.delete(uri);
+      this.add(model);
+    }
   }
-  private diagnostics(uri: string, diagnostics: Diagnostic[]) {
+  /** Shows a server's diagnostics on a buffer, unless the buffer has since moved to another language's server. */
+  private diagnostics(language: string, uri: string, diagnostics: Diagnostic[]) {
     const model = this.documents.get(uri);
-    if (!model || model.isDisposed()) return;
+    if (
+      !model ||
+      model.isDisposed() ||
+      serverLanguage(model.getLanguageId()) !== language
+    )
+      return;
     monaco.editor.setModelMarkers(
       model,
       "oxide-lsp",
@@ -450,7 +490,7 @@ export class EditorLanguages {
             }
             return {
               edits: [],
-              rejectReason: "Rename is unavailable. Check Language tools.",
+              rejectReason: `Rename is unavailable. Check ${LANGUAGE_BUTTON}.`,
             };
           },
         }),
@@ -459,10 +499,9 @@ export class EditorLanguages {
   }
   dispose() {
     this.disposed = true;
-    this.generation++;
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const registration of this.registrations) registration.dispose();
-    for (const connection of this.liveConnections) connection.dispose();
+    for (const connection of this.liveConnections.keys()) connection.dispose();
     this.liveConnections.clear();
     this.clients.clear();
     this.documents.clear();
