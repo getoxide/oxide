@@ -62,6 +62,15 @@ export function PullRequestCreate({
       active = false;
     };
   }, [projectId, retry]);
+  function chooseBase(next: string) {
+    setBase(next);
+    if (next in ahead) return;
+    void commands
+      .pullRequestCommitsBeyond(projectId, next)
+      .then((result) => (result.status === "ok" ? result.data : null))
+      .catch(() => null)
+      .then((count) => setAhead((known) => ({ ...known, [next]: count })));
+  }
   // Why no pull request can be opened from here, if it cannot.
   const blocker =
     isProtected || (head !== "" && head === base)
@@ -69,6 +78,8 @@ export function PullRequestCreate({
       : ahead[base] === 0
         ? "noDiff"
         : null;
+  // The count for a newly chosen base is still on its way.
+  const checking = base !== "" && !(base in ahead);
   async function submit() {
     if (
       busy ||
@@ -76,7 +87,8 @@ export function PullRequestCreate({
       !title.trim() ||
       !base ||
       base === head ||
-      blocker
+      blocker ||
+      checking
     )
       return;
     setBusy(true);
@@ -134,7 +146,7 @@ export function PullRequestCreate({
                 aria-label="Base branch"
                 value={base}
                 disabled={busy}
-                onChange={(e) => setBase(e.target.value)}
+                onChange={(e) => chooseBase(e.target.value)}
               >
                 {branches
                   .filter((b) => b !== head)
@@ -193,7 +205,12 @@ export function PullRequestCreate({
             type="submit"
             aria-describedby={blocker ? "pr-create-hint" : undefined}
             disabled={
-              busy || !title.trim() || !base || base === head || !!blocker
+              busy ||
+              !title.trim() ||
+              !base ||
+              base === head ||
+              !!blocker ||
+              checking
             }
           >
             {busy ? (

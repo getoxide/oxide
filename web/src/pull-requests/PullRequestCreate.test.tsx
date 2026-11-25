@@ -191,3 +191,50 @@ it("asks for a feature branch on a protected branch even when it has commits bey
     "Switch from release to a feature branch to open a pull request.",
   );
 });
+
+async function chooseBase(name: string) {
+  await act(async () => {
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Base branch"]')!;
+    select.value = name;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+it("re-checks the commits beyond a newly chosen base through local Git", async () => {
+  mockDraft({ commitsBeyond: 2 });
+  let resolve!: (n: number) => void;
+  const beyond = vi.spyOn(commands, "pullRequestCommitsBeyond").mockReturnValue(
+    new Promise((r) => {
+      resolve = (n) => r({ status: "ok", data: n });
+    }),
+  );
+  await open();
+  expect(createButton().disabled).toBe(false);
+
+  await chooseBase("dev");
+  expect(beyond).toHaveBeenCalledWith(1, "dev");
+  // Until the count is known, Create waits.
+  expect(createButton().disabled).toBe(true);
+  await act(async () => resolve(0));
+  expect(createButton().disabled).toBe(true);
+  expect(host.textContent).toContain(
+    "No commits on fix/topic beyond dev. Commit changes before creating a pull request.",
+  );
+
+  await chooseBase("main");
+  expect(beyond).toHaveBeenCalledTimes(1);
+  expect(createButton().disabled).toBe(false);
+  expect(host.textContent).not.toContain("No commits on");
+});
+
+it("lets the user try when the count for a base cannot be told", async () => {
+  mockDraft({ commitsBeyond: 2 });
+  vi.spyOn(commands, "pullRequestCommitsBeyond").mockResolvedValue({
+    status: "error",
+    error: { message: "unknown" },
+  });
+  await open();
+  await chooseBase("dev");
+  expect(createButton().disabled).toBe(false);
+  expect(host.textContent).not.toContain("No commits on");
+});
