@@ -162,8 +162,11 @@ export function TerminalCommandBlock(props: Props) {
       return false;
     });
     const cursorUp = term.parser.registerCsiHandler({ final: "A" }, markScreen);
+    // Until the shell marks the start, it is still reading the block's own command line: a key
+    // (or a terminal reply) sent then would land in that line instead of reaching the program.
     const input = term.onData((data) => {
-      if (callbacks.current.active) callbacks.current.onInput(data);
+      const { active: running, block: current } = callbacks.current;
+      if (running && current.started) callbacks.current.onInput(data);
     });
     const parsed = term.onWriteParsed(() => {
       setHeight(
@@ -208,9 +211,9 @@ export function TerminalCommandBlock(props: Props) {
   useEffect(() => {
     if (!visible) return;
     fitSurface.current();
-    if (active) terminal.current?.focus();
+    if (active && block.started) terminal.current?.focus();
     else terminal.current?.blur();
-  }, [visible, active]);
+  }, [visible, active, block.started]);
   return (
     <section
       className={`terminal-command-block${active ? " running" : ""}${!active && block.exitCode !== 0 ? " failed" : ""}${active && screen ? " fullscreen" : ""}`}

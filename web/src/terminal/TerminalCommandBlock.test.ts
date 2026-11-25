@@ -24,13 +24,15 @@ interface TerminalInstance {
   focus(): void;
   blur(): void;
   dispose(): void;
-  onData(): { dispose(): void };
+  onData(cb: (data: string) => void): { dispose(): void };
   onWriteParsed(): { dispose(): void };
 }
 
 const instances: TerminalInstance[] = [];
 const fitCalls: number[] = [];
 const bufferListeners: Array<(buffer: { type: "normal" | "alternate" }) => void> = [];
+const dataListeners: Array<(data: string) => void> = [];
+const focused: number[] = [];
 let nextRows = 24;
 let nextCols = 80;
 
@@ -57,10 +59,13 @@ vi.mock("@xterm/xterm", () => ({
     open() {}
     write() {}
     paste() {}
-    focus() {}
+    focus() { focused.push(1); }
     blur() {}
     dispose() {}
-    onData() { return { dispose() {} }; }
+    onData(cb: (data: string) => void) {
+      dataListeners.push(cb);
+      return { dispose() {} };
+    }
     onWriteParsed() { return { dispose() {} }; }
   },
 }));
@@ -115,6 +120,8 @@ beforeEach(() => {
   instances.length = 0;
   fitCalls.length = 0;
   bufferListeners.length = 0;
+  dataListeners.length = 0;
+  focused.length = 0;
   nextRows = 24;
   nextCols = 80;
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
@@ -281,4 +288,35 @@ it("collapses output clip to 0px when a finished command produced no output", as
   });
   const clip = mount.querySelector<HTMLElement>(".terminal-output-clip")!;
   expect(clip.style.height).toBe("0px");
+});
+
+it("neither takes focus nor sends keys to the shell until the block has started", async () => {
+  const onInput = vi.fn();
+  const render = (started: boolean) =>
+    act(async () =>
+      root.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ started }),
+          active: true,
+          visible: true,
+          onInput,
+          onReady: () => {},
+          onResize: () => {},
+          onScreen: () => {},
+        }),
+      ),
+    );
+  await render(false);
+  await act(async () => {
+    for (const listener of dataListeners) listener("typed ahead");
+  });
+  expect(onInput).not.toHaveBeenCalled();
+  expect(focused).toHaveLength(0);
+
+  await render(true);
+  await act(async () => {
+    for (const listener of dataListeners) listener("y");
+  });
+  expect(onInput).toHaveBeenCalledExactlyOnceWith("y");
+  expect(focused.length).toBeGreaterThan(0);
 });
