@@ -1,9 +1,74 @@
-import { useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { SignedImage } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
+import { cachedGithubImage, isGithubImageUrl, loadGithubImage } from "../shared/githubImages";
 import { limitBlocks, parseMarkdown, type Inline } from "./prMarkdown";
+
+const ImagesContext = createContext<{ projectId: number; signed: Map<string, string> } | null>(null);
+
+/** Lets the Markdown inside load GitHub images through the Project, using the signed URLs GitHub
+ *  gave for private attachments. Without it, every image is shown as a link. */
+export function MarkdownImages({ projectId, signed, children }: { projectId: number; signed: SignedImage[]; children: ReactNode }) {
+  const value = useMemo(() => ({ projectId, signed: new Map(signed.map((s) => [s.url, s.signedUrl])) }), [projectId, signed]);
+  return <ImagesContext.Provider value={value}>{children}</ImagesContext.Provider>;
+}
+
+/** An image, loaded once it scrolls near view; its alt text and an "Open image" link when it is
+ *  not on GitHub or cannot be loaded. */
+function MarkdownImage({ alt, url }: { alt: string; url: string }) {
+  const images = useContext(ImagesContext);
+  const projectId = images?.projectId;
+  const source = images?.signed.get(url) ?? url;
+  const loadable = projectId !== undefined && isGithubImageUrl(url);
+  const [src, setSrc] = useState(() => cachedGithubImage(url));
+  const [failed, setFailed] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!loadable || src || projectId === undefined) return;
+    let cancelled = false;
+    const start = () =>
+      void loadGithubImage(projectId, url, source).then(
+        (data) => !cancelled && setSrc(data),
+        () => !cancelled && setFailed(true),
+      );
+    const element = ref.current;
+    if (typeof IntersectionObserver === "undefined" || !element) {
+      start();
+      return () => {
+        cancelled = true;
+      };
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        start();
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(element);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [loadable, src, projectId, url, source]);
+  if (loadable && src) return <img className="md-image" src={src} alt={alt} />;
+  if (loadable && !failed) {
+    return <span ref={ref} className="md-image-loading" role="img" aria-label={alt ? `Loading ${alt}` : "Loading image"} />;
+  }
+  return (
+    <span className="md-image-fallback">
+      <span>{alt || "Image"}</span>
+      <button type="button" className="md-image-open" title={url} onClick={() => void openExternalLink(url)}>
+        Open image
+      </button>
+    </span>
+  );
+}
 
 function inline(parts: Inline[]): ReactNode[] {
   return parts.map((p, i) => {
+    if (p.kind === "image") return <MarkdownImage key={`${i}:${p.url}`} alt={p.alt} url={p.url} />;
     if (p.kind === "code") return <code key={i}>{p.text}</code>;
     if (p.kind === "strong") return <strong key={i}>{p.text}</strong>;
     if (p.kind === "link") return <span key={i} className="md-link">{p.text}</span>;
