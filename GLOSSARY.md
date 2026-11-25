@@ -11,7 +11,7 @@ A folder on the user's machine holding a Git repository, usually linked to a Git
 _Avoid_: Workspace, repo (when meaning the Oxide concept)
 
 **Open Project**:
-A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its terminals. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project (from its `×` close button or row menu) ends its terminals, takes it out of the sidebar and keeps it known.
+A Project the user opened (from the Project palette, by adding or cloning it, or by selecting it), and so listed in the sidebar with its terminals. Repositories found by the scan of the scan roots are known but not open: the Project palette finds them, the sidebar does not list them. Closing a Project (Close project on its row menu) ends its terminals, takes it out of the sidebar and keeps it known.
 _Avoid_: Pinned, recent, favourite Project
 
 **Project palette**:
@@ -35,16 +35,12 @@ One of the two tools in the right dock: Issues or Pull request. They are plain G
 _Avoid_: Tab, pane, widget
 
 **Terminals view**:
-The sidebar's default state: the Open Projects with their Terminals. A Project name selects it; only its leading chevron collapses or expands its Terminals without changing the selected Project, and its hover/focus `+` and `×` buttons open a Terminal or close the Project.
+The sidebar's default state: the Open Projects with their Terminals nested under each. A click on a Project name selects it and folds or unfolds its Terminals; the active Project is marked with an accent. Its hover/focus Files and `+` buttons open its **Files view** or a new Terminal; Close project is on its row menu.
 _Avoid_: Terminals tab, Projects view
 
 **Files view**:
-The sidebar's other state: the file tree of the selected Project, under its name. The **Sidebar switch** opens it and returns to the Terminals view; so does Open Files on a Project row's menu. A click selects a file and a double click (or Enter/Space) opens it in the **Code workspace**.
+The sidebar's other state: the file tree of one Project. The Files button on a Project row (or Open Files on its menu) opens it; its header, "← Project name · Terminals", returns to the **Terminals view**. A click selects a file and a double click (or Enter/Space) opens it in the **Code workspace**.
 _Avoid_: Files panel, Files Surface, explorer, navigator
-
-**Sidebar switch**:
-The two tabs at the top of the sidebar, Terminals and Files, that choose its view. Files shows the selected Project and is disabled while no Project is selected or its folder is missing.
-_Avoid_: Files button, Back to Terminals
 
 **Code workspace**:
 The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored; maximizing or a narrow centre hides the other half without closing it. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
