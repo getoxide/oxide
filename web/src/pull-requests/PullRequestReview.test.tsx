@@ -4,7 +4,7 @@ import { clearQueryCache } from "../shared/queryCache";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commands, type PullRequestDetail_Serialize } from "../bindings";
-import { CHECKS_REFRESH_MS, PullRequestReview } from "./PullRequestBrowser";
+import { CHECKS_REFRESH_MS, PullRequestReview, UNKNOWN_MERGE_STATE_POLLS } from "./PullRequestBrowser";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let host: HTMLDivElement;
@@ -68,7 +68,7 @@ afterEach(async () => {
   onBack.mockReset();
 });
 
-async function render(props: { active?: boolean } = {}) {
+async function render(props: { active?: boolean; refreshKey?: number } = {}) {
   await act(async () =>
     root.render(<PullRequestReview projectId={1} number={174} refreshKey={0} {...props} onBack={onBack} onChanged={onChanged} />),
   );
@@ -340,6 +340,25 @@ it("follows a pull request closely while GitHub is still settling its merge stat
   }
 });
 
+it("stops following an unknown merge state after a bounded number of polls, but not running checks", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "unknown" }) });
+    await render();
+    const calls = detailCalls();
+    await tickChecks(UNKNOWN_MERGE_STATE_POLLS + 10);
+    expect(detailCalls()).toBe(calls + UNKNOWN_MERGE_STATE_POLLS);
+
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "unknown", checks: running().checks }) });
+    await render({ refreshKey: 1 });
+    const runningCalls = detailCalls();
+    await tickChecks(UNKNOWN_MERGE_STATE_POLLS + 10);
+    expect(detailCalls()).toBe(runningCalls + UNKNOWN_MERGE_STATE_POLLS + 10);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not follow running checks while the Surface is hidden, and catches up when shown", async () => {
   vi.useFakeTimers();
   try {
@@ -350,6 +369,25 @@ it("does not follow running checks while the Surface is hidden, and catches up w
     expect(detailCalls()).toBe(calls);
     await render({ active: true });
     expect(detailCalls()).toBe(calls + 1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not count checks starting to run as the Surface being shown: no extra fetch", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    await act(async () => void vi.advanceTimersByTime(10_000));
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    const calls = detailCalls();
+    // The user acted: one fetch, which reports checks now running.
+    await render({ refreshKey: 1 });
+    await act(async () => {});
+    expect(detailCalls()).toBe(calls + 1);
+    // Then the fast cadence takes over, on its interval.
+    await tickChecks();
+    expect(detailCalls()).toBe(calls + 2);
   } finally {
     vi.useRealTimers();
   }

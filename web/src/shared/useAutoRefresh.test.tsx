@@ -9,14 +9,15 @@ let host: HTMLDivElement;
 let root: Root;
 let tick = -1;
 
-function Probe(props: { enabled?: boolean; intervalMs?: number }) {
+type ProbeProps = { enabled?: boolean; intervalMs?: number | null; maxTicks?: number };
+function Probe(props: ProbeProps) {
   const value = useAutoRefresh(props);
   useEffect(() => {
     tick = value;
   });
   return null;
 }
-const render = (props: { enabled?: boolean; intervalMs?: number } = {}) => act(async () => root.render(<Probe {...props} />));
+const render = (props: ProbeProps = {}) => act(async () => root.render(<Probe {...props} />));
 const advance = (ms: number) => act(async () => void vi.advanceTimersByTime(ms));
 const fire = (target: EventTarget, type: string) => act(async () => void target.dispatchEvent(new Event(type)));
 let visibility: DocumentVisibilityState = "visible";
@@ -50,6 +51,26 @@ it("follows a faster interval when asked", async () => {
   expect(tick).toBe(1);
   await advance(6_000);
   expect(tick).toBe(2);
+});
+
+it("runs no timer without a period, but still revalidates on focus", async () => {
+  await render({ intervalMs: null });
+  await advance(REFRESH_INTERVAL_MS * 3);
+  expect(tick).toBe(0);
+  await fire(window, "focus");
+  expect(tick).toBe(1);
+});
+
+it("stops its timer after the given number of ticks, and does not revalidate when the period changes", async () => {
+  await render({ intervalMs: 6_000, maxTicks: 2 });
+  await advance(6_000 * 5);
+  expect(tick).toBe(2);
+  await render({ intervalMs: null });
+  expect(tick).toBe(2);
+  await render({ intervalMs: 6_000 });
+  expect(tick).toBe(2);
+  await advance(6_000);
+  expect(tick).toBe(3);
 });
 
 it("pauses completely while disabled: no timer, no focus", async () => {

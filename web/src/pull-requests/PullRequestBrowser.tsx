@@ -235,10 +235,16 @@ export const CHECKS_REFRESH_MS = 6_000;
 
 type Result = { status: "ok" } | { status: "error"; error: { message: string } };
 
-/** An open pull request whose checks still run, or whose merge state GitHub has not computed yet. */
-function isSettling(detail: PullRequestDetail | undefined): boolean {
-  if (detail === undefined || (detail.phase !== "open" && detail.phase !== "draft")) return false;
-  return detail.checks.some((c) => c.state === "pending") || detail.mergeState === "unknown";
+/** How many fast polls an open pull request gets while only its merge state is unknown: GitHub
+ *  usually computes it within seconds, and a state it never settles must not poll forever. */
+export const UNKNOWN_MERGE_STATE_POLLS = 10;
+
+/** Why an open pull request is still moving: checks that run, or a merge state GitHub has not
+ *  computed yet. */
+function settling(detail: PullRequestDetail | undefined): "checks" | "mergeState" | null {
+  if (detail === undefined || (detail.phase !== "open" && detail.phase !== "draft")) return null;
+  if (detail.checks.some((c) => c.state === "pending")) return "checks";
+  return detail.mergeState === "unknown" ? "mergeState" : null;
 }
 
 export function PullRequestReview({
@@ -255,7 +261,14 @@ export function PullRequestReview({
   // Checks start and finish within minutes, and GitHub takes a moment to settle a fresh merge
   // state, so follow those closer than the general refresh does, only while the pull request is
   // shown. Soft polls: never two `gh` calls at once, and backed off after failures.
-  const fastPoll = useAutoRefresh({ enabled: active && isSettling(getQueryData<{ detail: PullRequestDetail }>(key)?.detail), intervalMs: CHECKS_REFRESH_MS });
+  // Only `active` turning on revalidates; settling just changes the cadence, so checks starting
+  // to run do not fetch again on top of the fetch that reported them.
+  const moving = settling(getQueryData<{ detail: PullRequestDetail }>(key)?.detail);
+  const fastPoll = useAutoRefresh({
+    enabled: active,
+    intervalMs: moving === null ? null : CHECKS_REFRESH_MS,
+    maxTicks: moving === "mergeState" ? UNKNOWN_MERGE_STATE_POLLS : undefined,
+  });
   const query = useQuery(
     key,
     async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
