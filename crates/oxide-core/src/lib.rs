@@ -38,7 +38,9 @@ pub use github::{
     IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
     PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
     PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewer, ReviewDecision, ReviewState,
+    PullRequestReviewer, ReviewDecision, ReviewState, TimelineAction, TimelineClosed,
+    TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem, TimelineLabel, TimelineMerge,
+    TimelinePerson, TimelineReference, TimelineRename, TimelineReview,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use oxide_platform::{AvailableShell, ShellKind};

@@ -486,6 +486,8 @@ fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
                 "default merge method".to_string()
             } else if c.iter().any(|a| a.contains("isRequired")) {
                 "required checks".to_string()
+            } else if c.iter().any(|a| a.contains("timelineItems")) {
+                "timeline".to_string()
             } else {
                 c[..2].join(" ")
             }
@@ -495,7 +497,7 @@ fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
     kinds.sort();
     assert_eq!(
         kinds,
-        ["pr view", "required checks"],
+        ["pr view", "required checks", "timeline"],
         "merge settings, the viewer's login and default merge method are reused"
     );
 }
@@ -1173,6 +1175,150 @@ fn detail_has_description_checks_comments_and_changed_files() {
 }
 
 #[test]
+fn pull_request_detail_interleaves_commits_force_pushes_reviews_and_events() {
+    use oxide_core::{
+        CheckState, ReviewState, TimelineAction, TimelineCommit, TimelineForcePush, TimelineItem,
+        TimelineMerge, TimelinePerson, TimelineReview,
+    };
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    state["timelines"] = serde_json::json!({"5": {
+        "id": "PR_kwDO5",
+        "url": "https://github.com/fake/repo/pull/5",
+        "participants": {"nodes": [{"login": "other"}, {"login": "reviewer"}]},
+        "timelineItems": {"nodes": [
+            {"__typename": "PullRequestCommit", "commit": {
+                "oid": "1111111aaaaaaa", "abbreviatedOid": "1111111", "messageHeadline": "Add b",
+                "committedDate": "2026-05-01T09:00:00Z", "url": "https://github.com/fake/repo/commit/1111111aaaaaaa",
+                "author": {"name": "Other Person", "user": {"login": "other"}},
+                "signature": {"isValid": true}, "statusCheckRollup": {"state": "SUCCESS"}}},
+            {"__typename": "PullRequestCommit", "commit": {
+                "oid": "2222222bbbbbbb", "abbreviatedOid": "2222222", "messageHeadline": "Unsigned",
+                "committedDate": "2026-05-01T09:05:00Z", "url": "javascript:alert(1)",
+                "author": {"name": "Someone", "user": null}, "signature": null, "statusCheckRollup": null}},
+            {"__typename": "ReviewRequestedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:10:00Z",
+             "requestedReviewer": {"login": "reviewer"}},
+            {"__typename": "ReviewRequestedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:11:00Z",
+             "requestedReviewer": {"name": "core-team"}},
+            {"__typename": "PullRequestReview", "id": "PRR_1", "author": {"login": "reviewer"}, "body": "",
+             "state": "COMMENTED", "createdAt": "2026-05-01T09:20:00Z", "submittedAt": "2026-05-01T09:20:00Z"},
+            {"__typename": "PullRequestReview", "id": "PRR_2", "author": {"login": "reviewer"}, "body": "Rename it",
+             "state": "CHANGES_REQUESTED", "createdAt": "2026-05-01T09:29:00Z", "submittedAt": "2026-05-01T09:30:00Z"},
+            {"__typename": "HeadRefForcePushedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:40:00Z",
+             "ref": {"name": "add-b"}, "beforeCommit": {"oid": "2222222bbbbbbb", "abbreviatedOid": "2222222"},
+             "afterCommit": {"oid": "3333333ccccccc", "abbreviatedOid": "3333333"}},
+            {"__typename": "ConvertToDraftEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:50:00Z"},
+            {"__typename": "ReadyForReviewEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:55:00Z"},
+            {"__typename": "MergedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T10:30:00Z",
+             "mergeRefName": "main", "commit": {"abbreviatedOid": "4444444"}},
+            {"__typename": "HeadRefDeletedEvent", "actor": null, "createdAt": "2026-05-01T10:31:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(detail.node_id, "PR_kwDO5");
+    assert_eq!(detail.participants, ["other", "reviewer"]);
+    let action = |actor: &str, at: &str| TimelineAction {
+        actor: actor.into(),
+        created_at: at.into(),
+    };
+    let requested = |login: &str, at: &str| {
+        TimelineItem::ReviewRequested(TimelinePerson {
+            actor: "other".into(),
+            created_at: at.into(),
+            login: login.into(),
+        })
+    };
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Commit(TimelineCommit {
+                oid: "1111111aaaaaaa".into(),
+                abbreviated_oid: "1111111".into(),
+                headline: "Add b".into(),
+                author: "other".into(),
+                committed_at: "2026-05-01T09:00:00Z".into(),
+                verified: true,
+                status: Some(CheckState::Success),
+                url: "https://github.com/fake/repo/commit/1111111aaaaaaa".into(),
+            }),
+            TimelineItem::Commit(TimelineCommit {
+                oid: "2222222bbbbbbb".into(),
+                abbreviated_oid: "2222222".into(),
+                headline: "Unsigned".into(),
+                author: "Someone".into(),
+                committed_at: "2026-05-01T09:05:00Z".into(),
+                verified: false,
+                status: None,
+                url: String::new(),
+            }),
+            requested("reviewer", "2026-05-01T09:10:00Z"),
+            requested("core-team", "2026-05-01T09:11:00Z"),
+            TimelineItem::Review(TimelineReview {
+                id: "PRR_2".into(),
+                author: "reviewer".into(),
+                body: "Rename it".into(),
+                created_at: "2026-05-01T09:30:00Z".into(),
+                state: ReviewState::ChangesRequested,
+            }),
+            TimelineItem::ForcePush(TimelineForcePush {
+                actor: "other".into(),
+                created_at: "2026-05-01T09:40:00Z".into(),
+                branch: "add-b".into(),
+                before: "2222222".into(),
+                after: "3333333".into(),
+                compare_url: "https://github.com/fake/repo/compare/2222222bbbbbbb..3333333ccccccc"
+                    .into(),
+            }),
+            TimelineItem::ConvertedToDraft(action("other", "2026-05-01T09:50:00Z")),
+            TimelineItem::ReadyForReview(action("other", "2026-05-01T09:55:00Z")),
+            TimelineItem::Merged(TimelineMerge {
+                actor: "other".into(),
+                created_at: "2026-05-01T10:30:00Z".into(),
+                commit: "4444444".into(),
+                base: "main".into(),
+            }),
+            TimelineItem::HeadRefDeleted(action("ghost", "2026-05-01T10:31:00Z")),
+        ]
+    );
+}
+
+#[test]
+fn pull_request_detail_falls_back_to_comments_and_reviews_when_the_timeline_query_fails() {
+    use oxide_core::{ReviewState, TimelineComment, TimelineItem, TimelineReview};
+    let f = fixture();
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([
+        {"id": "IC_1", "author": {"login": "reviewer"}, "body": "Looks good", "createdAt": "2026-05-01T10:00:00Z"}
+    ]);
+    pr["reviews"] = serde_json::json!([
+        {"id": "PRR_1", "author": {"login": "bob"}, "body": "Ship it", "state": "APPROVED", "submittedAt": "2026-05-01T09:00:00Z"}
+    ]);
+    install_gh(&f, &state_with_prs(&[pr]));
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(detail.node_id, "");
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Review(TimelineReview {
+                id: "PRR_1".into(),
+                author: "bob".into(),
+                body: "Ship it".into(),
+                created_at: "2026-05-01T09:00:00Z".into(),
+                state: ReviewState::Approved,
+            }),
+            TimelineItem::Comment(TimelineComment {
+                id: "IC_1".into(),
+                author: "reviewer".into(),
+                body: "Looks good".into(),
+                created_at: "2026-05-01T10:00:00Z".into(),
+            }),
+        ]
+    );
+}
+
+#[test]
 fn detail_offers_only_the_merge_methods_the_repository_allows() {
     let f = fixture();
     let mut state = state_with_prs(&[detailed_pr()]);
@@ -1679,6 +1825,148 @@ fn view_issue_detail_with_comments() {
     assert_eq!(detail.comments.len(), 1);
     assert_eq!(detail.comments[0].author, "dave");
     assert_eq!(detail.comments[0].body, "Can confirm on macOS");
+}
+
+fn issue_42() -> serde_json::Value {
+    serde_json::json!({
+        "number": 42,
+        "title": "Bug in lexer",
+        "body": "It crashes",
+        "state": "OPEN",
+        "author": {"login": "charlie"},
+        "url": "https://github.com/fake/repo/issues/42",
+        "createdAt": "2026-01-03T10:00:00Z",
+        "comments": [
+            {"id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm", "createdAt": "2026-01-03T10:30:00Z"}
+        ]
+    })
+}
+
+#[test]
+fn issue_detail_interleaves_activity_with_comments_from_graphql() {
+    use oxide_core::{
+        PullRequestLabel, TimelineAction, TimelineClosed, TimelineComment, TimelineItem,
+        TimelineLabel, TimelinePerson, TimelineReference, TimelineRename,
+    };
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "participants": {"nodes": [{"login": "charlie"}, {"login": "dave"}]},
+        "timelineItems": {"nodes": [
+            {"__typename": "LabeledEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T10:01:00Z",
+             "label": {"name": "bug", "color": "d73a4a"}},
+            {"__typename": "AssignedEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T10:02:00Z",
+             "assignee": {"login": "dave"}},
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm",
+             "createdAt": "2026-01-03T10:30:00Z"},
+            {"__typename": "UnlabeledEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-03T10:40:00Z",
+             "label": {"name": "bug", "color": "d73a4a"}},
+            {"__typename": "UnassignedEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-03T10:41:00Z",
+             "assignee": {"login": "dave"}},
+            {"__typename": "RenamedTitleEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T11:00:00Z",
+             "previousTitle": "Lexer bug", "currentTitle": "Bug in lexer"},
+            {"__typename": "CrossReferencedEvent", "actor": {"login": "erin"}, "createdAt": "2026-01-03T12:00:00Z",
+             "isCrossRepository": true,
+             "source": {"__typename": "PullRequest", "number": 9, "title": "Fix lexer", "state": "MERGED",
+                        "url": "https://github.com/other/repo/pull/9", "repository": {"nameWithOwner": "other/repo"}}},
+            {"__typename": "ClosedEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-04T09:00:00Z",
+             "stateReason": "NOT_PLANNED"},
+            {"__typename": "ReopenedEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-05T09:00:00Z"},
+            {"__typename": "SomethingNew", "createdAt": "2026-01-06T09:00:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.node_id, "I_kwDO42");
+    assert_eq!(detail.participants, ["charlie", "dave"]);
+    let person = |actor: &str, at: &str, login: &str| TimelinePerson {
+        actor: actor.into(),
+        created_at: at.into(),
+        login: login.into(),
+    };
+    let bug = PullRequestLabel {
+        name: "bug".into(),
+        color: "d73a4a".into(),
+    };
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Labeled(TimelineLabel {
+                actor: "charlie".into(),
+                created_at: "2026-01-03T10:01:00Z".into(),
+                label: bug.clone(),
+            }),
+            TimelineItem::Assigned(person("charlie", "2026-01-03T10:02:00Z", "dave")),
+            TimelineItem::Comment(TimelineComment {
+                id: "IC_1".into(),
+                author: "dave".into(),
+                body: "Can confirm".into(),
+                created_at: "2026-01-03T10:30:00Z".into(),
+            }),
+            TimelineItem::Unlabeled(TimelineLabel {
+                actor: "dave".into(),
+                created_at: "2026-01-03T10:40:00Z".into(),
+                label: bug,
+            }),
+            TimelineItem::Unassigned(person("dave", "2026-01-03T10:41:00Z", "dave")),
+            TimelineItem::Renamed(TimelineRename {
+                actor: "charlie".into(),
+                created_at: "2026-01-03T11:00:00Z".into(),
+                from: "Lexer bug".into(),
+                to: "Bug in lexer".into(),
+            }),
+            TimelineItem::CrossReferenced(TimelineReference {
+                actor: "erin".into(),
+                created_at: "2026-01-03T12:00:00Z".into(),
+                number: 9,
+                title: "Fix lexer".into(),
+                url: "https://github.com/other/repo/pull/9".into(),
+                state: "MERGED".into(),
+                pull_request: true,
+                repository: "other/repo".into(),
+                cross_repository: true,
+            }),
+            TimelineItem::Closed(TimelineClosed {
+                actor: "charlie".into(),
+                created_at: "2026-01-04T09:00:00Z".into(),
+                state_reason: "NOT_PLANNED".into(),
+            }),
+            TimelineItem::Reopened(TimelineAction {
+                actor: "dave".into(),
+                created_at: "2026-01-05T09:00:00Z".into(),
+            }),
+        ]
+    );
+    // One GraphQL round trip, numbered, with the user's values passed as typed fields.
+    let call = f
+        .gh_calls()
+        .into_iter()
+        .find(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .expect("a timeline query");
+    assert!(call.contains(&"number=42".to_string()), "{call:?}");
+}
+
+#[test]
+fn issue_detail_falls_back_to_its_comments_when_the_timeline_query_fails() {
+    use oxide_core::{TimelineComment, TimelineItem};
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    install_gh(&f, &state);
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.node_id, "");
+    assert_eq!(
+        detail.timeline,
+        vec![TimelineItem::Comment(TimelineComment {
+            id: "IC_1".into(),
+            author: "dave".into(),
+            body: "Can confirm".into(),
+            created_at: "2026-01-03T10:30:00Z".into(),
+        })]
+    );
 }
 
 #[test]

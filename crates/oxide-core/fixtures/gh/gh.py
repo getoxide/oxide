@@ -136,6 +136,16 @@ if args[:2] == ["api", "graphql"]:
         # The names of the checks branch protection requires, one per line through --jq.
         print("\n".join(state.get("required_checks", [])))
         sys.exit(0)
+    if any("timelineItems" in a for a in args):
+        # An issue's or pull request's node, timeline and participants, printed through --jq.
+        # `state["timelines"]` maps numbers to that node; absent, GitHub refuses the query.
+        number = next(a[len("number="):] for a in args if a.startswith("number="))
+        node = state.get("timelines", {}).get(number)
+        if node is None:
+            sys.stderr.write("GraphQL: Could not resolve to an Issue with the number of %s.\n" % number)
+            sys.exit(1)
+        print(json.dumps(node))
+        sys.exit(0)
     if any("reviewThreads" in a for a in args):
         # The inline review threads, printed through --jq as the nodes array.
         if state.get("review_threads_error"):

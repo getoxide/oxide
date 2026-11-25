@@ -15,6 +15,14 @@ use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod timeline;
+use timeline::{Subject, Timeline};
+pub use timeline::{
+    TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
+    TimelineItem, TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
+    TimelineReview,
+};
+
 const INSTALL_GUIDANCE: &str =
     "Install the GitHub CLI (https://cli.github.com), then run `gh auth login`.";
 const LOGIN_GUIDANCE: &str = "The GitHub CLI is not logged in. Run `gh auth login` in a terminal.";
@@ -236,6 +244,13 @@ pub struct PullRequestDetail {
     pub delete_branch_on_merge: bool,
     /// The number of changed files.
     pub changed_files: u32,
+    /// GitHub's GraphQL node id of the pull request; empty when the timeline could not be read.
+    pub node_id: String,
+    /// Everyone GitHub counts as taking part in the conversation.
+    pub participants: Vec<String>,
+    /// Comments, reviews, commits and activity, oldest first. Only the comments and reviews
+    /// when GitHub refused the timeline query.
+    pub timeline: Vec<TimelineItem>,
 }
 
 /// The form a new pull request starts from.
@@ -778,6 +793,45 @@ fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
     entries
 }
 
+/// The timeline `gh pr view` can tell on its own: comments and reviews, oldest first.
+fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
+    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut items: Vec<TimelineItem> = list("comments")
+        .iter()
+        .map(|c| {
+            TimelineItem::Comment(TimelineComment {
+                id: text(&c["id"]),
+                author: text(&c["author"]["login"]),
+                body: text(&c["body"]),
+                created_at: text(&c["createdAt"]),
+            })
+        })
+        .collect();
+    for review in list("reviews") {
+        let Some(state) = review_state_from(review["state"].as_str()) else {
+            continue;
+        };
+        let body = text(&review["body"]);
+        if body.trim().is_empty() && state == ReviewState::Commented {
+            continue;
+        }
+        items.push(TimelineItem::Review(TimelineReview {
+            id: text(&review["id"]),
+            author: text(&review["author"]["login"]),
+            body,
+            created_at: text(&review["submittedAt"]),
+            state,
+        }));
+    }
+    let at = |item: &TimelineItem| match item {
+        TimelineItem::Comment(c) => c.created_at.clone(),
+        TimelineItem::Review(r) => r.created_at.clone(),
+        _ => String::new(),
+    };
+    items.sort_by_key(at);
+    items
+}
+
 /// A check run or a commit status, as `statusCheckRollup` lists them.
 fn check_from(v: &serde_json::Value) -> PullRequestCheck {
     let state = if v["__typename"].as_str() == Some("StatusContext") {
@@ -1046,30 +1100,43 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
          additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
     );
     // Independent round trips to GitHub: run them side by side.
-    let (view, settings, default_method, viewer, required) = std::thread::scope(|scope| {
-        let required = scope.spawn(|| required_check_names(gh, cwd, number));
-        let settings = scope.spawn(|| merge_settings(gh, cwd));
-        let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
-        let viewer = scope.spawn(|| viewer_login(gh, cwd));
-        let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
-        fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
-            handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        }
-        (
-            view,
-            join(settings),
-            join(default_method),
-            join(viewer),
-            join(required),
-        )
-    });
+    let (view, settings, default_method, viewer, required, timeline) =
+        std::thread::scope(|scope| {
+            let required = scope.spawn(|| required_check_names(gh, cwd, number));
+            let timeline =
+                scope.spawn(|| timeline::timeline(gh, cwd, Subject::PullRequest, number));
+            let settings = scope.spawn(|| merge_settings(gh, cwd));
+            let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
+            let viewer = scope.spawn(|| viewer_login(gh, cwd));
+            let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
+            fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            }
+            (
+                view,
+                join(settings),
+                join(default_method),
+                join(viewer),
+                join(required),
+                join(timeline),
+            )
+        });
     let v = parse(&view?)?;
     let (merge_methods, delete_branch_on_merge) = settings?;
 
     let pull_request = pull_request_from(&v);
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
+    let comments = conversation_from(&v);
+    let Timeline {
+        node_id,
+        participants,
+        items,
+    } = timeline.unwrap_or_else(|| Timeline {
+        items: fallback_timeline(&v),
+        ..Timeline::default()
+    });
     Ok(PullRequestDetail {
         phase: phase_from(&v),
         body: text(&v["body"]),
@@ -1082,7 +1149,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
                 check
             })
             .collect(),
-        comments: conversation_from(&v),
+        comments,
         merge_state: merge_state_from(&v),
         review_decision: match v["reviewDecision"].as_str() {
             Some("APPROVED") => Some(ReviewDecision::Approved),
@@ -1104,6 +1171,9 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         delete_branch_on_merge,
         changed_files: v["changedFiles"].as_u64().unwrap_or(0) as u32,
         pull_request,
+        node_id,
+        participants,
+        timeline: items,
     })
 }
 
@@ -1674,6 +1744,13 @@ pub struct IssueDetail {
     pub assignees: Vec<String>,
     /// The signed-in GitHub user.
     pub viewer: String,
+    /// GitHub's GraphQL node id of the issue; empty when the timeline could not be read.
+    pub node_id: String,
+    /// Everyone GitHub counts as taking part in the conversation.
+    pub participants: Vec<String>,
+    /// Comments and activity, oldest first. Only the comments when GitHub refused the
+    /// timeline query.
+    pub timeline: Vec<TimelineItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1891,18 +1968,46 @@ pub fn issue_templates(gh: &Gh, cwd: &Path) -> Result<Vec<IssueTemplateFile>> {
 pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
-    let (view, viewer) = std::thread::scope(|scope| {
+    let (view, viewer, timeline) = std::thread::scope(|scope| {
         let viewer = scope.spawn(|| viewer_login(gh, cwd));
+        let timeline = scope.spawn(|| timeline::timeline(gh, cwd, Subject::Issue, number));
         let view = gh.run(cwd, &["issue", "view", &n, "--json", ISSUE_DETAIL_FIELDS]);
-        (
-            view,
-            viewer
+        fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+            handle
                 .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-        )
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        }
+        (view, join(viewer), join(timeline))
     });
     let v = parse(&view?)?;
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
+    let comments: Vec<IssueComment> = list("comments")
+        .iter()
+        .map(|c| IssueComment {
+            id: text(&c["id"]),
+            author: text(&c["author"]["login"]),
+            body: text(&c["body"]),
+            created_at: text(&c["createdAt"]),
+        })
+        .collect();
+    let Timeline {
+        node_id,
+        participants,
+        items,
+    } = timeline.unwrap_or_else(|| Timeline {
+        items: comments
+            .iter()
+            .map(|c| {
+                TimelineItem::Comment(TimelineComment {
+                    id: c.id.clone(),
+                    author: c.author.clone(),
+                    body: c.body.clone(),
+                    created_at: c.created_at.clone(),
+                })
+            })
+            .collect(),
+        ..Timeline::default()
+    });
     Ok(IssueDetail {
         number: v["number"].as_u64().unwrap_or(0) as u32,
         title: text(&v["title"]),
@@ -1912,18 +2017,13 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         author: text(&v["author"]["login"]),
         url: text(&v["url"]),
         created_at: text(&v["createdAt"]),
-        comments: list("comments")
-            .iter()
-            .map(|c| IssueComment {
-                id: text(&c["id"]),
-                author: text(&c["author"]["login"]),
-                body: text(&c["body"]),
-                created_at: text(&c["createdAt"]),
-            })
-            .collect(),
+        comments,
         labels: labels_from(&v["labels"]),
         assignees: logins_from(&v["assignees"]),
         viewer: viewer.unwrap_or_default(),
+        node_id,
+        participants,
+        timeline: items,
     })
 }
 
