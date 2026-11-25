@@ -42,15 +42,21 @@ fn image_sources(html: &str) -> Vec<String> {
         while let Some(i) = tag_lower.get(search..).and_then(|r| r.find("src=")) {
             let i = search + i;
             search = i + 4;
-            if !tag_lower[..i].ends_with(|c: char| c.is_ascii_whitespace()) {
+            let after_space = tag_lower
+                .get(..i)
+                .is_some_and(|before| before.ends_with(|c: char| c.is_ascii_whitespace()));
+            if !after_space {
                 continue;
             }
-            let value = &tag[i + 4..];
+            let Some(value) = tag.get(i + 4..) else {
+                break;
+            };
             let Some(quote) = value.chars().next().filter(|c| *c == '"' || *c == '\'') else {
                 break;
             };
-            if let Some(close) = value[1..].find(quote) {
-                out.push(decode_entities(&value[1..=close]));
+            let quoted = value.get(1..).unwrap_or_default();
+            if let Some(src) = quoted.find(quote).and_then(|close| quoted.get(..close)) {
+                out.push(decode_entities(src));
             }
             break;
         }
@@ -543,6 +549,18 @@ mod tests {
             let parsed = url::Url::parse(url).unwrap();
             assert_eq!(allowed_hop(&parsed), ok, "{url}");
         }
+    }
+
+    #[test]
+    fn image_sources_survive_odd_and_non_ascii_tags() {
+        let html = "<p>é<IMG alt=\"ü\" SRC='https://a/1.png'>ß<img data-src=\"x\" src=\"https://a/2.png?a=1&amp;b=2\">\
+                    <img src=noquote><img src=\"é\"><img alt=x src=\"unterminated";
+        assert_eq!(
+            image_sources(html),
+            ["https://a/1.png", "https://a/2.png?a=1&b=2", "é"]
+        );
+        assert!(image_sources("<img").is_empty());
+        assert!(image_sources("<img src=").is_empty());
     }
 
     #[test]
