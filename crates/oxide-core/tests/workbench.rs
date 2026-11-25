@@ -528,11 +528,19 @@ fn a_failing_block_keeps_the_error_the_shell_printed() {
     core.run_terminal_block(terminal.id, "cd missing-oxide-dir/", "fails")
         .unwrap();
     let output = until(&core, terminal.id, &rx, "fails;end;");
-    let start = output.find("fails;start").unwrap();
-    let end = output.find("fails;end;").unwrap();
-    let block = &output[start..end];
-    assert!(block.to_lowercase().contains("no such file"), "{block:?}");
-    assert!(output[end..].starts_with("fails;end;1;"), "{output:?}");
+    // The markers themselves: PowerShell's line editor echoes the wrapper, which spells them out.
+    let start = output.find("\x1b]633;Oxide;fails;start\x07").unwrap();
+    let end = output.find("\x1b]633;Oxide;fails;end;").unwrap();
+    let block = output[start..end].to_lowercase();
+    // zsh and bash: "no such file or directory"; PowerShell: "... because it does not exist."
+    assert!(
+        block.contains("no such file") || block.contains("does not exist"),
+        "{block:?}"
+    );
+    assert!(
+        output[end..].starts_with("\x1b]633;Oxide;fails;end;1;"),
+        "{output:?}"
+    );
     core.close_terminal(terminal.id).unwrap();
 }
 
@@ -549,20 +557,34 @@ fn shell_completion_follows_the_directory_a_block_moved_the_shell_to() {
     core.run_terminal_block(terminal.id, &change, "away")
         .unwrap();
     until(&core, terminal.id, &rx, "away;end;0;");
+    // Folders end in `/` on POSIX only, and PowerShell lists files first: compare names.
+    let names = |result: &oxide_core::TerminalCompletion| {
+        let mut names: Vec<String> = result
+            .matches
+            .iter()
+            .map(|item| item.label.trim_end_matches(['/', '\\']).to_string())
+            .collect();
+        names.sort();
+        names
+    };
     let result = core.complete_terminal(terminal.id, "ls only", 7).unwrap();
-    let labels: Vec<_> = result
-        .matches
-        .iter()
-        .map(|item| item.label.as_str())
-        .collect();
-    assert_eq!(labels, ["only-here-dir/", "only-here.txt"], "{result:?}");
-    // Back in the project, its files again.
-    core.run_terminal_block(terminal.id, "cd -", "back")
-        .unwrap();
+    assert_eq!(
+        names(&result),
+        ["only-here-dir", "only-here.txt"],
+        "{result:?}"
+    );
+    // Back in the project, its files again (`cd -` is not in Windows PowerShell 5.1).
+    let project = temporary.path().join("project");
+    core.run_terminal_block(
+        terminal.id,
+        &format!("cd '{}'", project.to_string_lossy()),
+        "back",
+    )
+    .unwrap();
     until(&core, terminal.id, &rx, "back;end;0;");
     let result = core.complete_terminal(terminal.id, "ls sub", 6).unwrap();
     assert!(
-        result.matches.iter().any(|item| item.label == "subdir/"),
+        names(&result).iter().any(|name| name == "subdir"),
         "{result:?}"
     );
     core.close_terminal(terminal.id).unwrap();
