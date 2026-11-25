@@ -17,10 +17,23 @@ interface Entry {
   updatedAt?: number;
   /** Marked by `invalidateQueries` so even an unmounted entry revalidates on its next mount. */
   stale?: boolean;
+  /** Fetches that failed in a row; soft polls back off while it is above zero. */
+  failures?: number;
 }
 
 /** How long cached data is trusted before a mount revalidates it in the background. */
 export const QUERY_STALE_MS = 30_000;
+
+/** The first wait before a soft poll asks again after a failure; it doubles per failure in a row. */
+export const POLL_BACKOFF_BASE_MS = 5_000;
+/** The longest a soft poll waits after repeated failures (a rate limit, a network outage). */
+export const POLL_BACKOFF_MAX_MS = 300_000;
+
+/** How long soft polls of an entry wait after its last failure. */
+function backoffMs(failures: number): number {
+  if (failures <= 0) return 0;
+  return Math.min(POLL_BACKOFF_BASE_MS * 2 ** (failures - 1), POLL_BACKOFF_MAX_MS);
+}
 
 /** Entries kept per window session, least recently used first out. */
 const ENTRY_BUDGET = 200;
@@ -75,7 +88,13 @@ function run<T>(
         ? { data: result.data, updatedAt: Date.now(), stale: options.trust && !options.trust(result.data) }
         : // Nobody asked for a background fetch, so its failure is not trusted for the staleness
           // window: the next mount asks again (e.g. once the user has logged in to `gh`).
-          { data: previous?.data, error: result.error.message, updatedAt: Date.now(), stale: options.background },
+          {
+            data: previous?.data,
+            error: result.error.message,
+            updatedAt: Date.now(),
+            stale: options.background,
+            failures: (previous?.failures ?? 0) + 1,
+          },
     );
     notify(key);
     return result;
@@ -86,9 +105,12 @@ function run<T>(
   return settled;
 }
 
-/** A timer or focus tick: never overlaps a fetch already running for the key. */
+/** A timer or focus tick: never overlaps a fetch already running for the key, and waits longer
+ *  after each failure in a row so a rate limit or an outage is not hammered. */
 function softRefresh<T>(key: string, fetch: () => Promise<QueryResult<T>>): void {
   if (inflight.has(key)) return;
+  const entry = entries.get(key);
+  if (entry?.failures && entry.updatedAt !== undefined && Date.now() - entry.updatedAt < backoffMs(entry.failures)) return;
   run(key, fetch, false);
 }
 

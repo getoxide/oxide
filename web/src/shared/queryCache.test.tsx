@@ -2,7 +2,7 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearQueryCache, invalidateQueries, prefetchQuery, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
+import { clearQueryCache, invalidateQueries, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_MAX_MS, prefetchQuery, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -230,6 +230,58 @@ describe("query cache", () => {
     await poll("k", next, 3);
     expect(next).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: "two" });
+  });
+
+  it("backs soft polls off exponentially after consecutive failures, capped, until one succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      let token = 0;
+      const failing = vi.fn(async () => fail("API rate limit exceeded"));
+      await poll("k", failing, token);
+      expect(failing).toHaveBeenCalledTimes(1);
+
+      // One failure: polls wait one base step.
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(1);
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(2);
+
+      // Two failures: the wait doubles.
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(2);
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(3);
+
+      // Many failures: never longer than the cap.
+      for (let i = 0; i < 20; i++) {
+        await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+        await poll("k", failing, ++token);
+      }
+      const calls = failing.mock.calls.length;
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(calls + 1);
+
+      // A success resets it: the next poll goes straight through.
+      const healthy = vi.fn(async () => ok("back"));
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+      await poll("k", healthy, ++token);
+      await poll("k", healthy, ++token);
+      expect(healthy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hold the user's own refresh back while polls back off", async () => {
+    await poll("k", async () => fail("offline"), 0);
+    const fetcher = vi.fn(async () => ok("fresh"));
+    await act(async () => root.render(<Probe k="k" fetch={fetcher} staleMs={QUERY_STALE_MS} poll={0} refresh={1} />));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "fresh" });
   });
 
   it("stays bounded", async () => {
