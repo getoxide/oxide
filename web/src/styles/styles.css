@@ -342,7 +342,6 @@ html.macos .header,
 .terminal-item:hover:not(:disabled) { background: none; }
 .terminal-item[aria-current="true"] { color: var(--fg-bright); }
 .terminal-item[aria-current="true"] .terminal-item-title { font-weight: 500; }
-.terminal-item-title { font-weight: 500; }
 .terminal-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 /* Shortcut hints (shown while Ctrl/⌘ is held) float over their control and never take layout space. */
 :is(.btn, .tab, .icon-btn, .sidebar-footer, .terminal-item, .project-row .project) { position: relative; }
