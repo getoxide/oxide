@@ -247,7 +247,6 @@ export function TerminalWorkbench({
       if (id !== null) void commands.closeTerminal(id);
     };
     // A mode switch must never start a new shell.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, generation]);
 
   useEffect(() => {
