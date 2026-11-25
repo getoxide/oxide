@@ -43,6 +43,12 @@
   --red: #F27A72;
   --yellow: #E8B84F;
   --purple: #B79CF0;
+  /* Destructive fills (Delete): deeper than --red, a soft tint meant for text and icons that is
+     too light under white text. Each keeps --on-danger above 4.5:1. */
+  --danger: #C93B32;
+  --danger-hover: #B3322A;
+  --danger-active: #9C2B24;
+  --on-danger: #FFFFFF;
   /* Status text on its own tint: the plain status colour misses 4.5:1 once the tint lifts the surface. */
   --green-on-tint: color-mix(in srgb, var(--green) 70%, var(--fg-bright));
   --red-on-tint: color-mix(in srgb, var(--red) 70%, var(--fg-bright));
@@ -51,6 +57,12 @@
   font: 13px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
   color: var(--fg);
+}
+:root[data-appearance="light"] {
+  --danger: #C4281F;
+  --danger-hover: #A5201A;
+  --danger-active: #8E1B16;
+  --on-danger: #FFFFFF;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -947,13 +959,12 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .pr-views .pr-compose-box { justify-items: stretch; }
 .pr-views .pr-compose-box > button[type="submit"] { justify-self: end; }
 
-/* Destructive confirm: a deep crimson that keeps white text above 4.5:1 on dark and light alike
-   (the theme's --red is a soft tint meant for text and icons, too light under white). */
-.modal-actions button.danger { --danger: #C93B32; background: var(--danger); border-color: var(--danger); color: #fff; }
-.modal-actions button.danger:hover:not(:disabled) { background: #B3322A; border-color: #B3322A; }
-.modal-actions button.danger:active:not(:disabled) { background: #9C2B24; border-color: #9C2B24; }
-.modal-actions button.danger:focus-visible { outline-color: #fff; outline-offset: -3px; box-shadow: 0 0 0 2px var(--danger); }
-.modal-actions button.danger:disabled { background: var(--danger); border-color: var(--danger); color: #fff; opacity: .55; }
+/* Destructive confirm, from the theme's danger tokens. */
+.modal-actions button.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+.modal-actions button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+.modal-actions button.danger:active:not(:disabled) { background: var(--danger-active); border-color: var(--danger-active); }
+.modal-actions button.danger:focus-visible { outline-color: var(--on-danger); outline-offset: -3px; box-shadow: 0 0 0 2px var(--danger); }
+.modal-actions button.danger:disabled { background: var(--danger); border-color: var(--danger); color: var(--on-danger); opacity: .55; }
 .modal-actions button.danger.pending:disabled { opacity: 1; cursor: progress; }
 .comment-delete-dialog { width: min(400px, calc(100vw - 32px)); min-width: 0; gap: 14px; padding: 22px; }
 .comment-delete-dialog p { margin: 0; color: var(--dim); line-height: 1.5; }
