@@ -6,11 +6,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import {
-  HistoryIcon,
-  SearchIcon,
-  XIcon,
-} from "@primer/octicons-react";
+import { SearchIcon } from "@primer/octicons-react";
 import { commands, type TerminalCompletion } from "../bindings";
 import type { CommandHistory } from "./terminalBlocks";
 import { historyMatches } from "./terminalBlocks";
@@ -230,6 +226,10 @@ export function TerminalInput({
   return (
     <form
       className="terminal-command-composer"
+      onBlur={(event) => {
+        // Focus left the command line (a click elsewhere, another window): the list goes with it.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenu(null);
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (!disabled && input.trim()) {
@@ -245,40 +245,30 @@ export function TerminalInput({
           aria-label={
             menu === "history" ? "Command history" : "Shell completions"
           }
+          style={
+            menu === "completion" && completion
+              ? ({ "--terminal-menu-column": String(column(base.current.line, completion.replacementIndex)) } as React.CSSProperties)
+              : undefined
+          }
         >
-          <header>
-            {menu === "history" ? (
-              <>
-                <SearchIcon size={14} />
-                <input
-                  ref={search}
-                  aria-label="Search command history"
-                  placeholder="Search history…"
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setPrefixSearch(false);
-                    setIndex(0);
-                  }}
-                  onKeyDown={navigate}
-                />
-              </>
-            ) : (
-              <strong>Shell completions</strong>
-            )}
-            <span className="grow" />
-            <button
-              type="button"
-              className="icon-btn sm"
-              aria-label="Close suggestions"
-              onClick={() => {
-                setMenu(null);
-                textarea.current?.focus();
-              }}
-            >
-              <XIcon size={14} />
-            </button>
-          </header>
+          {menu === "history" && (
+            <div className="terminal-menu-search">
+              <SearchIcon size={12} />
+              <input
+                ref={search}
+                aria-label="Search command history"
+                placeholder="Search history…"
+                spellCheck={false}
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPrefixSearch(false);
+                  setIndex(0);
+                }}
+                onKeyDown={navigate}
+              />
+            </div>
+          )}
           <div
             id={`${id}-options`}
             role="listbox"
@@ -297,16 +287,10 @@ export function TerminalInput({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => apply(i)}
                   >
-                    <HistoryIcon size={13} />
                     <code>{entry.command}</code>
-                    <span>
-                      {entry.exitCode !== null && entry.exitCode !== 0
-                        ? `exit ${entry.exitCode}`
-                        : new Date(entry.at).toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                    </span>
+                    {entry.exitCode !== null && entry.exitCode !== 0 && (
+                      <span className="terminal-menu-note">exit {entry.exitCode}</span>
+                    )}
                   </button>
                 ))
               : completion?.matches.map((entry, i) => (
@@ -320,15 +304,14 @@ export function TerminalInput({
                     onClick={() => apply(i)}
                   >
                     <code>{entry.label}</code>
-                    <span title={entry.detail}>{entry.detail}</span>
+                    {/* Paths speak for themselves (a directory ends in /); other kinds get a muted note. */}
+                    {entry.detail !== "File" && entry.detail !== "Directory" && entry.detail && (
+                      <span className="terminal-menu-note">{entry.detail}</span>
+                    )}
                   </button>
                 ))}
-            {count === 0 && <p className="dim">No matching commands.</p>}
+            {count === 0 && <p className="terminal-menu-empty">No matching commands</p>}
           </div>
-          <footer>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> navigate <kbd>Enter</kbd> insert <kbd>Esc</kbd> dismiss
-          </footer>
         </div>
       )}
       <div className="terminal-command-entry">
@@ -412,4 +395,9 @@ export function TerminalInput({
       )}
     </form>
   );
+}
+
+/** The column `at` falls on, within its own line of a multi-line command. */
+function column(line: string, at: number): number {
+  return at - (line.lastIndexOf("\n", at - 1) + 1);
 }

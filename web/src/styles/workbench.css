@@ -692,72 +692,101 @@
   }
 }
 
+/* Completions and history: a compact list right above the command line, starting at the word it
+   completes, drawn in the terminal's own type. No title, close button or key hints. */
 .terminal-input-menu {
+  --terminal-menu-column: 0;
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: min(760px, 100%);
+  bottom: calc(100% - 2px);
+  left: min(
+    calc(var(--terminal-gutter) + var(--terminal-menu-column) * 1ch - 10px),
+    calc(100% - 20px - min(360px, 100% - var(--terminal-gutter) - 20px))
+  );
+  width: max-content;
+  min-width: min(220px, calc(100% - var(--terminal-gutter) - 20px));
+  max-width: min(360px, calc(100% - var(--terminal-gutter) - 20px));
   z-index: 30;
+  padding: 3px;
+  font-family: var(--font-terminal, var(--mono));
+  font-size: var(--font-terminal-size, 13px);
   background: var(--bg2);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.22);
   overflow: hidden;
 }
-.terminal-input-menu > header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.terminal-input-menu header input {
-  background: transparent;
-  border: 0;
-  flex: 1;
-  min-width: 0;
-}
-.terminal-input-menu > [role="listbox"] {
-  max-height: min(320px, 45vh);
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-}
-.terminal-input-menu [role="option"] {
-  width: 100%;
-  background: none;
-  border: 0;
-  border-radius: 4px;
-  padding: 6px 10px;
-  justify-content: flex-start;
-  gap: 10px;
-  text-align: left;
-}
-.terminal-input-menu [role="option"][aria-selected="true"] {
-  background: var(--bg4);
-}
-.terminal-input-menu [role="option"] code {
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-.terminal-input-menu [role="option"] > span {
-  max-width: 40%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 11px;
-  color: var(--dim);
-}
-.terminal-input-menu footer {
-  padding: 8px 12px;
-  font-size: 11px;
-  color: var(--dim);
+.terminal-menu-search {
   display: flex;
   align-items: center;
   gap: 6px;
-  border-top: 1px solid var(--line);
+  padding: 3px 6px 5px;
+  margin-bottom: 3px;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line);
+}
+.terminal-menu-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: 0;
+}
+.terminal-input-menu > [role="listbox"] {
+  max-height: min(264px, 40vh);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-input-menu [role="option"] {
+  width: 100%;
+  min-height: 0;
+  height: 22px;
+  padding: 0 6px;
+  gap: 12px;
+  justify-content: flex-start;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+.terminal-input-menu [role="option"]:hover {
+  background: color-mix(in srgb, var(--fg-bright) 5%, transparent);
+}
+.terminal-input-menu [role="option"][aria-selected="true"] {
+  color: var(--fg-bright);
+  background: color-mix(in srgb, var(--fg-bright) 10%, transparent);
+}
+.terminal-input-menu [role="option"] code {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terminal-menu-note {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.terminal-menu-empty {
+  margin: 0;
+  padding: 3px 6px;
+  color: var(--faint);
 }
 .editor-loading-skeleton {
   position: absolute;

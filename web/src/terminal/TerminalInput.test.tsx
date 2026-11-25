@@ -176,3 +176,101 @@ it("runs on Enter from an inline command line with no chat-style send button, an
   expect(runs).toEqual(["echo one\necho two"]);
   expect(input().value).toBe("");
 });
+
+const listing = {
+  replacementIndex: 3,
+  replacementLength: 1,
+  matches: [
+    { text: "src/", label: "src/", detail: "Directory" },
+    { text: "sample.txt", label: "sample.txt", detail: "File" },
+  ],
+};
+
+it("lists shell completions as a compact list at the word being completed, directories ending in /", async () => {
+  mockIPC(() => listing);
+  await act(async () =>
+    root.render(
+      <TerminalInput
+        ref={createRef<TerminalInputHandle>()}
+        history={[]}
+        sessionId={1}
+        disabled={false}
+        visible
+        fresh={false}
+        onRun={() => {}}
+      />,
+    ),
+  );
+  await type("cd s");
+  await key("Tab");
+  const menu = container.querySelector<HTMLElement>(".terminal-input-menu")!;
+  // A list, not a card: no title, close button or key hints.
+  expect(menu.querySelector("header, footer, kbd")).toBeNull();
+  expect(menu.querySelector('[aria-label="Close suggestions"]')).toBeNull();
+  expect(menu.textContent).not.toContain("Shell completions");
+  const options = [...menu.querySelectorAll('[role="option"]')].map((option) => option.textContent);
+  // The kind shows as the trailing / of a directory, not as a word.
+  expect(options).toEqual(["src/", "sample.txt"]);
+  // Anchored under the caret's word: it starts at the column the completion replaces.
+  expect(menu.style.getPropertyValue("--terminal-menu-column")).toBe("3");
+
+  await key("ArrowDown");
+  await key("Enter");
+  expect(input().value).toBe("cd sample.txt");
+  await type("cd s");
+  await key("Tab");
+  await key("Escape");
+  expect(container.querySelector(".terminal-input-menu")).toBeNull();
+});
+
+it("dismisses the completion list when the command line loses focus", async () => {
+  mockIPC(() => listing);
+  await act(async () =>
+    root.render(
+      <TerminalInput
+        ref={createRef<TerminalInputHandle>()}
+        history={[]}
+        sessionId={1}
+        disabled={false}
+        visible
+        fresh={false}
+        onRun={() => {}}
+      />,
+    ),
+  );
+  await type("cd s");
+  await key("Tab");
+  expect(container.querySelector(".terminal-input-menu")).not.toBeNull();
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  await act(async () => {
+    input().focus();
+    outside.focus();
+  });
+  expect(container.querySelector(".terminal-input-menu")).toBeNull();
+  outside.remove();
+});
+
+it("shows history in the same compact list: a search field, the commands, no close button or key hints", async () => {
+  await act(async () =>
+    root.render(
+      <TerminalInput
+        ref={createRef<TerminalInputHandle>()}
+        history={history}
+        sessionId={1}
+        disabled={false}
+        visible
+        fresh={false}
+        onRun={() => {}}
+      />,
+    ),
+  );
+  await key("ArrowUp");
+  const menu = container.querySelector<HTMLElement>(".terminal-input-menu")!;
+  expect(menu.querySelector('[aria-label="Search command history"]')).not.toBeNull();
+  expect(menu.querySelector('[aria-label="Close suggestions"], footer, kbd')).toBeNull();
+  expect([...menu.querySelectorAll('[role="option"] code')].map((code) => code.textContent)).toEqual([
+    "git diff",
+    "git status",
+  ]);
+});
