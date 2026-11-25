@@ -2,16 +2,14 @@ import {
   AlertIcon,
   CheckCircleFillIcon,
   DotFillIcon,
-  GearIcon,
   GitMergeIcon,
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   SyncIcon,
   XCircleFillIcon,
 } from "@primer/octicons-react";
-import { useCallback, useRef, useState } from "react";
 import type { MergeMethod } from "../bindings";
-import { Popover } from "../shared/Popover";
+import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { mergeLabel, type MergeRequirement, type Tone } from "./pullRequestReview";
 
 /** The action in flight. Its button keeps its colour and shows a spinner; the others wait. */
@@ -93,13 +91,15 @@ interface MergeFooterProps {
   status: string;
   onMethod: (method: MergeMethod) => void;
   onDeleteBranch: (on: boolean) => void;
-  onMerge: () => void;
+  /** Merges now, with this method (the menu's pick, remembered for the next time). */
+  onMerge: (method: MergeMethod) => void;
   onAutoMerge: () => void;
   onReady: () => void;
   onClose: () => void;
 }
 
-/** Always in view: the verdict, the merge button, and its options out of the way behind a gear. */
+/** Always in view: the verdict, one split button to merge (its menu holds the other methods,
+ *  Merge when ready and Delete branch), and Close beside it. */
 export function MergeFooter(p: MergeFooterProps) {
   const closeButton = (
     <button
@@ -113,9 +113,6 @@ export function MergeFooter(p: MergeFooterProps) {
       </Working>
     </button>
   );
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const close = useCallback(() => setOpen(false), []);
 
   if (p.merged) {
     return (
@@ -151,6 +148,11 @@ export function MergeFooter(p: MergeFooterProps) {
       </footer>
     );
   }
+  // Blocked only by a wait: what the user can do now is leave the merge to GitHub.
+  const auto = p.canAutoMerge || p.autoMerge;
+  const method = p.method;
+  const pickHelp = (m: MergeMethod) =>
+    p.canMerge ? METHOD_HELP[m] : p.canAutoMerge ? "Waits for the checks and reviews, then merges this way." : METHOD_HELP[m];
   return (
     <footer className="pr-merge" aria-label="Merge">
       <p className={`pr-merge-status ${p.tone}`}>
@@ -158,73 +160,52 @@ export function MergeFooter(p: MergeFooterProps) {
         {p.status}
       </p>
       <div className="pr-merge-row">
-        <button
-          className={`primary${p.tone === "bad" ? " risky" : ""}${p.pending === "merge" ? " pending" : ""}`}
-          disabled={!p.canMerge}
-          onClick={p.onMerge}
+        <SplitButton
+          label={
+            auto ? (
+              <Working on={p.pending === "auto"} label="Turning on…">
+                <GitMergeIcon size={14} /> {p.autoMerge ? "Auto-merge on" : "Merge when ready"}
+              </Working>
+            ) : (
+              <Working on={p.pending === "merge"} label="Merging…">
+                <GitMergeIcon size={14} /> {mergeLabel(method)}
+              </Working>
+            )
+          }
+          title={auto ? "Merge by itself once the required checks pass" : undefined}
+          onClick={auto ? p.onAutoMerge : () => p.onMerge(method)}
+          disabled={p.autoMerge || (auto ? p.busy : !p.canMerge)}
+          pending={p.pending === "merge" || p.pending === "auto"}
+          menuDisabled={p.busy}
+          risky={p.tone === "bad" && !auto}
+          menuLabel="Merge options"
+          width={320}
         >
-          <Working on={p.pending === "merge"} label="Merging…">
-            <GitMergeIcon size={14} /> {mergeLabel(p.method)}
-          </Working>
-        </button>
-        
-        {p.canAutoMerge && (
-          <button
-            className={p.pending === "auto" ? "pending" : undefined}
-            disabled={p.busy || p.autoMerge}
-            onClick={p.onAutoMerge}
-            title="Merge by itself once the required checks pass"
-          >
-            <Working on={p.pending === "auto"} label="Turning on…">
-              {p.autoMerge ? "Auto-merge on" : "Merge when ready"}
-            </Working>
-          </button>
-        )}
-        {closeButton}
-        <button
-          ref={trigger}
-          className="icon-btn"
-          aria-label="Merge options"
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          title="Merge options"
-          onClick={() => setOpen((o) => !o)}
-        >
-          <GearIcon size={16} />
-        </button>
-      </div>
-      {p.autoMerge && <p className="pr-merge-note">GitHub will merge it once the checks pass.</p>}
-      {p.deleteBranch && !p.autoMerge && (
-        <p className="pr-merge-note">
-          <code>{p.head}</code> will be deleted after merging.
-        </p>
-      )}
-      {open && (
-        <Popover anchor={trigger} label="Merge options" onClose={close} width={300}>
-          <div className="pr-options">
-            <h5>Merge method</h5>
-            <div role="radiogroup" aria-label="Merge method">
-              {p.methods.map((m) => (
-                <label key={m} className="pr-option" data-checked={m === p.method}>
-                  <input
-                    type="radio"
-                    name="merge-method"
-                    checked={m === p.method}
-                    disabled={p.busy}
-                    onChange={() => p.onMethod(m)}
-                  />
-                  <span>
-                    <strong>{mergeLabel(m)}</strong>
-                    <small>{METHOD_HELP[m]}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <h5>After merging</h5>
+          <SplitMenu label="Merge method">
+            {p.methods.map((m) => (
+              <SplitMenuItem
+                key={m}
+                title={mergeLabel(m)}
+                help={pickHelp(m)}
+                checked={m === method}
+                onSelect={() => (p.canMerge ? p.onMerge(m) : p.onMethod(m))}
+              />
+            ))}
+            {p.canAutoMerge && !p.autoMerge && (
+              <SplitMenuItem
+                title="Merge when ready"
+                help="GitHub merges it by itself once the required checks pass."
+                onSelect={p.onAutoMerge}
+              />
+            )}
+          </SplitMenu>
+          <div className="split-menu-section">
             <div className="pr-switch-row">
               <span>
                 <strong id="delete-branch-label">Delete branch</strong>
-                <small>Removes <code>{p.head}</code> from GitHub.</small>
+                <small>
+                  Removes <code>{p.head}</code> from GitHub after merging.
+                </small>
               </span>
               <button
                 role="switch"
@@ -236,7 +217,14 @@ export function MergeFooter(p: MergeFooterProps) {
               />
             </div>
           </div>
-        </Popover>
+        </SplitButton>
+        {closeButton}
+      </div>
+      {p.autoMerge && <p className="pr-merge-note">GitHub will merge it once the checks pass.</p>}
+      {p.deleteBranch && !p.autoMerge && (
+        <p className="pr-merge-note">
+          <code>{p.head}</code> will be deleted after merging.
+        </p>
       )}
     </footer>
   );

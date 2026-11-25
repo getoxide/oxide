@@ -204,23 +204,102 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
 });
 
-it("lets the user pick a close reason radio option in the popover before closing", async () => {
+it("closes as not planned with one click in the close split-button's menu, the comment going along", async () => {
   vi.spyOn(commands, "closeIssue").mockResolvedValue({ status: "ok", data: null });
   await render();
   await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
 
-  const reasonBtn = host.querySelector<HTMLButtonElement>('button[aria-label="Close reason"]')!;
-  await act(async () => reasonBtn.click());
+  const box = host.querySelector<HTMLTextAreaElement>(".pr-compose textarea, textarea")!;
+  const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    set.call(box, "Duplicate of #3");
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(button("Close with comment")).toBeDefined();
 
-  const radios = [...document.body.querySelectorAll<HTMLInputElement>('[role="radiogroup"] input[type="radio"]')];
-  expect(radios).toHaveLength(2);
-  expect(radios[0].checked).toBe(true);
-  expect(radios[1].checked).toBe(false);
+  const chevron = host.querySelector<HTMLButtonElement>('.split-btn button[aria-label="Close options"]')!;
+  expect(chevron.getAttribute("aria-haspopup")).toBe("menu");
+  await act(async () => chevron.click());
+  const items = [...document.body.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"]')];
+  expect(items.map((i) => i.querySelector("strong")!.textContent)).toEqual(["Close as completed", "Close as not planned"]);
+  expect(items[0].getAttribute("aria-checked")).toBe("true");
 
-  await act(async () => radios[1].click());
-  expect(document.body.querySelector('[role="radiogroup"]')).toBeNull();
-  await act(async () => button("Close as not planned").click());
-  expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "notPlanned", "");
+  await act(async () => items[1].click());
+  expect(commands.closeIssue).toHaveBeenCalledTimes(1);
+  expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "notPlanned", "Duplicate of #3");
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+});
+
+it("dismisses the close menu with Escape without closing the issue", async () => {
+  vi.spyOn(commands, "closeIssue").mockResolvedValue({ status: "ok", data: null });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  const chevron = host.querySelector<HTMLButtonElement>('button[aria-label="Close options"]')!;
+  await act(async () => chevron.click());
+  const menu = document.body.querySelector('[role="menu"]')!;
+  await act(async () => void menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+  expect(document.activeElement).toBe(chevron);
+  expect(commands.closeIssue).not.toHaveBeenCalled();
+});
+
+it("toggles an assignee with feedback on its own row while the rest of the list stays usable", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob"], labels: [] } });
+  let finish!: () => void;
+  const edit = vi.spyOn(commands, "editIssue").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  await act(async () => (host.querySelector('[aria-label="Edit assignees"]') as HTMLButtonElement).click());
+  const row = (name: string) =>
+    [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent === name)!;
+  expect(row("ana").getAttribute("aria-selected")).toBe("false");
+
+  await act(async () => row("ana").querySelector("button")!.click());
+  expect(edit).toHaveBeenCalledWith(1, 7, expect.objectContaining({ addAssignees: ["ana"] }));
+  // The clicked row turns on at once and says it is working; the others stay as they were, clickable.
+  expect(row("ana").getAttribute("aria-selected")).toBe("true");
+  expect(row("ana").getAttribute("aria-busy")).toBe("true");
+  expect(row("bob").querySelector("button")!.disabled).toBe(false);
+  expect(row("bob").hasAttribute("aria-busy")).toBe(false);
+
+  vi.mocked(commands.issueDetail).mockResolvedValue({ status: "ok", data: detail({ assignees: ["bob", "ana"] }) });
+  await act(async () => finish());
+  expect(row("ana").getAttribute("aria-selected")).toBe("true");
+  expect(row("ana").hasAttribute("aria-busy")).toBe(false);
+  expect(row("ana").querySelector("button")!.disabled).toBe(false);
+});
+
+it("puts a failed assignee toggle back and says why", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob"], labels: [] } });
+  vi.spyOn(commands, "editIssue").mockResolvedValue({ status: "error", error: { message: "no access" } });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  await act(async () => (host.querySelector('[aria-label="Edit assignees"]') as HTMLButtonElement).click());
+  const ana = () => [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent === "ana")!;
+  await act(async () => ana().querySelector("button")!.click());
+  expect(ana().getAttribute("aria-selected")).toBe("false");
+  expect(ana().hasAttribute("aria-busy")).toBe(false);
+  expect(host.textContent).toContain("no access");
+});
+
+it("assigns yourself with the link saying it is working", async () => {
+  vi.mocked(commands.issueDetail).mockResolvedValue({ status: "ok", data: detail({ assignees: [] }) });
+  let finish!: () => void;
+  const edit = vi.spyOn(commands, "editIssue").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  await act(async () => button("assign yourself").click());
+  expect(edit).toHaveBeenCalledWith(1, 7, expect.objectContaining({ addAssignees: ["me"] }));
+  const link = host.querySelector<HTMLButtonElement>(".pr-field-empty button.link")!;
+  expect(link.getAttribute("aria-busy")).toBe("true");
+  expect(link.textContent).toContain("Assigning");
+  // Only the link waits: the rest of the issue stays editable.
+  expect(host.querySelector<HTMLButtonElement>('[aria-label="Edit title"]')!.disabled).toBe(false);
+  await act(async () => finish());
 });
 
 it("offers to reopen a closed issue", async () => {

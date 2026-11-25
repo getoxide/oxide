@@ -6,6 +6,7 @@ import {
   CommentIcon,
   GearIcon,
   SkipIcon,
+  SyncIcon,
   XCircleFillIcon,
 } from "@primer/octicons-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -181,9 +182,7 @@ export function PullRequestPeople({ projectId, detail, editable, busy, onEdit, o
             {editable && detail.viewer && (
               <>
                 {" – "}
-                <button className="link" disabled={busy} onClick={() => void onEdit({ addAssignees: [detail.viewer] })}>
-                  assign yourself
-                </button>
+                <AssignYourself disabled={busy} onAssign={() => onEdit({ addAssignees: [detail.viewer] })} />
               </>
             )}
           </p>
@@ -270,6 +269,28 @@ export function Field({
   );
 }
 
+/** "assign yourself": the link alone shows the work, so the rest of the page stays usable. */
+export function AssignYourself({ disabled, onAssign }: { disabled: boolean; onAssign: () => Promise<boolean> }) {
+  const [assigning, setAssigning] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
+  return (
+    <button
+      className={`link${assigning ? " pending" : ""}`}
+      disabled={disabled || assigning}
+      aria-busy={assigning || undefined}
+      onClick={() => {
+        setAssigning(true);
+        void onAssign().finally(() => {
+          if (mounted.current) setAssigning(false);
+        });
+      }}
+    >
+      {assigning ? "Assigning…" : "assign yourself"}
+    </button>
+  );
+}
+
 interface PickerItem {
   key: string;
   label: string;
@@ -297,7 +318,34 @@ export function Picker({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
+  // The rows the user just toggled: the state they asked for, shown at once, and whether GitHub is still on it.
+  const [toggled, setToggled] = useState<ReadonlyMap<string, { on: boolean; running: boolean }>>(new Map());
   useEffect(onOpen, [onOpen]);
+  // Once the reloaded selection shows a toggle, the row has nothing left to pretend: forget it as
+  // soon as the selection changes (adjusting state while rendering, not in an effect).
+  const selectedKey = selected.join("\n");
+  const [seenSelected, setSeenSelected] = useState(selectedKey);
+  if (seenSelected !== selectedKey) {
+    setSeenSelected(selectedKey);
+    const settled = [...toggled].filter(([key, t]) => !t.running && selected.includes(key) === t.on);
+    if (settled.length > 0) {
+      const next = new Map(toggled);
+      for (const [key] of settled) next.delete(key);
+      setToggled(next);
+    }
+  }
+
+  async function toggle(key: string, on: boolean) {
+    setToggled((current) => new Map(current).set(key, { on, running: true }));
+    const ok = await onToggle(key, on);
+    setToggled((current) => {
+      const next = new Map(current);
+      if (ok) next.set(key, { on, running: false });
+      else next.delete(key);
+      return next;
+    });
+  }
+
   const all = candidates.state === "ready" ? items(candidates.data) : [];
   // A reviewer GitHub reports but doesn't list as assignable (a team, say) stays removable.
   const known = new Set(all.map((i) => i.key));
@@ -327,16 +375,23 @@ export function Picker({
       {candidates.state === "ready" && shown.length === 0 && <p className="pr-field-empty">Nothing matches.</p>}
       <ul role="listbox" aria-multiselectable aria-label={title}>
         {shown.map((item) => {
-          const on = selected.includes(item.key);
+          const pending = toggled.get(item.key);
+          const on = pending ? pending.on : selected.includes(item.key);
+          const running = pending?.running === true;
           return (
-            <li key={item.key} role="option" aria-selected={on}>
-              <button disabled={busy} onClick={() => void onToggle(item.key, !on)}>
+            <li key={item.key} role="option" aria-selected={on} aria-busy={running || undefined}>
+              <button
+                className={running ? "pending" : undefined}
+                disabled={busy || running}
+                onClick={() => void toggle(item.key, !on)}
+              >
                 <span className="pr-picker-check">{on && <CheckIcon size={14} />}</span>
                 {item.login !== undefined && <Avatar login={item.login} size={18} />}
                 {item.color !== undefined && (
                   <span className="pr-swatch" style={{ background: HEX.test(item.color) ? `#${item.color}` : "#9A9892" }} />
                 )}
                 <span className="pr-person">{item.label}</span>
+                {running && <SyncIcon size={12} className="spin pr-picker-spin" aria-hidden />}
               </button>
             </li>
           );
