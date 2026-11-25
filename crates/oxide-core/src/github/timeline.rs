@@ -463,7 +463,10 @@ impl TimelineItem {
 
 /// Adds to `items` each comment and review of `conversation` (oldest first, as `gh` read them)
 /// that the timeline query did not return, in its place by time, so none can go missing when
-/// the timeline was cut short or could not be read.
+/// the timeline was cut short or could not be read. Each lands before the first later entry
+/// that follows its predecessor: GitHub orders a commit by when it was pushed but dates it by
+/// `committedAt`, which may be older than its neighbours, so such a commit never pulls an
+/// entry back past the ones before it.
 pub(super) fn merge_conversation(items: &mut Vec<TimelineItem>, conversation: Vec<TimelineItem>) {
     let known: std::collections::HashSet<String> = items
         .iter()

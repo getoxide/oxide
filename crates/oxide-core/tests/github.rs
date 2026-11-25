@@ -1485,6 +1485,45 @@ fn a_polled_pull_request_detail_reads_only_the_first_timeline_page() {
 }
 
 #[test]
+fn a_comment_missing_from_the_timeline_lands_by_time_after_an_older_commit_pushed_later() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let comment = |i: usize| {
+        serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "reviewer"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+    };
+    pr["comments"] = serde_json::json!([comment(10), comment(20), comment(30)]);
+    pr["reviews"] = serde_json::json!([]);
+    let node = |i: usize| {
+        let mut c = comment(i);
+        c["__typename"] = "IssueComment".into();
+        c
+    };
+    // The commit was made long before it was pushed, between the comments 10 and 30.
+    let commit = serde_json::json!({"__typename": "PullRequestCommit", "commit": {
+        "oid": "a".repeat(40), "abbreviatedOid": "aaaaaaa", "messageHeadline": "Old work",
+        "committedDate": at_second(1), "author": {"name": "bob"}}});
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] = serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": [
+        node(10), commit, node(30)
+    ]}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let order: Vec<String> = detail
+        .timeline
+        .iter()
+        .map(|item| match item {
+            TimelineItem::Comment(c) => c.id.clone(),
+            TimelineItem::Commit(c) => c.abbreviated_oid.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(order, ["IC_10", "aaaaaaa", "IC_20", "IC_30"]);
+}
+
+#[test]
 fn a_timeline_beyond_the_page_cap_is_flagged_and_keeps_every_comment_and_review() {
     use oxide_core::TimelineItem;
     let f = fixture();
