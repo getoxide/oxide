@@ -526,6 +526,25 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
 }
 
 #[test]
+fn a_failing_block_keeps_the_error_the_shell_printed() {
+    let (_temporary, core, id) = fixture();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    core.run_terminal_block(terminal.id, "cd missing-oxide-dir/", "fails")
+        .unwrap();
+    let output = until(&core, terminal.id, &rx, "fails;end;");
+    let start = output.find("fails;start").unwrap();
+    let end = output.find("fails;end;").unwrap();
+    let block = &output[start..end];
+    assert!(
+        block.to_lowercase().contains("no such file"),
+        "{block:?}"
+    );
+    assert!(output[end..].starts_with("fails;end;1;"), "{output:?}");
+    core.close_terminal(terminal.id).unwrap();
+}
+
+#[test]
 fn interrupting_a_program_keeps_the_shell_usable() {
     let (_temporary, core, id) = fixture();
     let terminal = core.start_block_terminal(id).unwrap();

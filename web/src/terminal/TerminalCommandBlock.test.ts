@@ -26,6 +26,7 @@ interface TerminalInstance {
   open(): void;
   write(data: string): void;
   written: string[];
+  shownLines(): string[];
   paste(): void;
   focus(): void;
   blur(): void;
@@ -41,6 +42,8 @@ const dataListeners: Array<(data: string) => void> = [];
 const focused: number[] = [];
 let nextRows = 24;
 let nextCols = 80;
+// When set, fit() sizes the terminal to its host element as the real FitAddon does (16px rows).
+let fitToHost = false;
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class implements TerminalInstance {
@@ -69,8 +72,16 @@ vi.mock("@xterm/xterm", () => ({
       instances.push(this);
     }
     written: string[] = [];
+    host: HTMLElement | null = null;
     loadAddon() {}
-    open() {}
+    open(element: HTMLElement) {
+      this.host = element;
+    }
+    /** The rows xterm draws: like xterm, it scrolls so the cursor row stays on screen. */
+    shownLines() {
+      const top = Math.max(0, this.buffer.active.cursorY - this.rows + 1);
+      return this.lines.slice(top, top + this.rows);
+    }
     write(data: string) {
       this.written.push(data);
       // A line-oriented model of the buffer: enough to know which rows hold text and where the cursor is.
@@ -97,7 +108,10 @@ vi.mock("@xterm/addon-fit", () => ({
     fit() {
       fitCalls.push(1);
       const current = instances.at(-1);
-      if (current) {
+      if (current && fitToHost && current.host) {
+        current.rows = Math.max(1, Math.floor(parseFloat(current.host.style.height) / 16));
+        current.cols = nextCols;
+      } else if (current) {
         current.rows = nextRows;
         current.cols = nextCols;
       }
@@ -148,6 +162,7 @@ beforeEach(() => {
   focused.length = 0;
   nextRows = 24;
   nextCols = 80;
+  fitToHost = false;
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
     window.setTimeout(() => cb(0), 0),
   );
@@ -586,4 +601,33 @@ it("keeps the cursor row of a running block, where the program is still typing",
     await new Promise((r) => setTimeout(r, 20));
   });
   expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe("32px");
+});
+
+it.each([
+  ["a failed cd", "cd: no such file or directory: tests/\r\n", 1],
+  ["a command not found", "zsh: command not found: prova\r\n", 127],
+  ["two lines", "first\r\nsecond\r\n", 0],
+])("shows the output of an ended block in the rows it keeps: %s", async (_, output, exitCode) => {
+  fitToHost = true;
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output, ended: true, exitCode }),
+        active: false,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  const clip = mount.querySelector<HTMLElement>(".terminal-output-clip")!;
+  // What the reader sees: the rows xterm draws, cut to the clip.
+  const seen = instances[0].shownLines().slice(0, parseFloat(clip.style.height) / 16);
+  const expected = output.split("\r\n").filter(Boolean);
+  expect(seen).toEqual(expected);
 });
