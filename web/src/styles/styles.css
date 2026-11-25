@@ -822,6 +822,7 @@ html.macos .header,
 .pr-create-draft { display: flex; gap: 8px; align-items: center; }
 .pr-create > p { margin: 0; line-height: 1.6; }
 .pr-create > .primary { justify-content: center; flex: none; }
+.pr-create > .pr-create-hint { color: var(--fg); overflow-wrap: anywhere; }
 .pr-create-error { color: var(--red); overflow-wrap: anywhere; }
 .pr-create-error pre { white-space: pre-wrap; font-size: 12px; }
 @keyframes project-arrive {
