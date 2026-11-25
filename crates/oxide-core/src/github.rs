@@ -292,12 +292,15 @@ pub struct Gh {
     ready_at: Mutex<Option<Instant>>,
     /// The last `gh auth status` outcome and when it finished. Held while a check runs, so
     /// callers that asked meanwhile wait for it and share its answer instead of starting their own.
-    auth_check: Mutex<Option<(Instant, (GithubAvailability, Option<String>))>>,
+    auth_check: Mutex<Option<(Instant, AuthOutcome)>>,
     default_branches: Cached<PathBuf, String>,
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
     viewer_logins: Cached<(), Option<String>>,
 }
+
+/// Whether `gh` can be used, and if not, what to tell the user.
+type AuthOutcome = (GithubAvailability, Option<String>);
 
 /// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
 /// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
@@ -975,7 +978,9 @@ fn required_check_names(gh: &Gh, cwd: &Path, number: u32) -> Vec<String> {
 /// The method the web merge box preselects for the signed-in user, if GitHub says.
 fn viewer_default_merge_method(gh: &Gh, cwd: &Path) -> Option<MergeMethod> {
     gh.default_merge_methods
-        .get_or(&cwd.to_path_buf(), || read_viewer_default_merge_method(gh, cwd))
+        .get_or(&cwd.to_path_buf(), || {
+            read_viewer_default_merge_method(gh, cwd)
+        })
         .ok()?
 }
 
