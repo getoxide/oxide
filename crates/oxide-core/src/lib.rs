@@ -38,7 +38,7 @@ pub use github::{
     IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
     PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
     PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewer, ReviewDecision, ReviewState, TimelineAction, TimelineClosed,
+    PullRequestReviewer, ReviewDecision, ReviewState, SignedImage, TimelineAction, TimelineClosed,
     TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem, TimelineLabel, TimelineMerge,
     TimelinePerson, TimelineReference, TimelineRename, TimelineReview,
 };

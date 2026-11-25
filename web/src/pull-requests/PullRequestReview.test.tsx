@@ -50,6 +50,7 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     changedFiles: 3,
     nodeId: "PR_174",
     participants: [],
+    signedImages: [],
     timeline: [
       { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
       { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z" },

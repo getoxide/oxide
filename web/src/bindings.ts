@@ -210,6 +210,8 @@ export type IssueDetail_Deserialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**  Signed URLs for the private user attachments in the description and comments. */
+	signedImages: SignedImage[],
 };
 
 export type IssueDetail_Serialize = {
@@ -230,6 +232,8 @@ export type IssueDetail_Serialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**  Signed URLs for the private user attachments in the description and comments. */
+	signedImages: SignedImage[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -440,6 +444,8 @@ export type PullRequestDetail_Deserialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**  Signed URLs for the private user attachments in the description, comments and reviews. */
+	signedImages: SignedImage[],
 };
 
 export type PullRequestDetail_Serialize = {
@@ -472,6 +478,8 @@ export type PullRequestDetail_Serialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**  Signed URLs for the private user attachments in the description, comments and reviews. */
+	signedImages: SignedImage[],
 };
 
 export type PullRequestDraft = PullRequestDraft_Serialize | PullRequestDraft_Deserialize;
@@ -540,6 +548,15 @@ export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 export type ReviewState = "requested" | "approved" | "changesRequested" | "commented" | "dismissed";
 
 export type ShellKind = "default" | "zsh" | "bash" | "powershell" | "pwsh";
+
+/**
+ *  A `https://github.com/user-attachments/assets/<id>` URL and the short-lived signed URL that
+ *  loads it without the user's token.
+ */
+export type SignedImage = {
+	url: string,
+	signedUrl: string,
+};
 
 export type Terminal = {
 	id: number,

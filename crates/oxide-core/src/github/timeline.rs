@@ -1,6 +1,7 @@
 //! The Activity Timeline of an issue or a pull request: its comments, reviews, commits and
 //! events in the order GitHub shows them, read through one `gh api graphql` round trip.
 
+use super::image::{SignedImage, signed_images};
 use super::{CheckState, Gh, PullRequestLabel, ReviewState, review_state_from, text};
 use serde::Serialize;
 use std::path::Path;
@@ -169,6 +170,8 @@ pub(super) struct Timeline {
     pub node_id: String,
     pub participants: Vec<String>,
     pub items: Vec<TimelineItem>,
+    /// Signed URLs for the user attachments of the description, comments and reviews.
+    pub signed_images: Vec<SignedImage>,
 }
 
 /// Which kind of number the query asks for.
@@ -187,7 +190,7 @@ const ACTOR: &str = "actor{login} createdAt";
 fn item_fields(subject: Subject) -> String {
     let mut fields = format!(
         "__typename \
-         ... on IssueComment{{id author{{login}} body createdAt}} \
+         ... on IssueComment{{id author{{login}} body bodyHTML createdAt}} \
          ... on AssignedEvent{{{ACTOR} assignee{{... on User{{login}} ... on Bot{{login}} ... on Mannequin{{login}} ... on Organization{{login}}}}}} \
          ... on UnassignedEvent{{{ACTOR} assignee{{... on User{{login}} ... on Bot{{login}} ... on Mannequin{{login}} ... on Organization{{login}}}}}} \
          ... on LabeledEvent{{{ACTOR} label{{name color}}}} \
@@ -201,7 +204,7 @@ fn item_fields(subject: Subject) -> String {
     );
     if let Subject::PullRequest = subject {
         fields.push_str(&format!(
-            " ... on PullRequestReview{{id author{{login}} body state createdAt submittedAt}} \
+            " ... on PullRequestReview{{id author{{login}} body bodyHTML state createdAt submittedAt}} \
              ... on PullRequestCommit{{commit{{oid abbreviatedOid messageHeadline committedDate url \
                author{{name user{{login}}}} signature{{isValid}} statusCheckRollup{{state}}}}}} \
              ... on HeadRefForcePushedEvent{{{ACTOR} ref{{name}} beforeCommit{{oid abbreviatedOid}} afterCommit{{oid abbreviatedOid}}}} \
@@ -226,7 +229,7 @@ pub(super) fn timeline(gh: &Gh, cwd: &Path, subject: Subject, number: u32) -> Op
     };
     let query = format!(
         "query=query($owner:String!,$name:String!,$number:Int!){{repository(owner:$owner,name:$name){{\
-         {field}(number:$number){{id url participants(first:50){{nodes{{login}}}} \
+         {field}(number:$number){{id url bodyHTML participants(first:50){{nodes{{login}}}} \
          timelineItems(first:{MAX_ITEMS}){{nodes{{{}}}}}}}}}}}",
         item_fields(subject)
     );
@@ -267,6 +270,11 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
         .nth(2)
         .filter(|_| !url.is_empty())
         .unwrap_or_default();
+    let items = list(&node["timelineItems"]["nodes"]);
+    let mut images = Vec::new();
+    for html in std::iter::once(node).chain(items).map(|n| &n["bodyHTML"]) {
+        signed_images(html.as_str().unwrap_or_default(), &mut images);
+    }
     Timeline {
         node_id: text(&node["id"]),
         participants: list(&node["participants"]["nodes"])
@@ -274,10 +282,11 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
             .map(|p| text(&p["login"]))
             .filter(|login| !login.is_empty())
             .collect(),
-        items: list(&node["timelineItems"]["nodes"])
+        items: items
             .iter()
             .filter_map(|item| item_from(item, repository))
             .collect(),
+        signed_images: images,
     }
 }
 

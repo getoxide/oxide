@@ -467,6 +467,16 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            signed_images: d.signed_images.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<oxide_core::SignedImage> for SignedImage {
+    fn from(i: oxide_core::SignedImage) -> Self {
+        Self {
+            url: i.url,
+            signed_url: i.signed_url,
         }
     }
 }
@@ -517,6 +527,7 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
     }
 }

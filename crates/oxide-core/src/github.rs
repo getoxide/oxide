@@ -15,7 +15,9 @@ use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod image;
 mod timeline;
+pub use image::SignedImage;
 use timeline::{Subject, Timeline};
 pub use timeline::{
     TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
@@ -251,6 +253,9 @@ pub struct PullRequestDetail {
     /// Comments, reviews, commits and activity, oldest first. Only the comments and reviews
     /// when GitHub refused the timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// Signed URLs for the private user attachments shown in the description, comments and
+    /// reviews; empty when the timeline could not be read.
+    pub signed_images: Vec<SignedImage>,
 }
 
 /// The form a new pull request starts from.
@@ -1133,6 +1138,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         node_id,
         participants,
         items,
+        signed_images,
     } = timeline.unwrap_or_else(|| Timeline {
         items: fallback_timeline(&v),
         ..Timeline::default()
@@ -1174,6 +1180,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         node_id,
         participants,
         timeline: items,
+        signed_images,
     })
 }
 
@@ -1751,6 +1758,9 @@ pub struct IssueDetail {
     /// Comments and activity, oldest first. Only the comments when GitHub refused the
     /// timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// Signed URLs for the private user attachments shown in the description and comments;
+    /// empty when the timeline could not be read.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1994,6 +2004,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         node_id,
         participants,
         items,
+        signed_images,
     } = timeline.unwrap_or_else(|| Timeline {
         items: comments
             .iter()
@@ -2024,6 +2035,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         node_id,
         participants,
         timeline: items,
+        signed_images,
     })
 }
 

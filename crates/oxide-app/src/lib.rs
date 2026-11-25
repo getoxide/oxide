@@ -706,6 +706,15 @@ pub struct PullRequestReviewer {
     pub state: ReviewState,
 }
 
+/// A `https://github.com/user-attachments/assets/<id>` URL and the short-lived signed URL that
+/// loads it without the user's token.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedImage {
+    pub url: String,
+    pub signed_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestLabel {
@@ -906,6 +915,8 @@ pub struct PullRequestDetail {
     pub participants: Vec<String>,
     /// Comments, reviews, commits and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// Signed URLs for the private user attachments in the description, comments and reviews.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -952,6 +963,8 @@ pub struct IssueDetail {
     pub participants: Vec<String>,
     /// Comments and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// Signed URLs for the private user attachments in the description and comments.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]

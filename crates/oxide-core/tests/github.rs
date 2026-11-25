@@ -2192,3 +2192,56 @@ fn checks_know_whether_branch_protection_requires_them() {
         ]
     );
 }
+
+#[test]
+fn issue_detail_resolves_private_user_attachments_from_body_html() {
+    use oxide_core::SignedImage;
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    let signed = |id: &str| {
+        format!("https://private-user-images.githubusercontent.com/7/9-{id}.png?jwt=eyJ.{id}")
+    };
+    let a = "84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+    let b = "e427716d-a14d-43fa-b17e-d41ae0701097";
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "url": "https://github.com/fake/repo/issues/42",
+        "bodyHTML": format!(
+            "<p><a href=\"{0}\"><img src=\"{0}&amp;x=1\" alt=\"image\"></a> \
+             <img src=\"https://evil.example/7/9-{a}.png\"> \
+             <img src=\"https://private-user-images.githubusercontent.com/7/no-id.png?jwt=1\"></p>",
+            signed(a)
+        ),
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"},
+             "body": format!("![shot](https://github.com/user-attachments/assets/{b})"),
+             "bodyHTML": format!("<p><img src='{}' alt='shot'></p>", signed(b)),
+             "createdAt": "2026-01-03T10:30:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(
+        detail.signed_images,
+        vec![
+            SignedImage {
+                url: format!("https://github.com/user-attachments/assets/{a}"),
+                signed_url: format!("{}&x=1", signed(a)),
+            },
+            SignedImage {
+                url: format!("https://github.com/user-attachments/assets/{b}"),
+                signed_url: signed(b),
+            },
+        ]
+    );
+    let query = f
+        .gh_calls()
+        .into_iter()
+        .flatten()
+        .find(|a| a.contains("timelineItems"))
+        .unwrap();
+    assert_eq!(query.matches("bodyHTML").count(), 2, "{query}");
+}

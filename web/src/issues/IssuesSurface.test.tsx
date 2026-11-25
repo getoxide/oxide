@@ -43,6 +43,7 @@ const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   nodeId: "I_7",
   participants: [],
   timeline: [],
+  signedImages: [],
   ...over,
 });
 
