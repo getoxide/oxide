@@ -113,11 +113,15 @@ fn let_children_receive_ctrl_c() {
     }
 }
 
-/// What to type into the shell to run `command` as a block marked by `token`.
+/// What to type into the shell to run `command` as a block marked by `token`. The leading `;`
+/// ends whatever stray input sits in the line editor as a statement of its own, and the prompt
+/// is defined again in case a block replaced it. The command runs from base64 (a syntax error
+/// fails the block), then the end is marked inline, as pipeline output so it follows any output
+/// PowerShell is still formatting; the prompt marks the end only of a block stopped by Ctrl+C.
 pub fn block_script(token: &str, command: &str) -> String {
     let encoded = base64::engine::general_purpose::STANDARD.encode(command);
     format!(
-        "[Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}\r"
+        "; {BLOCK_PROMPT_COMMAND}; [Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}; if ($null -ne $global:oxideCommandToken) {{ \"$([char]27)]633;Oxide;{token};end;$($global:oxideExitCode);$($pwd.ProviderPath)$([char]7)\"; $global:oxideCommandToken=$null }}\r"
     )
 }
 
@@ -170,6 +174,20 @@ pub fn clean_up_session(_group: Option<i32>) {}
 mod tests {
     use super::*;
     use crate::ShellKind;
+
+    #[test]
+    fn the_block_wrapper_is_one_line_that_marks_its_own_end() {
+        let script = block_script("tok", "Write-Output 'a'\nWrite-Output \"b\"");
+        assert_eq!(script.matches('\r').count(), 1, "{script}");
+        assert!(!script.contains('\n'), "{script}");
+        assert!(script.ends_with('\r'));
+        assert!(script.starts_with("; "), "{script}");
+        assert!(script.contains("function global:prompt"), "{script}");
+        let start = script.find("Oxide;tok;start").expect("start marker");
+        let end = script.find("Oxide;tok;end;").expect("inline end marker");
+        assert!(start < end);
+        assert!(script[end..].contains("$global:oxideCommandToken=$null"));
+    }
 
     #[test]
     fn available_shells_lists_default_and_powershell_without_unix_shells() {
