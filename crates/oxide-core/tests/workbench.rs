@@ -240,6 +240,59 @@ fn stray_input_before_a_block_cannot_leave_it_running() {
     }
 }
 
+/// Built-ins that finish at once (`cd`, `ls`) close every block, one right after the other,
+/// and each block reports the folder the shell is in.
+#[test]
+fn rapid_built_in_commands_close_every_block_with_the_new_directory() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        let steps = [
+            ("ls", "project"),
+            ("cd subdir", "subdir"),
+            ("cd ..", "project"),
+            ("cd ..", ""),
+        ];
+        for (index, (command, folder)) in steps.into_iter().enumerate() {
+            let token = format!("rapid-{index}");
+            core.run_terminal_block(terminal, command, &token).unwrap();
+            let (code, cwd) = block_end(&view, &token);
+            assert_eq!(code, "0", "{shell:?} {command}");
+            let name = std::path::Path::new(&cwd)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if folder.is_empty() {
+                assert_ne!(name, "project", "{shell:?} {command}: {cwd}");
+            } else {
+                assert_eq!(name, folder, "{shell:?} {command}: {cwd}");
+            }
+        }
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A command the shell cannot parse fails its block instead of waiting at a continuation prompt.
+#[test]
+fn a_syntax_error_fails_the_block_and_keeps_the_shell_usable() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        core.run_terminal_block(terminal, "echo 'unclosed", "broken").unwrap();
+        let (code, _) = block_end(&view, "broken");
+        assert_ne!(code, "0", "{shell:?}");
+        core.run_terminal_block(terminal, "echo STILL_''USABLE", "after").unwrap();
+        let (code, _) = block_end(&view, "after");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(view.text().contains("STILL_USABLE"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
 #[test]
 fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
     let (_temporary, core, id) = fixture();
