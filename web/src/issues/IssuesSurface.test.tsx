@@ -204,23 +204,43 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
 });
 
-it("lets the user pick a close reason radio option in the popover before closing", async () => {
+it("closes as not planned with one click in the close split-button's menu, the comment going along", async () => {
   vi.spyOn(commands, "closeIssue").mockResolvedValue({ status: "ok", data: null });
   await render();
   await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
 
-  const reasonBtn = host.querySelector<HTMLButtonElement>('button[aria-label="Close reason"]')!;
-  await act(async () => reasonBtn.click());
+  const box = host.querySelector<HTMLTextAreaElement>(".pr-compose textarea, textarea")!;
+  const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    set.call(box, "Duplicate of #3");
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(button("Close with comment")).toBeDefined();
 
-  const radios = [...document.body.querySelectorAll<HTMLInputElement>('[role="radiogroup"] input[type="radio"]')];
-  expect(radios).toHaveLength(2);
-  expect(radios[0].checked).toBe(true);
-  expect(radios[1].checked).toBe(false);
+  const chevron = host.querySelector<HTMLButtonElement>('.split-btn button[aria-label="Close options"]')!;
+  expect(chevron.getAttribute("aria-haspopup")).toBe("menu");
+  await act(async () => chevron.click());
+  const items = [...document.body.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"]')];
+  expect(items.map((i) => i.querySelector("strong")!.textContent)).toEqual(["Close as completed", "Close as not planned"]);
+  expect(items[0].getAttribute("aria-checked")).toBe("true");
 
-  await act(async () => radios[1].click());
-  expect(document.body.querySelector('[role="radiogroup"]')).toBeNull();
-  await act(async () => button("Close as not planned").click());
-  expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "notPlanned", "");
+  await act(async () => items[1].click());
+  expect(commands.closeIssue).toHaveBeenCalledTimes(1);
+  expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "notPlanned", "Duplicate of #3");
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+});
+
+it("dismisses the close menu with Escape without closing the issue", async () => {
+  vi.spyOn(commands, "closeIssue").mockResolvedValue({ status: "ok", data: null });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  const chevron = host.querySelector<HTMLButtonElement>('button[aria-label="Close options"]')!;
+  await act(async () => chevron.click());
+  const menu = document.body.querySelector('[role="menu"]')!;
+  await act(async () => void menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(document.body.querySelector('[role="menu"]')).toBeNull();
+  expect(document.activeElement).toBe(chevron);
+  expect(commands.closeIssue).not.toHaveBeenCalled();
 });
 
 it("offers to reopen a closed issue", async () => {

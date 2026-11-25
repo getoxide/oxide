@@ -1,12 +1,11 @@
 import { Skeleton } from "../shared/Skeleton";
 import {
   ArrowLeftIcon,
-  ChevronDownIcon,
   CommentIcon,
   MarkGithubIcon,
   PencilIcon,
 } from "@primer/octicons-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { QUERY_STALE_MS, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -23,7 +22,7 @@ import { Avatar } from "../shared/Avatar";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
-import { Popover } from "../shared/Popover";
+import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
 import { Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
@@ -84,8 +83,6 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const [reason, setReason] = useState<IssueCloseReason>("completed");
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [bodyDraft, setBodyDraft] = useState<string | null>(null);
-  const [reasonOpen, setReasonOpen] = useState(false);
-  const reasonTrigger = useRef<HTMLButtonElement>(null);
   const { candidates, load } = useCandidates(projectId);
   const busy = pending !== null;
 
@@ -171,9 +168,9 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
     if (await change("comment", () => commands.commentIssue(projectId, number, comment))) setComment("");
   }
 
-  async function close() {
+  async function close(why: IssueCloseReason) {
     // A comment left in the box goes out with the close, as the web's "Close with comment" does.
-    if (await change("close", () => commands.closeIssue(projectId, number, reason, comment))) setComment("");
+    if (await change("close", () => commands.closeIssue(projectId, number, why, comment))) setComment("");
   }
 
   return (
@@ -436,52 +433,33 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
       <footer className="pr-merge" aria-label="Status">
         {open ? (
           <div className="pr-merge-row">
-            <button
-              className={`primary${pending === "close" ? " pending" : ""}`}
+            <SplitButton
+              label={
+                <Working on={pending === "close"} label="Closing…">
+                  {canSubmitComment(comment) ? "Close with comment" : REASONS.find((r) => r.reason === reason)?.title}
+                </Working>
+              }
+              onClick={() => void close(reason)}
               disabled={busy}
-              onClick={() => void close()}
+              pending={pending === "close"}
+              menuDisabled={busy}
+              menuLabel="Close options"
             >
-              <Working on={pending === "close"} label="Closing…">
-                {canSubmitComment(comment) ? "Close with comment" : REASONS.find((r) => r.reason === reason)?.title}
-              </Working>
-            </button>
-            <button
-              ref={reasonTrigger}
-              className="icon-btn"
-              aria-label="Close reason"
-              aria-haspopup="dialog"
-              aria-expanded={reasonOpen}
-              title="Close reason"
-              onClick={() => setReasonOpen((o) => !o)}
-            >
-              <ChevronDownIcon size={16} />
-            </button>
-            {reasonOpen && (
-              <Popover anchor={reasonTrigger} label="Close reason" onClose={() => setReasonOpen(false)} width={300}>
-                <div className="pr-options">
-                  <h5>Close reason</h5>
-                  <div role="radiogroup" aria-label="Close reason">
-                    {REASONS.map((r) => (
-                      <label key={r.reason} className="pr-option" data-checked={r.reason === reason}>
-                        <input
-                          type="radio"
-                          name="close-reason"
-                          checked={r.reason === reason}
-                          onChange={() => {
-                            setReason(r.reason);
-                            setReasonOpen(false);
-                          }}
-                        />
-                        <span>
-                          <strong>{r.title}</strong>
-                          <small>{r.help}</small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </Popover>
-            )}
+              <SplitMenu label="Close reason">
+                {REASONS.map((r) => (
+                  <SplitMenuItem
+                    key={r.reason}
+                    title={r.title}
+                    help={r.help}
+                    checked={r.reason === reason}
+                    onSelect={() => {
+                      setReason(r.reason);
+                      void close(r.reason);
+                    }}
+                  />
+                ))}
+              </SplitMenu>
+            </SplitButton>
           </div>
         ) : (
           <>
