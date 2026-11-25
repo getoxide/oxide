@@ -114,6 +114,13 @@ describe("mentions", () => {
     ]);
   });
 
+  it("leaves a team mention as text rather than a chip for its organisation", () => {
+    expect(parseInline("ping @getoxide/core and @bob")).toEqual([
+      { kind: "text", text: "ping @getoxide/core and " },
+      { kind: "mention", text: "@bob", login: "bob" },
+    ]);
+  });
+
   it("does not read a bare @ or an invalid login as a mention", () => {
     expect(parseInline("@ alone, @-x and @a--b")).toEqual([{ kind: "text", text: "@ alone, @-x and @a--b" }]);
   });

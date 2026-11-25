@@ -81,8 +81,9 @@ function clean(src: string): string {
 }
 
 /** A GitHub login: letters, digits and single inner hyphens, at most 39 characters. The `@` must
- *  not follow a word character, a dot or another `@`, so `a@b.com` stays an email address. */
-const MENTION = /(?<![\w.+\-@/`])@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?![\w-]|\.\w)/g;
+ *  not follow a word character, a dot or another `@`, so `a@b.com` stays an email address, and a
+ *  `/` must not follow, so a team (`@org/team`) is not read as its organisation. */
+const MENTION = /(?<![\w.+\-@/`])@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?![\w-]|\.\w|\/)/g;
 
 /** Plain text with its `@mentions` read out. */
 function textWithMentions(text: string, out: Inline[]) {
