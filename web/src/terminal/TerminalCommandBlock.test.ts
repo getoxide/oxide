@@ -22,8 +22,9 @@ interface TerminalInstance {
       cb: (params: number[]) => boolean,
     ) => { dispose(): void };
   };
+  host: HTMLElement | null;
   loadAddon(): void;
-  open(): void;
+  open(element: HTMLElement): void;
   write(data: string): void;
   written: string[];
   shownLines(): string[];
