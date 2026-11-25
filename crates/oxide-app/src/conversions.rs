@@ -184,6 +184,8 @@ impl From<oxide_core::CheckState> for CheckState {
             oxide_core::CheckState::Success => Self::Success,
             oxide_core::CheckState::Failure => Self::Failure,
             oxide_core::CheckState::Pending => Self::Pending,
+            oxide_core::CheckState::Neutral => Self::Neutral,
+            oxide_core::CheckState::Skipped => Self::Skipped,
         }
     }
 }

@@ -805,6 +805,63 @@ fn checks_carry_the_link_to_their_run() {
 }
 
 #[test]
+fn checks_keep_github_s_exact_conclusion() {
+    use oxide_core::CheckState;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let run = |name: &str, status: &str, conclusion: &str| {
+        serde_json::json!({"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion})
+    };
+    let status = |context: &str, state: &str| {
+        serde_json::json!({"__typename": "StatusContext", "context": context, "state": state})
+    };
+    pr["statusCheckRollup"] = serde_json::json!([
+        run("success", "COMPLETED", "SUCCESS"),
+        run("neutral", "COMPLETED", "NEUTRAL"),
+        run("skipped", "COMPLETED", "SKIPPED"),
+        run("failure", "COMPLETED", "FAILURE"),
+        run("timed out", "COMPLETED", "TIMED_OUT"),
+        run("cancelled", "COMPLETED", "CANCELLED"),
+        run("action required", "COMPLETED", "ACTION_REQUIRED"),
+        run("stale", "COMPLETED", "STALE"),
+        run("queued", "QUEUED", ""),
+        run("in progress", "IN_PROGRESS", ""),
+        status("status success", "SUCCESS"),
+        status("status pending", "PENDING"),
+        status("status expected", "EXPECTED"),
+        status("status failure", "FAILURE"),
+        status("status error", "ERROR"),
+    ]);
+    install_gh(&f, &state_with_prs(&[pr]));
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let states: Vec<(&str, CheckState)> = detail
+        .checks
+        .iter()
+        .map(|c| (c.name.as_str(), c.state))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("success", CheckState::Success),
+            ("neutral", CheckState::Neutral),
+            ("skipped", CheckState::Skipped),
+            ("failure", CheckState::Failure),
+            ("timed out", CheckState::Failure),
+            ("cancelled", CheckState::Failure),
+            ("action required", CheckState::Failure),
+            ("stale", CheckState::Failure),
+            ("queued", CheckState::Pending),
+            ("in progress", CheckState::Pending),
+            ("status success", CheckState::Success),
+            ("status pending", CheckState::Pending),
+            ("status expected", CheckState::Pending),
+            ("status failure", CheckState::Failure),
+            ("status error", CheckState::Failure),
+        ]
+    );
+}
+
+#[test]
 fn the_default_merge_method_is_github_s_pick_only_when_the_repository_allows_it() {
     use oxide_core::MergeMethod;
     let f = fixture();

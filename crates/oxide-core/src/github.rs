@@ -95,6 +95,10 @@ pub enum CheckState {
     Success,
     Failure,
     Pending,
+    /// Completed without passing or failing. Does not hold the merge up.
+    Neutral,
+    /// Did not run, for example a workflow its path filter left out. Does not hold the merge up.
+    Skipped,
 }
 
 impl CheckState {
@@ -103,6 +107,8 @@ impl CheckState {
             CheckState::Success => "success",
             CheckState::Failure => "failure",
             CheckState::Pending => "pending",
+            CheckState::Neutral => "neutral",
+            CheckState::Skipped => "skipped",
         }
     }
 }
@@ -621,7 +627,9 @@ fn check_from(v: &serde_json::Value) -> PullRequestCheck {
         CheckState::Pending
     } else {
         match v["conclusion"].as_str() {
-            Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => CheckState::Success,
+            Some("SUCCESS") => CheckState::Success,
+            Some("NEUTRAL") => CheckState::Neutral,
+            Some("SKIPPED") => CheckState::Skipped,
             _ => CheckState::Failure,
         }
     };
