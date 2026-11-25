@@ -14,11 +14,9 @@ import {
   FileCodeIcon,
   FileIcon,
   ChevronDownIcon,
-  FoldIcon,
   ListUnorderedIcon,
   PlusIcon,
   SearchIcon,
-  SyncIcon,
   XIcon,
 } from "@primer/octicons-react";
 import { commands } from "../bindings";
@@ -856,36 +854,6 @@ export function CodeWorkbench({
         </div>
         {headerAction && <div className="editor-tabs-actions">{headerAction}</div>}
         </div>
-        {current && (
-          <div className="editor-breadcrumb">
-            <span title={current.path}>{current.path}</span>
-            <span className="grow" />
-            <button
-              className="btn sm"
-              onClick={() =>
-                void editor.current
-                  ?.getAction("editor.action.formatDocument")
-                  ?.run()
-              }
-            >
-              <FoldIcon size={13} /> Format
-            </button>
-            <button
-              className="btn sm"
-              disabled={!current.dirty || current.saving}
-              onClick={() =>
-                void saveDocument(records.current.get(current.path)!)
-              }
-            >
-              {current.saving ? (
-                <SyncIcon size={13} className="spin" />
-              ) : (
-                <CheckIcon size={13} />
-              )}{" "}
-              Save
-            </button>
-          </div>
-        )}
         {language && (
           <LanguageSupportNotice
             key={language}

@@ -187,6 +187,22 @@ vi.mock("./EditorFileTree", async (importOriginal) => {
 import { CodeWorkbench } from "./CodeWorkbench";
 import { ContextMenu } from "../shared/ContextMenu";
 import { DEFAULT_CODE_EDITOR_SETTINGS, resetCodeEditorSettings, saveCodeEditorSettings } from "./codeEditorSettings";
+import { isMacPlatform } from "../shared/shortcuts";
+
+/** Presses Mod+<key> (Cmd on macOS, Ctrl elsewhere) the way a user would. */
+function pressMod(key: string, shiftKey = false) {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      code: `Key${key.toUpperCase()}`,
+      metaKey: isMacPlatform,
+      ctrlKey: !isMacPlatform,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
 
 Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
@@ -322,6 +338,30 @@ describe("CodeWorkbench performance", () => {
     expect(treeRenders.count).toBe(rendersBefore);
   });
 
+  it("shows the open file only on its tab, without a duplicate path row or Format and Save buttons", async () => {
+    await act(async () =>
+      root.render(
+        <CodeWorkbench
+          projectId={1}
+          rootPath="/repo"
+          contextKey="p1"
+          visible
+          openRequest={{ id: 1, path: "src/app.ts" }}
+          onChanged={vi.fn()}
+        />,
+      ),
+    );
+    await settle();
+
+    const tab = host.querySelector<HTMLElement>('.editor-tabs [title="src/app.ts"]');
+    expect(tab?.textContent).toContain("app.ts");
+    const buttonLabels = [...host.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(buttonLabels).not.toContain("Format");
+    expect(buttonLabels).not.toContain("Save");
+    const pathTexts = [...host.querySelectorAll("span")].filter((s) => s.textContent === "src/app.ts");
+    expect(pathTexts).toHaveLength(0);
+  });
+
   it("persists open tabs on open/close and updates savedVersionId on save", async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 
@@ -347,8 +387,7 @@ describe("CodeWorkbench performance", () => {
     expect(host.querySelector('[aria-label="Unsaved changes"]')).not.toBeNull();
 
     model.getValue.mockClear();
-    const saveBtn = host.querySelector<HTMLButtonElement>(".editor-breadcrumb button:last-of-type")!;
-    await act(async () => saveBtn.click());
+    await act(async () => pressMod("s"));
     await settle();
 
     // Save read getValue() once to write the file, cleared dirty, and did not rewrite localStorage.
