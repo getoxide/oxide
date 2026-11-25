@@ -13,7 +13,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-const BLOCK_PROMPT: &str = r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#;
+/// The `printf` format of a block's end marker: its token, exit code and folder.
+macro_rules! end_marker {
+    () => {
+        r"'\033]633;Oxide;%s;end;%s;%s\007'"
+    };
+}
+
+const BLOCK_PROMPT: &str = concat!(
+    r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then builtin printf "#,
+    end_marker!(),
+    r#" "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"; fi)"#
+);
 
 /// The suffix of the `ZDOTDIR` a zsh block terminal starts with; any other init file is bash's.
 const ZSH_INIT_SUFFIX: &str = ".zsh";
@@ -25,14 +36,17 @@ const ZSH_INIT_SUFFIX: &str = ".zsh";
 /// `emulate -L zsh` keeps a user's `nounset` (or any other option) out of them.
 macro_rules! zsh_block_hooks {
     () => {
-        r#"# The output of a block ends where the block ends: no reverse-video % for a missing newline.
+        concat!(
+            r#"# The output of a block ends where the block ends: no reverse-video % for a missing newline.
 setopt hist_ignore_space
 unsetopt prompt_cr prompt_sp
 _oxide_precmd() {
   local _oxide_status=$?
   emulate -L zsh
   if [[ -n ${_oxide_token-} ]]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
+    builtin printf "#,
+            end_marker!(),
+            r#" "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
     _oxide_token=
   fi
 }
@@ -46,6 +60,7 @@ _oxide_rearm() {
 }
 _oxide_rearm
 "#
+        )
     };
 }
 
@@ -115,7 +130,8 @@ if [ -f "$HOME/.bashrc" ]; then
 fi
 "#;
 
-const BASH_BLOCK_HOOKS: &str = r#"case ":${HISTCONTROL-}:" in
+const BASH_BLOCK_HOOKS: &str = concat!(
+    r#"case ":${HISTCONTROL-}:" in
   *:ignorespace:*|*:ignoreboth:*) ;;
   *) HISTCONTROL="${HISTCONTROL:+$HISTCONTROL:}ignorespace" ;;
 esac
@@ -123,7 +139,9 @@ export HISTCONTROL
 _oxide_prompt_command() {
   local _oxide_prompt_status=$?
   if [ -n "${_oxide_token-}" ]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
+    builtin printf "#,
+    end_marker!(),
+    r#" "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
     _oxide_token=
   fi
 }
@@ -146,7 +164,8 @@ _oxide_rearm() {
 _oxide_rearm
 stty isig -echo
 trap ':' INT
-"#;
+"#
+);
 
 fn resolve_unix_shell(name: &str, fallbacks: &[&str]) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH")
@@ -323,7 +342,13 @@ pub fn block_script(token: &str, command: &str) -> io::Result<String> {
     let token = crate::block_token(token)?;
     let command = ansi_c_quoted(command);
     Ok(format!(
-        "\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
+        concat!(
+            "\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf ",
+            end_marker!(),
+            " \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
+        ),
+        token = token,
+        command = command,
     ))
 }
 

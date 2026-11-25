@@ -187,9 +187,14 @@ mod tests {
         assert!(!script.contains('\n'), "{script}");
         assert!(script.ends_with('\r'));
         assert!(script.starts_with("; "), "{script}");
-        assert!(script.contains("$global:oxideCommandToken='tok'"), "{script}");
+        assert!(
+            script.contains("$global:oxideCommandToken='tok'"),
+            "{script}"
+        );
         let start = script.find("Oxide;tok;start").expect("start marker");
-        let end = script.find("oxideEnd $global:oxideExitCode").expect("inline end marker");
+        let end = script
+            .find("oxideEnd $global:oxideExitCode")
+            .expect("inline end marker");
         assert!(start < end);
         // The prompt and the end marker live in one place, shared by the prompt and the wrapper.
         assert!(BLOCK_PROMPT_COMMAND.contains("function global:oxideEnd"));
@@ -201,7 +206,9 @@ mod tests {
     #[test]
     fn the_block_wrapper_restores_the_prompt_after_the_command() {
         let script = block_script("tok", "function global:prompt { 'mine> ' }").expect("script");
-        let end = script.find("oxideEnd $global:oxideExitCode").expect("inline end marker");
+        let end = script
+            .find("oxideEnd $global:oxideExitCode")
+            .expect("inline end marker");
         let before = script[..end].find("function global:prompt");
         let after = script[end..].find("function global:prompt");
         assert!(before.is_some() && after.is_some(), "{script}");
