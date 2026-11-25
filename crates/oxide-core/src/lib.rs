@@ -387,6 +387,12 @@ impl Core {
         github::pull_request_draft(&self.gh, &cwd)
     }
 
+    /// How many commits the Project's current branch has beyond `base`, from local Git only;
+    /// `None` when `base` is unknown locally. `base` is validated as a branch name. Starts `git`.
+    pub fn pull_request_commits_beyond(&self, project_id: u32, base: &str) -> Result<Option<u32>> {
+        github::pull_request_commits_beyond(&self.main_checkout(project_id)?, base)
+    }
+
     /// Pushes the current branch of the Project's folder if needed, then opens a pull request
     /// for it.
     pub fn create_pull_request(

@@ -62,6 +62,11 @@ export const commands = {
 	pullRequestBaseBranches: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("pull_request_base_branches", { projectId })),
 	/**  Title, body and base prefilled from the branch's commits. */
 	pullRequestDraft: (projectId: number) => typedError<PullRequestDraft_Serialize, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId })),
+	/**
+	 *  How many commits the checked-out branch has beyond `base`, from local Git only; null when
+	 *  `base` is unknown locally. Core validates `base` as a branch name. Starts `git`.
+	 */
+	pullRequestCommitsBeyond: (projectId: number, base: string) => typedError<number | null, AppError>(__TAURI_INVOKE("pull_request_commits_beyond", { projectId, base })),
 	/**  Pushes the branch if needed, then opens a pull request for it. */
 	createPullRequest: (projectId: number, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, pullRequest })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */

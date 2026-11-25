@@ -523,9 +523,91 @@ fn draft_counts_the_commits_beyond_the_default_branch() {
     commit_file(&f.work, "b.txt", "b\n", "Add b");
     commit_file(&f.work, "c.txt", "c\n", "Add c");
     assert_eq!(
-        f.core.pull_request_draft(f.project.id).unwrap().commits_beyond,
+        f.core
+            .pull_request_draft(f.project.id)
+            .unwrap()
+            .commits_beyond,
         Some(2)
     );
+}
+
+#[test]
+fn commits_beyond_any_base_are_counted_locally() {
+    let f = fixture();
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
+    git(&f.work, &["checkout", "-q", "-b", "develop"]);
+    commit_file(&f.work, "d.txt", "d\n", "Add d");
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "main")
+            .unwrap(),
+        Some(2)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "develop")
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature")
+            .unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "release/unknown")
+            .unwrap(),
+        None
+    );
+    // Local Git only: GitHub is never asked.
+    assert!(f.gh_calls().is_empty());
+}
+
+#[test]
+fn commits_beyond_refuses_a_base_that_is_not_a_branch_name() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let long = "b".repeat(256);
+    for base in [
+        "",
+        " ",
+        "-n",
+        "--output=/tmp/x",
+        "main..HEAD",
+        "main HEAD",
+        "main\n",
+        "main@{1}",
+        "main^",
+        "main~1",
+        "main:x",
+        "ma*n",
+        "ma?n",
+        "[main]",
+        "main\\x",
+        "/main",
+        "main/",
+        "main.lock",
+        long.as_str(),
+    ] {
+        let err = f
+            .core
+            .pull_request_commits_beyond(f.project.id, base)
+            .unwrap_err();
+        assert!(err.to_string().contains("branch name"), "{base:?}: {err}");
+    }
+    assert!(f.gh_calls().is_empty());
+}
+
+#[test]
+fn commits_beyond_refuses_an_unknown_project() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    assert!(f.core.pull_request_commits_beyond(9999, "main").is_err());
 }
 
 #[test]

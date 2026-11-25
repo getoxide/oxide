@@ -904,6 +904,45 @@ pub fn pull_request_draft(gh: &Gh, cwd: &Path) -> Result<PullRequestDraft> {
     })
 }
 
+/// The longest base branch name accepted from the webview.
+const MAX_BRANCH_NAME: usize = 255;
+
+/// A branch name from the webview, checked against the rules of
+/// `git check-ref-format --branch` that matter here: nothing that Git could read
+/// as an option, a range, a reflog entry or a revision expression.
+fn valid_branch_name(name: &str) -> Result<&str> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_BRANCH_NAME
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && name != "@"
+        && !name.contains("..")
+        && !name.contains("@{")
+        && !name.contains("//")
+        && !name.contains("/.")
+        && !name.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        });
+    if ok {
+        Ok(name)
+    } else {
+        Err(Error::Github(format!(
+            "{:?} is not a valid branch name.",
+            name.chars().take(64).collect::<String>()
+        )))
+    }
+}
+
+/// How many commits the checked-out branch has beyond `base`, from local Git only
+/// (no network); `None` when `base` is not known locally. Starts `git`.
+pub fn pull_request_commits_beyond(cwd: &Path, base: &str) -> Result<Option<u32>> {
+    let base = valid_branch_name(base)?;
+    Ok(git::commits_beyond(cwd, base))
+}
+
 /// `add-pr-surface` → `Add pr surface`.
 fn humanize(branch: &str) -> String {
     let words = branch

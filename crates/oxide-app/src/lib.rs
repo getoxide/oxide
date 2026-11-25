@@ -893,6 +893,21 @@ async fn pull_request_draft(
         .map(PullRequestDraft::from)
 }
 
+/// How many commits the checked-out branch has beyond `base`, from local Git only; null when
+/// `base` is unknown locally. Core validates `base` as a branch name. Starts `git`.
+#[tauri::command]
+#[specta::specta]
+async fn pull_request_commits_beyond(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    base: String,
+) -> Result<Option<u32>, AppError> {
+    git_blocking(&core, move |core| {
+        core.pull_request_commits_beyond(project_id, &base)
+    })
+    .await
+}
+
 /// Pushes the branch if needed, then opens a pull request for it.
 #[tauri::command]
 #[specta::specta]
@@ -1350,6 +1365,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         stop_language_server,
         pull_request_base_branches,
         pull_request_draft,
+        pull_request_commits_beyond,
         create_pull_request,
         list_pull_requests,
         pull_request_detail,
