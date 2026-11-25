@@ -19,7 +19,8 @@ interface TerminalInstance {
   };
   loadAddon(): void;
   open(): void;
-  write(): void;
+  write(data: string): void;
+  written: string[];
   paste(): void;
   focus(): void;
   blur(): void;
@@ -55,9 +56,12 @@ vi.mock("@xterm/xterm", () => ({
       this.options = { ...opts };
       instances.push(this);
     }
+    written: string[] = [];
     loadAddon() {}
     open() {}
-    write() {}
+    write(data: string) {
+      this.written.push(data);
+    }
     paste() {}
     focus() { focused.push(1); }
     blur() {}
@@ -397,4 +401,49 @@ it.each(["Oxide Dark", "Oxide Light"])("keeps failed-block red text at WCAG AA c
   } finally {
     saveAppearance(initial);
   }
+});
+
+it("never shows a cursor in a block that has ended, so clicking its output leaves no cursor behind", async () => {
+  const render = (ended: boolean) =>
+    act(async () =>
+      root.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ output: "lorenzo\r\n", ended, exitCode: ended ? 0 : null }),
+          active: !ended,
+          visible: true,
+          onInput: () => {},
+          onReady: () => {},
+          onResize: () => {},
+          onScreen: () => {},
+        }),
+      ),
+    );
+  await render(false);
+  const term = instances[0];
+  expect(term.written.join("")).not.toContain("\x1b[?25l");
+  expect(term.options.disableStdin).not.toBe(true);
+
+  await render(true);
+  // DECTCEM hides the cursor in every renderer, WebGL included; stdin off keeps a click from typing.
+  expect(term.written.join("")).toContain("\x1b[?25l");
+  expect(term.options.disableStdin).toBe(true);
+});
+
+it("never shows a cursor in a block restored from the last session", async () => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output: "old\r\n", ended: true, exitCode: 0, restored: true }),
+        active: false,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  const term = instances[0];
+  expect(term.written.join("")).toMatch(/old\r\n.*\x1b\[\?25l/s);
+  expect(term.options.disableStdin).toBe(true);
 });

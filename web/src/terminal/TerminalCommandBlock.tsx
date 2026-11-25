@@ -205,6 +205,14 @@ export function TerminalCommandBlock(props: Props) {
     if (delta) term.write(delta);
     written.current = block.outputOffset + block.output.length;
   }, [block.output, block.outputOffset]);
+  // An ended block is a record: no cursor (DECTCEM hide, which every renderer honours, WebGL
+  // included) and no input, while its output stays selectable, scrollable and copyable.
+  useEffect(() => {
+    const term = terminal.current;
+    if (!term || active) return;
+    term.options.disableStdin = true;
+    term.write("\x1b[?25l");
+  }, [active]);
   useEffect(() => {
     onScreen(active && screen);
   }, [active, screen, onScreen]);
