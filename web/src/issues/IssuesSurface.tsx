@@ -14,6 +14,7 @@ import { LabelChip } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { useAutoRefresh } from "../shared/useAutoRefresh";
 import { GithubSetup } from "../settings/GithubSetup";
+import { githubKeys } from "../shared/githubQueries";
 
 export interface IssuesSurfaceProps {
   projectId: number;
@@ -37,7 +38,7 @@ export function IssuesSurface(props: IssuesSurfaceProps) {
 function IssuesViews({ projectId, refreshKey = 0, onChanged }: IssuesSurfaceProps) {
   const tick = useAutoRefresh();
   const reload = refreshKey + tick;
-  const availability = useQuery(`p${projectId}:issues:state`, () => commands.issuesState(projectId), reload, { staleMs: QUERY_STALE_MS });
+  const availability = useQuery(githubKeys.issuesState(projectId), () => commands.issuesState(projectId), reload, { staleMs: QUERY_STALE_MS });
   const [opened, setOpened] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   // Bumped after the list changed under it (a new issue, a closed one), beyond the timer.
@@ -113,7 +114,7 @@ function IssueList({ projectId, refreshKey, onOpen, onCreate }: IssueListProps) 
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const list = useQuery(
-    `p${projectId}:issues:list:${search}`,
+    githubKeys.issueList(projectId, search),
     () => commands.listIssues(projectId, false, false, search),
     refreshKey,
     { staleMs: QUERY_STALE_MS },

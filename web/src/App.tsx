@@ -27,6 +27,7 @@ import { SettingsView } from "./settings/SettingsView";
 import { ResizeHandle } from "./shared/ResizeHandle";
 import { readJson, storageKeys, writeJson } from "./shared/storage";
 import { workspaceLayout } from "./shared/panelLayout";
+import { preloadGithub } from "./shared/githubQueries";
 import {
   NARROW_CENTRE, centreSplit, forgetLayout, layoutOf, maximizeHalf, parseLayouts, restoreSplit, setDivider, shownHalf, splitMode, visibleMode,
   type Half, type ProjectLayouts,
@@ -161,6 +162,13 @@ export function App() {
     restore.current = null;
     void commands.rememberSelection(selected.id);
   }, [selected]);
+
+  // Warm the selected Project's GitHub Surfaces in the background, on launch and on every switch.
+  // A missing folder has no repository to ask about.
+  const preloadId = selected && !selected.missing ? selected.id : null;
+  useEffect(() => {
+    if (preloadId !== null) void preloadGithub(preloadId);
+  }, [preloadId]);
 
   const layout = workspaceLayout(bodySize.width, {
     sidebar: sidebarSize.preferred, tools: toolsSize.preferred,

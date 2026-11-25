@@ -29,6 +29,7 @@ import {
 import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
+import { githubKeys } from "../shared/githubQueries";
 import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
@@ -81,7 +82,7 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
   const [search, setSearch] = useState("");
   const [manual, setManual] = useState(0);
   const list = useQuery(
-    `p${projectId}:prs:list:${mine}:${search}`,
+    githubKeys.pullRequestList(projectId, mine, search),
     () => commands.listPullRequests(projectId, mine, search),
     refreshKey + manual,
     { staleMs: QUERY_STALE_MS },
