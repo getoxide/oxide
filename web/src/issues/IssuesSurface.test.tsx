@@ -44,6 +44,7 @@ const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   reactions: [],
   participants: [],
   timeline: [],
+  timelineTruncated: false,
   signedImages: [],
   ...over,
 });
@@ -221,6 +222,19 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(host.querySelector('[aria-label="Edit title"]')).not.toBeNull();
   await act(async () => button("Close as completed").click());
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
+});
+
+it("links to the issue on GitHub when its timeline holds more activity than was read", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.issueDetail).mockResolvedValue({ status: "ok", data: detail({ timelineTruncated: true }) });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const more = [...host.querySelectorAll<HTMLButtonElement>('section[aria-label="Conversation"] button')].find((b) =>
+    b.textContent?.includes("more activity on GitHub"),
+  )!;
+  await act(async () => more.click());
+  expect(open).toHaveBeenCalledWith("https://github.com/fake/repo/issues/7");
 });
 
 it("interleaves activity with comments in the issue Conversation and opens references through the link flow", async () => {

@@ -222,6 +222,8 @@ export type IssueDetail_Deserialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**  Whether GitHub has more activity than Oxide read; every comment is still in `timeline`. */
+	timelineTruncated: boolean,
 	/**  The reactions on the description. */
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
@@ -246,6 +248,8 @@ export type IssueDetail_Serialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**  Whether GitHub has more activity than Oxide read; every comment is still in `timeline`. */
+	timelineTruncated: boolean,
 	/**  The reactions on the description. */
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
@@ -460,6 +464,11 @@ export type PullRequestDetail_Deserialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**
+	 *  Whether GitHub has more activity than Oxide read; every comment and review is still in
+	 *  `timeline`.
+	 */
+	timelineTruncated: boolean,
 	/**  The reactions on the description. */
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description, comments and reviews. */
@@ -496,6 +505,11 @@ export type PullRequestDetail_Serialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**
+	 *  Whether GitHub has more activity than Oxide read; every comment and review is still in
+	 *  `timeline`.
+	 */
+	timelineTruncated: boolean,
 	/**  The reactions on the description. */
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description, comments and reviews. */

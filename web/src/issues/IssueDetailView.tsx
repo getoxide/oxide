@@ -26,7 +26,7 @@ import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown, MarkdownImages } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
-import { ActivityRow, isConversationItem } from "../pull-requests/PullRequestTimeline";
+import { ActivityRow, isConversationItem, MoreOnGithub } from "../pull-requests/PullRequestTimeline";
 import { Reactions } from "../shared/Reactions";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
@@ -410,6 +410,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
               </div>
             </article>
           ))}
+          {detail.timelineTruncated && <MoreOnGithub url={detail.url} onOpen={(url) => void openLink(url)} />}
           <form
             className="pr-compose"
             onSubmit={(e) => {

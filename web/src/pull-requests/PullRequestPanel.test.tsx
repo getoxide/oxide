@@ -167,6 +167,7 @@ const detail = (title: string): PullRequestDetail_Serialize => ({
   reactions: [],
   participants: [],
   timeline: [],
+  timelineTruncated: false,
   signedImages: [],
   mergeState: "clean",
   reviewDecision: null,

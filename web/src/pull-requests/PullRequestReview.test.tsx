@@ -52,6 +52,7 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     reactions: [],
     participants: [],
     signedImages: [],
+    timelineTruncated: false,
     timeline: [
       { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
       { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
@@ -97,6 +98,20 @@ it("renders a cached pull request at once on remount without asking GitHub again
   expect(host.querySelector(".skeleton")).toBeNull();
   expect(host.textContent).toContain("chore(deps): bump react-virtual");
   expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
+});
+
+it("links to the pull request on GitHub when its timeline holds more activity than was read", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  await render();
+  expect(button(/more activity on GitHub/)).toBeUndefined();
+
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ timelineTruncated: true }) });
+  clearQueryCache();
+  await act(() => root.unmount());
+  root = createRoot(host);
+  await render();
+  await click(button(/more activity on GitHub/));
+  expect(open).toHaveBeenCalledWith("https://github.com/me/oxide/pull/174");
 });
 
 it("interleaves commits, force-pushes, reviews and events with comments, opening links through the link flow", async () => {

@@ -940,6 +940,9 @@ pub struct PullRequestDetail {
     pub participants: Vec<String>,
     /// Comments, reviews, commits and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment and review is still in
+    /// `timeline`.
+    pub timeline_truncated: bool,
     /// The reactions on the description.
     pub reactions: Vec<ReactionGroup>,
     /// Signed URLs for the private user attachments in the description, comments and reviews.
@@ -990,6 +993,8 @@ pub struct IssueDetail {
     pub participants: Vec<String>,
     /// Comments and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`.
+    pub timeline_truncated: bool,
     /// The reactions on the description.
     pub reactions: Vec<ReactionGroup>,
     /// Signed URLs for the private user attachments in the description and comments.

@@ -509,6 +509,7 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            timeline_truncated: d.timeline_truncated,
             reactions: d.reactions.into_iter().map(Into::into).collect(),
             signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
@@ -570,6 +571,7 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             node_id: d.node_id,
             participants: d.participants,
             timeline: d.timeline.into_iter().map(Into::into).collect(),
+            timeline_truncated: d.timeline_truncated,
             reactions: d.reactions.into_iter().map(Into::into).collect(),
             signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }

@@ -34,7 +34,7 @@ import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQu
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
 import { Markdown, MarkdownImages } from "./PullRequestMarkdown";
-import { ActivityRow, type ConversationItem, isConversationItem } from "./PullRequestTimeline";
+import { ActivityRow, type ConversationItem, isConversationItem, MoreOnGithub } from "./PullRequestTimeline";
 import { Reactions } from "../shared/Reactions";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon, useCandidates } from "./PullRequestPeople";
@@ -504,6 +504,7 @@ export function PullRequestReview({
               <ActivityRow key={i} item={item} head={pr.head} onOpen={(url) => void openLink(url)} />
             ),
           )}
+          {detail.timelineTruncated && <MoreOnGithub url={pr.url} onOpen={(url) => void openLink(url)} />}
           <form
             className="pr-compose"
             onSubmit={(e) => {

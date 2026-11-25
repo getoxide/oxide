@@ -70,6 +70,23 @@ function Row({ icon, actor, at, children }: { icon: ReactNode; actor?: string; a
   );
 }
 
+/** The row that ends a Conversation Oxide read only part of: every comment is shown, but some
+ *  activity is only on GitHub. */
+export function MoreOnGithub({ url, onOpen }: { url: string; onOpen: (url: string) => void }) {
+  return (
+    <div className="pr-timeline-event pr-timeline-more">
+      <span className="pr-timeline-icon" aria-hidden="true">
+        <SkipIcon size={12} />
+      </span>
+      <p className="pr-timeline-text">
+        <LinkButton url={url} onOpen={onOpen}>
+          See more activity on GitHub
+        </LinkButton>
+      </p>
+    </div>
+  );
+}
+
 /** One compact activity row of the Conversation, as GitHub's timeline shows it. `head` names
  *  the pull request's branch for the branch deleted and restored events. */
 export function ActivityRow({ item, head, onOpen }: { item: ActivityItem; head?: string; onOpen: (url: string) => void }) {
