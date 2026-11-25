@@ -5,8 +5,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commands, type PullRequestDetail_Serialize } from "../bindings";
 import { PullRequestPanel, REFRESH_INTERVAL_MS } from "./PullRequestPanel";
+import { REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+/** Focus after the last tick went stale, which is when focus asks GitHub again. */
+async function focusLater() {
+  const faked = vi.isFakeTimers();
+  if (!faked) vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + REVALIDATE_AFTER_MS);
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  if (!faked) vi.useRealTimers();
+}
 let host: HTMLDivElement;
 let root: Root;
 
@@ -23,9 +33,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const render = () =>
+const render = (active = true) =>
   act(async () =>
-    root.render(<PullRequestPanel projectId={1} refreshKey={0} onChanged={() => {}} />),
+    root.render(<PullRequestPanel projectId={1} refreshKey={0} active={active} onChanged={() => {}} />),
   );
 const listCalls = () => vi.mocked(commands.listPullRequests).mock.calls.length;
 
@@ -114,7 +124,7 @@ it("opens the pull request form from New pull request", async () => {
 it("reloads when the window regains focus", async () => {
   await render();
   const calls = listCalls();
-  await act(async () => void window.dispatchEvent(new Event("focus")));
+  await focusLater();
   expect(listCalls()).toBeGreaterThan(calls);
 });
 
@@ -221,8 +231,33 @@ it("keeps the list with a notice when a refresh fails", async () => {
   vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
   await render();
   vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "error", error: { message: "offline" } });
-  await act(async () => void window.dispatchEvent(new Event("focus")));
+  await focusLater();
   expect(host.textContent).toContain("First PR");
   expect(host.textContent).toContain("offline");
   expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("stops polling while the Surface is hidden, and revalidates silently once shown again", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
+    await render();
+    await render(false);
+    const calls = listCalls();
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS * 3));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(listCalls()).toBe(calls);
+
+    let resolve!: (r: Awaited<ReturnType<typeof commands.listPullRequests>>) => void;
+    vi.mocked(commands.listPullRequests).mockImplementation(() => new Promise((r) => (resolve = r)));
+    await render(true);
+    expect(listCalls()).toBe(calls + 1);
+    // The cached list stays, with no spinner pill, while the revalidation runs.
+    expect(host.textContent).toContain("First PR");
+    expect(host.querySelector(".refresh-spinner")).toBeNull();
+    await act(async () => resolve({ status: "ok", data: [pr(2, "Second PR")] }));
+    expect(host.textContent).toContain("Second PR");
+  } finally {
+    vi.useRealTimers();
+  }
 });

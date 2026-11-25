@@ -655,6 +655,8 @@ pub enum CheckState {
     Success,
     Failure,
     Pending,
+    Neutral,
+    Skipped,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

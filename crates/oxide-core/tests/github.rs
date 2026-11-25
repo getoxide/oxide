@@ -13,7 +13,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-const FAKE_GH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gh/gh");
+#[path = "../fixtures/gh/install.rs"]
+mod fake_gh;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -165,16 +166,7 @@ fn fixture() -> Fixture {
 }
 
 fn install_gh(f: &Fixture, state: &serde_json::Value) {
-    let names = if cfg!(windows) {
-        vec!["gh", "gh.py", "gh.cmd"]
-    } else {
-        vec!["gh", "gh.py"]
-    };
-    for name in names {
-        let from = Path::new(FAKE_GH).with_file_name(name);
-        std::fs::copy(from, f.gh_dir.join(name)).unwrap();
-    }
-    f.set_gh(state);
+    fake_gh::install(&f.gh_dir, state);
 }
 
 fn ok_state() -> serde_json::Value {
@@ -354,6 +346,151 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
         again,
         ["pr list"],
         "auth status and the default branch are reused"
+    );
+}
+
+fn auth_checks(f: &Fixture) -> usize {
+    f.gh_calls()
+        .iter()
+        .filter(|c| c[..2] == ["auth", "status"])
+        .count()
+}
+
+/// Asks for the Issues state from several threads at once, as startup preloading does.
+fn issues_state_at_once(f: &Fixture) -> Vec<GithubAvailability> {
+    let barrier = std::sync::Barrier::new(3);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    f.core.issues_state(f.project.id).unwrap().availability
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    })
+}
+
+#[test]
+fn concurrent_cold_starts_share_one_auth_check() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    assert_eq!(
+        issues_state_at_once(&f),
+        [GithubAvailability::Ready; 3].to_vec()
+    );
+    assert_eq!(auth_checks(&f), 1);
+}
+
+#[test]
+fn concurrent_checks_of_a_logged_out_gh_share_one_call_but_a_later_ask_checks_again() {
+    let f = fixture();
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
+    assert_eq!(
+        issues_state_at_once(&f),
+        [GithubAvailability::LoggedOut; 3].to_vec()
+    );
+    assert_eq!(auth_checks(&f), 1);
+
+    // Logging in afterwards is noticed: a failed check is never cached.
+    f.set_gh(&ok_state());
+    assert_eq!(
+        f.core.issues_state(f.project.id).unwrap().availability,
+        GithubAvailability::Ready
+    );
+    assert_eq!(auth_checks(&f), 2);
+}
+
+#[test]
+fn a_hung_auth_check_does_not_hold_up_changing_where_gh_is_found() {
+    let f = fixture();
+    // The old check hangs far longer than the bound below, so a slow runner (Windows CI spawns
+    // gh through a .cmd shim and Python) still tells "did not wait" from "waited".
+    let hang = std::time::Duration::from_secs(10);
+    let bound = hang / 2;
+    let mut state = ok_state();
+    state["auth_delay"] = hang.as_secs().into();
+    install_gh(&f, &state);
+    std::thread::scope(|scope| {
+        let slow = scope.spawn(|| f.core.issues_state(f.project.id).unwrap().availability);
+        while auth_checks(&f) == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        f.set_gh(&ok_state());
+
+        let started = std::time::Instant::now();
+        f.core.set_gh_search_path(Some(vec![f.gh_dir.clone()]));
+        assert!(started.elapsed() < bound, "{:?}", started.elapsed());
+        // A check asked after the change runs on its own instead of queueing behind the old one.
+        assert_eq!(
+            f.core.issues_state(f.project.id).unwrap().availability,
+            GithubAvailability::Ready
+        );
+        assert!(started.elapsed() < bound, "{:?}", started.elapsed());
+        assert_eq!(slow.join().unwrap(), GithubAvailability::Ready);
+    });
+}
+
+#[test]
+fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
+    let f = fixture();
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let before = f.gh_calls().len();
+
+    let again = f.core.pull_request_detail(f.project.id, 5).unwrap();
+
+    assert_eq!(again.viewer, "me");
+    let calls = &f.gh_calls()[before..];
+    let kinds: Vec<String> = calls
+        .iter()
+        .map(|c| {
+            if c.iter().any(|a| a.contains("viewerDefaultMergeMethod")) {
+                "default merge method".to_string()
+            } else if c.iter().any(|a| a.contains("isRequired")) {
+                "required checks".to_string()
+            } else {
+                c[..2].join(" ")
+            }
+        })
+        .collect();
+    let mut kinds = kinds;
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        ["pr view", "required checks"],
+        "merge settings, the viewer's login and default merge method are reused"
+    );
+}
+
+#[test]
+fn each_project_reads_its_own_viewer_login() {
+    let f = fixture();
+    let other_work = f.work.with_file_name("other");
+    git(
+        f.work.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            f.remote.to_str().unwrap(),
+            other_work.to_str().unwrap(),
+        ],
+    );
+    let other = f.core.add_project(&other_work.to_string_lossy()).unwrap();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    install_gh(&f, &state);
+    assert_eq!(
+        f.core.pull_request_detail(f.project.id, 5).unwrap().viewer,
+        "me"
+    );
+
+    // The other Project's checkout is signed in to GitHub as someone else.
+    state["viewer"] = "someone".into();
+    f.set_gh(&state);
+    assert_eq!(
+        f.core.pull_request_detail(other.id, 5).unwrap().viewer,
+        "someone"
     );
 }
 
@@ -671,6 +808,15 @@ fn merge_uses_an_allowed_method_and_can_delete_the_branch() {
         .unwrap_err();
     assert!(err.to_string().contains("rebase"), "{err}");
     assert!(merge_calls().is_empty());
+    // The settings were just read, not cached: refusing does not read them a second time.
+    let settings_reads = f
+        .gh_calls()
+        .iter()
+        .filter(|c| {
+            c[..2] == ["repo", "view"] && c.iter().any(|a| a.contains("rebaseMergeAllowed"))
+        })
+        .count();
+    assert_eq!(settings_reads, 1);
 
     f.core
         .merge_pull_request(f.project.id, 5, MergeMethod::Squash, true, false)
@@ -805,6 +951,59 @@ fn checks_carry_the_link_to_their_run() {
 }
 
 #[test]
+fn checks_keep_github_s_exact_conclusion() {
+    use oxide_core::CheckState;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let run = |name: &str, status: &str, conclusion: &str| serde_json::json!({"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion});
+    let status = |context: &str, state: &str| serde_json::json!({"__typename": "StatusContext", "context": context, "state": state});
+    pr["statusCheckRollup"] = serde_json::json!([
+        run("success", "COMPLETED", "SUCCESS"),
+        run("neutral", "COMPLETED", "NEUTRAL"),
+        run("skipped", "COMPLETED", "SKIPPED"),
+        run("failure", "COMPLETED", "FAILURE"),
+        run("timed out", "COMPLETED", "TIMED_OUT"),
+        run("cancelled", "COMPLETED", "CANCELLED"),
+        run("action required", "COMPLETED", "ACTION_REQUIRED"),
+        run("stale", "COMPLETED", "STALE"),
+        run("queued", "QUEUED", ""),
+        run("in progress", "IN_PROGRESS", ""),
+        status("status success", "SUCCESS"),
+        status("status pending", "PENDING"),
+        status("status expected", "EXPECTED"),
+        status("status failure", "FAILURE"),
+        status("status error", "ERROR"),
+    ]);
+    install_gh(&f, &state_with_prs(&[pr]));
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let states: Vec<(&str, CheckState)> = detail
+        .checks
+        .iter()
+        .map(|c| (c.name.as_str(), c.state))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("success", CheckState::Success),
+            ("neutral", CheckState::Neutral),
+            ("skipped", CheckState::Skipped),
+            ("failure", CheckState::Failure),
+            ("timed out", CheckState::Failure),
+            ("cancelled", CheckState::Failure),
+            ("action required", CheckState::Failure),
+            ("stale", CheckState::Failure),
+            ("queued", CheckState::Pending),
+            ("in progress", CheckState::Pending),
+            ("status success", CheckState::Success),
+            ("status pending", CheckState::Pending),
+            ("status expected", CheckState::Pending),
+            ("status failure", CheckState::Failure),
+            ("status error", CheckState::Failure),
+        ]
+    );
+}
+
+#[test]
 fn the_default_merge_method_is_github_s_pick_only_when_the_repository_allows_it() {
     use oxide_core::MergeMethod;
     let f = fixture();
@@ -815,6 +1014,46 @@ fn the_default_merge_method_is_github_s_pick_only_when_the_repository_allows_it(
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
     assert_eq!(detail.default_merge_method, None);
     assert!(detail.merge_methods.contains(&MergeMethod::Merge));
+}
+
+#[test]
+fn after_a_merge_the_next_pull_request_preselects_the_method_just_used() {
+    use oxide_core::MergeMethod;
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr(), pr_json(6, "Add c", "add-c", "other")]);
+    state["default_merge"] = "MERGE".into();
+    install_gh(&f, &state);
+    let detail = f.core.pull_request_detail(f.project.id, 6).unwrap();
+    assert_eq!(detail.default_merge_method, Some(MergeMethod::Merge));
+
+    f.core
+        .merge_pull_request(f.project.id, 5, MergeMethod::Squash, false, false)
+        .unwrap();
+
+    let detail = f.core.pull_request_detail(f.project.id, 6).unwrap();
+    assert_eq!(detail.default_merge_method, Some(MergeMethod::Squash));
+}
+
+#[test]
+fn merge_rereads_the_repository_settings_before_refusing_a_method() {
+    use oxide_core::MergeMethod;
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    state["repo"] = serde_json::json!({"rebaseMergeAllowed": false});
+    install_gh(&f, &state);
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+
+    // The repository allows rebase merges since the detail was read.
+    state["repo"] = serde_json::json!({"rebaseMergeAllowed": true});
+    f.set_gh(&state);
+    f.core
+        .merge_pull_request(f.project.id, 5, MergeMethod::Rebase, false, false)
+        .unwrap();
+    assert!(
+        f.gh_calls()
+            .iter()
+            .any(|c| c[..] == ["pr", "merge", "5", "--rebase"])
+    );
 }
 
 #[test]

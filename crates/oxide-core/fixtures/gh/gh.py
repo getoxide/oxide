@@ -91,6 +91,8 @@ def head_oid(pr):
 
 
 if args[:2] == ["auth", "status"]:
+    # "auth_delay" seconds stand for a gh that hangs while checking.
+    time.sleep(state.get("auth_delay", 0))
     if state.get("auth") == "ok":
         print("Logged in to github.com account fake (keyring)")
         sys.exit(0)
@@ -229,6 +231,10 @@ if args[:2] == ["pr", "merge"]:
     merged = by_number(number_arg())
     merged["state"] = "MERGED"
     merged["mergedAt"] = now()
+    # GitHub preselects the method the viewer used last.
+    for method in ("merge", "squash", "rebase"):
+        if "--" + method in args:
+            state["default_merge"] = method.upper()
     save()
     sys.exit(0)
 

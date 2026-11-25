@@ -4,7 +4,7 @@ import { clearQueryCache } from "../shared/queryCache";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commands, type PullRequestDetail_Serialize } from "../bindings";
-import { CHECKS_REFRESH_MS, PullRequestReview } from "./PullRequestBrowser";
+import { CHECKS_REFRESH_MS, PullRequestReview, UNKNOWN_MERGE_STATE_POLLS } from "./PullRequestBrowser";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let host: HTMLDivElement;
@@ -68,9 +68,9 @@ afterEach(async () => {
   onBack.mockReset();
 });
 
-async function render() {
+async function render(props: { active?: boolean; refreshKey?: number } = {}) {
   await act(async () =>
-    root.render(<PullRequestReview projectId={1} number={174} refreshKey={0} onBack={onBack} onChanged={onChanged} />),
+    root.render(<PullRequestReview projectId={1} number={174} refreshKey={0} {...props} onBack={onBack} onChanged={onChanged} />),
   );
 }
 const button = (name: string | RegExp) =>
@@ -315,6 +315,114 @@ it("reloads sooner while checks are still running, and stops once they are done"
     const settled = vi.mocked(commands.pullRequestDetail).mock.calls.length;
     await act(async () => void vi.advanceTimersByTime(CHECKS_REFRESH_MS * 3));
     expect(vi.mocked(commands.pullRequestDetail).mock.calls.length).toBe(settled);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+const detailCalls = () => vi.mocked(commands.pullRequestDetail).mock.calls.length;
+/** One check interval at a time, letting each poll's `gh` call settle before the next tick. */
+async function tickChecks(times = 1) {
+  for (let i = 0; i < times; i++) await act(async () => void vi.advanceTimersByTime(CHECKS_REFRESH_MS));
+}
+const running = () => detail({ checks: [{ name: "rust", state: "pending", url: null, required: false }] });
+
+it("follows a pull request closely while GitHub is still settling its merge state", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "unknown" }) });
+    await render();
+    const calls = detailCalls();
+    await tickChecks();
+    expect(detailCalls()).toBe(calls + 1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops following an unknown merge state after a bounded number of polls, but not running checks", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "unknown" }) });
+    await render();
+    const calls = detailCalls();
+    await tickChecks(UNKNOWN_MERGE_STATE_POLLS + 10);
+    expect(detailCalls()).toBe(calls + UNKNOWN_MERGE_STATE_POLLS);
+
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ mergeState: "unknown", checks: running().checks }) });
+    await render({ refreshKey: 1 });
+    const runningCalls = detailCalls();
+    await tickChecks(UNKNOWN_MERGE_STATE_POLLS + 10);
+    expect(detailCalls()).toBe(runningCalls + UNKNOWN_MERGE_STATE_POLLS + 10);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not follow running checks while the Surface is hidden, and catches up when shown", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    await render({ active: false });
+    const calls = detailCalls();
+    await tickChecks(5);
+    expect(detailCalls()).toBe(calls);
+    await render({ active: true });
+    expect(detailCalls()).toBe(calls + 1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not count checks starting to run as the Surface being shown: no extra fetch", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    await act(async () => void vi.advanceTimersByTime(10_000));
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    const calls = detailCalls();
+    // The user acted: one fetch, which reports checks now running.
+    await render({ refreshKey: 1 });
+    await act(async () => {});
+    expect(detailCalls()).toBe(calls + 1);
+    // Then the fast cadence takes over, on its interval.
+    await tickChecks();
+    expect(detailCalls()).toBe(calls + 2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never starts a check poll while the previous one is still in flight", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    await render();
+    const calls = detailCalls();
+    vi.mocked(commands.pullRequestDetail).mockImplementation(() => new Promise(() => {}));
+    await tickChecks(4);
+    expect(detailCalls()).toBe(calls + 1);
+    // The pull request stays on screen, with no spinner pill, while the slow call runs.
+    expect(host.textContent).toContain("chore(deps): bump react-virtual");
+    expect(host.querySelector(".refresh-spinner")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("backs check polls off while GitHub keeps failing, and keeps the pull request with a notice", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    await render();
+    const calls = detailCalls();
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "error", error: { message: "API rate limit exceeded" } });
+    await tickChecks(20);
+    // 20 ticks, but each failure in a row doubles the wait before the next poll.
+    expect(detailCalls() - calls).toBeLessThan(8);
+    expect(detailCalls() - calls).toBeGreaterThan(1);
+    expect(host.textContent).toContain("chore(deps): bump react-virtual");
+    expect(host.textContent).toContain("Couldn't refresh: API rate limit exceeded");
   } finally {
     vi.useRealTimers();
   }

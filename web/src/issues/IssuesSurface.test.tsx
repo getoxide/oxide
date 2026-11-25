@@ -5,9 +5,19 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commands, type IssueDetail, type IssueSummary } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
 import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
-import { REFRESH_INTERVAL_MS } from "../shared/useAutoRefresh";
+import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
+import { preloadGithub } from "../shared/githubQueries";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+/** Focus after the last tick went stale, which is when focus asks GitHub again. */
+async function focusLater() {
+  const faked = vi.isFakeTimers();
+  if (!faked) vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + REVALIDATE_AFTER_MS);
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  if (!faked) vi.useRealTimers();
+}
 let host: HTMLDivElement;
 let root: Root;
 
@@ -52,10 +62,27 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const render = () => act(async () => root.render(<IssuesSurface projectId={1} />));
+const render = (active = true) => act(async () => root.render(<IssuesSurface projectId={1} active={active} />));
 const listCalls = () => vi.mocked(commands.listIssues).mock.calls.length;
 const button = (name: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === name) as HTMLButtonElement;
+
+it("joins the background preload when opened mid-preload instead of asking gh again", async () => {
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => (finish = resolve));
+  vi.mocked(commands.listIssues).mockImplementation(async () => {
+    await gate;
+    return { status: "ok", data: [summary()] };
+  });
+  const preload = preloadGithub(1);
+  await act(async () => { await Promise.resolve(); });
+  await render();
+  await act(async () => { finish(); await preload; });
+
+  expect(host.textContent).toContain("Crash on startup");
+  expect(commands.issuesState).toHaveBeenCalledTimes(1);
+  expect(listCalls()).toBe(1);
+});
 
 it("lists issues with a full-width search and New issue, and no Refresh or Search button", async () => {
   await render();
@@ -139,7 +166,7 @@ it("reloads by itself on focus and on a timer while visible", async () => {
   try {
     await render();
     let calls = listCalls();
-    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await focusLater();
     expect(listCalls()).toBeGreaterThan(calls);
     calls = listCalls();
     await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS));
@@ -257,8 +284,8 @@ it("never shows one Project's issues in another", async () => {
 it("keeps the list and notes the failure when a refresh fails; a first failure shows the error", async () => {
   await render();
   vi.mocked(commands.listIssues).mockResolvedValue({ status: "error", error: { message: "network down" } });
-  // A refresh is explicit: focus bumps the auto-refresh token even while the cache is fresh.
-  await act(async () => void window.dispatchEvent(new Event("focus")));
+  // Focus once the last tick is stale asks again, even while the cache is fresh.
+  await focusLater();
   expect(host.textContent).toContain("Crash on startup");
   expect(host.textContent).toContain("network down");
   expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -274,7 +301,7 @@ it("still shows the guidance when gh is not ready, even with a cached list", asy
     status: "ok",
     data: { availability: "notAuthenticated", guidance: "Run gh auth login." },
   } as never);
-  await act(async () => void window.dispatchEvent(new Event("focus")));
+  await focusLater();
   expect(host.textContent).toContain("Run gh auth login.");
   expect(host.textContent).not.toContain("Crash on startup");
 });
@@ -338,4 +365,26 @@ it("copies the issue URL with confirmation feedback and surfaces clipboard error
   writeText.mockRejectedValueOnce(new Error("Clipboard denied"));
   await act(async () => copyBtn!.click());
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("Clipboard denied");
+});
+
+it("stops polling while the Surface is hidden, and revalidates silently once shown again", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    await render(false);
+    const calls = listCalls();
+    const checks = vi.mocked(commands.issuesState).mock.calls.length;
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS * 3));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(listCalls()).toBe(calls);
+    expect(vi.mocked(commands.issuesState).mock.calls.length).toBe(checks);
+
+    vi.mocked(commands.listIssues).mockImplementation(() => new Promise(() => {}));
+    await render(true);
+    expect(listCalls()).toBe(calls + 1);
+    expect(host.textContent).toContain("Crash on startup");
+    expect(host.querySelector(".refresh-spinner")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });

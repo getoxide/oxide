@@ -124,7 +124,7 @@ export type AvailableShell = {
 	isDefault: boolean,
 };
 
-export type CheckState = "success" | "failure" | "pending";
+export type CheckState = "success" | "failure" | "pending" | "neutral" | "skipped";
 
 export type DeveloperTool = DeveloperTool_Serialize | DeveloperTool_Deserialize;
 

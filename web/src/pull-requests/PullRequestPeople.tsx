@@ -10,6 +10,7 @@ import {
 } from "@primer/octicons-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { getQueryData, setQueryData } from "../shared/queryCache";
+import { githubKeys } from "../shared/githubQueries";
 import { Avatar } from "../shared/Avatar";
 import {
   commands,
@@ -49,7 +50,7 @@ export type Candidates =
 
 /** The people and labels GitHub offers, fetched the first time a picker opens. */
 export function useCandidates(projectId: number) {
-  const key = `p${projectId}:candidates`;
+  const key = githubKeys.pullRequestCandidates(projectId);
   const cached = getQueryData<PullRequestCandidates>(key);
   const [candidates, setCandidates] = useState<Candidates>(
     cached ? { state: "ready", data: cached } : { state: "idle" },

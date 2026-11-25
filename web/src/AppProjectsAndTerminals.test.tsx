@@ -12,6 +12,7 @@ import workbenchCss from "./styles/workbench.css?raw";
 import appearanceCss from "./styles/appearance.css?raw";
 
 const failingOpens = vi.hoisted(() => ({ current: false }));
+const githubAvailability = vi.hoisted(() => ({ current: "ready" }));
 vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
 vi.mock("./terminal/TerminalWorkbench", () => ({
   TerminalWorkbench: ({ projectId, contextKey, visible, headerAction }: { projectId: number; contextKey: string; visible: boolean; headerAction?: ReactNode }) => (
@@ -65,6 +66,7 @@ beforeEach(async () => {
   clearQueryCache();
   localStorage.clear();
   failingOpens.current = false;
+  githubAvailability.current = "ready";
   calls = [];
   host = document.createElement("div");
   document.body.append(host);
@@ -74,6 +76,8 @@ beforeEach(async () => {
     switch (command) {
       case "list_projects": case "rescan_projects": return projects;
       case "last_selection": return 1;
+      case "issues_state": return { availability: githubAvailability.current, guidance: null };
+      case "list_issues": case "list_pull_requests": return [];
       case "set_project_open": return null;
       case "plugin:event|listen": return 1;
       default: return null;
@@ -241,6 +245,59 @@ it("has no Sidebar switch: a Project row's Files button opens its Files view and
   expect(all(".files-panel")).toHaveLength(0);
   expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(false);
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
+});
+
+const githubCalls = (projectId: number) =>
+  calls
+    .filter(({ command, args }) => ["issues_state", "list_issues", "list_pull_requests"].includes(command) && (args as { projectId: number }).projectId === projectId)
+    .map(({ command, args }) => ({ command, args }));
+const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+const relaunch = async () => {
+  await act(async () => root.unmount());
+  calls = [];
+  root = createRoot(host);
+  await act(async () => root.render(<App />));
+  await settle();
+};
+
+it("preloads the selected Project's Issues and Pull requests in the background on launch", () => {
+  expect(githubCalls(1)).toEqual([
+    { command: "issues_state", args: { projectId: 1 } },
+    { command: "list_issues", args: { projectId: 1, closed: false, mine: false, search: "" } },
+    { command: "list_pull_requests", args: { projectId: 1, mine: false, search: "" } },
+  ]);
+  expect(githubCalls(2)).toEqual([]);
+});
+
+it("preloads a Project's GitHub Surfaces when the user switches to it, once", async () => {
+  await click(all(".project")[1]);
+  await settle();
+  expect(githubCalls(2).map(({ command }) => command)).toEqual(["issues_state", "list_issues", "list_pull_requests"]);
+  // Back and forth inside the staleness window reuses the warm cache.
+  await click(all(".project")[0]);
+  await click(all(".project")[1]);
+  await settle();
+  expect(githubCalls(1)).toHaveLength(3);
+  expect(githubCalls(2)).toHaveLength(3);
+});
+
+it("only checks readiness, and lists nothing, while the GitHub CLI is not ready", async () => {
+  githubAvailability.current = "loggedOut";
+  clearQueryCache();
+  await relaunch();
+  expect(githubCalls(1).map(({ command }) => command)).toEqual(["issues_state"]);
+  expect(host.textContent).not.toContain("gh auth login");
+});
+
+it("does not preload GitHub for a Project whose folder is missing", async () => {
+  projects[0].missing = true;
+  try {
+    clearQueryCache();
+    await relaunch();
+    expect(githubCalls(1)).toEqual([]);
+  } finally {
+    projects[0].missing = false;
+  }
 });
 
 it("disables a Project row's Files button while its folder is missing", async () => {

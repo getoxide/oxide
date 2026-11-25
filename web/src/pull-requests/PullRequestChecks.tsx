@@ -1,82 +1,113 @@
-import { CheckCircleFillIcon, ChevronDownIcon, DotFillIcon, LinkExternalIcon, XCircleFillIcon } from "@primer/octicons-react";
+import {
+  CheckCircleFillIcon,
+  CheckCircleIcon,
+  ChevronDownIcon,
+  DotFillIcon,
+  LinkExternalIcon,
+  SkipIcon,
+  SquareFillIcon,
+  XCircleFillIcon,
+} from "@primer/octicons-react";
 import type { PullRequestCheck } from "../bindings";
-import { countChecks, dedupeChecks } from "./pullRequestReview";
+import { countChecks, dedupeChecks, type CheckCounts } from "./pullRequestReview";
 
-export const CHECK_WORD = { success: "Passed", failure: "Failed", pending: "Running" } as const;
+export const CHECK_WORD = {
+  success: "Passed",
+  failure: "Failed",
+  pending: "Running",
+  neutral: "Neutral",
+  skipped: "Skipped",
+} as const;
 
-/** Checks in a box: what needs attention is listed, what passed folds into one row you can open.
+/** The order and wording of the counts, in the order GitHub's checks summary lists them:
+ *  failing first, then neutral, skipped, running and passed. The class names the bar segment and
+ *  matches the check state it counts. */
+const PARTS: { key: keyof CheckCounts; word: string; state: PullRequestCheck["state"] }[] = [
+  { key: "failing", word: "failing", state: "failure" },
+  { key: "neutral", word: "neutral", state: "neutral" },
+  { key: "skipped", word: "skipped", state: "skipped" },
+  { key: "pending", word: "running", state: "pending" },
+  { key: "passing", word: "passed", state: "success" },
+];
+
+const describe = (counts: CheckCounts, separator: string) =>
+  PARTS.filter((p) => counts[p.key] > 0)
+    .map((p) => `${counts[p.key]} ${p.word}`)
+    .join(separator);
+
+/** Checks in a box: what needs attention is listed, what completed without failing folds into one
+ *  row you can open. Neutral and skipped checks are counted apart from passed ones, never as passed.
  *  A check with a link opens its run on GitHub, to see what went wrong. */
 export function Checks({ checks, onOpen }: { checks: PullRequestCheck[]; onOpen: (url: string) => void }) {
-  const { failing, pending, passing } = countChecks(checks);
   const all = dedupeChecks(checks);
-  // Once branch protection names required checks, the others are shown but do not count.
+  // Once branch protection names required checks, the others are shown but do not hold the merge up.
   const hasRequired = checks.some((c) => c.required);
   if (all.length === 0) return null;
-  const attention = all.filter((c) => c.state !== "success");
-  const passed = all.filter((c) => c.state === "success");
-  const summary = [
-    failing > 0 && `${failing} failing`,
-    pending > 0 && `${pending} running`,
-    passing > 0 && `${passing} passed`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const inline = attention.length === 0 && passed.length <= 3;
+  const counts = countChecks(checks);
+  const attention = all.filter((c) => c.state === "failure" || c.state === "pending");
+  const completed = all.filter((c) => c.state !== "failure" && c.state !== "pending");
+  const completedCounts = countChecks(completed);
+  const inline = attention.length === 0 && completed.length <= 3;
+  const foldedLabel =
+    attention.length > 0
+      ? describe(completedCounts, " · ")
+      : completedCounts.passing === completed.length
+        ? `All ${completed.length} passed`
+        : `All ${completed.length} completed: ${describe(completedCounts, " · ")}`;
+  const row = (c: PullRequestCheck) => <CheckRow key={c.name} check={c} optional={hasRequired && !c.required} onOpen={onOpen} />;
   return (
     <section className="pr-box pr-checks-box" aria-label="Checks">
       <header>
         <h4>Checks</h4>
-        <span className="pr-checks-summary">{summary}</span>
-        <span className="pr-bar" role="img" aria-label={`${failing} failing, ${pending} running, ${passing} passing`}>
-          {failing > 0 && <i className="failure" style={{ flexGrow: failing }} />}
-          {pending > 0 && <i className="pending" style={{ flexGrow: pending }} />}
-          {passing > 0 && <i className="success" style={{ flexGrow: passing }} />}
+        <span className="pr-checks-summary">{describe(counts, " · ")}</span>
+        <span className="pr-bar" role="img" aria-label={describe(counts, ", ")}>
+          {PARTS.filter((p) => counts[p.key] > 0).map((p) => (
+            <i key={p.state} className={p.state} style={{ flexGrow: counts[p.key] }} />
+          ))}
         </span>
       </header>
-      {attention.length > 0 && (
-        <ul className="pr-checks">
-          {attention.map((c) => (
-            <CheckRow key={c.name} check={c} optional={hasRequired && !c.required} onOpen={onOpen} />
-          ))}
-        </ul>
-      )}
-      {passed.length > 0 &&
+      {attention.length > 0 && <ul className="pr-checks">{attention.map(row)}</ul>}
+      {completed.length > 0 &&
         (inline ? (
-          <ul className="pr-checks">
-            {passed.map((c) => (
-              <CheckRow key={c.name} check={c} optional={hasRequired && !c.required} onOpen={onOpen} />
-            ))}
-          </ul>
+          <ul className="pr-checks">{completed.map(row)}</ul>
         ) : (
           <details className="pr-passed">
             <summary>
-              <CheckCircleFillIcon size={14} className="pr-check-success" />
-              {attention.length > 0 ? `${passed.length} passed` : `All ${passed.length} passed`}
+              {completedCounts.passing === completed.length ? (
+                <CheckCircleFillIcon size={14} className="pr-check-success" />
+              ) : (
+                // Some only completed (neutral, skipped): a muted mark, not the green "passed" one.
+                <CheckCircleIcon size={14} className="pr-check-neutral" />
+              )}
+              {foldedLabel}
               <ChevronDownIcon size={14} className="pr-chev" />
             </summary>
-            <ul className="pr-checks">
-              {passed.map((c) => (
-                <CheckRow key={c.name} check={c} optional={hasRequired && !c.required} onOpen={onOpen} />
-              ))}
-            </ul>
+            <ul className="pr-checks">{completed.map(row)}</ul>
           </details>
         ))}
     </section>
   );
 }
 
+function CheckIcon({ state }: { state: PullRequestCheck["state"] }) {
+  switch (state) {
+    case "success":
+      return <CheckCircleFillIcon size={14} />;
+    case "failure":
+      return <XCircleFillIcon size={14} />;
+    case "neutral":
+      return <SquareFillIcon size={14} />;
+    case "skipped":
+      return <SkipIcon size={14} />;
+    case "pending":
+      return <DotFillIcon size={14} className="pr-pulse" />;
+  }
+}
+
 function CheckRow({ check, optional, onOpen }: { check: PullRequestCheck; optional: boolean; onOpen: (url: string) => void }) {
-  const icon =
-    check.state === "success" ? (
-      <CheckCircleFillIcon size={14} />
-    ) : check.state === "failure" ? (
-      <XCircleFillIcon size={14} />
-    ) : (
-      <DotFillIcon size={14} className="pr-pulse" />
-    );
   const body = (
     <>
-      {icon}
+      <CheckIcon state={check.state} />
       <span className="pr-check-name">{check.name}</span>
       {optional && <span className="pr-check-optional">Not required</span>}
       <span className="pr-check-state">{CHECK_WORD[check.state]}</span>

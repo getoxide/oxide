@@ -2,7 +2,7 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearQueryCache, invalidateQueries, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
+import { clearQueryCache, invalidateQueries, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_MAX_MS, prefetchQuery, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -19,19 +19,26 @@ function deferred<T>() {
 let host: HTMLDivElement;
 let root: Root;
 let seen: QueryState<unknown>;
+/** Every state a Probe committed, to catch one that flashed by. */
+let history: QueryState<unknown>[] = [];
 
-function Probe({ k, fetch, refresh = 0, staleMs }: { k: string; fetch: () => Promise<QueryResult<unknown>>; refresh?: number; staleMs?: number }) {
-  const state = useQuery(k, fetch, refresh, staleMs === undefined ? undefined : { staleMs });
+function Probe({ k, fetch, refresh = 0, staleMs, poll }: { k: string; fetch: () => Promise<QueryResult<unknown>>; refresh?: number; staleMs?: number; poll?: number }) {
+  const state = useQuery(k, fetch, refresh, staleMs === undefined && poll === undefined ? undefined : { staleMs, poll });
   useEffect(() => {
     seen = state;
+    history.push(state);
   });
   return null;
 }
 const mount = (k: string, fetch: () => Promise<QueryResult<unknown>>, refresh = 0, staleMs?: number) =>
   act(async () => root.render(<Probe k={k} fetch={fetch} refresh={refresh} staleMs={staleMs} />));
+/** Mounts with a soft poll token: what the auto-refresh timer and focus bump. */
+const poll = (k: string, fetch: () => Promise<QueryResult<unknown>>, token: number) =>
+  act(async () => root.render(<Probe k={k} fetch={fetch} staleMs={QUERY_STALE_MS} poll={token} />));
 
 beforeEach(() => {
   clearQueryCache();
+  history = [];
   host = document.createElement("div");
   root = createRoot(host);
 });
@@ -172,6 +179,138 @@ describe("query cache", () => {
     await mount("p:1:list", fetcher);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: "two" });
+  });
+
+  it("lets a mount join a prefetch still in flight instead of fetching again", async () => {
+    const preload = deferred<QueryResult<string>>();
+    const prefetched = prefetchQuery("k", () => preload.promise, { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(() => never<string>());
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(seen.state).toBe("loading");
+
+    await act(async () => preload.resolve(ok("warm")));
+    expect(seen).toMatchObject({ state: "ready", data: "warm" });
+    await expect(prefetched).resolves.toEqual(ok("warm"));
+  });
+
+  it("does not prefetch an entry that is still fresh", async () => {
+    await prefetchQuery("k", async () => ok("one"), { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(() => never<string>());
+    await expect(prefetchQuery("k", fetcher, { staleMs: QUERY_STALE_MS })).resolves.toEqual(ok("one"));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not trap a later mount behind a failed background prefetch", async () => {
+    await prefetchQuery("k", async () => fail("gh is not logged in"), { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(async () => ok("after login"));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "after login" });
+  });
+
+  it("shows loading, never the background failure, while a mount asks again after a failed prefetch", async () => {
+    await prefetchQuery("k", async () => fail("gh is not logged in"), { staleMs: QUERY_STALE_MS });
+    const retry = deferred<QueryResult<string>>();
+    await mount("k", () => retry.promise, 0, QUERY_STALE_MS);
+    expect(seen.state).toBe("loading");
+    await act(async () => retry.resolve(ok("after login")));
+    expect(seen).toMatchObject({ state: "ready", data: "after login" });
+    expect(history.map((s) => s.state)).not.toContain("error");
+  });
+
+  it("asks again when a background prefetch fails under a mounted query with nothing to show", async () => {
+    const first = deferred<QueryResult<string>>();
+    await mount("k", () => first.promise, 0, QUERY_STALE_MS);
+    await act(async () => first.resolve(fail("offline")));
+    expect(seen).toMatchObject({ state: "error", message: "offline" });
+
+    const fetcher = vi.fn(async () => fail("still offline"));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).not.toHaveBeenCalled();
+    await act(async () => void (await prefetchQuery("k", async () => fail("offline"), { staleMs: QUERY_STALE_MS })));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    // The mounted query does not wait for a fetch nobody runs: it asked itself, and shows that answer.
+    expect(seen).toMatchObject({ state: "error", message: "still offline" });
+  });
+
+  it("lets a mount ask again when a prefetch returned data the caller does not trust", async () => {
+    await prefetchQuery("k", async () => ok({ availability: "loggedOut" }), {
+      staleMs: QUERY_STALE_MS,
+      trust: (data) => data.availability === "ready",
+    });
+    const fetcher = vi.fn(async () => ok({ availability: "ready" }));
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: { availability: "ready" } });
+  });
+
+  it("skips a soft poll while a fetch for the key is still in flight, and polls once it settled", async () => {
+    const slow = deferred<QueryResult<string>>();
+    const fetcher = vi.fn(() => slow.promise);
+    await poll("k", fetcher, 0);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await poll("k", fetcher, 1);
+    await poll("k", fetcher, 2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await act(async () => slow.resolve(ok("one")));
+    const next = vi.fn(async () => ok("two"));
+    await poll("k", next, 3);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "two" });
+  });
+
+  it("backs soft polls off exponentially after consecutive failures, capped, until one succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      let token = 0;
+      const failing = vi.fn(async () => fail("API rate limit exceeded"));
+      await poll("k", failing, token);
+      expect(failing).toHaveBeenCalledTimes(1);
+
+      // One failure: polls wait one base step.
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(1);
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(2);
+
+      // Two failures: the wait doubles.
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(2);
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_BASE_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(3);
+
+      // Many failures: never longer than the cap.
+      for (let i = 0; i < 20; i++) {
+        await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+        await poll("k", failing, ++token);
+      }
+      const calls = failing.mock.calls.length;
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+      await poll("k", failing, ++token);
+      expect(failing).toHaveBeenCalledTimes(calls + 1);
+
+      // A success resets it: the next poll goes straight through.
+      const healthy = vi.fn(async () => ok("back"));
+      await act(async () => void vi.advanceTimersByTime(POLL_BACKOFF_MAX_MS));
+      await poll("k", healthy, ++token);
+      await poll("k", healthy, ++token);
+      expect(healthy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hold the user's own refresh back while polls back off", async () => {
+    await poll("k", async () => fail("offline"), 0);
+    const fetcher = vi.fn(async () => ok("fresh"));
+    await act(async () => root.render(<Probe k="k" fetch={fetcher} staleMs={QUERY_STALE_MS} poll={0} refresh={1} />));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "fresh" });
   });
 
   it("stays bounded", async () => {

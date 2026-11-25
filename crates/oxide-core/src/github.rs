@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const INSTALL_GUIDANCE: &str =
@@ -95,6 +95,10 @@ pub enum CheckState {
     Success,
     Failure,
     Pending,
+    /// Completed without passing or failing. Does not hold the merge up.
+    Neutral,
+    /// Did not run, for example a workflow its path filter left out. Does not hold the merge up.
+    Skipped,
 }
 
 impl CheckState {
@@ -103,6 +107,8 @@ impl CheckState {
             CheckState::Success => "success",
             CheckState::Failure => "failure",
             CheckState::Pending => "pending",
+            CheckState::Neutral => "neutral",
+            CheckState::Skipped => "skipped",
         }
     }
 }
@@ -289,15 +295,146 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
 #[derive(Default)]
 pub struct Gh {
     search_path: Mutex<Option<Vec<PathBuf>>>,
-    ready_at: Mutex<Option<Instant>>,
-    default_branches: Mutex<HashMap<PathBuf, (Instant, String)>>,
+    auth_check: AuthCheck,
+    default_branches: Cached<PathBuf, String>,
+    merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
+    default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
+    viewer_logins: Cached<PathBuf, Option<String>>,
+}
+
+/// Whether `gh` can be used, and if not, what to tell the user.
+type AuthOutcome = (GithubAvailability, Option<String>);
+
+/// One `gh auth status` at a time: callers that ask while a check runs wait for it and share
+/// its answer instead of starting their own. The lock is only held to read or record the slot,
+/// never while `gh` runs, so a hung `gh` blocks only the callers waiting for its answer.
+#[derive(Default)]
+struct AuthCheck {
+    slot: Mutex<AuthSlot>,
+    finished: Condvar,
+}
+
+#[derive(Default)]
+struct AuthSlot {
+    /// Bumped when the search path changes: a check started before then answers only its caller.
+    generation: u64,
+    /// The generation of the check that is running, if any.
+    running: Option<u64>,
+    /// The last outcome of the current generation and when it finished.
+    last: Option<(Instant, AuthOutcome)>,
+    /// When a check of the current generation last found `gh` ready. Kept with `generation`
+    /// so a search path change clears it in the same step that retires the checks of the old path.
+    ready_at: Option<Instant>,
+}
+
+/// Marks the check of `generation` as no longer running when dropped, and wakes its waiters:
+/// on return as on unwind, so a panicking check cannot leave them waiting forever.
+struct RunningCheck<'a> {
+    check: &'a AuthCheck,
+    generation: u64,
+}
+
+impl Drop for RunningCheck<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.check.slot.lock_recover();
+        if slot.running == Some(self.generation) {
+            slot.running = None;
+        }
+        drop(slot);
+        self.check.finished.notify_all();
+    }
+}
+
+/// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
+/// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
+/// reads are kept: a failure is asked again next time.
+struct Cached<K, V>(Mutex<CacheEntries<K, V>>);
+
+struct CacheEntries<K, V> {
+    /// Bumped by every clear or removal: a read that started before then is not kept, since it
+    /// may have been answered for the account or settings that were just forgotten.
+    epoch: u64,
+    values: HashMap<K, (Instant, V)>,
+}
+
+impl<K, V> Default for Cached<K, V> {
+    fn default() -> Self {
+        Self(Mutex::new(CacheEntries {
+            epoch: 0,
+            values: HashMap::new(),
+        }))
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
+    fn get_or<E>(
+        &self,
+        key: &K,
+        fetch: impl FnOnce() -> std::result::Result<V, E>,
+    ) -> std::result::Result<V, E> {
+        self.get_or_report(key, fetch).map(|(value, _)| value)
+    }
+
+    /// [`Cached::get_or`], also telling whether the value came from the cache (`true`) or was
+    /// just fetched (`false`).
+    fn get_or_report<E>(
+        &self,
+        key: &K,
+        fetch: impl FnOnce() -> std::result::Result<V, E>,
+    ) -> std::result::Result<(V, bool), E> {
+        let started = {
+            let entries = self.0.lock_recover();
+            if let Some((at, value)) = entries.values.get(key)
+                && at.elapsed() < CACHE_TTL
+            {
+                return Ok((value.clone(), true));
+            }
+            entries.epoch
+        };
+        let value = fetch()?;
+        let mut entries = self.0.lock_recover();
+        if entries.epoch == started {
+            entries
+                .values
+                .insert(key.clone(), (Instant::now(), value.clone()));
+        }
+        Ok((value, false))
+    }
+
+    fn remove(&self, key: &K) {
+        let mut entries = self.0.lock_recover();
+        entries.epoch += 1;
+        entries.values.remove(key);
+    }
+
+    fn clear(&self) {
+        let mut entries = self.0.lock_recover();
+        entries.epoch += 1;
+        entries.values.clear();
+    }
 }
 
 impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
         *self.search_path.lock_recover() = dirs;
-        *self.ready_at.lock_recover() = None;
-        self.default_branches.lock_recover().clear();
+        {
+            let mut slot = self.auth_check.slot.lock_recover();
+            slot.generation += 1;
+            slot.last = None;
+            slot.ready_at = None;
+        }
+        // Callers waiting for a check of the old search path start their own.
+        self.auth_check.finished.notify_all();
+        self.forget_metadata();
+    }
+
+    /// Drops what was read about repositories and the signed-in viewer: after `gh` changes or
+    /// logs out, the next account may see other settings.
+    fn forget_metadata(&self) {
+        self.default_branches.clear();
+        self.merge_settings.clear();
+        self.default_merge_methods.clear();
+        self.viewer_logins.clear();
     }
 
     fn path_var(&self) -> OsString {
@@ -424,19 +561,54 @@ impl Gh {
     }
 
     /// Whether `gh` can be used, and if not, what to tell the user.
-    fn availability(&self, cwd: &Path) -> (GithubAvailability, Option<String>) {
-        let fresh = |at: &Option<Instant>| at.is_some_and(|at| at.elapsed() < CACHE_TTL);
-        if fresh(&self.ready_at.lock_recover()) {
-            return (GithubAvailability::Ready, None);
-        }
-        match self.run(cwd, &["auth", "status"]) {
-            Ok(_) => {
-                *self.ready_at.lock_recover() = Some(Instant::now());
-                (GithubAvailability::Ready, None)
-            }
+    fn availability(&self, cwd: &Path) -> AuthOutcome {
+        self.availability_checked_by(|| match self.run(cwd, &["auth", "status"]) {
+            Ok(_) => (GithubAvailability::Ready, None),
             Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
             Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
+        })
+    }
+
+    /// [`Gh::availability`] with the `gh auth status` run given, so tests can drive it.
+    fn availability_checked_by(&self, check_auth: impl FnOnce() -> AuthOutcome) -> AuthOutcome {
+        let check = &self.auth_check;
+        let mut slot = check.slot.lock_recover();
+        if slot.ready_at.is_some_and(|at| at.elapsed() < CACHE_TTL) {
+            return (GithubAvailability::Ready, None);
         }
+        let asked = Instant::now();
+        let generation = loop {
+            // A check that finished after this caller asked answers it too. An older failure
+            // does not: logging in must be noticed on the next ask.
+            if let Some((finished, outcome)) = slot.last.as_ref()
+                && *finished >= asked
+            {
+                return outcome.clone();
+            }
+            if slot.running != Some(slot.generation) {
+                break slot.generation;
+            }
+            slot = check
+                .finished
+                .wait(slot)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        };
+        slot.running = Some(generation);
+        drop(slot);
+        // Frees the slot and wakes the waiters even if the check unwinds.
+        let _running = RunningCheck { check, generation };
+        let outcome = check_auth();
+        let mut slot = check.slot.lock_recover();
+        if slot.generation == generation {
+            if outcome.0 == GithubAvailability::Ready {
+                slot.ready_at = Some(Instant::now());
+            } else {
+                self.forget_metadata();
+            }
+            slot.last = Some((Instant::now(), outcome.clone()));
+        }
+        drop(slot);
+        outcome
     }
 
     fn require_ready(&self, cwd: &Path) -> Result<()> {
@@ -447,21 +619,14 @@ impl Gh {
     }
 
     fn default_branch(&self, cwd: &Path) -> Result<String> {
-        if let Some((at, branch)) = self.default_branches.lock_recover().get(cwd)
-            && at.elapsed() < CACHE_TTL
-        {
-            return Ok(branch.clone());
-        }
-        let json = self.run(cwd, &["repo", "view", "--json", "defaultBranchRef"])?;
-        let value: serde_json::Value = parse(&json)?;
-        let branch = value["defaultBranchRef"]["name"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| Error::Github("GitHub did not report a default branch.".into()))?;
-        self.default_branches
-            .lock_recover()
-            .insert(cwd.to_path_buf(), (Instant::now(), branch.clone()));
-        Ok(branch)
+        self.default_branches.get_or(&cwd.to_path_buf(), || {
+            let json = self.run(cwd, &["repo", "view", "--json", "defaultBranchRef"])?;
+            let value: serde_json::Value = parse(&json)?;
+            value["defaultBranchRef"]["name"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| Error::Github("GitHub did not report a default branch.".into()))
+        })
     }
 
     /// The open pull request of the checked-out branch.
@@ -621,7 +786,9 @@ fn check_from(v: &serde_json::Value) -> PullRequestCheck {
         CheckState::Pending
     } else {
         match v["conclusion"].as_str() {
-            Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => CheckState::Success,
+            Some("SUCCESS") => CheckState::Success,
+            Some("NEUTRAL") => CheckState::Neutral,
+            Some("SKIPPED") => CheckState::Skipped,
             _ => CheckState::Failure,
         }
     };
@@ -926,6 +1093,17 @@ fn required_check_names(gh: &Gh, cwd: &Path, number: u32) -> Vec<String> {
 
 /// The method the web merge box preselects for the signed-in user, if GitHub says.
 fn viewer_default_merge_method(gh: &Gh, cwd: &Path) -> Option<MergeMethod> {
+    gh.default_merge_methods
+        .get_or(&cwd.to_path_buf(), || {
+            read_viewer_default_merge_method(gh, cwd)
+        })
+        .ok()?
+}
+
+fn read_viewer_default_merge_method(
+    gh: &Gh,
+    cwd: &Path,
+) -> std::result::Result<Option<MergeMethod>, GhError> {
     let out = gh
         .run(
             cwd,
@@ -941,19 +1119,22 @@ fn viewer_default_merge_method(gh: &Gh, cwd: &Path) -> Option<MergeMethod> {
                 "--jq",
                 ".data.repository.viewerDefaultMergeMethod",
             ],
-        )
-        .ok()?;
-    match out.trim() {
+        )?;
+    Ok(match out.trim() {
         "MERGE" => Some(MergeMethod::Merge),
         "SQUASH" => Some(MergeMethod::Squash),
         "REBASE" => Some(MergeMethod::Rebase),
         _ => None,
-    }
+    })
 }
 
 fn viewer_login(gh: &Gh, cwd: &Path) -> Option<String> {
-    let out = gh.run(cwd, &["api", "user", "--jq", ".login"]).ok()?;
-    Some(out.trim().to_string()).filter(|login| !login.is_empty())
+    gh.viewer_logins
+        .get_or(&cwd.to_path_buf(), || {
+            let out = gh.run(cwd, &["api", "user", "--jq", ".login"])?;
+            Ok::<_, GhError>(Some(out.trim().to_string()).filter(|login| !login.is_empty()))
+        })
+        .ok()?
 }
 
 /// Moves a pull request out of draft, or back into it.
@@ -1164,6 +1345,87 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn a_value_fetched_across_a_clear_or_remove_is_not_kept() {
+        let cache: Cached<&str, &str> = Cached::default();
+        let fetched = cache.get_or(&"repo", || {
+            // The account changes while the old one is still being asked.
+            cache.clear();
+            Ok::<_, ()>("old account")
+        });
+        assert_eq!(fetched, Ok("old account"));
+        assert_eq!(
+            cache.get_or(&"repo", || Ok::<_, ()>("new account")),
+            Ok("new account")
+        );
+
+        cache.remove(&"repo");
+        let fetched = cache.get_or(&"repo", || {
+            cache.remove(&"repo");
+            Ok::<_, ()>("stale")
+        });
+        assert_eq!(fetched, Ok("stale"));
+        assert_eq!(cache.get_or(&"repo", || Ok::<_, ()>("fresh")), Ok("fresh"));
+    }
+
+    /// Runs `ask` on its own thread and gives up after a while, so a hang fails the test.
+    fn within_seconds<T: Send + 'static>(ask: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(ask()));
+        rx.recv_timeout(Duration::from_secs(10)).ok()
+    }
+
+    #[test]
+    fn a_check_that_panics_does_not_leave_later_callers_waiting_forever() {
+        let bin = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let gh = std::sync::Arc::new(fake_gh(bin.path(), &serde_json::json!({"auth": "ok"})));
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gh.availability_checked_by(|| panic!("gh auth status unwound"))
+        }));
+        assert!(panicked.is_err());
+
+        let later = {
+            let gh = gh.clone();
+            let cwd = cwd.path().to_path_buf();
+            within_seconds(move || gh.availability(&cwd).0)
+        };
+        assert_eq!(later, Some(GithubAvailability::Ready));
+    }
+
+    /// A `Gh` that finds only the fake `gh` fixture, with the given state.
+    fn fake_gh(dir: &Path, state: &serde_json::Value) -> Gh {
+        crate::fake_gh::install(dir, state);
+        let gh = Gh::default();
+        gh.set_search_path(Some(vec![dir.to_path_buf()]));
+        gh
+    }
+
+    #[test]
+    fn a_failed_auth_check_forgets_the_viewer_and_repository_metadata() {
+        let bin = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let gh = fake_gh(
+            bin.path(),
+            &serde_json::json!({"auth": "ok", "viewer": "me"}),
+        );
+        assert_eq!(gh.availability(cwd.path()).0, GithubAvailability::Ready);
+        assert_eq!(viewer_login(&gh, cwd.path()).as_deref(), Some("me"));
+
+        // The ready answer expires, `gh` is logged out, then logged in as someone else.
+        gh.auth_check.slot.lock_recover().ready_at = None;
+        std::fs::write(bin.path().join("state.json"), r#"{"auth": "logged_out"}"#).unwrap();
+        assert_eq!(gh.availability(cwd.path()).0, GithubAvailability::LoggedOut);
+        std::fs::write(
+            bin.path().join("state.json"),
+            r#"{"auth": "ok", "viewer": "someone"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(viewer_login(&gh, cwd.path()).as_deref(), Some("someone"));
+    }
 }
 
 /// Adds a conversation comment.
@@ -1239,6 +1501,11 @@ pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
 /// The merge methods the repository allows, and whether it deletes merged
 /// branches on its own.
 fn merge_settings(gh: &Gh, cwd: &Path) -> Result<(Vec<MergeMethod>, bool)> {
+    gh.merge_settings
+        .get_or(&cwd.to_path_buf(), || read_merge_settings(gh, cwd))
+}
+
+fn read_merge_settings(gh: &Gh, cwd: &Path) -> Result<(Vec<MergeMethod>, bool)> {
     let repo = parse(&gh.run(
         cwd,
         &[
@@ -1274,7 +1541,18 @@ pub fn merge_pull_request(
     auto: bool,
 ) -> Result<()> {
     gh.require_ready(cwd)?;
-    if !merge_settings(gh, cwd)?.0.contains(&method) {
+    // Cached settings may predate a change on GitHub: read them again once before refusing.
+    // Settings just read are current, so they are not read twice.
+    let key = cwd.to_path_buf();
+    let ((methods, _), cached) = gh
+        .merge_settings
+        .get_or_report(&key, || read_merge_settings(gh, cwd))?;
+    let mut ok = methods.contains(&method);
+    if !ok && cached {
+        gh.merge_settings.remove(&key);
+        ok = merge_settings(gh, cwd)?.0.contains(&method);
+    }
+    if !ok {
         return Err(Error::Github(format!(
             "The repository does not allow {} merges.",
             method.name()
@@ -1288,6 +1566,8 @@ pub fn merge_pull_request(
         args.push("--delete-branch");
     }
     gh.run(cwd, &args)?;
+    // GitHub now preselects the method just used: read it again for the next pull request.
+    gh.default_merge_methods.remove(&cwd.to_path_buf());
     Ok(())
 }
 

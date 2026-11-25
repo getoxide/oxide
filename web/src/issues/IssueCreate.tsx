@@ -2,6 +2,7 @@ import { Skeleton } from "../shared/Skeleton";
 import { ArrowLeftIcon, IssueOpenedIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { useQuery } from "../shared/queryCache";
+import { githubKeys } from "../shared/githubQueries";
 import { commands, type IssueSummary, type PullRequestLabel } from "../bindings";
 import { IssueTemplateChooser } from "./IssueTemplateChooser";
 import { IssueTemplateFields } from "./IssueTemplateFields";
@@ -29,7 +30,7 @@ interface IssueCreateProps {
 /** A new issue as the web offers it: first the repository's templates to choose from (when it
  *  has any), then the form of the chosen one, or a blank one. */
 export function IssueCreate({ projectId, onBack, onCreated }: IssueCreateProps) {
-  const query = useQuery(`p${projectId}:issues:templates`, () => commands.issueTemplates(projectId));
+  const query = useQuery(githubKeys.issueTemplates(projectId), () => commands.issueTemplates(projectId));
   // `undefined` while choosing, `null` for a blank issue.
   const [chosen, setChosen] = useState<IssueTemplate | null | undefined>(undefined);
 

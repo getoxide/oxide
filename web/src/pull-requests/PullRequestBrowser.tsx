@@ -29,6 +29,7 @@ import {
 import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
+import { githubKeys } from "../shared/githubQueries";
 import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
@@ -37,11 +38,16 @@ import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMe
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
 import { relativeTime } from "../shared/relativeTime";
+import { useAutoRefresh } from "../shared/useAutoRefresh";
 
 interface PullRequestBrowserProps {
   projectId: number;
-  /** Changes when the list should reload. */
+  /** Changes when the user's own change should reload the list. */
   refreshKey: number;
+  /** Changes on the auto-refresh timer or focus: a soft ask that never overlaps a fetch in flight. */
+  pollKey?: number;
+  /** Whether the Surface is shown; hidden, an open pull request stops following its checks. */
+  active?: boolean;
   /** Called after a merge or a new pull request, so other views reload. */
   onChanged: () => void;
 }
@@ -55,13 +61,6 @@ export function PullRequestStateIcon({ draft, size = 16 }: { draft: boolean; siz
   );
 }
 
-/** Where the list's summary of a pull request is cached. The detail query has a different shape
- *  (`PullRequestDetail`), so a summary is never written there:
- *  the review reads this key for an instant hero and lets the detail fetch fill in the rest. */
-export function pullRequestPreviewKey(projectId: number, number: number): string {
-  return `p${projectId}:prs:preview:${number}`;
-}
-
 function Branches({ head, base }: { head: string; base: string }) {
   return (
     <span className="pr-branches" title={`${head} → ${base}`}>
@@ -73,7 +72,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active = true, onChanged }: PullRequestBrowserProps) {
   const [creating, setCreating] = useState(false);
   const [mine, setMine] = useState(false);
   const [query, setQuery] = useState("");
@@ -81,10 +80,10 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
   const [search, setSearch] = useState("");
   const [manual, setManual] = useState(0);
   const list = useQuery(
-    `p${projectId}:prs:list:${mine}:${search}`,
+    githubKeys.pullRequestList(projectId, mine, search),
     () => commands.listPullRequests(projectId, mine, search),
     refreshKey + manual,
-    { staleMs: QUERY_STALE_MS },
+    { staleMs: QUERY_STALE_MS, poll: pollKey },
   );
   const [opened, setOpened] = useState<number | null>(null);
   // A quiet line on the list after a pull request was merged or closed; it fades on its own.
@@ -97,7 +96,7 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
   }, [outcome]);
 
   if (creating) return <PullRequestCreate projectId={projectId} onCancel={() => setCreating(false)} onCreated={(pr) => {
-    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
+    setQueryData(githubKeys.pullRequestPreview(projectId, pr.number), pr);
     setCreating(false); setOpened(pr.number); onChanged();
   }} />;
 
@@ -107,6 +106,8 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
         projectId={projectId}
         number={opened}
         refreshKey={refreshKey}
+        pollKey={pollKey}
+        active={active}
         onBack={(done) => {
           if (done) setOutcome({ kind: done, number: opened });
           setOpened(null);
@@ -151,7 +152,7 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
         )}
         {list.state === "loading" && <Skeleton label="Loading pull requests…" />}
         {list.state === "error" && (
-          <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(`p${projectId}:`); setManual((v) => v + 1); }} />
+          <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(githubKeys.project(projectId)); setManual((v) => v + 1); }} />
         )}
         {list.state === "ready" && list.data.length === 0 && (
           <div className="pr-empty surface-empty">
@@ -174,7 +175,7 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
                   onClick={() => {
                     // The list already knows this pull request's summary: hand it to the review
                     // so the hero paints before the much slower detail call returns.
-                    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
+                    setQueryData(githubKeys.pullRequestPreview(projectId, pr.number), pr);
                     setOpened(pr.number);
                   }}
                 >
@@ -215,32 +216,61 @@ interface PullRequestReviewProps {
   projectId: number;
   number: number;
   refreshKey: number;
+  pollKey?: number;
+  active?: boolean;
   onBack: (done?: "merged" | "closed") => void;
   onChanged: () => void;
 }
 
-/** How often an open pull request reloads while some of its checks are still running. */
-export const CHECKS_REFRESH_MS = 10_000;
+/** How often an open pull request reloads while its checks run or GitHub is still settling its
+ *  merge state; once everything settled it follows the Surface's normal interval again. */
+export const CHECKS_REFRESH_MS = 6_000;
 
 type Result = { status: "ok" } | { status: "error"; error: { message: string } };
+
+/** How many fast polls an open pull request gets while only its merge state is unknown: GitHub
+ *  usually computes it within seconds, and a state it never settles must not poll forever. */
+export const UNKNOWN_MERGE_STATE_POLLS = 10;
+
+/** Why an open pull request is still moving: checks that run, or a merge state GitHub has not
+ *  computed yet. */
+function settling(detail: PullRequestDetail | undefined): "checks" | "mergeState" | null {
+  if (detail === undefined || (detail.phase !== "open" && detail.phase !== "draft")) return null;
+  if (detail.checks.some((c) => c.state === "pending")) return "checks";
+  return detail.mergeState === "unknown" ? "mergeState" : null;
+}
 
 export function PullRequestReview({
   projectId,
   number,
   refreshKey,
+  pollKey = 0,
+  active = true,
   onBack,
   onChanged,
 }: PullRequestReviewProps) {
   const [reload, setReload] = useState(0);
+  const key = githubKeys.pullRequestDetail(projectId, number);
+  // Checks start and finish within minutes, and GitHub takes a moment to settle a fresh merge
+  // state, so follow those closer than the general refresh does, only while the pull request is
+  // shown. Soft polls: never two `gh` calls at once, and backed off after failures.
+  // Only `active` turning on revalidates; settling just changes the cadence, so checks starting
+  // to run do not fetch again on top of the fetch that reported them.
+  const moving = settling(getQueryData<{ detail: PullRequestDetail }>(key)?.detail);
+  const fastPoll = useAutoRefresh({
+    enabled: active,
+    intervalMs: moving === null ? null : CHECKS_REFRESH_MS,
+    maxTicks: moving === "mergeState" ? UNKNOWN_MERGE_STATE_POLLS : undefined,
+  });
   const query = useQuery(
-    `p${projectId}:prs:detail:${number}`,
+    key,
     async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
       const detail = await commands.pullRequestDetail(projectId, number);
       if (detail.status === "error") return detail;
       return { status: "ok", data: { detail: detail.data } };
     },
     refreshKey + reload,
-    { staleMs: QUERY_STALE_MS },
+    { staleMs: QUERY_STALE_MS, poll: pollKey + fastPoll },
   );
   const loaded: Loaded = query.state === "ready" ? { state: "ready", ...query.data } : query;
   const [error, setError] = useState<string | null>(null);
@@ -261,15 +291,6 @@ export function PullRequestReview({
   const method = seed ? defaultMergeMethod(seed.mergeMethods, methodChoice, seed.defaultMergeMethod) : methodChoice;
   const deleteBranch = deleteChoice ?? seed?.deleteBranchOnMerge ?? false;
 
-  // Checks start and finish within minutes, so follow them closer than the general refresh does.
-  const checksRunning = loaded.state === "ready" && loaded.detail.checks.some((c) => c.state === "pending");
-  useEffect(() => {
-    if (!checksRunning) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") setReload((n) => n + 1);
-    }, CHECKS_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [checksRunning]);
 
   async function openLink(url: string) {
     const message = await openExternalLink(url);
@@ -279,7 +300,7 @@ export function PullRequestReview({
   // What the repository list already told us, if this pull request came from there. It only has
   // the summary fields, so it paints the hero while the detail query supplies checks, diff and
   // comments; it is never written into the detail query's own key.
-  const preview = getQueryData<PullRequest>(pullRequestPreviewKey(projectId, number));
+  const preview = getQueryData<PullRequest>(githubKeys.pullRequestPreview(projectId, number));
   const shownPr = loaded.state === "ready" ? loaded.detail.pullRequest : (preview ?? null);
   const nav = (
     <div className="pr-nav">
@@ -343,13 +364,13 @@ export function PullRequestReview({
     const result = await run();
     setPending(null);
     if (result.status === "error") setError(result.error.message);
-    else invalidateQueries(`p${projectId}:prs:list:`);
+    else invalidateQueries(githubKeys.pullRequestLists(projectId));
     return result.status === "ok";
   }
 
   /** A merged or closed pull request must not linger on the cached lists. */
   const dropFromLists = () =>
-    updateQueries<PullRequest[]>(`p${projectId}:prs:list:`, (prs) => prs.filter((p) => p.number !== number));
+    updateQueries<PullRequest[]>(githubKeys.pullRequestLists(projectId), (prs) => prs.filter((p) => p.number !== number));
 
   async function sendComment() {
     if (await act("comment", () => commands.commentPullRequest(projectId, number, comment))) {
@@ -395,7 +416,7 @@ export function PullRequestReview({
   return (
     <div className="pr-review">
       {nav}
-      <RefreshNotice query={query} working={busy} />
+      <RefreshNotice query={query} />
       <div className="pr-scroll">
         <header className="pr-hero">
           <h3 className="pr-title">
