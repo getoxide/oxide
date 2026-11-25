@@ -35,6 +35,11 @@ export function mergeMentions(...lists: readonly (readonly string[])[]): string[
   return out;
 }
 
+/** `gh` names a GitHub App's author `app/<name>`; GitHub mentions it as `@<name>`. */
+function mentionable(login: string): string {
+  return login.replace(/^app\//, "");
+}
+
 /** The people of an issue or pull request, most involved first: its author, assignees and
  *  reviewers, whoever wrote or acted in its timeline, then GitHub's own participant list. The
  *  viewer is left out: nobody mentions themselves. */
@@ -51,11 +56,12 @@ export function conversationPeople(conversation: {
     return [item.author];
   });
   const viewer = conversation.viewer.toLowerCase();
-  return mergeMentions(
-    [conversation.author],
-    conversation.assignees,
-    (conversation.reviewers ?? []).map((r) => r.login),
-    actors,
-    conversation.participants,
-  ).filter((login) => login.toLowerCase() !== viewer);
+  const everyone = [
+    conversation.author,
+    ...conversation.assignees,
+    ...(conversation.reviewers ?? []).map((r) => r.login),
+    ...actors,
+    ...conversation.participants,
+  ];
+  return mergeMentions(everyone.map(mentionable)).filter((login) => login.toLowerCase() !== viewer);
 }

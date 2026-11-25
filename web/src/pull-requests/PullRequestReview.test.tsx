@@ -522,6 +522,44 @@ it("reads the conversation like the web: avatar, name, what they did and when", 
   expect(entries[1].querySelector("header")!.textContent).toContain("Author");
 });
 
+it("offers the conversation's people before collaborators in the comment box and the comment editor", async () => {
+  const candidates = vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "Bob", "cy"], labels: [] } });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      participants: ["erin"],
+      timeline: [
+        { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
+        { kind: "comment", id: "c2", author: "me", body: "Done", createdAt: "2026-10-27T12:00:00Z" },
+      ],
+    }),
+  });
+  await render();
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  const typeIn = (box: HTMLTextAreaElement, text: string) => act(async () => {
+    setter.call(box, text);
+    box.setSelectionRange(text.length, text.length);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const options = (box: HTMLTextAreaElement) =>
+    [...box.closest(".md-editor")!.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+
+  const compose = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!;
+  await typeIn(compose, "@");
+  expect(candidates).toHaveBeenCalled();
+  // A GitHub App is mentioned by its bare name, as GitHub does.
+  expect(options(compose)).toEqual(["dependabot", "bob", "erin", "ana", "cy"]);
+  await act(async () => {
+    compose.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  expect(compose.value).toBe("@dependabot ");
+
+  await click(button("Edit comment"));
+  const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit comment"]')!;
+  await typeIn(editor, "Done @er");
+  expect(options(editor)).toEqual(["erin"]);
+});
+
 it("reloads sooner while checks are still running, and stops once they are done", async () => {
   vi.useFakeTimers();
   try {

@@ -35,7 +35,8 @@ import { Checks } from "./PullRequestChecks";
 import { Markdown } from "./PullRequestMarkdown";
 import { ActivityRow, type ConversationItem, isConversationItem } from "./PullRequestTimeline";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
-import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
+import { NO_EDIT, PullRequestPeople, ReviewStateIcon, useCandidates } from "./PullRequestPeople";
+import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
 import { relativeTime } from "../shared/relativeTime";
 import { useAutoRefresh } from "../shared/useAutoRefresh";
@@ -277,6 +278,7 @@ export function PullRequestReview({
   const [pending, setPending] = useState<Pending | null>(null);
   const busy = pending !== null;
   const [comment, setComment] = useState("");
+  const people = useCandidates(projectId);
   const [methodChoice, setMethod] = useState<MergeMethod | null>(null);
   const [deleteChoice, setDeleteBranch] = useState<boolean | null>(null);
   const mergeDoneTimer = useRef<number | null>(null);
@@ -350,6 +352,10 @@ export function PullRequestReview({
   const phase = merged ? "merged" : detail.phase;
   const live = phase === "open" || phase === "draft";
   const conversationCount = detail.timeline.filter(isConversationItem).length;
+  const mentions = mergeMentions(
+    conversationPeople({ ...detail, author: pr.author }),
+    people.candidates.state === "ready" ? people.candidates.data.users : [],
+  );
   const inputs = { phase, checks: detail.checks, mergeState: detail.mergeState, reviewDecision: detail.reviewDecision ?? null };
   const status = readiness(inputs);
   const requirements = live ? mergeRequirements(inputs) : [];
@@ -484,6 +490,8 @@ export function PullRequestReview({
                 author={pr.author}
                 viewer={detail.viewer}
                 projectId={projectId}
+                mentions={mentions}
+                onMentionOpen={people.load}
                 onChanged={() => setReload((n) => n + 1)}
                 onError={setError}
               />
@@ -506,6 +514,8 @@ export function PullRequestReview({
                 rows={3}
                 value={comment}
                 onChange={setComment}
+                mentions={mentions}
+                onMentionOpen={people.load}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -609,11 +619,13 @@ const REVIEW_ACTION = {
 } as const;
 
 /** One conversation entry as the web shows it: who, what they did, when, and what they wrote. */
-function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
+function Entry({ entry, author, viewer, projectId, mentions, onMentionOpen, onChanged, onError }: {
   entry: ConversationItem;
   author: string;
   viewer: string;
   projectId: number;
+  mentions: readonly string[];
+  onMentionOpen: () => void;
   /** The conversation changed on GitHub: load it again. */
   onChanged: () => void;
   onError: (message: string) => void;
@@ -651,6 +663,8 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
             onSaved={() => { setEditing(false); onChanged(); }}
             onCancel={() => setEditing(false)}
             onError={onError}
+            mentions={mentions}
+            onMentionOpen={onMentionOpen}
           />
         ) : entry.body.trim() && <Markdown source={entry.body} />}
       </div>
