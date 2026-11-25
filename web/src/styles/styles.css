@@ -775,7 +775,7 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 /* Close on the left, compact; the merge control takes the rest of the row at the same height. */
 .pr-views .pr-merge-row { display: flex; flex-wrap: nowrap; align-items: stretch; gap: var(--space-2); }
 .pr-views .pr-merge-row > button:not(.icon-btn) { flex: none; min-height: 32px; border-radius: var(--radius-control); white-space: nowrap; }
-.pr-views .pr-merge-row > .primary { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; text-overflow: ellipsis; }
+.pr-views .pr-merge-row > .primary:not(.icon-btn) { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; text-overflow: ellipsis; }
 .pr-views .pr-merge-row > .split-btn { flex: 1 1 0; }
 .pr-views .pr-merge-row > .primary.risky:is(:not(:disabled), .pending) { background: var(--bg4); border-color: var(--red); color: var(--fg-bright); }
 .pr-views .pr-merge-row > .icon-btn { flex: none; width: var(--control-height); height: var(--control-height); border: 1px solid var(--line-strong); background: var(--bg3); }

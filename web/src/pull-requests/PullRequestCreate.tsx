@@ -248,7 +248,7 @@ export function PullRequestCreate({
             </p>
           ) : blocker === "same" ? (
             <p className="pr-create-hint" id="pr-create-hint">
-              The head and the base are the same branch. Choose another base.
+              The head and the base are the same branch. Choose a different head or base.
             </p>
           ) : blocker === "noDiff" ? (
             <p className="pr-create-hint" id="pr-create-hint">

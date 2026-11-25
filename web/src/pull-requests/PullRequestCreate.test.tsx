@@ -197,7 +197,7 @@ it("keeps Create disabled when the head and the base are the same branch", async
   await open();
   await chooseBase("fix/topic");
   expect(createButton().disabled).toBe(true);
-  expect(host.textContent).toContain("The head and the base are the same branch. Choose another base.");
+  expect(host.textContent).toContain("The head and the base are the same branch. Choose a different head or base.");
   expect(host.textContent).not.toContain("No commits on");
   await submit();
   expect(create).not.toHaveBeenCalled();

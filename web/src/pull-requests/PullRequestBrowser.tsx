@@ -141,7 +141,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
             Mine
           </button>
         </SurfaceSearch>
-        <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from the Project's current branch"><GitPullRequestIcon size={14} /> New pull request</button>
+        <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from a local branch"><GitPullRequestIcon size={14} /> New pull request</button>
       </div>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
@@ -163,7 +163,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
                 ? "Nothing in this Project’s repository matches these filters."
                 : "Pull requests opened from this Project’s branches appear here."}
             </p>
-            <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from the Project's current branch"><GitPullRequestIcon size={14} /> New pull request</button>
+            <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from a local branch"><GitPullRequestIcon size={14} /> New pull request</button>
           </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
