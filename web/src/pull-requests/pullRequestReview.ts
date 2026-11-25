@@ -40,6 +40,8 @@ export interface CheckCounts {
   failing: number;
   pending: number;
   passing: number;
+  neutral: number;
+  skipped: number;
 }
 
 /** The checks that decide the merge: the required ones when branch protection names any, else all.
@@ -49,13 +51,18 @@ export function decidingChecks(checks: PullRequestCheck[]): PullRequestCheck[] {
   return required.length > 0 ? required : checks;
 }
 
+const COUNT_KEY: Record<PullRequestCheck["state"], keyof CheckCounts> = {
+  failure: "failing",
+  pending: "pending",
+  success: "passing",
+  neutral: "neutral",
+  skipped: "skipped",
+};
+
+/** How many checks are in each state, one per name, as the Checks list shows them. */
 export function countChecks(checks: PullRequestCheck[]): CheckCounts {
-  const counts = { failing: 0, pending: 0, passing: 0 };
-  for (const c of dedupeChecks(decidingChecks(checks))) {
-    if (c.state === "failure") counts.failing++;
-    else if (c.state === "pending") counts.pending++;
-    else counts.passing++;
-  }
+  const counts = { failing: 0, pending: 0, passing: 0, neutral: 0, skipped: 0 };
+  for (const c of dedupeChecks(checks)) counts[COUNT_KEY[c.state]]++;
   return counts;
 }
 
@@ -96,7 +103,8 @@ export function mergeRequirements({ phase, checks, mergeState, reviewDecision }:
   } else if (reviewDecision === "approved") {
     rows.push({ kind: "review", tone: "ok", title: "Changes approved" });
   }
-  const { failing, pending } = countChecks(checks);
+  // Neutral and skipped checks never hold the merge up, as on GitHub.
+  const { failing, pending } = countChecks(decidingChecks(checks));
   if (failing > 0) {
     rows.push({ kind: "checks", tone: "bad", title: `${plural(failing, "check")} failing`, detail: "Open a failing check to see what went wrong." });
   } else if (pending === 0 && checks.length > 0) {
@@ -133,7 +141,7 @@ export function mergeRequirements({ phase, checks, mergeState, reviewDecision }:
 export function readiness(inputs: MergeInputs): { tone: Tone; label: string } {
   const first = mergeRequirements(inputs)[0];
   // Running checks get no row in the merge box (the Checks list shows them), but they still mean "not yet".
-  if (first?.tone === "ok" && countChecks(inputs.checks).pending > 0) return { tone: "warn", label: "Checks still running" };
+  if (first?.tone === "ok" && countChecks(decidingChecks(inputs.checks)).pending > 0) return { tone: "warn", label: "Checks still running" };
   if (!first) return { tone: "neutral", label: "No checks reported" };
   if (first.tone === "ok") return { tone: "ok", label: "Ready to merge" };
   return { tone: first.tone, label: first.title };
