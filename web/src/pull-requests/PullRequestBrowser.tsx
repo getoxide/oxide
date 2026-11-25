@@ -235,6 +235,12 @@ export const CHECKS_REFRESH_MS = 6_000;
 
 type Result = { status: "ok" } | { status: "error"; error: { message: string } };
 
+/** An open pull request whose checks still run, or whose merge state GitHub has not computed yet. */
+function isSettling(detail: PullRequestDetail | undefined): boolean {
+  if (detail === undefined || (detail.phase !== "open" && detail.phase !== "draft")) return false;
+  return detail.checks.some((c) => c.state === "pending") || detail.mergeState === "unknown";
+}
+
 export function PullRequestReview({
   projectId,
   number,
@@ -245,13 +251,13 @@ export function PullRequestReview({
   onChanged,
 }: PullRequestReviewProps) {
   const [reload, setReload] = useState(0);
-  // Checks start and finish within minutes, so follow them closer than the general refresh does,
-  // only while the pull request is shown. Soft polls: never two `gh` calls at once, and backed off
-  // after failures.
-  const [settling, setSettling] = useState(false);
-  const fastPoll = useAutoRefresh({ enabled: active && settling, intervalMs: CHECKS_REFRESH_MS });
+  const key = `p${projectId}:prs:detail:${number}`;
+  // Checks start and finish within minutes, and GitHub takes a moment to settle a fresh merge
+  // state, so follow those closer than the general refresh does, only while the pull request is
+  // shown. Soft polls: never two `gh` calls at once, and backed off after failures.
+  const fastPoll = useAutoRefresh({ enabled: active && isSettling(getQueryData<{ detail: PullRequestDetail }>(key)?.detail), intervalMs: CHECKS_REFRESH_MS });
   const query = useQuery(
-    `p${projectId}:prs:detail:${number}`,
+    key,
     async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
       const detail = await commands.pullRequestDetail(projectId, number);
       if (detail.status === "error") return detail;
@@ -279,11 +285,6 @@ export function PullRequestReview({
   const method = seed ? defaultMergeMethod(seed.mergeMethods, methodChoice, seed.defaultMergeMethod) : methodChoice;
   const deleteBranch = deleteChoice ?? seed?.deleteBranchOnMerge ?? false;
 
-  const nowSettling =
-    loaded.state === "ready" &&
-    (loaded.detail.phase === "open" || loaded.detail.phase === "draft") &&
-    (loaded.detail.checks.some((c) => c.state === "pending") || loaded.detail.mergeState === "unknown");
-  useEffect(() => setSettling(nowSettling), [nowSettling]);
 
   async function openLink(url: string) {
     const message = await openExternalLink(url);

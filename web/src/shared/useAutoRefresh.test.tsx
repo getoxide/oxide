@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS, useAutoRefresh } from "./useAutoRefresh";
@@ -10,7 +10,10 @@ let root: Root;
 let tick = -1;
 
 function Probe(props: { enabled?: boolean; intervalMs?: number }) {
-  tick = useAutoRefresh(props);
+  const value = useAutoRefresh(props);
+  useEffect(() => {
+    tick = value;
+  });
   return null;
 }
 const render = (props: { enabled?: boolean; intervalMs?: number } = {}) => act(async () => root.render(<Probe {...props} />));

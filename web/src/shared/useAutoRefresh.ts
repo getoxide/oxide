@@ -20,8 +20,12 @@ export interface AutoRefreshOptions {
  *  `useQuery` as its soft `poll` token, so a tick never overlaps a fetch in flight. */
 export function useAutoRefresh({ enabled = true, intervalMs = REFRESH_INTERVAL_MS }: AutoRefreshOptions = {}): number {
   const [tick, setTick] = useState(0);
-  const last = useRef(Date.now());
+  // When the last tick (or the mount) happened; set in an effect, since render must stay pure.
+  const last = useRef(0);
   const wasEnabled = useRef(enabled);
+  useEffect(() => {
+    last.current = Date.now();
+  }, []);
 
   useEffect(() => {
     const revealed = enabled && !wasEnabled.current;
