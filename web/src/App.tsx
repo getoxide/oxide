@@ -552,14 +552,14 @@ export function App() {
           {selected && visitedTools[`${selected.id}:Pull request`] && (
             <div className="surface-content" hidden={activeTool !== "Pull request"}>
               <Suspense fallback={<Skeleton kind="list" label="Loading pull requests…" />}>
-                <PullRequestPanel projectId={selected.id} refreshKey={0} onChanged={() => {}} />
+                <PullRequestPanel projectId={selected.id} refreshKey={0} active={dockVisible && activeTool === "Pull request"} onChanged={() => {}} />
               </Suspense>
             </div>
           )}
           {selected && visitedTools[`${selected.id}:Issues`] && (
             <div className="surface-content" hidden={activeTool !== "Issues"}>
               <Suspense fallback={<Skeleton kind="list" label="Loading issues…" />}>
-                <IssuesSurface projectId={selected.id} />
+                <IssuesSurface projectId={selected.id} active={dockVisible && activeTool === "Issues"} />
               </Suspense>
             </div>
           )}

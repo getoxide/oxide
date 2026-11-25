@@ -32,8 +32,10 @@ import { shortcutLabel } from "../shared/platform";
 interface IssueDetailViewProps {
   projectId: number;
   number: number;
-  /** Changes whenever the issue should be fetched again. */
+  /** Changes when the user's own change should fetch the issue again. */
   refreshKey: number;
+  /** Changes on the auto-refresh timer or focus: a soft ask that never overlaps a fetch in flight. */
+  pollKey?: number;
   onBack: () => void;
   /** Called after the issue changed on GitHub, so the list reloads. */
   onChanged: () => void;
@@ -67,10 +69,13 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
 
 /** One issue, with what the web page lets you do: read and edit it, assign and label it,
  *  discuss it, close it with a reason or reopen it. */
-export function IssueDetailView({ projectId, number, refreshKey, onBack, onChanged }: IssueDetailViewProps) {
+export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, onBack, onChanged }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
-  const query = useQuery(`p${projectId}:issues:detail:${number}`, () => commands.issueDetail(projectId, number), refreshKey + reload, { staleMs: QUERY_STALE_MS });
+  const query = useQuery(`p${projectId}:issues:detail:${number}`, () => commands.issueDetail(projectId, number), refreshKey + reload, {
+    staleMs: QUERY_STALE_MS,
+    poll: pollKey,
+  });
   const loaded: Loaded = query.state === "ready" ? { state: "ready", issue: query.data } : query;
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState<string | null>(null);

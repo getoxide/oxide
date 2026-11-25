@@ -38,11 +38,16 @@ import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMe
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
 import { relativeTime } from "../shared/relativeTime";
+import { useAutoRefresh } from "../shared/useAutoRefresh";
 
 interface PullRequestBrowserProps {
   projectId: number;
-  /** Changes when the list should reload. */
+  /** Changes when the user's own change should reload the list. */
   refreshKey: number;
+  /** Changes on the auto-refresh timer or focus: a soft ask that never overlaps a fetch in flight. */
+  pollKey?: number;
+  /** Whether the Surface is shown; hidden, an open pull request stops following its checks. */
+  active?: boolean;
   /** Called after a merge or a new pull request, so other views reload. */
   onChanged: () => void;
 }
@@ -74,7 +79,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active = true, onChanged }: PullRequestBrowserProps) {
   const [creating, setCreating] = useState(false);
   const [mine, setMine] = useState(false);
   const [query, setQuery] = useState("");
@@ -85,7 +90,7 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
     githubKeys.pullRequestList(projectId, mine, search),
     () => commands.listPullRequests(projectId, mine, search),
     refreshKey + manual,
-    { staleMs: QUERY_STALE_MS },
+    { staleMs: QUERY_STALE_MS, poll: pollKey },
   );
   const [opened, setOpened] = useState<number | null>(null);
   // A quiet line on the list after a pull request was merged or closed; it fades on its own.
@@ -108,6 +113,8 @@ export function PullRequestBrowser({ projectId, refreshKey, onChanged }: PullReq
         projectId={projectId}
         number={opened}
         refreshKey={refreshKey}
+        pollKey={pollKey}
+        active={active}
         onBack={(done) => {
           if (done) setOutcome({ kind: done, number: opened });
           setOpened(null);
@@ -216,12 +223,15 @@ interface PullRequestReviewProps {
   projectId: number;
   number: number;
   refreshKey: number;
+  pollKey?: number;
+  active?: boolean;
   onBack: (done?: "merged" | "closed") => void;
   onChanged: () => void;
 }
 
-/** How often an open pull request reloads while some of its checks are still running. */
-export const CHECKS_REFRESH_MS = 10_000;
+/** How often an open pull request reloads while its checks run or GitHub is still settling its
+ *  merge state; once everything settled it follows the Surface's normal interval again. */
+export const CHECKS_REFRESH_MS = 6_000;
 
 type Result = { status: "ok" } | { status: "error"; error: { message: string } };
 
@@ -229,10 +239,17 @@ export function PullRequestReview({
   projectId,
   number,
   refreshKey,
+  pollKey = 0,
+  active = true,
   onBack,
   onChanged,
 }: PullRequestReviewProps) {
   const [reload, setReload] = useState(0);
+  // Checks start and finish within minutes, so follow them closer than the general refresh does,
+  // only while the pull request is shown. Soft polls: never two `gh` calls at once, and backed off
+  // after failures.
+  const [settling, setSettling] = useState(false);
+  const fastPoll = useAutoRefresh({ enabled: active && settling, intervalMs: CHECKS_REFRESH_MS });
   const query = useQuery(
     `p${projectId}:prs:detail:${number}`,
     async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
@@ -241,7 +258,7 @@ export function PullRequestReview({
       return { status: "ok", data: { detail: detail.data } };
     },
     refreshKey + reload,
-    { staleMs: QUERY_STALE_MS },
+    { staleMs: QUERY_STALE_MS, poll: pollKey + fastPoll },
   );
   const loaded: Loaded = query.state === "ready" ? { state: "ready", ...query.data } : query;
   const [error, setError] = useState<string | null>(null);
@@ -262,15 +279,11 @@ export function PullRequestReview({
   const method = seed ? defaultMergeMethod(seed.mergeMethods, methodChoice, seed.defaultMergeMethod) : methodChoice;
   const deleteBranch = deleteChoice ?? seed?.deleteBranchOnMerge ?? false;
 
-  // Checks start and finish within minutes, so follow them closer than the general refresh does.
-  const checksRunning = loaded.state === "ready" && loaded.detail.checks.some((c) => c.state === "pending");
-  useEffect(() => {
-    if (!checksRunning) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") setReload((n) => n + 1);
-    }, CHECKS_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [checksRunning]);
+  const nowSettling =
+    loaded.state === "ready" &&
+    (loaded.detail.phase === "open" || loaded.detail.phase === "draft") &&
+    (loaded.detail.checks.some((c) => c.state === "pending") || loaded.detail.mergeState === "unknown");
+  useEffect(() => setSettling(nowSettling), [nowSettling]);
 
   async function openLink(url: string) {
     const message = await openExternalLink(url);
