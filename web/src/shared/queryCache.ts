@@ -15,6 +15,9 @@ interface Entry {
   error?: string;
   /** When the last fetch settled, or when the data was written directly. */
   updatedAt?: number;
+  /** The sequence number of the last direct write (`setQueryData`, `updateQuery`): a fetch
+   *  started before it may not know of that change, so its result is not applied over it. */
+  written?: number;
   /** Marked by `invalidateQueries` so even an unmounted entry revalidates on its next mount. */
   stale?: boolean;
   /** Fetches that failed in a row; soft polls back off while it is above zero. */
@@ -85,6 +88,12 @@ function run<T>(
     if (inflight.get(key)?.id !== id) return result;
     inflight.delete(key);
     const previous = entries.get(key);
+    if (result.status === "ok" && previous?.written !== undefined && previous.written > id) {
+      // Written meanwhile (a mutation GitHub just accepted): keep that, and ask again.
+      entries.set(key, { ...previous, stale: true });
+      notify(key, true);
+      return result;
+    }
     entries.set(
       key,
       result.status === "ok"
@@ -231,7 +240,7 @@ export function getQueryData<T>(key: string): T | undefined {
 /** Replaces a key's data directly, e.g. after a mutation returned the new value or a list seeded a
  *  detail view's preview. Written data counts as fresh. */
 export function setQueryData<T>(key: string, data: T): void {
-  entries.set(key, { data, updatedAt: Date.now() });
+  entries.set(key, { data, updatedAt: Date.now(), written: ++sequence });
   notify(key);
 }
 
@@ -239,7 +248,7 @@ export function setQueryData<T>(key: string, data: T): void {
 export function updateQuery<T>(key: string, update: (data: T) => T): void {
   const entry = entries.get(key);
   if (entry?.data === undefined) return;
-  entries.set(key, { ...entry, data: update(entry.data as T) });
+  entries.set(key, { ...entry, data: update(entry.data as T), written: ++sequence });
   notify(key);
 }
 
@@ -249,7 +258,7 @@ export function updateQueries<T>(prefix: string, update: (data: T) => T): void {
     if (!key.startsWith(prefix)) continue;
     const entry = entries.get(key);
     if (entry?.data === undefined) continue;
-    entries.set(key, { ...entry, data: update(entry.data as T) });
+    entries.set(key, { ...entry, data: update(entry.data as T), written: ++sequence });
     notify(key);
   }
 }

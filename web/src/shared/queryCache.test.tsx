@@ -2,7 +2,7 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearQueryCache, invalidateQueries, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_MAX_MS, prefetchQuery, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
+import { clearQueryCache, invalidateQueries, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_MAX_MS, prefetchQuery, QUERY_STALE_MS, setQueryData, updateQuery, useQuery, type QueryResult, type QueryState } from "./queryCache";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -116,6 +116,21 @@ describe("query cache", () => {
     await mount("k", fetcher, 1);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: "two" });
+  });
+
+  it("does not let a fetch started before a write overwrite it, and asks again", async () => {
+    await mount("k", async () => ok("before"));
+    const stale = deferred<QueryResult<string>>();
+    const fetcher = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(ok("after"));
+    await mount("k", fetcher, 1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    // A mutation GitHub accepted lands while that fetch is still on its way.
+    await act(async () => updateQuery<string>("k", () => "confirmed"));
+    const written = history.length;
+    await act(async () => stale.resolve(ok("before")));
+    expect(history.slice(written).map((s) => (s.state === "ready" ? s.data : s.state))).not.toContain("before");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(seen).toMatchObject({ state: "ready", data: "after" });
   });
 
   it("joins an identical fetch already in flight", async () => {
