@@ -681,6 +681,35 @@ fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
 }
 
 #[test]
+fn create_refuses_a_base_that_is_not_a_branch_name() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+
+    for base in [
+        "--output=/tmp/x",
+        "-n",
+        "main..HEAD",
+        "main@{1}",
+        "main^",
+        "main:x",
+    ] {
+        let err = f
+            .core
+            .create_pull_request(f.project.id, &input("T", base, false))
+            .unwrap_err();
+        assert!(err.to_string().contains("branch name"), "{base:?}: {err}");
+    }
+    assert!(f.create_calls().is_empty());
+    assert!(
+        git(&f.remote, &["branch", "--list", "feature"])
+            .trim()
+            .is_empty()
+    );
+}
+
+#[test]
 fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
     let f = fixture();
     install_gh(&f, &ok_state());

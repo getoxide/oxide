@@ -122,6 +122,38 @@ fn has_unpushed_commits(cwd: &Path) -> bool {
         .is_none_or(|n| n > 0)
 }
 
+/// The longest base branch name accepted from the webview.
+const MAX_BRANCH_NAME: usize = 255;
+
+/// A branch name from the webview, checked against the rules of
+/// `git check-ref-format --branch` that matter here: nothing that Git could read
+/// as an option, a range, a reflog entry or a revision expression.
+pub(crate) fn valid_branch_name(name: &str) -> Result<&str> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_BRANCH_NAME
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && name != "@"
+        && !name.contains("..")
+        && !name.contains("@{")
+        && !name.contains("//")
+        && !name.contains("/.")
+        && !name.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        });
+    if ok {
+        Ok(name)
+    } else {
+        Err(Error::Git(format!(
+            "{:?} is not a valid branch name.",
+            name.chars().take(64).collect::<String>()
+        )))
+    }
+}
+
 /// How many commits HEAD has beyond `base`, preferring its remote-tracking branch;
 /// `None` when neither exists locally, so the caller cannot tell.
 pub(crate) fn commits_beyond(cwd: &Path, base: &str) -> Option<u32> {
