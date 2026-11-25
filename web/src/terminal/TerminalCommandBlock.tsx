@@ -110,7 +110,8 @@ export function TerminalCommandBlock(props: Props) {
         !element.clientWidth
       )
         return;
-      viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
+      viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
+      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
       addon.fit();
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
       if (screenElement && term.rows)

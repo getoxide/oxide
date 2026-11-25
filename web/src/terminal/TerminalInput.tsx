@@ -23,16 +23,20 @@ interface Props {
   history: CommandHistory[];
   sessionId: number | null;
   disabled: boolean;
+  /** Kept mounted but not shown, so a half-typed command survives a running one. */
+  hidden?: boolean;
   visible: boolean;
   /** No Command has run yet: show the shortcut hint. */
   fresh: boolean;
-  onRun: (command: string) => void;
+  /** Runs `command`; `false` when it was refused (another one runs), so the line keeps it. */
+  onRun: (command: string) => boolean | void;
 }
 export function TerminalInput({
   ref,
   history,
   sessionId,
   disabled,
+  hidden = false,
   visible,
   fresh,
   onRun,
@@ -226,16 +230,15 @@ export function TerminalInput({
   return (
     <form
       className="terminal-command-composer"
+      hidden={hidden}
+      style={hidden ? { display: "none" } : undefined}
       onBlur={(event) => {
         // Focus left the command line (a click elsewhere, another window): the list goes with it.
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenu(null);
       }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!disabled && input.trim()) {
-          onRun(input);
-          change("");
-        }
+        if (!disabled && input.trim() && onRun(input) !== false) change("");
       }}
     >
       {menu && (

@@ -321,10 +321,10 @@ export function TerminalWorkbench({
       sessionId === null ||
       activeBlock.current
     )
-      return;
+      return false;
     if (/^(clear|cls|clear-host)\s*$/i.test(command.trim())) {
       clearTerminal();
-      return;
+      return true;
     }
     const token = crypto.randomUUID();
     setFullscreen(null);
@@ -349,6 +349,7 @@ export function TerminalWorkbench({
     setHistory((old) =>
       [...old, { command, at: block.at, exitCode: null }].slice(-300),
     );
+    return true;
   }
 
   function launch(block: Block, rows: number, cols: number) {
@@ -397,6 +398,7 @@ export function TerminalWorkbench({
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [visible, running]);
+  const interrupting = running && (showRunning || Boolean(fullscreen));
   return (
     <main
       className="terminal-workbench"
@@ -499,27 +501,26 @@ export function TerminalWorkbench({
           </button>
         </div>
       )}
-      {running && (showRunning || fullscreen) ? (
-        !fullscreen && (
-          <button
-            className="terminal-interrupt"
-            onClick={() => void write("\x03")}
-            aria-label="Interrupt command"
-          >
-            <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
-          </button>
-        )
-      ) : (
-        <TerminalInput
-          ref={composer}
-          history={history}
-          sessionId={sessionId}
-          disabled={closed || sessionId === null}
-          visible={visible}
-          fresh={blocks.length === 0}
-          onRun={run}
-        />
+      {interrupting && !fullscreen && (
+        <button
+          className="terminal-interrupt"
+          onClick={() => void write("\x03")}
+          aria-label="Interrupt command"
+        >
+          <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
+        </button>
       )}
+      {/* Hidden, not unmounted, while a command runs: what was typed meanwhile is still there after. */}
+      <TerminalInput
+        ref={composer}
+        history={history}
+        sessionId={sessionId}
+        disabled={closed || sessionId === null}
+        hidden={interrupting}
+        visible={visible && !interrupting}
+        fresh={blocks.length === 0}
+        onRun={run}
+      />
     </main>
   );
 }

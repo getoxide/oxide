@@ -28,7 +28,39 @@ pub struct TerminalSession {
     commands: Sender<SessionCommand>,
     subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
     /// The folder the shell reported at the end of its last block; `summary.cwd` until then.
-    cwd: Arc<Mutex<String>>,
+    live_cwd: Arc<Mutex<String>>,
+    /// The token of the block that runs now: only its `end` marker may move `live_cwd`.
+    block_token: Arc<Mutex<Option<String>>>,
+    /// Holds blocks until the shell's first prompt (see [`Gate`]).
+    gate: Arc<Mutex<Gate>>,
+}
+
+/// Until its first prompt a shell still runs its startup files and the terminal reads input a
+/// line at a time, where a line past the TTY's limit (1024 bytes on macOS) loses its end: a long
+/// block script would never run. Blocks wait here for the first `prompt` marker, or for
+/// [`SHELL_READY_TIMEOUT`] when a shell never prints one.
+#[derive(Default)]
+struct Gate {
+    open: bool,
+    queued: Vec<Vec<u8>>,
+}
+
+/// How long blocks wait for a shell's first prompt before they are sent anyway.
+const SHELL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Sends the blocks that waited for the shell's first prompt, in order; later ones go straight.
+fn open_gate(gate: &Mutex<Gate>, commands: &Sender<SessionCommand>) {
+    let mut gate = gate.lock_recover();
+    if gate.open {
+        return;
+    }
+    gate.open = true;
+    for input in gate.queued.drain(..) {
+        let (reply, _) = bounded(1);
+        if commands.send(SessionCommand::Write(input, reply)).is_err() {
+            break;
+        }
+    }
 }
 
 enum SessionCommand {
@@ -51,7 +83,22 @@ impl TerminalSession {
         }
         let script =
             os::block_script(token, command).map_err(|error| Error::Terminal(error.to_string()))?;
-        self.write(script.as_bytes())
+        *self.block_token.lock_recover() = Some(token.to_string());
+        let mut gate = self.gate.lock_recover();
+        if !gate.open {
+            gate.queued.push(script.into_bytes());
+            return Ok(());
+        }
+        // Queued under the lock, so it follows any block the gate sends; written outside it.
+        let (reply, result) = bounded(1);
+        self.commands
+            .send(SessionCommand::Write(script.into_bytes(), reply))
+            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?;
+        drop(gate);
+        result
+            .recv()
+            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?
+            .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))
     }
 
     pub fn start(
@@ -158,10 +205,30 @@ impl TerminalSession {
         let start_cwd = dunce::simplified(cwd).to_string_lossy().into_owned();
         let live_cwd = Arc::new(Mutex::new(start_cwd.clone()));
         let output_cwd = Arc::clone(&live_cwd);
+        let block_token = Arc::new(Mutex::new(None::<String>));
+        let output_token = Arc::clone(&block_token);
+        let gate = Arc::new(Mutex::new(Gate {
+            open: !blocks,
+            queued: Vec::new(),
+        }));
         let (commands, receiver) = unbounded();
-        std::thread::spawn(move || {
-            read_output(reader, &output_subscribers, blocks, &output_cwd);
-        });
+        let output = OutputState {
+            subscribers: output_subscribers,
+            blocks,
+            cwd: output_cwd,
+            block_token: output_token,
+            gate: Arc::clone(&gate),
+            commands: commands.clone(),
+        };
+        std::thread::spawn(move || read_output(reader, &output));
+        if blocks {
+            let gate = Arc::clone(&gate);
+            let commands = commands.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(SHELL_READY_TIMEOUT);
+                open_gate(&gate, &commands);
+            });
+        }
         std::thread::spawn(move || {
             let mut writer = writer;
             let master = pair.master;
@@ -206,13 +273,15 @@ impl TerminalSession {
             },
             commands,
             subscribers,
-            cwd: live_cwd,
+            live_cwd,
+            block_token,
+            gate,
         })
     }
 
     /// The shell's current folder, as its last block `end` marker reported it.
     pub fn live_cwd(&self) -> String {
-        self.cwd.lock_recover().clone()
+        self.live_cwd.lock_recover().clone()
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<u8>> {
@@ -336,46 +405,89 @@ fn deliver(subscribers: &Mutex<Vec<Sender<Vec<u8>>>>, chunk: &[u8]) {
     });
 }
 
-fn read_output(
-    mut reader: Box<dyn Read + Send>,
-    subscribers: &Mutex<Vec<Sender<Vec<u8>>>>,
+/// What the output thread shares with the session.
+struct OutputState {
+    subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
     blocks: bool,
-    cwd: &Mutex<String>,
-) {
+    cwd: Arc<Mutex<String>>,
+    block_token: Arc<Mutex<Option<String>>>,
+    gate: Arc<Mutex<Gate>>,
+    commands: Sender<SessionCommand>,
+}
+
+fn read_output(mut reader: Box<dyn Read + Send>, state: &OutputState) {
     let mut buffer = [0_u8; 16 * 1024];
-    let mut markers = EndMarkers::default();
+    let mut markers = ShellMarkers::default();
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(count) => {
-                if blocks && let Some(folder) = markers.push(&buffer[..count]) {
-                    *cwd.lock_recover() = folder;
+                if state.blocks {
+                    for marker in markers.push(&buffer[..count]) {
+                        follow(state, marker);
+                    }
                 }
-                deliver(subscribers, &buffer[..count]);
+                deliver(&state.subscribers, &buffer[..count]);
             }
         }
     }
-    if blocks {
-        deliver(subscribers, b"\x1b]633;Oxide;closed\x07");
+    if state.blocks {
+        deliver(&state.subscribers, b"\x1b]633;Oxide;closed\x07");
     }
 }
 
-/// Finds the folder in the block `end` markers the shell hooks print
-/// (`ESC ] 633;Oxide;<token>;end;<exit>;<folder> BEL`), across PTY reads.
+/// Moves the live folder to where the shell reports it is: at the end of the block that runs
+/// now, or at a prompt outside any block. A marker a program prints inside a block, without its
+/// random token, moves nothing.
+fn follow(state: &OutputState, marker: ShellMarker) {
+    let mut token = state.block_token.lock_recover();
+    let folder = match marker {
+        ShellMarker::Prompt { folder } => {
+            open_gate(&state.gate, &state.commands);
+            if token.is_some() {
+                return;
+            }
+            folder
+        }
+        ShellMarker::End {
+            token: marked,
+            folder,
+        } => {
+            if token.as_deref() != Some(marked.as_str()) {
+                return;
+            }
+            *token = None;
+            folder
+        }
+    };
+    if Path::new(&folder).is_absolute() && Path::new(&folder).is_dir() {
+        *state.cwd.lock_recover() = folder;
+    }
+}
+
+/// A marker the shell hooks print: `ESC ] 633;Oxide;<token>;end;<exit>;<folder> BEL` at the end
+/// of a block, `ESC ] 633;Oxide;prompt;<folder> BEL` at a prompt outside one.
+#[derive(Debug, PartialEq)]
+enum ShellMarker {
+    End { token: String, folder: String },
+    Prompt { folder: String },
+}
+
+/// Finds the `end` and `prompt` markers in PTY output, across reads.
 #[derive(Default)]
-struct EndMarkers {
+struct ShellMarkers {
     pending: Vec<u8>,
 }
 
-impl EndMarkers {
+impl ShellMarkers {
     const PREFIX: &'static [u8] = b"\x1b]633;Oxide;";
     /// Longer than any marker a shell prints; an unterminated one past it is dropped.
     const LIMIT: usize = 8 * 1024;
 
-    /// The folder of the last complete `end` marker, when this chunk finished one.
-    fn push(&mut self, chunk: &[u8]) -> Option<String> {
+    /// The markers this chunk completed, in order.
+    fn push(&mut self, chunk: &[u8]) -> Vec<ShellMarker> {
         self.pending.extend_from_slice(chunk);
-        let mut folder = None;
+        let mut found = Vec::new();
         let mut rest = 0;
         let mut open = false;
         while let Some(start) = find(&self.pending[rest..], Self::PREFIX).map(|at| rest + at) {
@@ -386,12 +498,20 @@ impl EndMarkers {
                 break;
             };
             let marker = String::from_utf8_lossy(&self.pending[body..body + length]);
-            let mut fields = marker.splitn(4, ';');
-            if let (Some(_token), Some("end"), Some(_exit), Some(path)) =
-                (fields.next(), fields.next(), fields.next(), fields.next())
-                && Path::new(path).is_absolute()
-            {
-                folder = Some(path.to_string());
+            if let Some(folder) = marker.strip_prefix("prompt;") {
+                found.push(ShellMarker::Prompt {
+                    folder: folder.to_string(),
+                });
+            } else {
+                let mut fields = marker.splitn(4, ';');
+                if let (Some(token), Some("end"), Some(_exit), Some(folder)) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                {
+                    found.push(ShellMarker::End {
+                        token: token.to_string(),
+                        folder: folder.to_string(),
+                    });
+                }
             }
             rest = body + length + 1;
         }
@@ -406,7 +526,7 @@ impl EndMarkers {
         if self.pending.len() > Self::LIMIT {
             self.pending.clear();
         }
-        folder
+        found
     }
 }
 
@@ -425,20 +545,97 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_folder_of_an_end_marker_is_read_across_split_reads() {
-        let mut markers = EndMarkers::default();
+    fn markers_are_read_across_split_reads() {
+        let mut markers = ShellMarkers::default();
         assert_eq!(
             markers.push(b"out\x1b]633;Oxide;t1;start\x07error\r\n\x1b]63"),
-            None
+            vec![]
         );
-        assert_eq!(markers.push(b"3;Oxide;t1;end;1;/Users/some;one"), None);
-        assert_eq!(markers.push(b"\x07"), Some("/Users/some;one".to_string()));
+        assert_eq!(markers.push(b"3;Oxide;t1;end;1;/Users/some;one"), vec![]);
         assert_eq!(
-            markers.push(b"\x1b]633;Oxide;a;end;0;/a\x07\x1b]633;Oxide;b;end;0;/b\x07"),
-            Some("/b".to_string())
+            markers.push(b"\x07\x1b]633;Oxide;prompt;/a;b\x07"),
+            vec![
+                ShellMarker::End {
+                    token: "t1".into(),
+                    folder: "/Users/some;one".into()
+                },
+                ShellMarker::Prompt {
+                    folder: "/a;b".into()
+                },
+            ]
         );
-        // A relative folder is not one the shell reports: it is ignored.
-        assert_eq!(markers.push(b"\x1b]633;Oxide;c;end;0;relative\x07"), None);
+    }
+
+    fn state(token: Option<&str>) -> (OutputState, Receiver<SessionCommand>) {
+        let (commands, receiver) = unbounded();
+        let state = OutputState {
+            subscribers: Arc::default(),
+            blocks: true,
+            cwd: Arc::new(Mutex::new("start".into())),
+            block_token: Arc::new(Mutex::new(token.map(str::to_string))),
+            gate: Arc::default(),
+            commands,
+        };
+        (state, receiver)
+    }
+
+    #[test]
+    fn only_the_running_block_or_a_prompt_outside_one_moves_the_folder() {
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        let end = |token: &str, folder: &str| ShellMarker::End {
+            token: token.into(),
+            folder: folder.into(),
+        };
+        let prompt = |folder: &str| ShellMarker::Prompt {
+            folder: folder.into(),
+        };
+        let (state, _commands) = state(Some("mine"));
+        let cwd = || state.cwd.lock_recover().clone();
+        // A program inside the block prints markers: neither moves the folder.
+        follow(&state, end("other", &here));
+        follow(&state, prompt(&here));
+        assert_eq!(cwd(), "start");
+        // A folder that is relative or does not exist is not one the shell is in.
+        follow(&state, end("mine", "/no/such/oxide/folder"));
+        assert_eq!(cwd(), "start");
+        // The block's end counts once; then a prompt outside a block counts.
+        let (state, _commands) = self::state(Some("mine"));
+        let cwd = || state.cwd.lock_recover().clone();
+        follow(&state, end("mine", &here));
+        assert_eq!(cwd(), here);
+        assert_eq!(*state.block_token.lock_recover(), None);
+        follow(&state, end("mine", "/"));
+        assert_eq!(cwd(), here);
+        let root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        follow(&state, prompt(&root));
+        assert_eq!(cwd(), root);
+    }
+
+    #[test]
+    fn blocks_wait_for_the_first_prompt_and_keep_their_order() {
+        let (state, commands) = state(None);
+        state.gate.lock_recover().queued = vec![b"one".to_vec(), b"two".to_vec()];
+        assert!(commands.try_recv().is_err());
+        follow(
+            &state,
+            ShellMarker::Prompt {
+                folder: "relative".into(),
+            },
+        );
+        let written: Vec<Vec<u8>> = commands
+            .try_iter()
+            .map(|command| match command {
+                SessionCommand::Write(input, _) => input,
+                _ => panic!("only writes"),
+            })
+            .collect();
+        assert_eq!(written, vec![b"one".to_vec(), b"two".to_vec()]);
+        assert!(state.gate.lock_recover().open);
     }
 
     #[test]

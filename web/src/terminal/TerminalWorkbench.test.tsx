@@ -446,3 +446,22 @@ it("keeps the command line the same element, unchanged, from the start to the en
   look();
   expect(new Set(seen).size).toBe(1);
 });
+
+it("keeps what was typed during a running command, and a refused Enter keeps it too", async () => {
+  const shell = await openShell();
+  await shell.submit("sleep 1");
+  await shell.start();
+  // Enter while the command runs is refused: the line keeps the command instead of dropping it.
+  await shell.submit("git sta");
+  const input = () => container.querySelector("textarea")!;
+  expect(input().value).toBe("git sta");
+  expect(shell.calls.filter((name) => name === "run_terminal_block")).toHaveLength(1);
+  // Past the running indicator delay the command line gives way to Interrupt, without losing its text.
+  await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
+  expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(true);
+  await shell.end(0);
+  expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
+  expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(false);
+  expect(input().value).toBe("git sta");
+});

@@ -614,3 +614,59 @@ fn a_program_reading_raw_keys_receives_ctrl_c_as_a_key() {
     assert!(output.contains("raw;end;0;"), "{output}");
     core.close_terminal(terminal.id).unwrap();
 }
+
+/// A long block sent as soon as the shell starts, while its startup files still run and the
+/// terminal reads input a line at a time, must still run: Core holds it until the first prompt.
+#[test]
+fn a_long_block_sent_at_startup_waits_for_the_shell_and_ends() {
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        // Over 2 KiB on 41 lines: past what a terminal line holds before the line editor reads.
+        let echo = if cfg!(windows) {
+            "Write-Output"
+        } else {
+            "echo"
+        };
+        let mut command: Vec<String> = (0..40)
+            .map(|line| format!("{echo} long_line_{line:02}_{}", "x".repeat(40)))
+            .collect();
+        command.push(format!("{echo} LONG_''DONE"));
+        core.run_terminal_block(terminal, &command.join("\n"), "long")
+            .unwrap();
+        assert_eq!(block_end(&view, "long").0, "0", "{shell:?}");
+        assert!(view.text().contains("LONG_DONE"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A restored Terminal's shell moves to the old folder with a plain `cd` before any block;
+/// completion follows it there from the prompt that comes after.
+#[test]
+fn completion_follows_a_cd_typed_outside_a_block() {
+    let (temporary, core, id) = fixture();
+    let elsewhere = temporary.path().join("restored");
+    std::fs::create_dir_all(elsewhere.join("only-restored-dir")).unwrap();
+    let elsewhere = elsewhere.canonicalize().unwrap();
+    let elsewhere = dunce::simplified(&elsewhere).to_string_lossy().into_owned();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    let line = if cfg!(windows) {
+        format!(" Set-Location -LiteralPath '{elsewhere}'\r")
+    } else {
+        format!(" cd -- '{elsewhere}' 2>/dev/null\n")
+    };
+    core.write_terminal(terminal.id, line.as_bytes()).unwrap();
+    until(&core, terminal.id, &rx, &format!("prompt;{elsewhere}"));
+    let result = core.complete_terminal(terminal.id, "ls only", 7).unwrap();
+    assert!(
+        result
+            .matches
+            .iter()
+            .any(|item| item.label == "only-restored-dir/" || item.label == "only-restored-dir"),
+        "{result:?}"
+    );
+    core.close_terminal(terminal.id).unwrap();
+}

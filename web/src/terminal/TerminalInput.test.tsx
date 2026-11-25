@@ -158,7 +158,7 @@ it("runs on Enter from an inline command line with no chat-style send button, an
         disabled={false}
         visible
         fresh
-        onRun={(command) => runs.push(command)}
+        onRun={(command) => void runs.push(command)}
       />,
     ),
   );

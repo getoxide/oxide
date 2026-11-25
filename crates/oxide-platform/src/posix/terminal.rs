@@ -20,6 +20,14 @@ macro_rules! end_marker {
     };
 }
 
+/// The `printf` format of the marker a prompt prints outside a block: the shell's folder. Its
+/// first one tells Core the startup files have run and the line editor reads input.
+macro_rules! prompt_marker {
+    () => {
+        r"'\033]633;Oxide;prompt;%s\007'"
+    };
+}
+
 const BLOCK_PROMPT: &str = concat!(
     r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token-}" ]; then builtin printf "#,
     end_marker!(),
@@ -48,6 +56,10 @@ _oxide_precmd() {
             end_marker!(),
             r#" "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
     _oxide_token=
+  else
+    builtin printf "#,
+            prompt_marker!(),
+            r#" "$PWD"
   fi
 }
 _oxide_quiet_prompt() {
@@ -143,6 +155,10 @@ _oxide_prompt_command() {
     end_marker!(),
     r#" "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
     _oxide_token=
+  else
+    builtin printf "#,
+    prompt_marker!(),
+    r#" "$PWD"
   fi
 }
 _oxide_quiet_prompt() {

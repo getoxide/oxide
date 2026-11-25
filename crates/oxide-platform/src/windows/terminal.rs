@@ -12,8 +12,10 @@ use std::time::Duration;
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
 /// Oxide's prompt and `oxideEnd`, which returns the end marker of the running block (and forgets
-/// its token) for the prompt to write and the block wrapper to emit as pipeline output.
-const BLOCK_PROMPT_COMMAND: &str = r#"function global:oxideEnd($oxideCode) { $oxideMarker=([char]27)+']633;Oxide;'+$global:oxideCommandToken+';end;'+$oxideCode+';'+$pwd.ProviderPath+[char]7; $global:oxideCommandToken=$null; $oxideMarker }; function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write((oxideEnd $oxideCode)) }; ' ' }"#;
+/// its token) for the prompt to write and the block wrapper to emit as pipeline output. Outside a
+/// block the prompt writes a `prompt` marker with the folder; its first one tells Core the
+/// profile has run and the REPL reads input.
+const BLOCK_PROMPT_COMMAND: &str = r#"function global:oxideEnd($oxideCode) { $oxideMarker=([char]27)+']633;Oxide;'+$global:oxideCommandToken+';end;'+$oxideCode+';'+$pwd.ProviderPath+[char]7; $global:oxideCommandToken=$null; $oxideMarker }; function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write((oxideEnd $oxideCode)) } else { [Console]::Write(([char]27)+']633;Oxide;prompt;'+$pwd.ProviderPath+[char]7) }; ' ' }"#;
 
 fn resolve_pwsh() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH")
