@@ -22,10 +22,11 @@ export function mergeLabel(method: MergeMethod): string {
   return MERGE_LABELS[method];
 }
 
-const CHECK_RANK: Record<PullRequestCheck["state"], number> = { failure: 0, pending: 1, success: 2 };
+const CHECK_RANK: Record<PullRequestCheck["state"], number> = { failure: 0, pending: 1, success: 2, neutral: 3, skipped: 4 };
 
 /** One entry per check name, worst state winning, failing first. GitHub lists a check once per
- *  workflow run, so the same name often shows up pending and passing at once. */
+ *  workflow run, so the same name often shows up pending and passing at once. A neutral or skipped
+ *  run ranks last, so a run that really passed or failed wins over it. */
 export function dedupeChecks(checks: PullRequestCheck[]): PullRequestCheck[] {
   const byName = new Map<string, PullRequestCheck>();
   for (const c of checks) {

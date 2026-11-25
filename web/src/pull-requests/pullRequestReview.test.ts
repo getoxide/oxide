@@ -57,6 +57,25 @@ describe("dedupeChecks", () => {
     ]);
     expect(out).toEqual([check("lint", "failure"), check("rust", "pending"), check("web", "success")]);
   });
+
+  it("ranks neutral and skipped after passed, so a real result wins over a skipped run of the same check", () => {
+    const out = dedupeChecks([
+      check("docs", "skipped"),
+      check("lint", "neutral"),
+      check("docs", "success"),
+      check("lint", "skipped"),
+      check("audit", "skipped"),
+      check("format", "neutral"),
+      check("rust", "success"),
+    ]);
+    expect(out).toEqual([
+      check("docs", "success"),
+      check("rust", "success"),
+      check("lint", "neutral"),
+      check("format", "neutral"),
+      check("audit", "skipped"),
+    ]);
+  });
 });
 
 describe("readiness", () => {
