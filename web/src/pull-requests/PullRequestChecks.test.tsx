@@ -64,6 +64,16 @@ it("folds many completed checks under one row that names each outcome", () => {
   expect(folded()).toBe("All 4 completed: 1 neutral · 1 skipped · 2 passed");
 });
 
+it("marks the folded row green only when every folded check passed", () => {
+  const icon = () => host.querySelector(".pr-passed > summary svg")?.getAttribute("class") ?? "";
+  render([check("a", "success"), check("b", "success"), check("c", "success"), check("d", "success")]);
+  expect(icon()).toContain("pr-check-success");
+
+  render([check("a", "success"), check("b", "success"), check("c", "skipped"), check("d", "neutral")]);
+  expect(icon()).not.toContain("pr-check-success");
+  expect(icon()).toContain("pr-check-neutral");
+});
+
 it("keeps failing checks first in the header", () => {
   render([check("a", "success"), check("b", "failure"), check("c", "neutral"), check("d", "pending")]);
   expect(summary()).toBe("1 failing · 1 neutral · 1 running · 1 passed");

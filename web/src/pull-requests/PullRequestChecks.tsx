@@ -1,5 +1,6 @@
 import {
   CheckCircleFillIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
   DotFillIcon,
   LinkExternalIcon,
@@ -72,7 +73,12 @@ export function Checks({ checks, onOpen }: { checks: PullRequestCheck[]; onOpen:
         ) : (
           <details className="pr-passed">
             <summary>
-              <CheckCircleFillIcon size={14} className="pr-check-success" />
+              {completedCounts.passing === completed.length ? (
+                <CheckCircleFillIcon size={14} className="pr-check-success" />
+              ) : (
+                // Some only completed (neutral, skipped): a muted mark, not the green "passed" one.
+                <CheckCircleIcon size={14} className="pr-check-neutral" />
+              )}
               {foldedLabel}
               <ChevronDownIcon size={14} className="pr-chev" />
             </summary>
