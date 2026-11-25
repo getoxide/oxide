@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -62,15 +62,31 @@ export function PullRequestCreate({
       active = false;
     };
   }, [projectId, retry]);
+  // Asks local Git again how many commits the head has beyond `of`.
+  const recount = useCallback(
+    (of: string) => {
+      void commands
+        .pullRequestCommitsBeyond(projectId, of)
+        .then((result) => (result.status === "ok" ? result.data : null))
+        .catch(() => null)
+        .then((count) => setAhead((known) => ({ ...known, [of]: count })));
+    },
+    [projectId],
+  );
   function chooseBase(next: string) {
     setBase(next);
-    if (next in ahead) return;
-    void commands
-      .pullRequestCommitsBeyond(projectId, next)
-      .then((result) => (result.status === "ok" ? result.data : null))
-      .catch(() => null)
-      .then((count) => setAhead((known) => ({ ...known, [next]: count })));
+    // A count above zero only grows with new commits; zero or unknown may be stale.
+    const known = ahead[next];
+    if (typeof known === "number" && known > 0) return;
+    recount(next);
   }
+  // The user may commit in a Terminal meanwhile: count again when the window comes back.
+  useEffect(() => {
+    if (loading || base === "") return;
+    const onFocus = () => recount(base);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loading, base, recount]);
   // Why no pull request can be opened from here, if it cannot.
   // A protected branch is fine as a head as long as it has something to compare.
   const blocker =

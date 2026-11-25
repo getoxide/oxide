@@ -234,6 +234,27 @@ it("re-checks the commits beyond a newly chosen base through local Git", async (
   expect(host.textContent).not.toContain("No commits on");
 });
 
+it("re-checks the count when the window regains focus, so a commit made meanwhile enables Create", async () => {
+  mockDraft({ commitsBeyond: 0 });
+  const beyond = vi.spyOn(commands, "pullRequestCommitsBeyond").mockResolvedValue({ status: "ok", data: 1 });
+  await open();
+  expect(createButton().disabled).toBe(true);
+  await act(async () => void window.dispatchEvent(new Event("focus")));
+  expect(beyond).toHaveBeenCalledWith(1, "main");
+  expect(createButton().disabled).toBe(false);
+  expect(host.textContent).not.toContain("No commits on");
+});
+
+it("never takes a cached zero as final when coming back to a base", async () => {
+  mockDraft({ commitsBeyond: 0 });
+  const beyond = vi.spyOn(commands, "pullRequestCommitsBeyond").mockResolvedValue({ status: "ok", data: 2 });
+  await open();
+  await chooseBase("dev");
+  await chooseBase("main");
+  expect(beyond).toHaveBeenLastCalledWith(1, "main");
+  expect(createButton().disabled).toBe(false);
+});
+
 it("lets the user try when the count for a base cannot be told", async () => {
   mockDraft({ commitsBeyond: 2 });
   vi.spyOn(commands, "pullRequestCommitsBeyond").mockResolvedValue({
