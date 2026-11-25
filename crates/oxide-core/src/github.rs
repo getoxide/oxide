@@ -372,12 +372,22 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
         key: &K,
         fetch: impl FnOnce() -> std::result::Result<V, E>,
     ) -> std::result::Result<V, E> {
+        self.get_or_report(key, fetch).map(|(value, _)| value)
+    }
+
+    /// [`Cached::get_or`], also telling whether the value came from the cache (`true`) or was
+    /// just fetched (`false`).
+    fn get_or_report<E>(
+        &self,
+        key: &K,
+        fetch: impl FnOnce() -> std::result::Result<V, E>,
+    ) -> std::result::Result<(V, bool), E> {
         let started = {
             let entries = self.0.lock_recover();
             if let Some((at, value)) = entries.values.get(key)
                 && at.elapsed() < CACHE_TTL
             {
-                return Ok(value.clone());
+                return Ok((value.clone(), true));
             }
             entries.epoch
         };
@@ -388,7 +398,7 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
                 .values
                 .insert(key.clone(), (Instant::now(), value.clone()));
         }
-        Ok(value)
+        Ok((value, false))
     }
 
     fn remove(&self, key: &K) {
@@ -1540,12 +1550,16 @@ pub fn merge_pull_request(
     auto: bool,
 ) -> Result<()> {
     gh.require_ready(cwd)?;
-    // The cached settings may predate a change on GitHub: read them again once before refusing.
-    let allowed = |gh: &Gh| merge_settings(gh, cwd).map(|(methods, _)| methods.contains(&method));
-    let mut ok = allowed(gh)?;
-    if !ok {
-        gh.merge_settings.remove(&cwd.to_path_buf());
-        ok = allowed(gh)?;
+    // Cached settings may predate a change on GitHub: read them again once before refusing.
+    // Settings just read are current, so they are not read twice.
+    let key = cwd.to_path_buf();
+    let ((methods, _), cached) = gh
+        .merge_settings
+        .get_or_report(&key, || read_merge_settings(gh, cwd))?;
+    let mut ok = methods.contains(&method);
+    if !ok && cached {
+        gh.merge_settings.remove(&key);
+        ok = merge_settings(gh, cwd)?.0.contains(&method);
     }
     if !ok {
         return Err(Error::Github(format!(

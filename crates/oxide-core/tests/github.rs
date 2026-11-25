@@ -812,6 +812,15 @@ fn merge_uses_an_allowed_method_and_can_delete_the_branch() {
         .unwrap_err();
     assert!(err.to_string().contains("rebase"), "{err}");
     assert!(merge_calls().is_empty());
+    // The settings were just read, not cached: refusing does not read them a second time.
+    let settings_reads = f
+        .gh_calls()
+        .iter()
+        .filter(|c| {
+            c[..2] == ["repo", "view"] && c.iter().any(|a| a.contains("rebaseMergeAllowed"))
+        })
+        .count();
+    assert_eq!(settings_reads, 1);
 
     f.core
         .merge_pull_request(f.project.id, 5, MergeMethod::Squash, true, false)
