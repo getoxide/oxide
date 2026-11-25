@@ -247,7 +247,7 @@ export function TerminalInput({
           }
           style={
             menu === "completion" && completion
-              ? ({ "--terminal-menu-column": String(column(base.current.line, completion.replacementIndex)) } as React.CSSProperties)
+              ? ({ "--terminal-menu-column": String(column(input, completion.replacementIndex)) } as React.CSSProperties)
               : undefined
           }
         >
