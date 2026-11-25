@@ -922,7 +922,7 @@ async fn pull_request_commits_beyond(
 }
 
 /// Pushes the chosen head branch if needed, without checking it out, then opens a pull request
-/// for it.
+/// for it. Starts `git` (a push the user asked for) and `gh`.
 #[tauri::command]
 #[specta::specta]
 async fn create_pull_request(
