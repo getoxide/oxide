@@ -254,14 +254,199 @@ impl From<oxide_core::PullRequestLabel> for PullRequestLabel {
     }
 }
 
-impl From<oxide_core::PullRequestComment> for PullRequestComment {
-    fn from(c: oxide_core::PullRequestComment) -> Self {
+impl From<oxide_core::TimelineComment> for TimelineComment {
+    fn from(x: oxide_core::TimelineComment) -> Self {
         Self {
-            id: c.id,
-            author: c.author,
-            body: c.body,
-            created_at: c.created_at,
-            review: c.review.map(Into::into),
+            id: x.id,
+            author: x.author,
+            body: x.body,
+            created_at: x.created_at,
+            reactions: x.reactions.map(|r| r.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
+impl From<oxide_core::TimelineReview> for TimelineReview {
+    fn from(x: oxide_core::TimelineReview) -> Self {
+        Self {
+            id: x.id,
+            author: x.author,
+            body: x.body,
+            created_at: x.created_at,
+            state: x.state.into(),
+            reactions: x.reactions.map(|r| r.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
+impl From<oxide_core::ReactionContent> for ReactionContent {
+    fn from(c: oxide_core::ReactionContent) -> Self {
+        match c {
+            oxide_core::ReactionContent::ThumbsUp => Self::ThumbsUp,
+            oxide_core::ReactionContent::ThumbsDown => Self::ThumbsDown,
+            oxide_core::ReactionContent::Laugh => Self::Laugh,
+            oxide_core::ReactionContent::Hooray => Self::Hooray,
+            oxide_core::ReactionContent::Confused => Self::Confused,
+            oxide_core::ReactionContent::Heart => Self::Heart,
+            oxide_core::ReactionContent::Rocket => Self::Rocket,
+            oxide_core::ReactionContent::Eyes => Self::Eyes,
+        }
+    }
+}
+
+impl From<ReactionContent> for oxide_core::ReactionContent {
+    fn from(c: ReactionContent) -> Self {
+        match c {
+            ReactionContent::ThumbsUp => Self::ThumbsUp,
+            ReactionContent::ThumbsDown => Self::ThumbsDown,
+            ReactionContent::Laugh => Self::Laugh,
+            ReactionContent::Hooray => Self::Hooray,
+            ReactionContent::Confused => Self::Confused,
+            ReactionContent::Heart => Self::Heart,
+            ReactionContent::Rocket => Self::Rocket,
+            ReactionContent::Eyes => Self::Eyes,
+        }
+    }
+}
+
+impl From<oxide_core::ReactionGroup> for ReactionGroup {
+    fn from(g: oxide_core::ReactionGroup) -> Self {
+        Self {
+            content: g.content.into(),
+            count: g.count,
+            viewer_has_reacted: g.viewer_has_reacted,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineCommit> for TimelineCommit {
+    fn from(x: oxide_core::TimelineCommit) -> Self {
+        Self {
+            oid: x.oid,
+            abbreviated_oid: x.abbreviated_oid,
+            headline: x.headline,
+            author: x.author,
+            committed_at: x.committed_at,
+            verified: x.verified,
+            status: x.status.map(Into::into),
+            url: x.url,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineForcePush> for TimelineForcePush {
+    fn from(x: oxide_core::TimelineForcePush) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            branch: x.branch,
+            before: x.before,
+            after: x.after,
+            compare_url: x.compare_url,
+        }
+    }
+}
+
+impl From<oxide_core::TimelinePerson> for TimelinePerson {
+    fn from(x: oxide_core::TimelinePerson) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            login: x.login,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineLabel> for TimelineLabel {
+    fn from(x: oxide_core::TimelineLabel) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            label: x.label.into(),
+        }
+    }
+}
+
+impl From<oxide_core::TimelineClosed> for TimelineClosed {
+    fn from(x: oxide_core::TimelineClosed) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            state_reason: x.state_reason,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineAction> for TimelineAction {
+    fn from(x: oxide_core::TimelineAction) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineMerge> for TimelineMerge {
+    fn from(x: oxide_core::TimelineMerge) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            commit: x.commit,
+            base: x.base,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineRename> for TimelineRename {
+    fn from(x: oxide_core::TimelineRename) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            from: x.from,
+            to: x.to,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineReference> for TimelineReference {
+    fn from(x: oxide_core::TimelineReference) -> Self {
+        Self {
+            actor: x.actor,
+            created_at: x.created_at,
+            number: x.number,
+            title: x.title,
+            url: x.url,
+            state: x.state,
+            pull_request: x.pull_request,
+            repository: x.repository,
+            cross_repository: x.cross_repository,
+        }
+    }
+}
+
+impl From<oxide_core::TimelineItem> for TimelineItem {
+    fn from(item: oxide_core::TimelineItem) -> Self {
+        use oxide_core::TimelineItem as Core;
+        match item {
+            Core::Comment(x) => Self::Comment(x.into()),
+            Core::Review(x) => Self::Review(x.into()),
+            Core::Commit(x) => Self::Commit(x.into()),
+            Core::ForcePush(x) => Self::ForcePush(x.into()),
+            Core::Assigned(x) => Self::Assigned(x.into()),
+            Core::Unassigned(x) => Self::Unassigned(x.into()),
+            Core::Labeled(x) => Self::Labeled(x.into()),
+            Core::Unlabeled(x) => Self::Unlabeled(x.into()),
+            Core::ReviewRequested(x) => Self::ReviewRequested(x.into()),
+            Core::ReviewRequestRemoved(x) => Self::ReviewRequestRemoved(x.into()),
+            Core::Closed(x) => Self::Closed(x.into()),
+            Core::Reopened(x) => Self::Reopened(x.into()),
+            Core::Merged(x) => Self::Merged(x.into()),
+            Core::ConvertedToDraft(x) => Self::ConvertedToDraft(x.into()),
+            Core::ReadyForReview(x) => Self::ReadyForReview(x.into()),
+            Core::Renamed(x) => Self::Renamed(x.into()),
+            Core::HeadRefDeleted(x) => Self::HeadRefDeleted(x.into()),
+            Core::HeadRefRestored(x) => Self::HeadRefRestored(x.into()),
+            Core::CrossReferenced(x) => Self::CrossReferenced(x.into()),
         }
     }
 }
@@ -296,7 +481,6 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             body: d.body,
             head_sha: d.head_sha,
             checks: d.checks.into_iter().map(Into::into).collect(),
-            comments: d.comments.into_iter().map(Into::into).collect(),
             merge_state: d.merge_state.into(),
             review_decision: d.review_decision.map(Into::into),
             reviewers: d.reviewers.into_iter().map(Into::into).collect(),
@@ -309,17 +493,21 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             default_merge_method: d.default_merge_method.map(Into::into),
             delete_branch_on_merge: d.delete_branch_on_merge,
             changed_files: d.changed_files,
+            node_id: d.node_id,
+            participants: d.participants,
+            timeline: d.timeline.into_iter().map(Into::into).collect(),
+            timeline_truncated: d.timeline_truncated,
+            reactions: d.reactions.into_iter().map(Into::into).collect(),
+            signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
     }
 }
 
-impl From<oxide_core::IssueComment> for IssueComment {
-    fn from(c: oxide_core::IssueComment) -> Self {
+impl From<oxide_core::SignedImage> for SignedImage {
+    fn from(i: oxide_core::SignedImage) -> Self {
         Self {
-            id: c.id,
-            author: c.author,
-            body: c.body,
-            created_at: c.created_at,
+            asset_id: i.asset_id,
+            signed_url: i.signed_url,
         }
     }
 }
@@ -352,10 +540,15 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             author: d.author,
             url: d.url,
             created_at: d.created_at,
-            comments: d.comments.into_iter().map(Into::into).collect(),
             labels: d.labels.into_iter().map(Into::into).collect(),
             assignees: d.assignees,
             viewer: d.viewer,
+            node_id: d.node_id,
+            participants: d.participants,
+            timeline: d.timeline.into_iter().map(Into::into).collect(),
+            timeline_truncated: d.timeline_truncated,
+            reactions: d.reactions.into_iter().map(Into::into).collect(),
+            signed_images: d.signed_images.into_iter().map(Into::into).collect(),
         }
     }
 }

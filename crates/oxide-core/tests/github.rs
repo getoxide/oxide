@@ -486,6 +486,8 @@ fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
                 "default merge method".to_string()
             } else if c.iter().any(|a| a.contains("isRequired")) {
                 "required checks".to_string()
+            } else if c.iter().any(|a| a.contains("timelineItems")) {
+                "timeline".to_string()
             } else {
                 c[..2].join(" ")
             }
@@ -495,7 +497,7 @@ fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
     kinds.sort();
     assert_eq!(
         kinds,
-        ["pr view", "required checks"],
+        ["pr view", "required checks", "timeline"],
         "merge settings, the viewer's login and default merge method are reused"
     );
 }
@@ -1081,6 +1083,22 @@ fn detailed_pr() -> serde_json::Value {
     pr
 }
 
+/// The comments and reviews of a timeline, oldest first: author, body and review state.
+fn conversation(
+    items: &[oxide_core::TimelineItem],
+) -> Vec<(String, String, Option<oxide_core::ReviewState>)> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            oxide_core::TimelineItem::Comment(c) => Some((c.author.clone(), c.body.clone(), None)),
+            oxide_core::TimelineItem::Review(r) => {
+                Some((r.author.clone(), r.body.clone(), Some(r.state)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn numbers(prs: &[oxide_core::PullRequest]) -> Vec<u32> {
     prs.iter().map(|p| p.number).collect()
 }
@@ -1145,9 +1163,10 @@ fn detail_has_description_checks_comments_and_changed_files() {
             ("ci/legacy", "success")
         ]
     );
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].author, "reviewer");
-    assert_eq!(detail.comments[0].body, "Looks good");
+    assert_eq!(
+        conversation(&detail.timeline),
+        [("reviewer".into(), "Looks good".into(), None)]
+    );
     assert_eq!(detail.changed_files, 4);
 
     let calls = f.gh_calls();
@@ -1170,6 +1189,406 @@ fn detail_has_description_checks_comments_and_changed_files() {
         json_fields.split(',').any(|field| field == "changedFiles"),
         "expected changedFiles in gh pr view --json fields, got: {json_fields}"
     );
+}
+
+#[test]
+fn pull_request_detail_interleaves_commits_force_pushes_reviews_and_events() {
+    use oxide_core::{
+        CheckState, ReviewState, TimelineAction, TimelineCommit, TimelineForcePush, TimelineItem,
+        TimelineMerge, TimelinePerson, TimelineReview,
+    };
+    let f = fixture();
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([]);
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] = serde_json::json!({"5": {
+        "id": "PR_kwDO5",
+        "url": "https://github.com/fake/repo/pull/5",
+        "participants": {"nodes": [{"login": "other"}, {"login": "reviewer"}]},
+        "timelineItems": {"nodes": [
+            {"__typename": "PullRequestCommit", "commit": {
+                "oid": "1111111aaaaaaa", "abbreviatedOid": "1111111", "messageHeadline": "Add b",
+                "committedDate": "2026-05-01T09:00:00Z", "url": "https://github.com/fake/repo/commit/1111111aaaaaaa",
+                "author": {"name": "Other Person", "user": {"login": "other"}},
+                "signature": {"isValid": true}, "statusCheckRollup": {"state": "SUCCESS"}}},
+            {"__typename": "PullRequestCommit", "commit": {
+                "oid": "2222222bbbbbbb", "abbreviatedOid": "2222222", "messageHeadline": "Unsigned",
+                "committedDate": "2026-05-01T09:05:00Z", "url": "javascript:alert(1)",
+                "author": {"name": "Someone", "user": null}, "signature": null, "statusCheckRollup": null}},
+            {"__typename": "ReviewRequestedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:10:00Z",
+             "requestedReviewer": {"login": "reviewer"}},
+            {"__typename": "ReviewRequestedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:11:00Z",
+             "requestedReviewer": {"name": "core-team"}},
+            {"__typename": "PullRequestReview", "id": "PRR_1", "author": {"login": "reviewer"}, "body": "",
+             "state": "COMMENTED", "createdAt": "2026-05-01T09:20:00Z", "submittedAt": "2026-05-01T09:20:00Z"},
+            {"__typename": "PullRequestReview", "id": "PRR_2", "author": {"login": "reviewer"}, "body": "Rename it",
+             "state": "CHANGES_REQUESTED", "createdAt": "2026-05-01T09:29:00Z", "submittedAt": "2026-05-01T09:30:00Z"},
+            {"__typename": "HeadRefForcePushedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:40:00Z",
+             "ref": {"name": "add-b"}, "beforeCommit": {"oid": "2222222bbbbbbb", "abbreviatedOid": "2222222"},
+             "afterCommit": {"oid": "3333333ccccccc", "abbreviatedOid": "3333333"}},
+            {"__typename": "ConvertToDraftEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:50:00Z"},
+            {"__typename": "ReadyForReviewEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T09:55:00Z"},
+            {"__typename": "MergedEvent", "actor": {"login": "other"}, "createdAt": "2026-05-01T10:30:00Z",
+             "mergeRefName": "main", "commit": {"abbreviatedOid": "4444444"}},
+            {"__typename": "HeadRefDeletedEvent", "actor": null, "createdAt": "2026-05-01T10:31:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(detail.node_id, "PR_kwDO5");
+    assert_eq!(detail.participants, ["other", "reviewer"]);
+    let action = |actor: &str, at: &str| TimelineAction {
+        actor: actor.into(),
+        created_at: at.into(),
+    };
+    let requested = |login: &str, at: &str| {
+        TimelineItem::ReviewRequested(TimelinePerson {
+            actor: "other".into(),
+            created_at: at.into(),
+            login: login.into(),
+        })
+    };
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Commit(TimelineCommit {
+                oid: "1111111aaaaaaa".into(),
+                abbreviated_oid: "1111111".into(),
+                headline: "Add b".into(),
+                author: "other".into(),
+                committed_at: "2026-05-01T09:00:00Z".into(),
+                verified: true,
+                status: Some(CheckState::Success),
+                url: "https://github.com/fake/repo/commit/1111111aaaaaaa".into(),
+            }),
+            TimelineItem::Commit(TimelineCommit {
+                oid: "2222222bbbbbbb".into(),
+                abbreviated_oid: "2222222".into(),
+                headline: "Unsigned".into(),
+                author: "Someone".into(),
+                committed_at: "2026-05-01T09:05:00Z".into(),
+                verified: false,
+                status: None,
+                url: String::new(),
+            }),
+            requested("reviewer", "2026-05-01T09:10:00Z"),
+            requested("core-team", "2026-05-01T09:11:00Z"),
+            TimelineItem::Review(TimelineReview {
+                id: "PRR_2".into(),
+                author: "reviewer".into(),
+                body: "Rename it".into(),
+                created_at: "2026-05-01T09:30:00Z".into(),
+                state: ReviewState::ChangesRequested,
+                reactions: Some(vec![]),
+            }),
+            TimelineItem::ForcePush(TimelineForcePush {
+                actor: "other".into(),
+                created_at: "2026-05-01T09:40:00Z".into(),
+                branch: "add-b".into(),
+                before: "2222222".into(),
+                after: "3333333".into(),
+                compare_url: "https://github.com/fake/repo/compare/2222222bbbbbbb..3333333ccccccc"
+                    .into(),
+            }),
+            TimelineItem::ConvertedToDraft(action("other", "2026-05-01T09:50:00Z")),
+            TimelineItem::ReadyForReview(action("other", "2026-05-01T09:55:00Z")),
+            TimelineItem::Merged(TimelineMerge {
+                actor: "other".into(),
+                created_at: "2026-05-01T10:30:00Z".into(),
+                commit: "4444444".into(),
+                base: "main".into(),
+            }),
+            TimelineItem::HeadRefDeleted(action("ghost", "2026-05-01T10:31:00Z")),
+        ]
+    );
+}
+
+#[test]
+fn pull_request_detail_falls_back_to_comments_and_reviews_when_the_timeline_query_fails() {
+    use oxide_core::{ReviewState, TimelineComment, TimelineItem, TimelineReview};
+    let f = fixture();
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([
+        {"id": "IC_1", "author": {"login": "reviewer"}, "body": "Looks good", "createdAt": "2026-05-01T10:00:00Z"}
+    ]);
+    pr["reviews"] = serde_json::json!([
+        {"id": "PRR_1", "author": {"login": "bob"}, "body": "Ship it", "state": "APPROVED", "submittedAt": "2026-05-01T09:00:00Z"}
+    ]);
+    install_gh(&f, &state_with_prs(&[pr]));
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(detail.node_id, "");
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Review(TimelineReview {
+                id: "PRR_1".into(),
+                author: "bob".into(),
+                body: "Ship it".into(),
+                created_at: "2026-05-01T09:00:00Z".into(),
+                state: ReviewState::Approved,
+                reactions: None,
+            }),
+            TimelineItem::Comment(TimelineComment {
+                id: "IC_1".into(),
+                author: "reviewer".into(),
+                body: "Looks good".into(),
+                created_at: "2026-05-01T10:00:00Z".into(),
+                reactions: None,
+            }),
+        ]
+    );
+}
+
+/// An ISO timestamp `i` seconds after 10:00.
+fn at_second(i: usize) -> String {
+    format!(
+        "2026-01-03T{:02}:{:02}:{:02}Z",
+        10 + i / 3600,
+        (i / 60) % 60,
+        i % 60
+    )
+}
+
+#[test]
+fn issue_detail_pages_through_a_timeline_longer_than_one_page() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut state = ok_state();
+    let mut issue = issue_42();
+    let comments: Vec<serde_json::Value> = (0..150)
+        .filter(|i| i % 2 == 1)
+        .map(|i| {
+            serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "dave"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+        })
+        .collect();
+    issue["comments"] = comments.into();
+    state["issues"] = serde_json::json!([issue]);
+    let nodes: Vec<serde_json::Value> = (0..150)
+        .map(|i| {
+            if i % 2 == 1 {
+                serde_json::json!({"__typename": "IssueComment", "id": format!("IC_{i}"),
+                    "author": {"login": "dave"}, "body": format!("comment {i}"), "createdAt": at_second(i)})
+            } else {
+                serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                    "createdAt": at_second(i)})
+            }
+        })
+        .collect();
+    state["timelines"] =
+        serde_json::json!({"42": {"id": "I_kwDO42", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.timeline.len(), 150);
+    assert!(!detail.timeline_truncated);
+    assert!(matches!(&detail.timeline[149], TimelineItem::Comment(c) if c.id == "IC_149"));
+    let pages: Vec<Vec<String>> = f
+        .gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .collect();
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    let cursor = pages[1]
+        .iter()
+        .position(|a| a == "cursor=100")
+        .expect("the next cursor");
+    assert_eq!(
+        pages[1][cursor - 1],
+        "-f",
+        "the cursor is passed as a string field"
+    );
+}
+
+#[test]
+fn a_polled_issue_detail_reads_only_the_first_timeline_page_and_reuses_the_rest() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut state = ok_state();
+    let nodes: Vec<serde_json::Value> = (0..250)
+        .map(|i| {
+            serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                "createdAt": at_second(i)})
+        })
+        .collect();
+    let mut issue = issue_42();
+    issue["comments"] = serde_json::json!([]);
+    state["issues"] = serde_json::json!([issue]);
+    state["timelines"] =
+        serde_json::json!({"42": {"id": "I_kwDO42", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+    let timeline_reads = || {
+        f.gh_calls()
+            .into_iter()
+            .filter(|c| {
+                c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems"))
+            })
+            .count()
+    };
+
+    // A poll with nothing read before reads the whole timeline.
+    let first = f.core.poll_issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(first.timeline.len(), 250);
+    assert_eq!(timeline_reads(), 3);
+
+    let polled = f.core.poll_issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(timeline_reads(), 4, "a poll reads only the first page");
+    assert_eq!(
+        polled.timeline.len(),
+        250,
+        "the later pages come from the last full read"
+    );
+    assert!(!polled.timeline_truncated);
+    assert!(
+        matches!(&polled.timeline[249], TimelineItem::Reopened(e) if e.created_at == at_second(249))
+    );
+
+    f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(
+        timeline_reads(),
+        7,
+        "a load or a refresh reads every page again"
+    );
+}
+
+#[test]
+fn a_polled_pull_request_detail_reads_only_the_first_timeline_page() {
+    let f = fixture();
+    let nodes: Vec<serde_json::Value> = (0..150)
+        .map(|i| {
+            serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                "createdAt": at_second(i)})
+        })
+        .collect();
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([]);
+    pr["reviews"] = serde_json::json!([]);
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] =
+        serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+    let timeline_reads = || {
+        f.gh_calls()
+            .into_iter()
+            .filter(|c| {
+                c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems"))
+            })
+            .count()
+    };
+
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(timeline_reads(), 2);
+    let polled = f.core.poll_pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(timeline_reads(), 3);
+    assert_eq!(polled.timeline.len(), 150);
+}
+
+#[test]
+fn a_comment_missing_from_the_timeline_lands_by_time_after_an_older_commit_pushed_later() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let comment = |i: usize| {
+        serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "reviewer"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+    };
+    pr["comments"] = serde_json::json!([comment(10), comment(20), comment(30)]);
+    pr["reviews"] = serde_json::json!([]);
+    let node = |i: usize| {
+        let mut c = comment(i);
+        c["__typename"] = "IssueComment".into();
+        c
+    };
+    // The commit was made long before it was pushed, between the comments 10 and 30.
+    let commit = serde_json::json!({"__typename": "PullRequestCommit", "commit": {
+        "oid": "a".repeat(40), "abbreviatedOid": "aaaaaaa", "messageHeadline": "Old work",
+        "committedDate": at_second(1), "author": {"name": "bob"}}});
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] = serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": [
+        node(10), commit, node(30)
+    ]}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let order: Vec<String> = detail
+        .timeline
+        .iter()
+        .map(|item| match item {
+            TimelineItem::Comment(c) => c.id.clone(),
+            TimelineItem::Commit(c) => c.abbreviated_oid.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(order, ["IC_10", "aaaaaaa", "IC_20", "IC_30"]);
+}
+
+#[test]
+fn a_timeline_beyond_the_page_cap_is_flagged_and_keeps_every_comment_and_review() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let total = 650;
+    pr["comments"] = (0..total)
+        .filter(|i| i % 10 != 0)
+        .map(|i| {
+            serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "reviewer"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+        })
+        .collect::<Vec<_>>()
+        .into();
+    pr["reviews"] = (0..total)
+        .filter(|i| i % 10 == 0)
+        .map(|i| {
+            serde_json::json!({"id": format!("PRR_{i}"), "author": {"login": "bob"},
+            "body": format!("review {i}"), "state": "APPROVED", "submittedAt": at_second(i)})
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let nodes: Vec<serde_json::Value> = (0..total)
+        .map(|i| {
+            if i % 10 == 0 {
+                serde_json::json!({"__typename": "PullRequestReview", "id": format!("PRR_{i}"),
+                    "author": {"login": "bob"}, "body": format!("review {i}"), "state": "APPROVED",
+                    "createdAt": at_second(i), "submittedAt": at_second(i)})
+            } else {
+                serde_json::json!({"__typename": "IssueComment", "id": format!("IC_{i}"),
+                    "author": {"login": "reviewer"}, "body": format!("comment {i}"), "createdAt": at_second(i)})
+            }
+        })
+        .collect();
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] =
+        serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert!(detail.timeline_truncated, "more than the pages read");
+    let ids: Vec<String> = detail
+        .timeline
+        .iter()
+        .map(|item| match item {
+            TimelineItem::Comment(c) => c.id.clone(),
+            TimelineItem::Review(r) => r.id.clone(),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    let expected: Vec<String> = (0..total)
+        .map(|i| {
+            if i % 10 == 0 {
+                format!("PRR_{i}")
+            } else {
+                format!("IC_{i}")
+            }
+        })
+        .collect();
+    assert_eq!(ids, expected, "every comment and review, oldest first");
+    let pages = f
+        .gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .count();
+    assert_eq!(pages, 5, "the pages read are capped");
 }
 
 #[test]
@@ -1201,7 +1620,7 @@ fn comment_sends_the_body_and_shows_up_on_the_next_view() {
         )
     );
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
-    assert_eq!(detail.comments.last().unwrap().body, "Thanks!");
+    assert_eq!(conversation(&detail.timeline).last().unwrap().1, "Thanks!");
 
     let before = f.gh_calls().len();
     assert!(f.core.comment_pull_request(f.project.id, 5, "  ").is_err());
@@ -1331,16 +1750,15 @@ fn detail_reports_who_reviews_who_is_assigned_and_whether_it_can_merge() {
         ]
     );
     // The review with a body joins the conversation, in order; the empty comment-only one does not.
-    let thread: Vec<(&str, Option<ReviewState>)> = detail
-        .comments
-        .iter()
-        .map(|c| (c.author.as_str(), c.review))
+    let thread: Vec<(String, Option<ReviewState>)> = conversation(&detail.timeline)
+        .into_iter()
+        .map(|(author, _, review)| (author, review))
         .collect();
     assert_eq!(
         thread,
         [
-            ("reviewer", None),
-            ("bob", Some(ReviewState::ChangesRequested))
+            ("reviewer".to_string(), None),
+            ("bob".to_string(), Some(ReviewState::ChangesRequested))
         ]
     );
 }
@@ -1676,9 +2094,154 @@ fn view_issue_detail_with_comments() {
     assert_eq!(detail.author, "charlie");
     assert_eq!(detail.state, "OPEN");
     assert_eq!(detail.url, "https://github.com/fake/repo/issues/42");
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].author, "dave");
-    assert_eq!(detail.comments[0].body, "Can confirm on macOS");
+    assert_eq!(
+        conversation(&detail.timeline),
+        [("dave".into(), "Can confirm on macOS".into(), None)]
+    );
+}
+
+fn issue_42() -> serde_json::Value {
+    serde_json::json!({
+        "number": 42,
+        "title": "Bug in lexer",
+        "body": "It crashes",
+        "state": "OPEN",
+        "author": {"login": "charlie"},
+        "url": "https://github.com/fake/repo/issues/42",
+        "createdAt": "2026-01-03T10:00:00Z",
+        "comments": [
+            {"id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm", "createdAt": "2026-01-03T10:30:00Z"}
+        ]
+    })
+}
+
+#[test]
+fn issue_detail_interleaves_activity_with_comments_from_graphql() {
+    use oxide_core::{
+        PullRequestLabel, TimelineAction, TimelineClosed, TimelineComment, TimelineItem,
+        TimelineLabel, TimelinePerson, TimelineReference, TimelineRename,
+    };
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "participants": {"nodes": [{"login": "charlie"}, {"login": "dave"}]},
+        "timelineItems": {"nodes": [
+            {"__typename": "LabeledEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T10:01:00Z",
+             "label": {"name": "bug", "color": "d73a4a"}},
+            {"__typename": "AssignedEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T10:02:00Z",
+             "assignee": {"login": "dave"}},
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm",
+             "createdAt": "2026-01-03T10:30:00Z"},
+            {"__typename": "UnlabeledEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-03T10:40:00Z",
+             "label": {"name": "bug", "color": "d73a4a"}},
+            {"__typename": "UnassignedEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-03T10:41:00Z",
+             "assignee": {"login": "dave"}},
+            {"__typename": "RenamedTitleEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-03T11:00:00Z",
+             "previousTitle": "Lexer bug", "currentTitle": "Bug in lexer"},
+            {"__typename": "CrossReferencedEvent", "actor": {"login": "erin"}, "createdAt": "2026-01-03T12:00:00Z",
+             "isCrossRepository": true,
+             "source": {"__typename": "PullRequest", "number": 9, "title": "Fix lexer", "state": "MERGED",
+                        "url": "https://github.com/other/repo/pull/9", "repository": {"nameWithOwner": "other/repo"}}},
+            {"__typename": "ClosedEvent", "actor": {"login": "charlie"}, "createdAt": "2026-01-04T09:00:00Z",
+             "stateReason": "NOT_PLANNED"},
+            {"__typename": "ReopenedEvent", "actor": {"login": "dave"}, "createdAt": "2026-01-05T09:00:00Z"},
+            {"__typename": "SomethingNew", "createdAt": "2026-01-06T09:00:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.node_id, "I_kwDO42");
+    assert_eq!(detail.participants, ["charlie", "dave"]);
+    let person = |actor: &str, at: &str, login: &str| TimelinePerson {
+        actor: actor.into(),
+        created_at: at.into(),
+        login: login.into(),
+    };
+    let bug = PullRequestLabel {
+        name: "bug".into(),
+        color: "d73a4a".into(),
+    };
+    assert_eq!(
+        detail.timeline,
+        vec![
+            TimelineItem::Labeled(TimelineLabel {
+                actor: "charlie".into(),
+                created_at: "2026-01-03T10:01:00Z".into(),
+                label: bug.clone(),
+            }),
+            TimelineItem::Assigned(person("charlie", "2026-01-03T10:02:00Z", "dave")),
+            TimelineItem::Comment(TimelineComment {
+                id: "IC_1".into(),
+                author: "dave".into(),
+                body: "Can confirm".into(),
+                created_at: "2026-01-03T10:30:00Z".into(),
+                reactions: Some(vec![]),
+            }),
+            TimelineItem::Unlabeled(TimelineLabel {
+                actor: "dave".into(),
+                created_at: "2026-01-03T10:40:00Z".into(),
+                label: bug,
+            }),
+            TimelineItem::Unassigned(person("dave", "2026-01-03T10:41:00Z", "dave")),
+            TimelineItem::Renamed(TimelineRename {
+                actor: "charlie".into(),
+                created_at: "2026-01-03T11:00:00Z".into(),
+                from: "Lexer bug".into(),
+                to: "Bug in lexer".into(),
+            }),
+            TimelineItem::CrossReferenced(TimelineReference {
+                actor: "erin".into(),
+                created_at: "2026-01-03T12:00:00Z".into(),
+                number: 9,
+                title: "Fix lexer".into(),
+                url: "https://github.com/other/repo/pull/9".into(),
+                state: "MERGED".into(),
+                pull_request: true,
+                repository: "other/repo".into(),
+                cross_repository: true,
+            }),
+            TimelineItem::Closed(TimelineClosed {
+                actor: "charlie".into(),
+                created_at: "2026-01-04T09:00:00Z".into(),
+                state_reason: "NOT_PLANNED".into(),
+            }),
+            TimelineItem::Reopened(TimelineAction {
+                actor: "dave".into(),
+                created_at: "2026-01-05T09:00:00Z".into(),
+            }),
+        ]
+    );
+    // One GraphQL round trip, numbered, with the user's values passed as typed fields.
+    let call = f
+        .gh_calls()
+        .into_iter()
+        .find(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .expect("a timeline query");
+    assert!(call.contains(&"number=42".to_string()), "{call:?}");
+}
+
+#[test]
+fn issue_detail_falls_back_to_its_comments_when_the_timeline_query_fails() {
+    use oxide_core::{TimelineComment, TimelineItem};
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    install_gh(&f, &state);
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.node_id, "");
+    assert_eq!(
+        detail.timeline,
+        vec![TimelineItem::Comment(TimelineComment {
+            id: "IC_1".into(),
+            author: "dave".into(),
+            body: "Can confirm".into(),
+            created_at: "2026-01-03T10:30:00Z".into(),
+            reactions: None,
+        })]
+    );
 }
 
 #[test]
@@ -1721,8 +2284,8 @@ fn create_comment_and_close_issue_calling_gh() {
         .comment_issue(f.project.id, 10, "First thought")
         .unwrap();
     let detail = f.core.issue_detail(f.project.id, 10).unwrap();
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].body, "First thought");
+    assert_eq!(conversation(&detail.timeline).len(), 1);
+    assert_eq!(conversation(&detail.timeline)[0].1, "First thought");
 
     // Close: it leaves the open list and shows in the closed one, with its reason
     f.core
@@ -1903,4 +2466,278 @@ fn checks_know_whether_branch_protection_requires_them() {
             ("ci/legacy", false)
         ]
     );
+}
+
+#[test]
+fn issue_detail_reads_the_reactions_on_the_issue_and_its_comments() {
+    use oxide_core::{ReactionContent, ReactionGroup, TimelineItem};
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "reactionGroups": [
+            {"content": "THUMBS_UP", "viewerHasReacted": true, "reactors": {"totalCount": 2}},
+            {"content": "HEART", "viewerHasReacted": false, "reactors": {"totalCount": 0}},
+            {"content": "ROCKET", "viewerHasReacted": false, "reactors": {"totalCount": 1}},
+            {"content": "SOMETHING_NEW", "viewerHasReacted": false, "reactors": {"totalCount": 3}}
+        ],
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"}, "body": "Can confirm",
+             "createdAt": "2026-01-03T10:30:00Z",
+             "reactionGroups": [{"content": "EYES", "viewerHasReacted": false, "reactors": {"totalCount": 1}}]}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    // Empty groups and kinds GitHub may add later are left out.
+    assert_eq!(
+        detail.reactions,
+        vec![
+            ReactionGroup {
+                content: ReactionContent::ThumbsUp,
+                count: 2,
+                viewer_has_reacted: true,
+            },
+            ReactionGroup {
+                content: ReactionContent::Rocket,
+                count: 1,
+                viewer_has_reacted: false,
+            },
+        ]
+    );
+    let TimelineItem::Comment(comment) = &detail.timeline[0] else {
+        panic!("{:?}", detail.timeline);
+    };
+    assert_eq!(
+        comment.reactions,
+        Some(vec![ReactionGroup {
+            content: ReactionContent::Eyes,
+            count: 1,
+            viewer_has_reacted: false,
+        }])
+    );
+    let call = f
+        .gh_calls()
+        .into_iter()
+        .find(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .expect("a timeline query");
+    assert!(
+        call.iter().any(|a| a.contains("reactionGroups")),
+        "{call:?}"
+    );
+}
+
+#[test]
+fn pull_request_detail_reads_the_reactions_on_the_description_and_reviews() {
+    use oxide_core::{ReactionContent, ReactionGroup, TimelineItem};
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr()]);
+    state["timelines"] = serde_json::json!({"5": {
+        "id": "PR_kwDO5",
+        "url": "https://github.com/fake/repo/pull/5",
+        "reactionGroups": [{"content": "HOORAY", "viewerHasReacted": false, "reactors": {"totalCount": 4}}],
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "PullRequestReview", "id": "PRR_2", "author": {"login": "reviewer"}, "body": "Rename it",
+             "state": "CHANGES_REQUESTED", "createdAt": "2026-05-01T09:29:00Z", "submittedAt": "2026-05-01T09:30:00Z",
+             "reactionGroups": [{"content": "CONFUSED", "viewerHasReacted": true, "reactors": {"totalCount": 1}}]}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert_eq!(
+        detail.reactions,
+        vec![ReactionGroup {
+            content: ReactionContent::Hooray,
+            count: 4,
+            viewer_has_reacted: false,
+        }]
+    );
+    let TimelineItem::Review(review) = &detail.timeline[0] else {
+        panic!("{:?}", detail.timeline);
+    };
+    assert_eq!(
+        review.reactions,
+        Some(vec![ReactionGroup {
+            content: ReactionContent::Confused,
+            count: 1,
+            viewer_has_reacted: true,
+        }])
+    );
+}
+
+/// The arguments of the GraphQL reaction mutations `gh` was asked to run.
+fn reaction_calls(f: &Fixture) -> Vec<Vec<String>> {
+    f.gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("Reaction(")))
+        .collect()
+}
+
+#[test]
+fn toggle_reaction_adds_and_removes_through_typed_graphql_fields() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    install_gh(&f, &ok_state());
+
+    f.core
+        .toggle_reaction(f.project.id, "IC_kwDO1", ReactionContent::Rocket, true)
+        .unwrap();
+    f.core
+        .toggle_reaction(f.project.id, "PRR_kwDO2", ReactionContent::ThumbsUp, false)
+        .unwrap();
+
+    let calls = reaction_calls(&f);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let field =
+        |call: &[String], value: &str| call.windows(2).any(|w| w[0] == "-f" && w[1] == value);
+    assert!(
+        calls[0].iter().any(|a| a.contains("addReaction")),
+        "{:?}",
+        calls[0]
+    );
+    assert!(field(&calls[0], "subject=IC_kwDO1"), "{:?}", calls[0]);
+    assert!(field(&calls[0], "content=ROCKET"), "{:?}", calls[0]);
+    assert!(
+        calls[1].iter().any(|a| a.contains("removeReaction")),
+        "{:?}",
+        calls[1]
+    );
+    assert!(field(&calls[1], "subject=PRR_kwDO2"), "{:?}", calls[1]);
+    assert!(field(&calls[1], "content=THUMBS_UP"), "{:?}", calls[1]);
+    // User values never go through -F, which reads a leading @ as a file.
+    assert!(!calls.iter().flatten().any(|a| a == "-F"), "{calls:?}");
+}
+
+#[test]
+fn toggle_reaction_refuses_a_subject_that_is_not_a_node_id_without_calling_gh() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let long = "A".repeat(257);
+    for id in [
+        "",
+        "@/etc/passwd",
+        "@IC_1",
+        "a b",
+        "IC_1\n",
+        "id=1&x",
+        "a/b",
+        "é",
+        long.as_str(),
+    ] {
+        assert!(
+            f.core
+                .toggle_reaction(f.project.id, id, ReactionContent::Heart, true)
+                .is_err(),
+            "{id:?}"
+        );
+    }
+    assert!(reaction_calls(&f).is_empty());
+}
+
+#[test]
+fn toggle_reaction_reports_what_github_refused() {
+    use oxide_core::ReactionContent;
+    let f = fixture();
+    let mut state = ok_state();
+    state["reaction_error"] =
+        serde_json::json!("GraphQL: Could not resolve to a node with the global id of 'IC_gone'");
+    install_gh(&f, &state);
+    let message = f
+        .core
+        .toggle_reaction(f.project.id, "IC_gone", ReactionContent::Laugh, true)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("Could not resolve"), "{message}");
+}
+
+#[test]
+fn issue_detail_resolves_private_user_attachments_from_body_html() {
+    use oxide_core::SignedImage;
+    let f = fixture();
+    let mut state = ok_state();
+    state["issues"] = serde_json::json!([issue_42()]);
+    let signed = |id: &str| {
+        format!("https://private-user-images.githubusercontent.com/7/9-{id}.png?jwt=eyJ.{id}")
+    };
+    let a = "84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+    let b = "e427716d-a14d-43fa-b17e-d41ae0701097";
+    state["timelines"] = serde_json::json!({"42": {
+        "id": "I_kwDO42",
+        "url": "https://github.com/fake/repo/issues/42",
+        "bodyHTML": format!(
+            "<p><a href=\"{0}\"><img src=\"{0}&amp;x=1\" alt=\"image\"></a> \
+             <img src=\"https://evil.example/7/9-{a}.png\"> \
+             <img src=\"https://private-user-images.githubusercontent.com/7/no-id.png?jwt=1\"></p>",
+            signed(a)
+        ),
+        "participants": {"nodes": []},
+        "timelineItems": {"nodes": [
+            {"__typename": "IssueComment", "id": "IC_1", "author": {"login": "dave"},
+             // A private repository's asset: GitHub signs it the same way, by its uuid.
+             "body": format!("![shot](https://github.com/fake/repo/assets/7/{b})"),
+             "bodyHTML": format!("<p><img src='{}' alt='shot'></p>", signed(b)),
+             "createdAt": "2026-01-03T10:30:00Z"}
+        ]}
+    }});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(
+        detail.signed_images,
+        vec![
+            SignedImage {
+                asset_id: a.to_string(),
+                signed_url: format!("{}&x=1", signed(a)),
+            },
+            SignedImage {
+                asset_id: b.to_string(),
+                signed_url: signed(b),
+            },
+        ]
+    );
+    let query = f
+        .gh_calls()
+        .into_iter()
+        .flatten()
+        .find(|a| a.contains("timelineItems"))
+        .unwrap();
+    assert_eq!(query.matches("bodyHTML").count(), 2, "{query}");
+}
+
+#[test]
+fn fetch_github_image_refuses_unknown_projects_and_non_github_urls_without_a_request() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+    assert!(
+        f.core
+            .fetch_github_image(f.project.id + 100, asset)
+            .is_err()
+    );
+    for url in [
+        "http://user-images.githubusercontent.com/1/2-x.png",
+        "https://user:pw@github.com/user-attachments/assets/x",
+        "https://127.0.0.1/a.png",
+        "https://localhost/a.png",
+        "https://evil.example/a.png",
+        "https://raw.githubusercontent.com:8443/fake/repo/main/a.png",
+        "https://github.com/settings/tokens",
+        "data:image/svg+xml,<svg/>",
+        "",
+    ] {
+        let error = f.core.fetch_github_image(f.project.id, url).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("only shows images hosted on GitHub"),
+            "{url}: {error}"
+        );
+    }
+    assert!(f.gh_calls().is_empty(), "no gh call for a refused URL");
 }

@@ -706,6 +706,16 @@ pub struct PullRequestReviewer {
     pub state: ReviewState,
 }
 
+/// The short-lived signed URL GitHub rendered for an uploaded asset (named by its uuid), which
+/// loads it without the user's token.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedImage {
+    /// The uuid of the asset, the last segment of its `github.com` URL.
+    pub asset_id: String,
+    pub signed_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestLabel {
@@ -715,14 +725,160 @@ pub struct PullRequestLabel {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct PullRequestComment {
-    /// Set on a plain comment, which can be edited or deleted; reviews have none.
-    pub id: Option<String>,
+pub struct TimelineComment {
+    pub id: String,
     pub author: String,
     pub body: String,
     pub created_at: String,
-    /// Set when the entry is a review rather than a plain comment.
-    pub review: Option<ReviewState>,
+    /// `null` when only `gh` gave the comment: its reactions are unknown, so not offered.
+    pub reactions: Option<Vec<ReactionGroup>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineReview {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub state: ReviewState,
+    /// `null` when only `gh` gave the review: its reactions are unknown, so not offered.
+    pub reactions: Option<Vec<ReactionGroup>>,
+}
+
+/// One of the eight reactions GitHub offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ReactionContent {
+    ThumbsUp,
+    ThumbsDown,
+    Laugh,
+    Hooray,
+    Confused,
+    Heart,
+    Rocket,
+    Eyes,
+}
+
+/// How many people gave one reaction, and whether the signed-in user is one of them.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionGroup {
+    pub content: ReactionContent,
+    pub count: u32,
+    pub viewer_has_reacted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineCommit {
+    pub oid: String,
+    pub abbreviated_oid: String,
+    pub headline: String,
+    pub author: String,
+    pub committed_at: String,
+    pub verified: bool,
+    pub status: Option<CheckState>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineForcePush {
+    pub actor: String,
+    pub created_at: String,
+    pub branch: String,
+    pub before: String,
+    pub after: String,
+    pub compare_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelinePerson {
+    pub actor: String,
+    pub created_at: String,
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineLabel {
+    pub actor: String,
+    pub created_at: String,
+    pub label: PullRequestLabel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineClosed {
+    pub actor: String,
+    pub created_at: String,
+    pub state_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineAction {
+    pub actor: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineMerge {
+    pub actor: String,
+    pub created_at: String,
+    pub commit: String,
+    pub base: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineRename {
+    pub actor: String,
+    pub created_at: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineReference {
+    pub actor: String,
+    pub created_at: String,
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    pub pull_request: bool,
+    pub repository: String,
+    pub cross_repository: bool,
+}
+
+/// One entry of an issue's or pull request's Activity Timeline.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TimelineItem {
+    Comment(TimelineComment),
+    Review(TimelineReview),
+    Commit(TimelineCommit),
+    ForcePush(TimelineForcePush),
+    Assigned(TimelinePerson),
+    Unassigned(TimelinePerson),
+    Labeled(TimelineLabel),
+    Unlabeled(TimelineLabel),
+    ReviewRequested(TimelinePerson),
+    ReviewRequestRemoved(TimelinePerson),
+    Closed(TimelineClosed),
+    Reopened(TimelineAction),
+    Merged(TimelineMerge),
+    ConvertedToDraft(TimelineAction),
+    ReadyForReview(TimelineAction),
+    Renamed(TimelineRename),
+    HeadRefDeleted(TimelineAction),
+    HeadRefRestored(TimelineAction),
+    CrossReferenced(TimelineReference),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -752,7 +908,6 @@ pub struct PullRequestDetail {
     /// The commit the pull request's head points at.
     pub head_sha: String,
     pub checks: Vec<PullRequestCheck>,
-    pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
     pub review_decision: Option<ReviewDecision>,
     pub reviewers: Vec<PullRequestReviewer>,
@@ -770,15 +925,18 @@ pub struct PullRequestDetail {
     pub delete_branch_on_merge: bool,
     /// The number of changed files.
     pub changed_files: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct IssueComment {
-    pub id: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
+    /// GitHub's GraphQL node id; empty when the timeline could not be read.
+    pub node_id: String,
+    pub participants: Vec<String>,
+    /// Comments, reviews, commits and activity, oldest first.
+    pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment and review is still in
+    /// `timeline`.
+    pub timeline_truncated: bool,
+    /// The reactions on the description.
+    pub reactions: Vec<ReactionGroup>,
+    /// Signed URLs for the private user attachments in the description, comments and reviews.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -807,10 +965,20 @@ pub struct IssueDetail {
     pub author: String,
     pub url: String,
     pub created_at: String,
-    pub comments: Vec<IssueComment>,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
     pub viewer: String,
+    /// GitHub's GraphQL node id; empty when the timeline could not be read.
+    pub node_id: String,
+    pub participants: Vec<String>,
+    /// Comments and activity, oldest first.
+    pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`.
+    pub timeline_truncated: bool,
+    /// The reactions on the description.
+    pub reactions: Vec<ReactionGroup>,
+    /// Signed URLs for the private user attachments in the description and comments.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -988,14 +1156,22 @@ async fn list_issues(
 
 #[tauri::command]
 #[specta::specta]
+/// `poll`: a background refresh, which reads only the first page of the Activity Timeline.
 async fn issue_detail(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     number: u32,
+    poll: bool,
 ) -> Result<IssueDetail, AppError> {
-    git_blocking(&core, move |core| core.issue_detail(project_id, number))
-        .await
-        .map(IssueDetail::from)
+    git_blocking(&core, move |core| {
+        if poll {
+            core.poll_issue_detail(project_id, number)
+        } else {
+            core.issue_detail(project_id, number)
+        }
+    })
+    .await
+    .map(IssueDetail::from)
 }
 
 #[tauri::command]
@@ -1036,6 +1212,24 @@ async fn delete_comment(
     id: String,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| core.delete_comment(project_id, &id)).await
+}
+
+/// Adds (`add`) or removes the signed-in user's reaction on an issue, a pull request, a
+/// comment or a review. `subject_id` is its GraphQL node id, validated in Core; the call
+/// goes to GitHub through `gh api graphql`.
+#[tauri::command]
+#[specta::specta]
+async fn toggle_reaction(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    subject_id: String,
+    content: ReactionContent,
+    add: bool,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.toggle_reaction(project_id, &subject_id, content.into(), add)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1110,16 +1304,22 @@ async fn list_pull_requests(
     .map(|prs| prs.into_iter().map(PullRequest::from).collect())
 }
 
-/// One pull request's description, checks, conversation and changed files.
+/// One pull request's description, checks, conversation and changed files. `poll`: a
+/// background refresh, which reads only the first page of the Activity Timeline.
 #[tauri::command]
 #[specta::specta]
 async fn pull_request_detail(
     core: State<'_, Arc<Core>>,
     project_id: u32,
     number: u32,
+    poll: bool,
 ) -> Result<PullRequestDetail, AppError> {
     git_blocking(&core, move |core| {
-        core.pull_request_detail(project_id, number)
+        if poll {
+            core.poll_pull_request_detail(project_id, number)
+        } else {
+            core.pull_request_detail(project_id, number)
+        }
     })
     .await
     .map(PullRequestDetail::from)
@@ -1182,6 +1382,19 @@ async fn open_link(core: State<'_, Arc<Core>>, url: String) -> Result<Option<Str
         Err(error) => Err(error),
     })
     .await
+}
+
+/// An image embedded in an issue or pull request, as a `data:` URL the webview shows under its
+/// existing Content Security Policy. Network access: Core reads it from GitHub's image hosts
+/// only, without the user's token, and returns raster images only (`Core::fetch_github_image`).
+#[tauri::command]
+#[specta::specta]
+async fn fetch_github_image(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    url: String,
+) -> Result<String, AppError> {
+    git_blocking(&core, move |core| core.fetch_github_image(project_id, &url)).await
 }
 
 /// Opens a link whose host the user confirmed after `open_link` refused it as unlisted.
@@ -1387,10 +1600,12 @@ pub fn builder() -> Builder<tauri::Wry> {
         comment_pull_request,
         edit_comment,
         delete_comment,
+        toggle_reaction,
         merge_pull_request,
         close_pull_request,
         open_link,
         open_confirmed_link,
+        fetch_github_image,
         set_pull_request_draft,
         update_pull_request_branch,
         pull_request_candidates,

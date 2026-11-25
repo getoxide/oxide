@@ -91,6 +91,7 @@ function IssueForm({ projectId, template, backLabel, onBack, onCreated }: IssueF
     if (template && template.labels.length > 0) load();
   }, [template, load]);
   const known = candidates.state === "ready" ? candidates.data.labels : null;
+  const mentions = candidates.state === "ready" ? candidates.data.users : [];
   const chosenLabels = known
     ? labels.flatMap((l) => {
         const match = known.find((k) => k.name === l.name);
@@ -164,6 +165,9 @@ function IssueForm({ projectId, template, backLabel, onBack, onCreated }: IssueF
             disabled={busy}
             onChange={(id, value) => setAnswers((a) => ({ ...a, [id]: value }))}
             onKeyDown={submitOnModEnter}
+            mentions={mentions}
+            onMentionOpen={load}
+            projectId={projectId}
           />
         ) : (
           <div className="pr-create-field">
@@ -176,6 +180,9 @@ function IssueForm({ projectId, template, backLabel, onBack, onCreated }: IssueF
               value={body}
               onChange={setBody}
               onKeyDown={submitOnModEnter}
+              mentions={mentions}
+              onMentionOpen={load}
+              projectId={projectId}
             />
           </div>
         )}

@@ -6,7 +6,7 @@ import {
   PencilIcon,
 } from "@primer/octicons-react";
 import { useState } from "react";
-import { QUERY_STALE_MS, useQuery } from "../shared/queryCache";
+import { QUERY_STALE_MS, updateQuery, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { CommentEditForm, CommentTools } from "../shared/CommentTools";
@@ -22,9 +22,12 @@ import { Avatar } from "../shared/Avatar";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
+import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
-import { Markdown } from "../pull-requests/PullRequestMarkdown";
+import { Markdown, MarkdownImages } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
+import { ActivityRow, isConversationItem, MoreOnGithub } from "../pull-requests/PullRequestTimeline";
+import { Reactions, ReactionsSaved, withReaction } from "../shared/Reactions";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
@@ -72,7 +75,7 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
 export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, onBack, onChanged }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
-  const query = useQuery(githubKeys.issueDetail(projectId, number), () => commands.issueDetail(projectId, number), refreshKey + reload, {
+  const query = useQuery(githubKeys.issueDetail(projectId, number), ({ poll }) => commands.issueDetail(projectId, number, poll), refreshKey + reload, {
     staleMs: QUERY_STALE_MS,
     poll: pollKey,
   });
@@ -134,6 +137,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
 
   const { issue: detail } = loaded;
   const phase = issuePhase(detail);
+  const conversationCount = detail.timeline.filter(isConversationItem).length;
+  const mentions = mergeMentions(conversationPeople(detail), candidates.state === "ready" ? candidates.data.users : []);
   const open = phase === "open";
 
   /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
@@ -178,6 +183,12 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   }
 
   return (
+    <MarkdownImages projectId={projectId} signed={detail.signedImages}>
+    <ReactionsSaved.Provider
+      value={(subject, content, add) =>
+        updateQuery<IssueDetail>(githubKeys.issueDetail(projectId, number), (d) => withReaction(d, subject, content, add))
+      }
+    >
     <div className="pr-review">
       <RefreshNotice query={query} />
       {nav}
@@ -259,11 +270,14 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 )}
               </header>
               {bodyDraft === null ? (
-                detail.body.trim() ? (
-                  <Markdown source={detail.body} />
-                ) : (
-                  <p className="pr-field-empty issue-no-body">No description provided.</p>
-                )
+                <>
+                  {detail.body.trim() ? (
+                    <Markdown source={detail.body} />
+                  ) : (
+                    <p className="pr-field-empty issue-no-body">No description provided.</p>
+                  )}
+                  <Reactions projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
+                </>
               ) : (
                 <div className="issue-body-edit">
                   <MarkdownEditor
@@ -272,6 +286,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     value={bodyDraft}
                     autoFocus
                     onChange={setBodyDraft}
+                    mentions={mentions}
+                    onMentionOpen={load}
                   />
                   <div className="pr-merge-row">
                     <button
@@ -362,9 +378,11 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         <section className="pr-section" aria-label="Conversation">
           <h4>
             <CommentIcon size={14} /> Conversation
-            {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
+            {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.comments.map((c, i) => (
+          {detail.timeline.map((c, i) => !isConversationItem(c) ? (
+            <ActivityRow key={i} item={c} onOpen={(url) => void openLink(url)} />
+          ) : (
             <article key={c.id || i} className="pr-entry">
               <Avatar login={c.author} size={24} />
               <div className="pr-entry-card">
@@ -373,7 +391,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                   {c.author === detail.author && <span className="pr-tag">Author</span>}
                   <span className="pr-entry-action">commented</span>
                   <time dateTime={c.createdAt}>{relativeTime(c.createdAt)}</time>
-                  {c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
+                  {c.kind === "comment" && c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
                     <CommentTools projectId={projectId} id={c.id} onEdit={() => setEditingComment(c.id)} onDeleted={() => setReload((n) => n + 1)} onError={setError} />
                   )}
                 </header>
@@ -385,11 +403,19 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     onSaved={() => { setEditingComment(null); setReload((n) => n + 1); }}
                     onCancel={() => setEditingComment(null)}
                     onError={setError}
+                    mentions={mentions}
+                    onMentionOpen={load}
                   />
-                ) : c.body.trim() && <Markdown source={c.body} />}
+                ) : (
+                  <>
+                    {c.body.trim() && <Markdown source={c.body} />}
+                    {c.reactions && <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />}
+                  </>
+                )}
               </div>
             </article>
           ))}
+          {detail.timelineTruncated && <MoreOnGithub url={detail.url} onOpen={(url) => void openLink(url)} />}
           <form
             className="pr-compose"
             onSubmit={(e) => {
@@ -405,6 +431,8 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 rows={3}
                 value={comment}
                 onChange={setComment}
+                mentions={mentions}
+                onMentionOpen={load}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -484,5 +512,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         )}
       </footer>
     </div>
+    </ReactionsSaved.Provider>
+    </MarkdownImages>
   );
 }

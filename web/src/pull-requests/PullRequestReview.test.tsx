@@ -32,10 +32,6 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
       { name: "web", state: "failure", url: "https://github.com/me/oxide/actions/runs/1", required: true },
       { name: "rust", state: "success", url: null, required: false },
     ],
-    comments: [
-      { id: null, author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", review: "changesRequested" },
-      { id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", review: null },
-    ],
     mergeState: "clean",
     reviewDecision: null,
     reviewers: [{ login: "bob", state: "changesRequested" }],
@@ -48,6 +44,15 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     defaultMergeMethod: "squash",
     deleteBranchOnMerge: false,
     changedFiles: 3,
+    nodeId: "PR_174",
+    reactions: [],
+    participants: [],
+    signedImages: [],
+    timelineTruncated: false,
+    timeline: [
+      { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
+      { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
+    ],
     ...overrides,
   };
 }
@@ -89,6 +94,87 @@ it("renders a cached pull request at once on remount without asking GitHub again
   expect(host.querySelector(".skeleton")).toBeNull();
   expect(host.textContent).toContain("chore(deps): bump react-virtual");
   expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
+});
+
+it("offers the first reaction on a pull request with no description and no reactions yet", async () => {
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ body: "", reactions: [] }) });
+  await render();
+  const description = host.querySelector('section[aria-label="Description"]');
+  expect(description).not.toBeNull();
+  expect(description!.querySelector('[aria-label="Add reaction"]')).not.toBeNull();
+  expect(description!.textContent).toContain("No description provided.");
+});
+
+it("links to the pull request on GitHub when its timeline holds more activity than was read", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  await render();
+  expect(button(/more activity on GitHub/)).toBeUndefined();
+
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: detail({ timelineTruncated: true }) });
+  clearQueryCache();
+  await act(() => root.unmount());
+  root = createRoot(host);
+  await render();
+  await click(button(/more activity on GitHub/));
+  expect(open).toHaveBeenCalledWith("https://github.com/me/oxide/pull/174");
+});
+
+it("interleaves commits, force-pushes, reviews and events with comments, opening links through the link flow", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        {
+          kind: "commit", oid: "1111111aaaa", abbreviatedOid: "1111111", headline: "Bump react-virtual", author: "app/dependabot",
+          committedAt: "2026-10-27T08:00:00Z", verified: true, status: "success", url: "https://github.com/me/oxide/commit/1111111aaaa",
+        },
+        { kind: "reviewRequested", actor: "app/dependabot", createdAt: "2026-10-27T08:01:00Z", login: "bob" },
+        { kind: "review", id: "PRR_1", author: "me", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
+        {
+          kind: "forcePush", actor: "app/dependabot", createdAt: "2026-10-27T10:30:00Z", branch: "dependabot/npm/react-virtual",
+          before: "1111111", after: "2222222", compareUrl: "https://github.com/me/oxide/compare/1111111aaaa..2222222bbbb",
+        },
+        { kind: "comment", id: "c1", author: "me", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
+        { kind: "labeled", actor: "bob", createdAt: "2026-10-27T11:30:00Z", label: { name: "dependencies", color: "0366d6" } },
+        { kind: "convertedToDraft", actor: "bob", createdAt: "2026-10-27T12:00:00Z" },
+        { kind: "readyForReview", actor: "bob", createdAt: "2026-10-27T12:30:00Z" },
+        { kind: "merged", actor: "bob", createdAt: "2026-10-27T13:00:00Z", commit: "3333333", base: "main" },
+        { kind: "headRefDeleted", actor: "bob", createdAt: "2026-10-27T13:01:00Z" },
+      ],
+    }),
+  });
+  await render();
+
+  const conversation = host.querySelector('section[aria-label="Conversation"]')!;
+  const rows = [...conversation.querySelectorAll(".pr-timeline-event, .pr-entry")];
+  const texts = rows.map((r) => r.textContent ?? "");
+  expect(texts).toHaveLength(10);
+  expect(texts[0]).toContain("Bump react-virtual");
+  expect(texts[0]).toContain("Verified");
+  expect(texts[0]).toContain("1111111");
+  expect(rows[0].querySelector(".pr-timeline-status.success")).not.toBeNull();
+  expect(texts[1]).toContain("requested a review from bob");
+  expect(texts[2]).toContain("requested changes");
+  expect(texts[3]).toContain("force-pushed");
+  expect(texts[3]).toContain("1111111");
+  expect(texts[3]).toContain("2222222");
+  expect(texts[4]).toContain("Rebased");
+  expect(texts[5]).toMatch(/added the\s*dependencies\s*label/);
+  expect(texts[6]).toContain("marked this pull request as draft");
+  expect(texts[7]).toContain("marked this pull request as ready for review");
+  expect(texts[8]).toContain("merged commit 3333333 into main");
+  expect(texts[9]).toContain("deleted the dependabot/npm/react-virtual branch");
+
+  // Only the viewer's plain comment has edit tools; their review does not.
+  expect(rows[2].querySelector('[aria-label="Edit comment"]')).toBeNull();
+  expect(rows[4].querySelector('[aria-label="Edit comment"]')).not.toBeNull();
+
+  const sha = [...rows[0].querySelectorAll("button")].find((b) => b.textContent === "1111111")!;
+  await click(sha);
+  expect(open).toHaveBeenLastCalledWith("https://github.com/me/oxide/commit/1111111aaaa");
+  await click([...rows[3].querySelectorAll("button")].find((b) => b.textContent === "Compare")!);
+  expect(open).toHaveBeenLastCalledWith("https://github.com/me/oxide/compare/1111111aaaa..2222222bbbb");
 });
 
 it("renders the changed file count from changedFiles in singular and plural form", async () => {
@@ -458,6 +544,44 @@ it("reads the conversation like the web: avatar, name, what they did and when", 
   expect(entries[1].querySelector("header")!.textContent).toContain("Author");
 });
 
+it("offers the conversation's people before collaborators in the comment box and the comment editor", async () => {
+  const candidates = vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "Bob", "cy"], labels: [] } });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      participants: ["erin"],
+      timeline: [
+        { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested", reactions: [] },
+        { kind: "comment", id: "c2", author: "me", body: "Done", createdAt: "2026-10-27T12:00:00Z", reactions: [] },
+      ],
+    }),
+  });
+  await render();
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  const typeIn = (box: HTMLTextAreaElement, text: string) => act(async () => {
+    setter.call(box, text);
+    box.setSelectionRange(text.length, text.length);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const options = (box: HTMLTextAreaElement) =>
+    [...box.closest(".md-editor")!.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+
+  const compose = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!;
+  await typeIn(compose, "@");
+  expect(candidates).toHaveBeenCalled();
+  // A GitHub App is mentioned by its bare name, as GitHub does.
+  expect(options(compose)).toEqual(["dependabot", "bob", "erin", "ana", "cy"]);
+  await act(async () => {
+    compose.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  expect(compose.value).toBe("@dependabot ");
+
+  await click(button("Edit comment"));
+  const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit comment"]')!;
+  await typeIn(editor, "Done @er");
+  expect(options(editor)).toEqual(["erin"]);
+});
+
 it("reloads sooner while checks are still running, and stops once they are done", async () => {
   vi.useFakeTimers();
   try {
@@ -476,6 +600,38 @@ it("reloads sooner while checks are still running, and stops once they are done"
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("asks for the whole timeline on load and on refresh, but only its first page when polling", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(commands.pullRequestDetail).mockResolvedValue({ status: "ok", data: running() });
+    await render();
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls).toEqual([[1, 174, false]]);
+    await tickChecks();
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls.at(-1)).toEqual([1, 174, true]);
+    await render({ refreshKey: 1 });
+    expect(vi.mocked(commands.pullRequestDetail).mock.calls.at(-1)).toEqual([1, 174, false]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("offers no reactions on an entry only gh gave, whose reactions GitHub's timeline did not tell", async () => {
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        { kind: "comment", id: "c1", author: "ana", body: "Read from the timeline", createdAt: "2026-10-27T11:00:00Z", reactions: [] },
+        { kind: "comment", id: "c2", author: "ana", body: "Read from gh alone", createdAt: "2026-10-27T12:00:00Z", reactions: null },
+      ],
+    }),
+  });
+  await render();
+  const entries = [...host.querySelectorAll<HTMLElement>("article")];
+  const entry = (text: string) => entries.find((e) => e.textContent?.includes(text))!;
+  expect(entry("Read from the timeline").querySelector('[aria-label="Add reaction"]')).not.toBeNull();
+  expect(entry("Read from gh alone").querySelector(".reactions")).toBeNull();
 });
 
 const detailCalls = () => vi.mocked(commands.pullRequestDetail).mock.calls.length;
@@ -600,4 +756,83 @@ it("places the loading preview header inside .pr-scroll so it shares the review 
   const scroll = host.querySelector(".pr-review .pr-scroll");
   expect(scroll).not.toBeNull();
   expect(scroll!.querySelector('.skeleton[role="status"]')).not.toBeNull();
+});
+
+it("keeps a reaction across a remount, and a pending one over a refresh from before it", async () => {
+  let settle!: (value: { status: "ok"; data: null }) => void;
+  vi.spyOn(commands, "toggleReaction").mockImplementation(() => new Promise((resolve) => (settle = resolve)));
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ reactions: [{ content: "heart", count: 3, viewerHasReacted: false }] }),
+  });
+  await render();
+  const heart = () => host.querySelector<HTMLButtonElement>('section[aria-label="Description"] .reactions button[aria-pressed]')!;
+  await click(heart());
+  expect(heart().textContent).toBe("❤️4");
+
+  // A refresh that read GitHub before the reaction landed does not take it back meanwhile.
+  await render({ refreshKey: 1 });
+  expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(2);
+  expect(heart().textContent).toBe("❤️4");
+  expect(heart().getAttribute("aria-pressed")).toBe("true");
+
+  await act(async () => settle({ status: "ok", data: null }));
+  await act(() => root.unmount());
+  root = createRoot(host);
+  await render({ refreshKey: 1 });
+  expect(heart().textContent).toBe("❤️4");
+  expect(heart().getAttribute("aria-pressed")).toBe("true");
+});
+
+it("shows reactions on the description and reviews, and rolls a refused toggle back", async () => {
+  vi.spyOn(commands, "toggleReaction").mockResolvedValue({ status: "error", error: { message: "GitHub refused the reaction" } });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      reactions: [{ content: "heart", count: 3, viewerHasReacted: false }],
+      timeline: [
+        {
+          kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested",
+          reactions: [{ content: "hooray", count: 1, viewerHasReacted: false }],
+        },
+      ],
+    }),
+  });
+  await render();
+
+  expect(host.querySelector('section[aria-label="Description"] .reactions')?.textContent).toContain("❤️3");
+  const review = host.querySelector('section[aria-label="Conversation"] .pr-entry')!;
+  const hooray = review.querySelector<HTMLButtonElement>(".reactions button[aria-pressed]")!;
+  expect(hooray.textContent).toBe("🎉1");
+  await click(hooray);
+  expect(commands.toggleReaction).toHaveBeenCalledWith(1, "PRR_1", "hooray", true);
+  expect(hooray.textContent).toBe("🎉1");
+  expect(hooray.getAttribute("aria-pressed")).toBe("false");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("GitHub refused the reaction");
+});
+
+it("shows images in the description and reviews through Core, with a link for other hosts", async () => {
+  const asset = "https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const signed = "https://private-user-images.githubusercontent.com/7/9-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.png?jwt=abc";
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: "data:image/gif;base64,R0lGODlh" });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      body: `Before and after:\n\n![After](${asset})`,
+      signedImages: [{ assetId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", signedUrl: signed }],
+      timeline: [
+        { kind: "review", id: "PRR_1", author: "bob", body: "See ![mock](http://example.com/a.png) and ![ext](https://example.com/b.png)", createdAt: "2026-10-27T10:00:00Z", state: "commented", reactions: [] },
+      ],
+    }),
+  });
+  await render();
+  await click(host.querySelector<HTMLButtonElement>(".pr-description .pr-toggle")!);
+  const images = [...host.querySelectorAll<HTMLImageElement>(".md img")];
+  expect(images.map((i) => [i.alt, i.getAttribute("src")])).toEqual([["After", "data:image/gif;base64,R0lGODlh"]]);
+  expect(fetch).toHaveBeenCalledWith(1, signed);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const conversation = host.querySelector('[aria-label="Conversation"]')!;
+  expect(conversation.textContent).toContain("ext");
+  expect(conversation.textContent).toContain("Open image");
+  expect(conversation.textContent).not.toContain("mock");
 });

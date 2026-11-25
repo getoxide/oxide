@@ -79,13 +79,22 @@ export const commands = {
 	createPullRequest: (projectId: number, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, pullRequest })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
 	listPullRequests: (projectId: number, mine: boolean, search: string) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("list_pull_requests", { projectId, mine, search })),
-	/**  One pull request's description, checks, conversation and changed files. */
-	pullRequestDetail: (projectId: number, number: number) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number })),
+	/**
+	 *  One pull request's description, checks, conversation and changed files. `poll`: a
+	 *  background refresh, which reads only the first page of the Activity Timeline.
+	 */
+	pullRequestDetail: (projectId: number, number: number, poll: boolean) => typedError<PullRequestDetail_Serialize, AppError>(__TAURI_INVOKE("pull_request_detail", { projectId, number, poll })),
 	commentPullRequest: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_pull_request", { projectId, number, body })),
 	/**  Rewrites a comment of a pull request or an issue. */
 	editComment: (projectId: number, id: string, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_comment", { projectId, id, body })),
 	/**  Deletes a comment of a pull request or an issue. */
 	deleteComment: (projectId: number, id: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_comment", { projectId, id })),
+	/**
+	 *  Adds (`add`) or removes the signed-in user's reaction on an issue, a pull request, a
+	 *  comment or a review. `subject_id` is its GraphQL node id, validated in Core; the call
+	 *  goes to GitHub through `gh api graphql`.
+	 */
+	toggleReaction: (projectId: number, subjectId: string, content: ReactionContent, add: boolean) => typedError<null, AppError>(__TAURI_INVOKE("toggle_reaction", { projectId, subjectId, content, add })),
 	mergePullRequest: (projectId: number, number: number, method: MergeMethod, deleteBranch: boolean, auto: boolean) => typedError<null, AppError>(__TAURI_INVOKE("merge_pull_request", { projectId, number, method, deleteBranch, auto })),
 	/**  Closes a pull request without merging it. */
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
@@ -98,6 +107,12 @@ export const commands = {
 	openLink: (url: string) => typedError<string | null, AppError>(__TAURI_INVOKE("open_link", { url })),
 	/**  Opens a link whose host the user confirmed after `open_link` refused it as unlisted. */
 	openConfirmedLink: (url: string) => typedError<null, AppError>(__TAURI_INVOKE("open_confirmed_link", { url })),
+	/**
+	 *  An image embedded in an issue or pull request, as a `data:` URL the webview shows under its
+	 *  existing Content Security Policy. Network access: Core reads it from GitHub's image hosts
+	 *  only, without the user's token, and returns raster images only (`Core::fetch_github_image`).
+	 */
+	fetchGithubImage: (projectId: number, url: string) => typedError<string, AppError>(__TAURI_INVOKE("fetch_github_image", { projectId, url })),
 	/**  Moves a pull request out of draft (`draft` false), or back into it. */
 	setPullRequestDraft: (projectId: number, number: number, draft: boolean) => typedError<null, AppError>(__TAURI_INVOKE("set_pull_request_draft", { projectId, number, draft })),
 	/**  Brings a pull request's branch up to date with its base. */
@@ -111,7 +126,8 @@ export const commands = {
 	/**  The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none. */
 	issueTemplates: (projectId: number) => typedError<IssueTemplateFile[], AppError>(__TAURI_INVOKE("issue_templates", { projectId })),
 	listIssues: (projectId: number, closed: boolean, mine: boolean, search: string) => typedError<IssueSummary[], AppError>(__TAURI_INVOKE("list_issues", { projectId, closed, mine, search })),
-	issueDetail: (projectId: number, number: number) => typedError<IssueDetail, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number })),
+	/**  `poll`: a background refresh, which reads only the first page of the Activity Timeline. */
+	issueDetail: (projectId: number, number: number, poll: boolean) => typedError<IssueDetail_Serialize, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number, poll })),
 	createIssue: (projectId: number, title: string, body: string, assignees: string[], labels: string[]) => typedError<IssueSummary, AppError>(__TAURI_INVOKE("create_issue", { projectId, title, body, assignees, labels })),
 	commentIssue: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_issue", { projectId, number, body })),
 	/**  Closes an issue with a reason, leaving `comment` first when it is not empty. */
@@ -183,14 +199,9 @@ export type GithubRepository = {
 
 export type IssueCloseReason = "completed" | "notPlanned";
 
-export type IssueComment = {
-	id: string,
-	author: string,
-	body: string,
-	createdAt: string,
-};
+export type IssueDetail = IssueDetail_Serialize | IssueDetail_Deserialize;
 
-export type IssueDetail = {
+export type IssueDetail_Deserialize = {
 	number: number,
 	title: string,
 	body: string,
@@ -199,10 +210,45 @@ export type IssueDetail = {
 	author: string,
 	url: string,
 	createdAt: string,
-	comments: IssueComment[],
 	labels: PullRequestLabel[],
 	assignees: string[],
 	viewer: string,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments and activity, oldest first. */
+	timeline: TimelineItem_Deserialize[],
+	/**  Whether GitHub has more activity than Oxide read; every comment is still in `timeline`. */
+	timelineTruncated: boolean,
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
+	/**  Signed URLs for the private user attachments in the description and comments. */
+	signedImages: SignedImage[],
+};
+
+export type IssueDetail_Serialize = {
+	number: number,
+	title: string,
+	body: string,
+	state: string,
+	stateReason: string,
+	author: string,
+	url: string,
+	createdAt: string,
+	labels: PullRequestLabel[],
+	assignees: string[],
+	viewer: string,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments and activity, oldest first. */
+	timeline: TimelineItem_Serialize[],
+	/**  Whether GitHub has more activity than Oxide read; every comment is still in `timeline`. */
+	timelineTruncated: boolean,
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
+	/**  Signed URLs for the private user attachments in the description and comments. */
+	signedImages: SignedImage[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -359,28 +405,6 @@ export type PullRequestCheck_Serialize = {
 	required: boolean,
 };
 
-export type PullRequestComment = PullRequestComment_Serialize | PullRequestComment_Deserialize;
-
-export type PullRequestComment_Deserialize = {
-	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
-	id?: string | null,
-	author: string,
-	body: string,
-	createdAt: string,
-	/**  Set when the entry is a review rather than a plain comment. */
-	review?: ReviewState | null,
-};
-
-export type PullRequestComment_Serialize = {
-	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
-	id: string | null,
-	author: string,
-	body: string,
-	createdAt: string,
-	/**  Set when the entry is a review rather than a plain comment. */
-	review: ReviewState | null,
-};
-
 export type PullRequestDetail = PullRequestDetail_Serialize | PullRequestDetail_Deserialize;
 
 export type PullRequestDetail_Deserialize = {
@@ -390,7 +414,6 @@ export type PullRequestDetail_Deserialize = {
 	/**  The commit the pull request's head points at. */
 	headSha: string,
 	checks: PullRequestCheck_Deserialize[],
-	comments: PullRequestComment_Deserialize[],
 	mergeState: MergeState,
 	reviewDecision?: ReviewDecision | null,
 	reviewers: PullRequestReviewer[],
@@ -408,6 +431,20 @@ export type PullRequestDetail_Deserialize = {
 	deleteBranchOnMerge: boolean,
 	/**  The number of changed files. */
 	changedFiles: number,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments, reviews, commits and activity, oldest first. */
+	timeline: TimelineItem_Deserialize[],
+	/**
+	 *  Whether GitHub has more activity than Oxide read; every comment and review is still in
+	 *  `timeline`.
+	 */
+	timelineTruncated: boolean,
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
+	/**  Signed URLs for the private user attachments in the description, comments and reviews. */
+	signedImages: SignedImage[],
 };
 
 export type PullRequestDetail_Serialize = {
@@ -417,7 +454,6 @@ export type PullRequestDetail_Serialize = {
 	/**  The commit the pull request's head points at. */
 	headSha: string,
 	checks: PullRequestCheck_Serialize[],
-	comments: PullRequestComment_Serialize[],
 	mergeState: MergeState,
 	reviewDecision: ReviewDecision | null,
 	reviewers: PullRequestReviewer[],
@@ -435,6 +471,20 @@ export type PullRequestDetail_Serialize = {
 	deleteBranchOnMerge: boolean,
 	/**  The number of changed files. */
 	changedFiles: number,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments, reviews, commits and activity, oldest first. */
+	timeline: TimelineItem_Serialize[],
+	/**
+	 *  Whether GitHub has more activity than Oxide read; every comment and review is still in
+	 *  `timeline`.
+	 */
+	timelineTruncated: boolean,
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
+	/**  Signed URLs for the private user attachments in the description, comments and reviews. */
+	signedImages: SignedImage[],
 };
 
 export type PullRequestDraft = PullRequestDraft_Serialize | PullRequestDraft_Deserialize;
@@ -498,11 +548,31 @@ export type PullRequestReviewer = {
 	state: ReviewState,
 };
 
+/**  One of the eight reactions GitHub offers. */
+export type ReactionContent = "thumbsUp" | "thumbsDown" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+
+/**  How many people gave one reaction, and whether the signed-in user is one of them. */
+export type ReactionGroup = {
+	content: ReactionContent,
+	count: number,
+	viewerHasReacted: boolean,
+};
+
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewState = "requested" | "approved" | "changesRequested" | "commented" | "dismissed";
 
 export type ShellKind = "default" | "zsh" | "bash" | "powershell" | "pwsh";
+
+/**
+ *  The short-lived signed URL GitHub rendered for an uploaded asset (named by its uuid), which
+ *  loads it without the user's token.
+ */
+export type SignedImage = {
+	/**  The uuid of the asset, the last segment of its `github.com` URL. */
+	assetId: string,
+	signedUrl: string,
+};
 
 export type Terminal = {
 	id: number,
@@ -527,6 +597,215 @@ export type TerminalMatch = {
 export type TerminalSettings = {
 	shell: ShellKind,
 	loadUserConfig: boolean,
+};
+
+export type TimelineAction = {
+	actor: string,
+	createdAt: string,
+};
+
+export type TimelineClosed = {
+	actor: string,
+	createdAt: string,
+	stateReason: string,
+};
+
+export type TimelineComment = TimelineComment_Serialize | TimelineComment_Deserialize;
+
+export type TimelineComment_Deserialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	/**  `null` when only `gh` gave the comment: its reactions are unknown, so not offered. */
+	reactions?: ReactionGroup[] | null,
+};
+
+export type TimelineComment_Serialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	/**  `null` when only `gh` gave the comment: its reactions are unknown, so not offered. */
+	reactions: ReactionGroup[] | null,
+};
+
+export type TimelineCommit = TimelineCommit_Serialize | TimelineCommit_Deserialize;
+
+export type TimelineCommit_Deserialize = {
+	oid: string,
+	abbreviatedOid: string,
+	headline: string,
+	author: string,
+	committedAt: string,
+	verified: boolean,
+	status?: CheckState | null,
+	url: string,
+};
+
+export type TimelineCommit_Serialize = {
+	oid: string,
+	abbreviatedOid: string,
+	headline: string,
+	author: string,
+	committedAt: string,
+	verified: boolean,
+	status: CheckState | null,
+	url: string,
+};
+
+export type TimelineForcePush = {
+	actor: string,
+	createdAt: string,
+	branch: string,
+	before: string,
+	after: string,
+	compareUrl: string,
+};
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem = TimelineItem_Serialize | TimelineItem_Deserialize;
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem_Deserialize = {
+	kind: "comment",
+} & TimelineComment_Deserialize | {
+	kind: "review",
+} & TimelineReview_Deserialize | {
+	kind: "commit",
+} & TimelineCommit_Deserialize | {
+	kind: "forcePush",
+} & TimelineForcePush | {
+	kind: "assigned",
+} & TimelinePerson | {
+	kind: "unassigned",
+} & TimelinePerson | {
+	kind: "labeled",
+} & TimelineLabel | {
+	kind: "unlabeled",
+} & TimelineLabel | {
+	kind: "reviewRequested",
+} & TimelinePerson | {
+	kind: "reviewRequestRemoved",
+} & TimelinePerson | {
+	kind: "closed",
+} & TimelineClosed | {
+	kind: "reopened",
+} & TimelineAction | {
+	kind: "merged",
+} & TimelineMerge | {
+	kind: "convertedToDraft",
+} & TimelineAction | {
+	kind: "readyForReview",
+} & TimelineAction | {
+	kind: "renamed",
+} & TimelineRename | {
+	kind: "headRefDeleted",
+} & TimelineAction | {
+	kind: "headRefRestored",
+} & TimelineAction | {
+	kind: "crossReferenced",
+} & TimelineReference;
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem_Serialize = {
+	kind: "comment",
+} & TimelineComment_Serialize | {
+	kind: "review",
+} & TimelineReview_Serialize | {
+	kind: "commit",
+} & TimelineCommit_Serialize | {
+	kind: "forcePush",
+} & TimelineForcePush | {
+	kind: "assigned",
+} & TimelinePerson | {
+	kind: "unassigned",
+} & TimelinePerson | {
+	kind: "labeled",
+} & TimelineLabel | {
+	kind: "unlabeled",
+} & TimelineLabel | {
+	kind: "reviewRequested",
+} & TimelinePerson | {
+	kind: "reviewRequestRemoved",
+} & TimelinePerson | {
+	kind: "closed",
+} & TimelineClosed | {
+	kind: "reopened",
+} & TimelineAction | {
+	kind: "merged",
+} & TimelineMerge | {
+	kind: "convertedToDraft",
+} & TimelineAction | {
+	kind: "readyForReview",
+} & TimelineAction | {
+	kind: "renamed",
+} & TimelineRename | {
+	kind: "headRefDeleted",
+} & TimelineAction | {
+	kind: "headRefRestored",
+} & TimelineAction | {
+	kind: "crossReferenced",
+} & TimelineReference;
+
+export type TimelineLabel = {
+	actor: string,
+	createdAt: string,
+	label: PullRequestLabel,
+};
+
+export type TimelineMerge = {
+	actor: string,
+	createdAt: string,
+	commit: string,
+	base: string,
+};
+
+export type TimelinePerson = {
+	actor: string,
+	createdAt: string,
+	login: string,
+};
+
+export type TimelineReference = {
+	actor: string,
+	createdAt: string,
+	number: number,
+	title: string,
+	url: string,
+	state: string,
+	pullRequest: boolean,
+	repository: string,
+	crossRepository: boolean,
+};
+
+export type TimelineRename = {
+	actor: string,
+	createdAt: string,
+	from: string,
+	to: string,
+};
+
+export type TimelineReview = TimelineReview_Serialize | TimelineReview_Deserialize;
+
+export type TimelineReview_Deserialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	state: ReviewState,
+	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
+	reactions?: ReactionGroup[] | null,
+};
+
+export type TimelineReview_Serialize = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	state: ReviewState,
+	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
+	reactions: ReactionGroup[] | null,
 };
 
 /* Tauri Specta runtime */

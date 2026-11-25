@@ -4,10 +4,12 @@
 
 import { relativeTime } from "../shared/relativeTime";
 
-export interface Inline {
-  kind: "text" | "code" | "link" | "strong";
-  text: string;
-}
+export type Inline =
+  | { kind: "text" | "code" | "link" | "strong"; text: string }
+  /** `@login`: `text` is what GitHub shows, `login` a valid GitHub login. */
+  | { kind: "mention"; text: string; login: string }
+  /** An image, from `![alt](url)` or an `<img>` tag. `url` is always `https`. */
+  | { kind: "image"; alt: string; url: string };
 
 export type Block =
   | { kind: "heading"; level: number; inline: Inline[] }
@@ -30,6 +32,39 @@ function replaceUntilStable(src: string, pattern: RegExp, replacement: string): 
   return out;
 }
 
+/** `url` when it is a well-formed `https` URL, else null. */
+function httpsUrl(url: string): string | null {
+  if (/[\s\p{Cc}]/u.test(url)) return null;
+  try {
+    return new URL(url).protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function attribute(attrs: string, name: string): string {
+  const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i").exec(attrs);
+  return decodeEntities(m?.[1] ?? m?.[2] ?? m?.[3] ?? "");
+}
+
+/** An `<img>` tag as Markdown image syntax, which `parseInline` reads; nothing when its source
+ *  is not `https`. The alt text and URL are escaped so they cannot end the syntax early. */
+function imageTagAsMarkdown(attrs: string): string {
+  const url = httpsUrl(attribute(attrs, "src"));
+  if (!url) return "";
+  const alt = attribute(attrs, "alt").replace(/[[\]\n]/g, "");
+  return `![${alt}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+}
+
 function clean(src: string): string {
   const text = src
     .replace(/\r\n?/g, "\n")
@@ -40,29 +75,52 @@ function clean(src: string): string {
     .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]+\S.*$/gm, "")
     // Dependabot's machine-readable trailer.
     .replace(/\n?---\nupdated-dependencies:[\s\S]*?(\n\.\.\.\n?|$)/, "\n")
+    .replace(/<img\b([^>]*)>/gi, (_, attrs: string) => imageTagAsMarkdown(attrs))
     .replace(/<br\s*\/?>/gi, "\n");
   return replaceUntilStable(text, new RegExp(`</?(${TAGS})(\\s[^>]*)?/?>`, "gi"), "");
 }
 
-export function parseInline(text: string): Inline[] {
-  const out: Inline[] = [];
-  const re = /`([^`]+)`|\*\*([^*]+)\*\*|!\[[^\]]*\]\([^)]*\)|\[([^\]]+)\]\([^)]*\)/g;
+/** A GitHub login: letters, digits and single inner hyphens, at most 39 characters. The `@` must
+ *  not follow a word character, a dot or another `@`, so `a@b.com` stays an email address, and a
+ *  `/` must not follow, so a team (`@org/team`) is not read as its organisation. */
+const MENTION = /(?<![\w.+\-@/`])@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?![\w-]|\.\w|\/)/g;
+
+/** Plain text with its `@mentions` read out. */
+function textWithMentions(text: string, out: Inline[]) {
   let last = 0;
-  for (let m = re.exec(text); m; m = re.exec(text)) {
+  for (const m of text.matchAll(MENTION)) {
     if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
-    if (m[1] !== undefined) out.push({ kind: "code", text: m[1] });
-    else if (m[2] !== undefined) out.push({ kind: "strong", text: m[2] });
-    else if (m[3] !== undefined) out.push({ kind: "link", text: m[3].replace(/`/g, "") });
+    out.push({ kind: "mention", text: m[0], login: m[1] });
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+}
+
+export function parseInline(text: string): Inline[] {
+  const out: Inline[] = [];
+  const re =
+    /`([^`]+)`|\*\*([^*]+)\*\*|\[!\[([^\]\n]*)\]\(([^)\s]*)[^)]*\)\]\([^)]*\)|!\[([^\]\n]*)\]\(([^)\s]*)[^)]*\)|\[([^\]]+)\]\([^)]*\)/g;
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > last) textWithMentions(text.slice(last, m.index), out);
+    if (m[1] !== undefined) out.push({ kind: "code", text: m[1] });
+    else if (m[2] !== undefined) out.push({ kind: "strong", text: m[2] });
+    else if (m[3] !== undefined || m[5] !== undefined) {
+      const url = httpsUrl(m[4] ?? m[6]);
+      if (url) out.push({ kind: "image", alt: m[3] ?? m[5], url });
+    } else if (m[7] !== undefined) out.push({ kind: "link", text: m[7].replace(/`/g, "") });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) textWithMentions(text.slice(last), out);
   return out;
 }
 
 const COLUMNS = 36;
 
 function textLines(parts: Inline[]): number {
-  return Math.max(1, Math.ceil(parts.reduce((n, p) => n + p.text.length, 0) / COLUMNS));
+  // An image is shown a few lines tall.
+  const length = (p: Inline) => (p.kind === "image" ? 4 * COLUMNS : p.text.length);
+  return Math.max(1, Math.ceil(parts.reduce((n, p) => n + length(p), 0) / COLUMNS));
 }
 
 function cost(block: Block): number {

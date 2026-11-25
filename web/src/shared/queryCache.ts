@@ -15,6 +15,9 @@ interface Entry {
   error?: string;
   /** When the last fetch settled, or when the data was written directly. */
   updatedAt?: number;
+  /** The sequence number of the last direct write (`setQueryData`, `updateQuery`): a fetch
+   *  started before it may not know of that change, so its result is not applied over it. */
+  written?: number;
   /** Marked by `invalidateQueries` so even an unmounted entry revalidates on its next mount. */
   stale?: boolean;
   /** Fetches that failed in a row; soft polls back off while it is above zero. */
@@ -85,6 +88,12 @@ function run<T>(
     if (inflight.get(key)?.id !== id) return result;
     inflight.delete(key);
     const previous = entries.get(key);
+    if (result.status === "ok" && previous?.written !== undefined && previous.written > id) {
+      // Written meanwhile (a mutation GitHub just accepted): keep that, and ask again.
+      entries.set(key, { ...previous, stale: true });
+      notify(key, true);
+      return result;
+    }
     entries.set(
       key,
       result.status === "ok"
@@ -109,6 +118,12 @@ function run<T>(
   return settled;
 }
 
+/** How a `useQuery` fetch was asked: `poll` for a timer or focus tick, which may read less (e.g.
+ *  only the first page of a GitHub timeline), false for a load, a refresh or an invalidation. */
+export interface FetchAsk {
+  poll: boolean;
+}
+
 /** A timer or focus tick: never overlaps a fetch already running for the key, and waits longer
  *  after each failure in a row so a rate limit or an outage is not hammered. */
 function softRefresh<T>(key: string, fetch: () => Promise<QueryResult<T>>): void {
@@ -118,15 +133,19 @@ function softRefresh<T>(key: string, fetch: () => Promise<QueryResult<T>>): void
   run(key, fetch, false);
 }
 
+const FULL: FetchAsk = { poll: false };
+const POLL: FetchAsk = { poll: true };
+
 /** Shows the last known result for `key` at once. By default a mount revalidates in the
  *  background; pass `staleMs` to trust cached data for that long (the GitHub surfaces do, since
  *  every fetch is a `gh` call). A changed `refresh` token is a hard ask (the user just acted), so
  *  it bypasses the threshold and any fetch in flight, and an invalidation always wins. A changed
  *  `poll` token is a soft one (a timer or focus tick): it fetches unless a fetch for the key is
- *  already running. The caller owns the refresh policy; this owns what to show meanwhile. */
+ *  already running, and is the only fetch asked as a `poll`. The caller owns the refresh policy;
+ *  this owns what to show meanwhile. */
 export function useQuery<T>(
   key: string,
-  fetch: () => Promise<QueryResult<T>>,
+  fetch: (ask: FetchAsk) => Promise<QueryResult<T>>,
   refresh: string | number = 0,
   options: { staleMs?: number; poll?: string | number } = {},
 ): QueryState<T> {
@@ -142,10 +161,10 @@ export function useQuery<T>(
   useEffect(
     () =>
       subscribe(key, (invalidated) => {
-        if (invalidated) run(key, () => fetchRef.current(), true);
+        if (invalidated) run(key, () => fetchRef.current(FULL), true);
         // A preload failed under this mounted query, which has nothing to show: ask in the
         // foreground rather than wait for a fetch nobody runs.
-        else if (awaitsRetry(key) && !inflight.has(key)) run(key, () => fetchRef.current(), false);
+        else if (awaitsRetry(key) && !inflight.has(key)) run(key, () => fetchRef.current(FULL), false);
         rerender();
       }),
     [key],
@@ -159,9 +178,9 @@ export function useQuery<T>(
     // new key) reuses the cache unless it has gone stale.
     const forced = same && previous.refresh !== refresh;
     const polled = same && previous.poll !== poll;
-    if (forced) run(key, () => fetchRef.current(), true);
-    else if (polled) softRefresh(key, () => fetchRef.current());
-    else if (isStale(key, staleMs)) run(key, () => fetchRef.current(), false);
+    if (forced) run(key, () => fetchRef.current(FULL), true);
+    else if (polled) softRefresh(key, () => fetchRef.current(POLL));
+    else if (isStale(key, staleMs)) run(key, () => fetchRef.current(FULL), false);
   }, [key, refresh, staleMs, poll]);
 
   const entry = entries.get(key);
@@ -221,7 +240,15 @@ export function getQueryData<T>(key: string): T | undefined {
 /** Replaces a key's data directly, e.g. after a mutation returned the new value or a list seeded a
  *  detail view's preview. Written data counts as fresh. */
 export function setQueryData<T>(key: string, data: T): void {
-  entries.set(key, { data, updatedAt: Date.now() });
+  entries.set(key, { data, updatedAt: Date.now(), written: ++sequence });
+  notify(key);
+}
+
+/** Rewrites the data of the entry `key`, if it has any, keeping its age. */
+export function updateQuery<T>(key: string, update: (data: T) => T): void {
+  const entry = entries.get(key);
+  if (entry?.data === undefined) return;
+  entries.set(key, { ...entry, data: update(entry.data as T), written: ++sequence });
   notify(key);
 }
 
@@ -231,7 +258,7 @@ export function updateQueries<T>(prefix: string, update: (data: T) => T): void {
     if (!key.startsWith(prefix)) continue;
     const entry = entries.get(key);
     if (entry?.data === undefined) continue;
-    entries.set(key, { ...entry, data: update(entry.data as T) });
+    entries.set(key, { ...entry, data: update(entry.data as T), written: ++sequence });
     notify(key);
   }
 }

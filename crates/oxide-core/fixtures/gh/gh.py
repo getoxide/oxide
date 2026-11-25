@@ -136,6 +136,37 @@ if args[:2] == ["api", "graphql"]:
         # The names of the checks branch protection requires, one per line through --jq.
         print("\n".join(state.get("required_checks", [])))
         sys.exit(0)
+    if any("addReaction" in a or "removeReaction" in a for a in args):
+        # A reaction added or removed, recorded in `state["reactions"]`; `reaction_error` refuses it.
+        if state.get("reaction_error"):
+            sys.stderr.write(state["reaction_error"] + "\n")
+            sys.exit(1)
+        field = lambda name: next(a[len(name) + 1:] for a in args if a.startswith(name + "="))
+        add = any("addReaction" in a for a in args)
+        state.setdefault("reactions", []).append(
+            {"subject": field("subject"), "content": field("content"), "add": add}
+        )
+        save()
+        print("{}")
+        sys.exit(0)
+    if any("timelineItems" in a for a in args):
+        # An issue's or pull request's node, timeline and participants, printed through --jq.
+        # `state["timelines"]` maps numbers to that node; absent, GitHub refuses the query.
+        number = next(a[len("number="):] for a in args if a.startswith("number="))
+        node = state.get("timelines", {}).get(number)
+        if node is None:
+            sys.stderr.write("GraphQL: Could not resolve to an Issue with the number of %s.\n" % number)
+            sys.exit(1)
+        # Pages of 100 items; the cursor, passed as `-f cursor=<offset>`, is the offset.
+        start = int(next((a[len("cursor="):] for a in args if a.startswith("cursor=")), "0"))
+        items = node.get("timelineItems", {}).get("nodes", [])
+        end = start + 100
+        node = dict(node, timelineItems={
+            "nodes": items[start:end],
+            "pageInfo": {"hasNextPage": end < len(items), "endCursor": str(end)},
+        })
+        print(json.dumps(node))
+        sys.exit(0)
     if any("reviewThreads" in a for a in args):
         # The inline review threads, printed through --jq as the nodes array.
         if state.get("review_threads_error"):
@@ -175,6 +206,24 @@ if args[:2] == ["pr", "edit"]:
         r for r in pr.get("reviewRequests", []) if r["login"] not in csv("--remove-reviewer")
     ] + [{"__typename": "User", "login": login} for login in csv("--add-reviewer")]
     save()
+    sys.exit(0)
+
+if len(args) > 1 and args[0] == "api" and args[1].startswith("repos/") and "/contents/" in args[1] \
+        and flag("-H") == "Accept: application/vnd.github.raw":
+    # `state["raw_files"]` maps endpoints to base64 file contents; "big" stands for a file
+    # larger than any image Oxide reads.
+    content = state.get("raw_files", {}).get(args[1])
+    if content is None:
+        sys.stderr.write("gh: Not Found (HTTP 404)")
+        sys.exit(1)
+    if content == "big":
+        chunk = b"\0" * 65536
+        for _ in range(6 * 16):
+            sys.stdout.buffer.write(chunk)
+    else:
+        import base64
+        sys.stdout.buffer.write(base64.b64decode(content))
+    sys.stdout.buffer.flush()
     sys.exit(0)
 
 TEMPLATES_DIR = "repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE"

@@ -22,20 +22,23 @@ import {
   commands,
   type MergeMethod,
   type PullRequest,
-  type PullRequestComment,
   type PullRequestDetail,
   type PullRequestEdit,
+  type ReactionGroup,
 } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
 import { githubKeys } from "../shared/githubQueries";
-import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
+import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, updateQuery, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
-import { Markdown } from "./PullRequestMarkdown";
+import { Markdown, MarkdownImages } from "./PullRequestMarkdown";
+import { ActivityRow, type ConversationItem, isConversationItem, MoreOnGithub } from "./PullRequestTimeline";
+import { Reactions, ReactionsSaved, withReaction } from "../shared/Reactions";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
-import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
+import { NO_EDIT, PullRequestPeople, ReviewStateIcon, useCandidates } from "./PullRequestPeople";
+import { conversationPeople, mergeMentions } from "../shared/mentions";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
 import { relativeTime } from "../shared/relativeTime";
 import { useAutoRefresh } from "../shared/useAutoRefresh";
@@ -264,8 +267,8 @@ export function PullRequestReview({
   });
   const query = useQuery(
     key,
-    async (): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
-      const detail = await commands.pullRequestDetail(projectId, number);
+    async ({ poll }): Promise<QueryResult<{ detail: PullRequestDetail }>> => {
+      const detail = await commands.pullRequestDetail(projectId, number, poll);
       if (detail.status === "error") return detail;
       return { status: "ok", data: { detail: detail.data } };
     },
@@ -277,6 +280,7 @@ export function PullRequestReview({
   const [pending, setPending] = useState<Pending | null>(null);
   const busy = pending !== null;
   const [comment, setComment] = useState("");
+  const people = useCandidates(projectId);
   const [methodChoice, setMethod] = useState<MergeMethod | null>(null);
   const [deleteChoice, setDeleteBranch] = useState<boolean | null>(null);
   const mergeDoneTimer = useRef<number | null>(null);
@@ -349,6 +353,11 @@ export function PullRequestReview({
   const pr = detail.pullRequest;
   const phase = merged ? "merged" : detail.phase;
   const live = phase === "open" || phase === "draft";
+  const conversationCount = detail.timeline.filter(isConversationItem).length;
+  const mentions = mergeMentions(
+    conversationPeople({ ...detail, author: pr.author }),
+    people.candidates.state === "ready" ? people.candidates.data.users : [],
+  );
   const inputs = { phase, checks: detail.checks, mergeState: detail.mergeState, reviewDecision: detail.reviewDecision ?? null };
   const status = readiness(inputs);
   const requirements = live ? mergeRequirements(inputs) : [];
@@ -416,6 +425,12 @@ export function PullRequestReview({
   const edit = (partial: Partial<PullRequestEdit>) =>
     change(null, () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
   return (
+    <MarkdownImages projectId={projectId} signed={detail.signedImages}>
+    <ReactionsSaved.Provider
+      value={(subject, content, add) =>
+        updateQuery<{ detail: PullRequestDetail }>(key, (d) => ({ detail: withReaction(d.detail, subject, content, add) }))
+      }
+    >
     <div className="pr-review">
       {nav}
       <RefreshNotice query={query} />
@@ -453,7 +468,9 @@ export function PullRequestReview({
           )}
         </header>
 
-        {detail.body.trim() && <Description body={detail.body} />}
+        {(detail.body.trim() || detail.reactions.length > 0 || detail.nodeId !== "") && (
+          <Description body={detail.body} projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
+        )}
         {live && <MergeStatus
             requirements={requirements}
             busy={busy}
@@ -473,19 +490,26 @@ export function PullRequestReview({
         <section className="pr-section" aria-label="Conversation">
           <h4>
             <CommentIcon size={14} /> Conversation
-            {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
+            {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.comments.map((c, i) => (
-            <Entry
-              key={c.id ?? i}
-              entry={c}
-              author={pr.author}
-              viewer={detail.viewer}
-              projectId={projectId}
-              onChanged={() => setReload((n) => n + 1)}
-              onError={setError}
-            />
-          ))}
+          {detail.timeline.map((item, i) =>
+            isConversationItem(item) ? (
+              <Entry
+                key={item.id || i}
+                entry={item}
+                author={pr.author}
+                viewer={detail.viewer}
+                projectId={projectId}
+                mentions={mentions}
+                onMentionOpen={people.load}
+                onChanged={() => setReload((n) => n + 1)}
+                onError={setError}
+              />
+            ) : (
+              <ActivityRow key={i} item={item} head={pr.head} onOpen={(url) => void openLink(url)} />
+            ),
+          )}
+          {detail.timelineTruncated && <MoreOnGithub url={pr.url} onOpen={(url) => void openLink(url)} />}
           <form
             className="pr-compose"
             onSubmit={(e) => {
@@ -501,6 +525,8 @@ export function PullRequestReview({
                 rows={3}
                 value={comment}
                 onChange={setComment}
+                mentions={mentions}
+                onMentionOpen={people.load}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
@@ -569,6 +595,8 @@ export function PullRequestReview({
         </div>
       )}
     </div>
+    </ReactionsSaved.Provider>
+    </MarkdownImages>
   );
 }
 
@@ -604,29 +632,32 @@ const REVIEW_ACTION = {
 } as const;
 
 /** One conversation entry as the web shows it: who, what they did, when, and what they wrote. */
-function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
-  entry: PullRequestComment;
+function Entry({ entry, author, viewer, projectId, mentions, onMentionOpen, onChanged, onError }: {
+  entry: ConversationItem;
   author: string;
   viewer: string;
   projectId: number;
+  mentions: readonly string[];
+  onMentionOpen: () => void;
   /** The conversation changed on GitHub: load it again. */
   onChanged: () => void;
   onError: (message: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   // Only a plain comment of yours can be rewritten or removed; reviews and others' comments cannot.
-  const id = !entry.review && viewer !== "" && entry.author === viewer ? entry.id : null;
+  const review = entry.kind === "review" ? entry.state : null;
+  const id = !review && viewer !== "" && entry.author === viewer && entry.id ? entry.id : null;
   return (
-    <article className={`pr-entry${entry.review ? ` pr-entry-${entry.review}` : ""}`}>
+    <article className={`pr-entry${review ? ` pr-entry-${review}` : ""}`}>
       <Avatar login={entry.author} size={24} />
       <div className="pr-entry-card">
         <header>
           <strong>{entry.author}</strong>
           {entry.author === author && <span className="pr-tag">Author</span>}
           <span className="pr-entry-action">
-            {entry.review ? (
+            {review ? (
               <>
-                <ReviewStateIcon state={entry.review} size={12} /> {REVIEW_ACTION[entry.review]}
+                <ReviewStateIcon state={review} size={12} /> {REVIEW_ACTION[review]}
               </>
             ) : (
               "commented"
@@ -645,8 +676,15 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
             onSaved={() => { setEditing(false); onChanged(); }}
             onCancel={() => setEditing(false)}
             onError={onError}
+            mentions={mentions}
+            onMentionOpen={onMentionOpen}
           />
-        ) : entry.body.trim() && <Markdown source={entry.body} />}
+        ) : (
+          <>
+            {entry.body.trim() && <Markdown source={entry.body} />}
+            {entry.reactions && <Reactions projectId={projectId} subjectId={entry.id} reactions={entry.reactions} onError={onError} />}
+          </>
+        )}
       </div>
     </article>
   );
@@ -654,17 +692,33 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
 
 /** The description, folded away until asked for: bot and template boilerplate shouldn't
  *  push the rest off the screen, and when opened it is the whole text. */
-function Description({ body }: { body: string }) {
+function Description({ body, projectId, subjectId, reactions, onError }: {
+  body: string;
+  projectId: number;
+  subjectId: string;
+  reactions: ReactionGroup[];
+  onError: (message: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <section className="pr-section pr-description" aria-label="Description">
-      <button className="pr-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <h4>Description</h4>
-        <ChevronDownIcon size={14} className="pr-chev" />
-      </button>
-      <Collapsible open={open}>
-        <Markdown source={body} />
-      </Collapsible>
+      {body.trim() ? (
+        <>
+          <button className="pr-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+            <h4>Description</h4>
+            <ChevronDownIcon size={14} className="pr-chev" />
+          </button>
+          <Collapsible open={open}>
+            <Markdown source={body} />
+          </Collapsible>
+        </>
+      ) : (
+        <>
+          <h4>Description</h4>
+          <p className="pr-field-empty issue-no-body">No description provided.</p>
+        </>
+      )}
+      <Reactions projectId={projectId} subjectId={subjectId} reactions={reactions} onError={onError} />
     </section>
   );
 }

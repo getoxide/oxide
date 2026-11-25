@@ -2,11 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { commands, type IssueDetail, type IssueSummary } from "../bindings";
+import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
-import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
+import { clearQueryCache, getQueryData, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
-import { preloadGithub } from "../shared/githubQueries";
+import { githubKeys, preloadGithub } from "../shared/githubQueries";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -38,8 +38,13 @@ const summary = (over: Partial<IssueSummary> = {}): IssueSummary => ({
 const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   ...summary(),
   body: "It **crashes**.",
-  comments: [],
   viewer: "me",
+  nodeId: "I_7",
+  reactions: [],
+  participants: [],
+  timeline: [],
+  timelineTruncated: false,
+  signedImages: [],
   ...over,
 });
 
@@ -161,6 +166,20 @@ it("opens the issue form from New issue", async () => {
   await vi.waitFor(() => expect(host.querySelector(".issue-create h3")?.textContent).toBe("New issue"));
 });
 
+it("mentions the repository's people from the new issue's description", async () => {
+  vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["ana", "bob"], labels: [] } });
+  await render();
+  await act(async () => button("New issue").click());
+  const box = await vi.waitFor(() => host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!);
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(box, "cc @");
+    box.setSelectionRange(4, 4);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect([...host.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toEqual(["ana", "bob"]);
+});
+
 it("reloads by itself on focus and on a timer while visible", async () => {
   vi.useFakeTimers();
   try {
@@ -202,6 +221,115 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(host.querySelector('[aria-label="Edit title"]')).not.toBeNull();
   await act(async () => button("Close as completed").click());
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
+});
+
+it("asks for the issue's whole timeline when opened, and only its first page when polling", async () => {
+  vi.useFakeTimers();
+  try {
+    await render();
+    await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+    expect(vi.mocked(commands.issueDetail).mock.calls).toEqual([[1, 7, false]]);
+    await act(async () => void vi.advanceTimersByTime(REFRESH_INTERVAL_MS));
+    expect(vi.mocked(commands.issueDetail).mock.calls.at(-1)).toEqual([1, 7, true]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("links to the issue on GitHub when its timeline holds more activity than was read", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.issueDetail).mockResolvedValue({ status: "ok", data: detail({ timelineTruncated: true }) });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const more = [...host.querySelectorAll<HTMLButtonElement>('section[aria-label="Conversation"] button')].find((b) =>
+    b.textContent?.includes("more activity on GitHub"),
+  )!;
+  await act(async () => more.click());
+  expect(open).toHaveBeenCalledWith("https://github.com/fake/repo/issues/7");
+});
+
+it("interleaves activity with comments in the issue Conversation and opens references through the link flow", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        { kind: "labeled", actor: "alice", createdAt: "2026-01-01T01:00:00Z", label: { name: "bug", color: "d73a4a" } },
+        { kind: "assigned", actor: "alice", createdAt: "2026-01-01T02:00:00Z", login: "bob" },
+        { kind: "comment", id: "IC_1", author: "me", body: "On it", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
+        { kind: "renamed", actor: "alice", createdAt: "2026-01-01T04:00:00Z", from: "Crash", to: "Crash on startup" },
+        {
+          kind: "crossReferenced", actor: "erin", createdAt: "2026-01-01T05:00:00Z", number: 9, title: "Fix the crash",
+          url: "https://github.com/other/repo/pull/9", state: "MERGED", pullRequest: true, repository: "other/repo", crossRepository: true,
+        },
+        { kind: "closed", actor: "bob", createdAt: "2026-01-01T06:00:00Z", stateReason: "NOT_PLANNED" },
+        { kind: "reopened", actor: "alice", createdAt: "2026-01-01T07:00:00Z" },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const conversation = host.querySelector('section[aria-label="Conversation"]')!;
+  const rows = [...conversation.querySelectorAll(".pr-timeline-event, .pr-entry")].map((r) => r.textContent ?? "");
+  expect(rows).toHaveLength(7);
+  expect(rows[0]).toMatch(/alice added the\s*bug\s*label/);
+  expect(conversation.querySelector(".pr-timeline-event .pr-label")?.textContent).toBe("bug");
+  expect(rows[1]).toContain("alice assigned bob");
+  expect(rows[2]).toContain("On it");
+  expect(rows[3]).toContain("changed the title");
+  expect(rows[3]).toContain("Crash on startup");
+  expect(rows[4]).toContain("other/repo#9");
+  expect(rows[5]).toContain("bob closed this as not planned");
+  expect(rows[6]).toContain("alice reopened this");
+  // The viewer's own comment can still be edited.
+  expect(conversation.querySelector('[aria-label="Edit comment"]')).not.toBeNull();
+
+  const reference = [...conversation.querySelectorAll<HTMLButtonElement>(".pr-timeline-event button")].find((b) =>
+    b.textContent?.includes("Fix the crash"),
+  )!;
+  await act(async () => reference.click());
+  expect(open).toHaveBeenCalledWith("https://github.com/other/repo/pull/9");
+});
+
+it("offers the conversation's people before collaborators in the comment box and the comment editor", async () => {
+  const candidates = vi.spyOn(commands, "pullRequestCandidates").mockResolvedValue({ status: "ok", data: { users: ["zed", "Carol", "ann"], labels: [] } });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      participants: ["dave", "me"],
+      timeline: [
+        { kind: "comment", id: "IC_1", author: "carol", body: "Same here", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
+        { kind: "comment", id: "IC_2", author: "me", body: "On it", createdAt: "2026-01-01T04:00:00Z", reactions: [] },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  const typeIn = (box: HTMLTextAreaElement, text: string) => act(async () => {
+    setter.call(box, text);
+    box.setSelectionRange(text.length, text.length);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const options = (box: HTMLTextAreaElement) =>
+    [...box.closest(".md-editor")!.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+
+  const compose = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!;
+  await typeIn(compose, "@");
+  expect(candidates).toHaveBeenCalledTimes(1);
+  expect(options(compose)).toEqual(["alice", "bob", "carol", "dave", "zed", "ann"]);
+
+  await act(async () => (host.querySelector('[aria-label="Edit comment"]') as HTMLButtonElement).click());
+  const editor = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit comment"]')!;
+  await typeIn(editor, "On it @da");
+  expect(options(editor)).toEqual(["dave"]);
+  await act(async () => {
+    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  expect(options(editor)).toEqual([]);
+  expect(host.querySelector('textarea[aria-label="Edit comment"]')).not.toBeNull();
 });
 
 it("closes as not planned with one click in the close split-button's menu, the comment going along", async () => {
@@ -466,4 +594,82 @@ it("stops polling while the Surface is hidden, and revalidates silently once sho
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("shows reactions under the description and comments and toggles them optimistically", async () => {
+  let finish!: () => void;
+  const toggle = vi.spyOn(commands, "toggleReaction").mockImplementation(
+    () => new Promise((resolve) => (finish = () => resolve({ status: "ok", data: null }))),
+  );
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      reactions: [{ content: "thumbsUp", count: 2, viewerHasReacted: true }],
+      timeline: [
+        {
+          kind: "comment", id: "IC_1", author: "bob", body: "Same here", createdAt: "2026-01-01T03:00:00Z",
+          reactions: [{ content: "eyes", count: 1, viewerHasReacted: false }],
+        },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  const thumbs = description.querySelector<HTMLButtonElement>('.reactions button[aria-pressed]')!;
+  expect(thumbs.textContent).toBe("👍2");
+  expect(thumbs.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => thumbs.click());
+  expect(toggle).toHaveBeenCalledWith(1, "I_7", "thumbsUp", false);
+  // Before GitHub answers, the count already shows the viewer's reaction gone.
+  expect(thumbs.textContent).toBe("👍1");
+  expect(thumbs.getAttribute("aria-pressed")).toBe("false");
+  await act(async () => finish());
+
+  const comment = host.querySelector('section[aria-label="Conversation"] .pr-entry')!;
+  expect(comment.querySelector(".reactions")?.textContent).toContain("👀1");
+  await act(async () => comment.querySelector<HTMLButtonElement>('button[aria-label="Add reaction"]')!.click());
+  const picker = document.querySelector('[role="dialog"][aria-label="Add reaction"]')!;
+  expect([...picker.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"]);
+  await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Rocket"]')!.click());
+  expect(toggle).toHaveBeenLastCalledWith(1, "IC_1", "rocket", true);
+  expect(comment.querySelector(".reactions")?.textContent).toContain("🚀1");
+  expect(document.querySelector('[role="dialog"][aria-label="Add reaction"]')).toBeNull();
+  await act(async () => finish());
+
+  // What GitHub accepted is kept in the cached issue, so reopening it shows the same.
+  const cached = getQueryData<IssueDetail>(githubKeys.issueDetail(1, 7))!;
+  expect(cached.reactions).toEqual([{ content: "thumbsUp", count: 1, viewerHasReacted: false }]);
+  const cachedComment = cached.timeline[0] as Extract<IssueDetail["timeline"][number], { kind: "comment" }>;
+  expect(cachedComment.reactions?.map((r) => r.content)).toEqual(["rocket", "eyes"]);
+});
+
+it("shows the description's private attachment through its signed URL and other hosts as a link", async () => {
+  const asset = "https://github.com/user-attachments/assets/84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
+  const signed = "https://private-user-images.githubusercontent.com/7/9-84ccda0a-5c4a-4fe4-b897-ed3f90e852b2.png?jwt=abc";
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: "data:image/png;base64,iVBORw0KGgo=" });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      body: `It crashes:\n\n<img width="600" alt="Crash dialog" src="${asset}" />`,
+      signedImages: [{ assetId: "84ccda0a-5c4a-4fe4-b897-ed3f90e852b2", signedUrl: signed }],
+      timeline: [
+        { kind: "comment", id: "IC_1", author: "dave", body: "![tracker](https://tracker.example/pixel.png)", createdAt: "2026-01-01T03:00:00Z", reactions: [] },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('[aria-label="Description"]')!;
+  const img = description.querySelector("img.md-image") as HTMLImageElement;
+  expect(img.alt).toBe("Crash dialog");
+  expect(img.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+  expect(fetch).toHaveBeenCalledWith(1, signed);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const conversation = host.querySelector('[aria-label="Conversation"]')!;
+  expect(conversation.querySelector(".md img")).toBeNull();
+  expect(conversation.textContent).toContain("tracker");
+  expect(conversation.textContent).toContain("Open image");
 });

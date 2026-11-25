@@ -9,6 +9,7 @@ import { commands, type PullRequest } from "../bindings";
 import { BranchPicker } from "./BranchPicker";
 import { describeCreatePrError } from "./createPullRequestError";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
+import { useCandidates } from "./PullRequestPeople";
 
 /** The key of a (head, base) pair in the commit counts. */
 const pair = (head: string, base: string) => `${head}\u0000${base}`;
@@ -38,6 +39,7 @@ export function PullRequestCreate({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const people = useCandidates(projectId);
   // The latest count asked for each pair, and the latest prefill asked for a head: an older
   // answer, or one asked before the form reloaded (another project, Try again), is dropped.
   const counting = useRef<{ next: number; latest: Record<string, number>; prefill: number }>({
@@ -231,6 +233,9 @@ export function PullRequestCreate({
             disabled={busy}
             placeholder="Describe the change and how you tested it."
             rows={9}
+            projectId={projectId}
+            mentions={people.candidates.state === "ready" ? people.candidates.data.users : []}
+            onMentionOpen={people.load}
           />
           <label className="pr-create-draft">
             <input

@@ -34,11 +34,13 @@ pub use error::{Error, Result};
 pub use files::{FileContent, FileEntry};
 pub use git::FETCH_INTERVAL;
 pub use github::{
-    CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueComment, IssueDetail,
-    IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
-    PullRequestCandidates, PullRequestCheck, PullRequestComment, PullRequestDetail,
-    PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
-    PullRequestReviewer, ReviewDecision, ReviewState,
+    CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueDetail, IssueEdit,
+    IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
+    PullRequestCandidates, PullRequestCheck, PullRequestDetail, PullRequestDraft, PullRequestEdit,
+    PullRequestInput, PullRequestLabel, PullRequestPhase, PullRequestReviewer, ReactionContent,
+    ReactionGroup, ReviewDecision, ReviewState, SignedImage, TimelineAction, TimelineClosed,
+    TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem, TimelineLabel, TimelineMerge,
+    TimelinePerson, TimelineReference, TimelineRename, TimelineReview,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use oxide_platform::{AvailableShell, ShellKind};
@@ -728,7 +730,13 @@ impl Core {
 
     /// Detailed issue with its description, status and comments.
     pub fn issue_detail(&self, project_id: u32, number: u32) -> Result<IssueDetail> {
-        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number)
+        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number, false)
+    }
+
+    /// [`Core::issue_detail`] for a background poll: it reads only the first page of the
+    /// Activity Timeline, reusing the rest from a full read made in the last few minutes.
+    pub fn poll_issue_detail(&self, project_id: u32, number: u32) -> Result<IssueDetail> {
+        github::issue_detail(&self.gh, &self.main_checkout(project_id)?, number, true)
     }
 
     /// The files of the repository's issue templates directory on GitHub.
@@ -763,6 +771,24 @@ impl Core {
     /// Deletes a comment of a pull request or an issue.
     pub fn delete_comment(&self, project_id: u32, id: &str) -> Result<()> {
         github::delete_comment(&self.gh, &self.main_checkout(project_id)?, id)
+    }
+
+    /// Adds or removes the signed-in user's reaction on an issue, a pull request, a comment
+    /// or a review, by its GraphQL node id.
+    pub fn toggle_reaction(
+        &self,
+        project_id: u32,
+        subject_id: &str,
+        content: ReactionContent,
+        add: bool,
+    ) -> Result<()> {
+        github::toggle_reaction(
+            &self.gh,
+            &self.main_checkout(project_id)?,
+            subject_id,
+            content,
+            add,
+        )
     }
 
     /// Adds a comment to an issue.
@@ -803,6 +829,13 @@ impl Core {
         Ok(())
     }
 
+    /// An image embedded in an issue or pull request of the Project's repository, as a
+    /// `data:` URL. Network access: see [`github::fetch_github_image`]; it reads only GitHub's
+    /// image hosts, refuses everything else before connecting and returns raster images only.
+    pub fn fetch_github_image(&self, project_id: u32, url: &str) -> Result<String> {
+        github::fetch_github_image(&self.gh, &self.main_checkout(project_id)?, url)
+    }
+
     /// Opens a link on a host outside the allowlist, after the user confirmed the host.
     pub fn open_confirmed_link(&self, url: &str) -> Result<()> {
         self.system().open_url(github::confirmed_url(url)?);
@@ -823,7 +856,17 @@ impl Core {
     /// A pull request's description, checks, conversation, allowed merge
     /// methods and changed files.
     pub fn pull_request_detail(&self, project_id: u32, number: u32) -> Result<PullRequestDetail> {
-        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number)
+        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number, false)
+    }
+
+    /// [`Core::pull_request_detail`] for a background poll: it reads only the first page of the
+    /// Activity Timeline, reusing the rest from a full read made in the last few minutes.
+    pub fn poll_pull_request_detail(
+        &self,
+        project_id: u32,
+        number: u32,
+    ) -> Result<PullRequestDetail> {
+        github::pull_request_detail(&self.gh, &self.main_checkout(project_id)?, number, true)
     }
 
     /// Adds a conversation comment to a pull request.

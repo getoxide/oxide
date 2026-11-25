@@ -617,6 +617,15 @@ html.macos .header,
 .pr-views .md p { white-space: pre-line; }
 .pr-views .md-h { font-weight: 650; color: var(--fg-bright); margin-top: var(--space-1); }
 .pr-views .md-link { color: var(--acc2); }
+/* GitHub's @mention: bold link text that opens the profile. */
+button.md-mention { display: inline; min-height: 0; padding: 0; border: 0; border-radius: 3px; background: none; font-size: inherit; font-weight: 600; line-height: inherit; color: var(--acc2); white-space: normal; }
+button.md-mention:hover:not(:disabled) { background: none; text-decoration: underline; }
+/* Embedded images: read through Core as data: URLs; a placeholder while loading, a link when not shown. */
+.md-image { display: block; max-width: 100%; height: auto; margin: 4px 0; border-radius: 6px; }
+.md-image-loading { display: block; width: min(100%, 320px); height: 120px; margin: 4px 0; border-radius: 6px; background: var(--bg3); }
+.md-image-fallback { display: inline-flex; align-items: baseline; gap: var(--space-2); color: var(--dim); }
+button.md-image-open { display: inline; min-height: 0; padding: 0; border: 0; background: none; font-size: inherit; line-height: inherit; color: var(--acc2); }
+button.md-image-open:hover:not(:disabled) { background: none; text-decoration: underline; }
 .pr-views .md code, .pr-views .md pre { font-family: var(--mono); font-size: 12px; background: var(--bg3); border-radius: 4px; }
 .pr-views .md code { padding: 1px 5px; }
 .pr-views .md pre { padding: var(--space-2) 10px; overflow-x: auto; white-space: pre; }
@@ -640,6 +649,25 @@ html.macos .header,
 .pr-views .pr-entry-action { display: inline-flex; align-items: center; gap: 4px; }
 .pr-views .pr-entry-card > .md { padding: 8px 10px; }
 .pr-views .pr-entry-card > header:last-child { border-bottom: 0; }
+/* Activity Timeline rows: compact, between the comment cards, the icon on the avatars' axis. */
+.pr-views .pr-timeline-event { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 0 0 4px; font-size: 12px; color: var(--dim); }
+.pr-views .pr-timeline-icon { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--bg3); color: var(--dim); }
+.pr-views .pr-timeline-text { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pr-views .pr-timeline-text strong { color: var(--fg-bright); }
+.pr-views .pr-timeline-text time { color: var(--faint); }
+.pr-views .pr-timeline-text code { font-size: 11px; }
+.pr-views .pr-timeline-text del { color: var(--faint); }
+.pr-views .pr-timeline-text ins { text-decoration: none; color: var(--fg-bright); }
+.pr-views .pr-timeline-headline { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-views .pr-timeline-link { min-height: 0; padding: 0; border: 0; background: none; color: var(--acc); font: inherit; cursor: pointer; }
+.pr-views .pr-timeline-link:hover { text-decoration: underline; }
+.pr-views .pr-timeline-sha { font-family: var(--mono); font-size: 11px; }
+.pr-views .pr-timeline-verified { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--green); border-radius: 999px; color: var(--green); font-size: 11px; }
+.pr-views .pr-timeline-status { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pr-views .pr-timeline-status.success { background: var(--green); }
+.pr-views .pr-timeline-status.failure { background: var(--red); }
+.pr-views .pr-timeline-status.pending { background: var(--yellow); }
+.pr-views .pr-timeline-state { text-transform: capitalize; color: var(--faint); }
 .pr-views .pr-compose { display: flex; gap: var(--space-2); align-items: flex-start; }
 .pr-views .pr-compose > .avatar { margin-top: 4px; }
 .pr-views .pr-compose-box { flex: 1; min-width: 0; display: grid; gap: var(--space-2); justify-items: end; }
@@ -694,6 +722,15 @@ html.macos .header,
 /* Popovers: reviewers/assignees/labels pickers and merge options. Portalled to <body>. */
 .pr-popover { position: fixed; z-index: 60; display: flex; flex-direction: column; overflow: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg2); box-shadow: 0 12px 32px #0008; color: var(--fg); }
 .pr-popover[data-side="top"] { box-shadow: 0 -12px 32px #0008; }
+/* Reactions under a description, comment or review, as GitHub's pills, and their picker. */
+.reactions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-2); }
+.reactions .reaction { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: none; font-size: 12px; line-height: 1; }
+.reactions .reaction.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 14%, transparent); color: var(--fg); }
+.reactions .reaction-count { font-variant-numeric: tabular-nums; }
+.reaction-picker { display: flex; gap: 2px; padding: var(--space-2); }
+.reaction-picker .reaction-option { width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; font-size: 16px; }
+.reaction-picker .reaction-option:hover { background: var(--bg3); }
+.reaction-picker .reaction-option.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 14%, transparent); }
 .pr-picker { display: grid; gap: var(--space-2); padding: var(--space-3); min-height: 0; }
 .pr-picker header { display: flex; align-items: center; justify-content: space-between; }
 .pr-picker input { width: 100%; }
@@ -970,6 +1007,10 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .md-editor .md-tool:hover:not(:disabled) { background: var(--gh-btn-hover); color: var(--fg-bright); border: 0; }
 .md-editor textarea { display: block; width: 100%; border: 0; border-radius: 0; box-shadow: none; resize: vertical; min-height: 96px; padding: 10px 12px; background: var(--gh-field); }
 .md-editor textarea:focus { box-shadow: none; }
+.md-editor .md-mention-menu { list-style: none; margin: 0; padding: 4px; max-height: 200px; overflow-y: auto; border-top: 1px solid var(--gh-border); background: var(--bg3); }
+.md-editor .md-mention-menu li { padding: 4px 8px; border-radius: 4px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.md-editor .md-mention-menu li:hover { background: var(--gh-btn-hover); }
+.md-editor .md-mention-menu li[aria-selected="true"] { background: var(--gh-blue); color: #fff; }
 .md-editor .md-preview { min-height: 96px; padding: 10px 12px; background: var(--gh-field); }
 .pr-views .issue-body-edit { padding: var(--space-2); }
 .pr-views .pr-compose-box { justify-items: stretch; }

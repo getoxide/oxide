@@ -15,6 +15,18 @@ use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod image;
+mod reactions;
+mod timeline;
+pub use image::{SignedImage, fetch_github_image};
+pub use reactions::{ReactionContent, ReactionGroup, toggle_reaction};
+use timeline::{Subject, Timeline};
+pub use timeline::{
+    TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
+    TimelineItem, TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
+    TimelineReview,
+};
+
 const INSTALL_GUIDANCE: &str =
     "Install the GitHub CLI (https://cli.github.com), then run `gh auth login`.";
 const LOGIN_GUIDANCE: &str = "The GitHub CLI is not logged in. Run `gh auth login` in a terminal.";
@@ -175,19 +187,6 @@ pub struct PullRequestLabel {
     pub color: String,
 }
 
-/// A conversation entry: a comment, or a review that said something.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestComment {
-    /// GitHub's node id of a plain comment, which can be edited or deleted; none for a review.
-    pub id: Option<String>,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    /// Set when the entry is a review rather than a plain comment.
-    pub review: Option<ReviewState>,
-}
-
 /// Who and what a pull request can be assigned, for the settings pickers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,7 +217,6 @@ pub struct PullRequestDetail {
     /// The commit the pull request's head points at.
     pub head_sha: String,
     pub checks: Vec<PullRequestCheck>,
-    pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
     pub review_decision: Option<ReviewDecision>,
     pub reviewers: Vec<PullRequestReviewer>,
@@ -236,6 +234,22 @@ pub struct PullRequestDetail {
     pub delete_branch_on_merge: bool,
     /// The number of changed files.
     pub changed_files: u32,
+    /// GitHub's GraphQL node id of the pull request; empty when the timeline could not be read.
+    pub node_id: String,
+    /// Everyone GitHub counts as taking part in the conversation.
+    pub participants: Vec<String>,
+    /// Comments, reviews, commits and activity, oldest first. Only the comments and reviews
+    /// when GitHub refused the timeline query.
+    pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment and review is still in
+    /// `timeline`, but those only `gh` gave carry no reactions (`None`) and no signed images,
+    /// so their private attachments stay unresolved.
+    pub timeline_truncated: bool,
+    /// The reactions on the description; none when GitHub refused the timeline query.
+    pub reactions: Vec<ReactionGroup>,
+    /// Signed URLs for the private user attachments shown in the description, comments and
+    /// reviews; empty when the timeline could not be read.
+    pub signed_images: Vec<SignedImage>,
 }
 
 /// The form a new pull request starts from.
@@ -311,6 +325,9 @@ pub struct Gh {
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
     viewer_logins: Cached<PathBuf, Option<String>>,
+    timeline_pages: timeline::LaterPages,
+    /// Whether the last timeline query failed, so a failure is logged once, not every poll.
+    timeline_refused: std::sync::atomic::AtomicBool,
 }
 
 /// Whether `gh` can be used, and if not, what to tell the user.
@@ -446,6 +463,7 @@ impl Gh {
         self.merge_settings.clear();
         self.default_merge_methods.clear();
         self.viewer_logins.clear();
+        self.timeline_pages.clear();
     }
 
     fn path_var(&self) -> OsString {
@@ -473,12 +491,13 @@ impl Gh {
         self.run_with_input(cwd, args, None)
     }
 
-    fn run_with_input(
+    /// The one hardened `gh` command (ADR-0016): found on the search path, with the hardened
+    /// environment and no standard input.
+    fn command<S: AsRef<std::ffi::OsStr>>(
         &self,
         cwd: &Path,
-        args: &[&str],
-        input: Option<&str>,
-    ) -> std::result::Result<String, GhError> {
+        args: impl IntoIterator<Item = S>,
+    ) -> std::result::Result<Command, GhError> {
         let path = self.path_var();
         #[cfg(windows)]
         let mut child_path = path.clone();
@@ -516,6 +535,23 @@ impl Gh {
             .ok_or(GhError::Missing)?,
         );
         oxide_platform::process::hide_console(&mut command);
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("PATH", &child_path)
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("NO_COLOR", "1")
+            .envs(crate::git_command::hardening_env())
+            .stdin(Stdio::null());
+        Ok(command)
+    }
+
+    fn run_with_input(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: Option<&str>,
+    ) -> std::result::Result<String, GhError> {
         // cmd.exe cannot safely carry newlines in a batch argument. gh accepts body text
         // on stdin, preserving descriptions and comments when it is installed as a shim.
         #[cfg(windows)]
@@ -534,14 +570,7 @@ impl Gh {
                 Some(body)
             })
         };
-        command
-            .args(args)
-            .current_dir(cwd)
-            .env("PATH", &child_path)
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .envs(crate::git_command::hardening_env())
-            .stdin(Stdio::null());
+        let mut command = self.command(cwd, args.iter())?;
         let output = match input {
             Some(input) => pipe_stdin(command, input),
             None => {
@@ -569,6 +598,42 @@ impl Gh {
             stderr
         };
         Err(GhError::Failed(redact_url_credentials(message.trim())))
+    }
+
+    /// Runs `gh` for binary output, reading at most `cap` bytes of it: a child that writes more
+    /// is stopped and the call fails. Its standard error is not read.
+    fn run_bounded(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        cap: u64,
+    ) -> std::result::Result<Vec<u8>, GhError> {
+        use std::io::Read;
+        let failed = |what: &str| GhError::Failed(what.to_string());
+        let mut command = self.command(cwd, args)?;
+        command.stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = command.spawn().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => GhError::Missing,
+            _ => GhError::Failed(redact_url_credentials(&format!("could not run gh: {e}"))),
+        })?;
+        let mut out = Vec::new();
+        let read = match child.stdout.take() {
+            Some(stdout) => stdout.take(cap + 1).read_to_end(&mut out).map(drop),
+            None => Err(std::io::Error::other("gh stdout was not piped")),
+        };
+        let too_large = out.len() as u64 > cap;
+        if too_large {
+            oxide_platform::diag::best_effort("stopping gh", child.kill());
+        }
+        let status = child.wait().map_err(|_| failed("gh did not finish"))?;
+        if too_large {
+            return Err(failed("gh wrote more than Oxide reads"));
+        }
+        read.map_err(|_| failed("could not read gh's output"))?;
+        if !status.success() {
+            return Err(failed("gh failed"));
+        }
+        Ok(out)
     }
 
     /// Whether `gh` can be used, and if not, what to tell the user.
@@ -745,17 +810,20 @@ fn labels_from(value: &serde_json::Value) -> Vec<PullRequestLabel> {
         .collect()
 }
 
-/// Comments and the reviews that said something, oldest first, as the web conversation shows them.
-fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
+/// The conversation `gh pr view` or `gh issue view` tells on its own: comments and reviews,
+/// oldest first.
+fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
-    let mut entries: Vec<PullRequestComment> = list("comments")
+    let mut items: Vec<TimelineItem> = list("comments")
         .iter()
-        .map(|c| PullRequestComment {
-            id: Some(text(&c["id"])).filter(|id| !id.is_empty()),
-            author: text(&c["author"]["login"]),
-            body: text(&c["body"]),
-            created_at: text(&c["createdAt"]),
-            review: None,
+        .map(|c| {
+            TimelineItem::Comment(TimelineComment {
+                id: text(&c["id"]),
+                author: text(&c["author"]["login"]),
+                body: text(&c["body"]),
+                created_at: text(&c["createdAt"]),
+                reactions: None,
+            })
         })
         .collect();
     for review in list("reviews") {
@@ -766,16 +834,22 @@ fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
         if body.trim().is_empty() && state == ReviewState::Commented {
             continue;
         }
-        entries.push(PullRequestComment {
-            id: None,
+        items.push(TimelineItem::Review(TimelineReview {
+            id: text(&review["id"]),
             author: text(&review["author"]["login"]),
             body,
             created_at: text(&review["submittedAt"]),
-            review: Some(state),
-        });
+            state,
+            reactions: None,
+        }));
     }
-    entries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    entries
+    let at = |item: &TimelineItem| match item {
+        TimelineItem::Comment(c) => c.created_at.clone(),
+        TimelineItem::Review(r) => r.created_at.clone(),
+        _ => String::new(),
+    };
+    items.sort_by_key(at);
+    items
 }
 
 /// A check run or a commit status, as `statusCheckRollup` lists them.
@@ -1036,9 +1110,22 @@ pub fn list_pull_requests(
         .unwrap_or_default())
 }
 
+/// The value of a scoped thread, re-raising its panic on the caller.
+fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 /// One pull request with its description, checks, conversation, the merge
-/// methods the repository allows and its changed-file count.
-pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
+/// methods the repository allows and its changed-file count. A `poll` reads only the first page
+/// of the Activity Timeline (see [`timeline::timeline`]).
+pub fn pull_request_detail(
+    gh: &Gh,
+    cwd: &Path,
+    number: u32,
+    poll: bool,
+) -> Result<PullRequestDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
     let fields = format!(
@@ -1046,30 +1133,38 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
          additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
     );
     // Independent round trips to GitHub: run them side by side.
-    let (view, settings, default_method, viewer, required) = std::thread::scope(|scope| {
-        let required = scope.spawn(|| required_check_names(gh, cwd, number));
-        let settings = scope.spawn(|| merge_settings(gh, cwd));
-        let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
-        let viewer = scope.spawn(|| viewer_login(gh, cwd));
-        let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
-        fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
-            handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        }
-        (
-            view,
-            join(settings),
-            join(default_method),
-            join(viewer),
-            join(required),
-        )
-    });
+    let (view, settings, default_method, viewer, required, timeline) =
+        std::thread::scope(|scope| {
+            let required = scope.spawn(|| required_check_names(gh, cwd, number));
+            let timeline =
+                scope.spawn(|| timeline::timeline(gh, cwd, Subject::PullRequest, number, poll));
+            let settings = scope.spawn(|| merge_settings(gh, cwd));
+            let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
+            let viewer = scope.spawn(|| viewer_login(gh, cwd));
+            let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
+            (
+                view,
+                join(settings),
+                join(default_method),
+                join(viewer),
+                join(required),
+                join(timeline),
+            )
+        });
     let v = parse(&view?)?;
     let (merge_methods, delete_branch_on_merge) = settings?;
 
     let pull_request = pull_request_from(&v);
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
+    let Timeline {
+        node_id,
+        participants,
+        reactions,
+        mut items,
+        signed_images,
+        truncated,
+    } = timeline.unwrap_or_default();
+    timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(PullRequestDetail {
         phase: phase_from(&v),
         body: text(&v["body"]),
@@ -1082,7 +1177,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
                 check
             })
             .collect(),
-        comments: conversation_from(&v),
         merge_state: merge_state_from(&v),
         review_decision: match v["reviewDecision"].as_str() {
             Some("APPROVED") => Some(ReviewDecision::Approved),
@@ -1104,6 +1198,12 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         delete_branch_on_merge,
         changed_files: v["changedFiles"].as_u64().unwrap_or(0) as u32,
         pull_request,
+        node_id,
+        participants,
+        timeline: items,
+        timeline_truncated: truncated,
+        reactions,
+        signed_images,
     })
 }
 
@@ -1332,9 +1432,9 @@ mod tests {
     }
 
     #[test]
-    fn comment_ids_are_base64url_text_never_a_file_reference() {
+    fn node_ids_are_base64url_text_never_a_file_reference() {
         for id in ["IC_kwDOAbc123-_", "MDEyOklzc3VlQ29tbWVudDE="] {
-            assert_eq!(checked_comment_id(id).unwrap(), id);
+            assert_eq!(checked_node_id(id).unwrap(), id);
         }
         for id in [
             "",
@@ -1346,7 +1446,7 @@ mod tests {
             "a/b",
             "é",
         ] {
-            assert!(checked_comment_id(id).is_err(), "{id:?}");
+            assert!(checked_node_id(id).is_err(), "{id:?}");
         }
     }
 
@@ -1487,9 +1587,9 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
-/// A GraphQL node id (`IC_kwDO...`) is base64url-style text. Anything else, notably a leading
-/// `@`, which `gh api -F` would read as a file, is refused.
-fn checked_comment_id(id: &str) -> Result<&str> {
+/// A GraphQL node id (`IC_kwDO...`, `PRR_...`, `I_...`) is base64url-style text. Anything else,
+/// notably a leading `@`, which `gh api -F` would read as a file, is refused.
+fn checked_node_id(id: &str) -> Result<&str> {
     if !id.is_empty()
         && id.len() <= 256
         && id
@@ -1498,13 +1598,13 @@ fn checked_comment_id(id: &str) -> Result<&str> {
     {
         Ok(id)
     } else {
-        Err(Error::Github("That comment id is not valid.".into()))
+        Err(Error::Github("That GitHub id is not valid.".into()))
     }
 }
 
 /// Rewrites a conversation comment of a pull request or an issue (both are issue comments to GitHub).
 pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
-    let id = checked_comment_id(id)?;
+    let id = checked_node_id(id)?;
     let body = body.trim();
     if body.is_empty() {
         return Err(Error::Github(
@@ -1530,7 +1630,7 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
 
 /// Deletes a conversation comment of a pull request or an issue.
 pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
-    let id = checked_comment_id(id)?;
+    let id = checked_node_id(id)?;
     gh.require_ready(cwd)?;
     gh.run(
         cwd,
@@ -1633,16 +1733,6 @@ const ISSUE_DETAIL_FIELDS: &str =
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IssueComment {
-    /// GitHub's node id, to edit or delete the comment.
-    pub id: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct IssueSummary {
     pub number: u32,
     pub title: String,
@@ -1669,11 +1759,26 @@ pub struct IssueDetail {
     pub author: String,
     pub url: String,
     pub created_at: String,
-    pub comments: Vec<IssueComment>,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
     /// The signed-in GitHub user.
     pub viewer: String,
+    /// GitHub's GraphQL node id of the issue; empty when the timeline could not be read.
+    pub node_id: String,
+    /// Everyone GitHub counts as taking part in the conversation.
+    pub participants: Vec<String>,
+    /// Comments and activity, oldest first. Only the comments when GitHub refused the
+    /// timeline query.
+    pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`,
+    /// but those only `gh` gave carry no reactions (`None`) and no signed images, so their
+    /// private attachments stay unresolved.
+    pub timeline_truncated: bool,
+    /// The reactions on the description; none when GitHub refused the timeline query.
+    pub reactions: Vec<ReactionGroup>,
+    /// Signed URLs for the private user attachments shown in the description and comments;
+    /// empty when the timeline could not be read.
+    pub signed_images: Vec<SignedImage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1888,21 +1993,27 @@ pub fn issue_templates(gh: &Gh, cwd: &Path) -> Result<Vec<IssueTemplateFile>> {
     Ok(files)
 }
 
-pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
+/// One issue with its description and Activity Timeline; a `poll` reads only the first page
+/// of the timeline (see [`timeline::timeline`]).
+pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32, poll: bool) -> Result<IssueDetail> {
     gh.require_ready(cwd)?;
     let n = number.to_string();
-    let (view, viewer) = std::thread::scope(|scope| {
+    let (view, viewer, timeline) = std::thread::scope(|scope| {
         let viewer = scope.spawn(|| viewer_login(gh, cwd));
+        let timeline = scope.spawn(|| timeline::timeline(gh, cwd, Subject::Issue, number, poll));
         let view = gh.run(cwd, &["issue", "view", &n, "--json", ISSUE_DETAIL_FIELDS]);
-        (
-            view,
-            viewer
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-        )
+        (view, join(viewer), join(timeline))
     });
     let v = parse(&view?)?;
-    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
+    let Timeline {
+        node_id,
+        participants,
+        reactions,
+        mut items,
+        signed_images,
+        truncated,
+    } = timeline.unwrap_or_default();
+    timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(IssueDetail {
         number: v["number"].as_u64().unwrap_or(0) as u32,
         title: text(&v["title"]),
@@ -1912,18 +2023,15 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         author: text(&v["author"]["login"]),
         url: text(&v["url"]),
         created_at: text(&v["createdAt"]),
-        comments: list("comments")
-            .iter()
-            .map(|c| IssueComment {
-                id: text(&c["id"]),
-                author: text(&c["author"]["login"]),
-                body: text(&c["body"]),
-                created_at: text(&c["createdAt"]),
-            })
-            .collect(),
         labels: labels_from(&v["labels"]),
         assignees: logins_from(&v["assignees"]),
         viewer: viewer.unwrap_or_default(),
+        node_id,
+        participants,
+        timeline: items,
+        timeline_truncated: truncated,
+        reactions,
+        signed_images,
     })
 }
 
@@ -1956,7 +2064,7 @@ pub fn create_issue(
         .next()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
-    let detail = issue_detail(gh, cwd, number)?;
+    let detail = issue_detail(gh, cwd, number, false)?;
     Ok(IssueSummary {
         number: detail.number,
         title: detail.title,
