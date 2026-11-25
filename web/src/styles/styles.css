@@ -617,6 +617,9 @@ html.macos .header,
 .pr-views .md p { white-space: pre-line; }
 .pr-views .md-h { font-weight: 650; color: var(--fg-bright); margin-top: var(--space-1); }
 .pr-views .md-link { color: var(--acc2); }
+/* GitHub's @mention: bold link text that opens the profile. */
+button.md-mention { display: inline; min-height: 0; padding: 0; border: 0; border-radius: 3px; background: none; font-size: inherit; font-weight: 600; line-height: inherit; color: var(--acc2); white-space: normal; }
+button.md-mention:hover:not(:disabled) { background: none; text-decoration: underline; }
 .pr-views .md code, .pr-views .md pre { font-family: var(--mono); font-size: 12px; background: var(--bg3); border-radius: 4px; }
 .pr-views .md code { padding: 1px 5px; }
 .pr-views .md pre { padding: var(--space-2) 10px; overflow-x: auto; white-space: pre; }

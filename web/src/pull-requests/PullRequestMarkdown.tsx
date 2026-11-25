@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { openExternalLink } from "../shared/externalLink";
 import { limitBlocks, parseMarkdown, type Inline } from "./prMarkdown";
 
 function inline(parts: Inline[]): ReactNode[] {
@@ -6,6 +7,19 @@ function inline(parts: Inline[]): ReactNode[] {
     if (p.kind === "code") return <code key={i}>{p.text}</code>;
     if (p.kind === "strong") return <strong key={i}>{p.text}</strong>;
     if (p.kind === "link") return <span key={i} className="md-link">{p.text}</span>;
+    if (p.kind === "mention") {
+      return (
+        <button
+          key={i}
+          type="button"
+          className="md-mention"
+          title={`Open ${p.login} on GitHub`}
+          onClick={() => void openExternalLink(`https://github.com/${p.login}`)}
+        >
+          {p.text}
+        </button>
+      );
+    }
     return p.text;
   });
 }
