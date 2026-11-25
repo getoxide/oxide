@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const INSTALL_GUIDANCE: &str =
@@ -296,9 +296,7 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
 pub struct Gh {
     search_path: Mutex<Option<Vec<PathBuf>>>,
     ready_at: Mutex<Option<Instant>>,
-    /// The last `gh auth status` outcome and when it finished. Held while a check runs, so
-    /// callers that asked meanwhile wait for it and share its answer instead of starting their own.
-    auth_check: Mutex<Option<(Instant, AuthOutcome)>>,
+    auth_check: AuthCheck,
     default_branches: Cached<PathBuf, String>,
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
@@ -307,6 +305,25 @@ pub struct Gh {
 
 /// Whether `gh` can be used, and if not, what to tell the user.
 type AuthOutcome = (GithubAvailability, Option<String>);
+
+/// One `gh auth status` at a time: callers that ask while a check runs wait for it and share
+/// its answer instead of starting their own. The lock is only held to read or record the slot,
+/// never while `gh` runs, so a hung `gh` blocks only the callers waiting for its answer.
+#[derive(Default)]
+struct AuthCheck {
+    slot: Mutex<AuthSlot>,
+    finished: Condvar,
+}
+
+#[derive(Default)]
+struct AuthSlot {
+    /// Bumped when the search path changes: a check started before then answers only its caller.
+    generation: u64,
+    /// The generation of the check that is running, if any.
+    running: Option<u64>,
+    /// The last outcome of the current generation and when it finished.
+    last: Option<(Instant, AuthOutcome)>,
+}
 
 /// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
 /// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
@@ -350,7 +367,13 @@ impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
         *self.search_path.lock_recover() = dirs;
         *self.ready_at.lock_recover() = None;
-        *self.auth_check.lock_recover() = None;
+        {
+            let mut slot = self.auth_check.slot.lock_recover();
+            slot.generation += 1;
+            slot.last = None;
+        }
+        // Callers waiting for a check of the old search path start their own.
+        self.auth_check.finished.notify_all();
         self.forget_metadata();
     }
 
@@ -493,26 +516,45 @@ impl Gh {
             return (GithubAvailability::Ready, None);
         }
         let asked = Instant::now();
-        let mut last = self.auth_check.lock_recover();
-        // A check that finished after this caller asked answers it too. An older failure does
-        // not: logging in must be noticed on the next ask.
-        if let Some((finished, outcome)) = last.as_ref()
-            && *finished >= asked
-        {
-            return outcome.clone();
-        }
-        let outcome = match self.run(cwd, &["auth", "status"]) {
-            Ok(_) => {
-                *self.ready_at.lock_recover() = Some(Instant::now());
-                (GithubAvailability::Ready, None)
+        let check = &self.auth_check;
+        let mut slot = check.slot.lock_recover();
+        let generation = loop {
+            // A check that finished after this caller asked answers it too. An older failure
+            // does not: logging in must be noticed on the next ask.
+            if let Some((finished, outcome)) = slot.last.as_ref()
+                && *finished >= asked
+            {
+                return outcome.clone();
             }
+            if slot.running != Some(slot.generation) {
+                break slot.generation;
+            }
+            slot = check
+                .finished
+                .wait(slot)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        };
+        slot.running = Some(generation);
+        drop(slot);
+        let outcome = match self.run(cwd, &["auth", "status"]) {
+            Ok(_) => (GithubAvailability::Ready, None),
             Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
             Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
         };
-        if outcome.0 != GithubAvailability::Ready {
-            self.forget_metadata();
+        let mut slot = check.slot.lock_recover();
+        if slot.running == Some(generation) {
+            slot.running = None;
         }
-        *last = Some((Instant::now(), outcome.clone()));
+        if slot.generation == generation {
+            if outcome.0 == GithubAvailability::Ready {
+                *self.ready_at.lock_recover() = Some(Instant::now());
+            } else {
+                self.forget_metadata();
+            }
+            slot.last = Some((Instant::now(), outcome.clone()));
+        }
+        drop(slot);
+        check.finished.notify_all();
         outcome
     }
 
