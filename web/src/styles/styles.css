@@ -550,7 +550,6 @@ html.macos .header,
 .pr-views .pr-tag { display: inline-flex; align-items: center; box-sizing: border-box; height: 18px; font-size: 11px; line-height: 1; padding: 0 7px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--dim); }
 .pr-views .comment-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
 .pr-views .comment-tools button { min-height: 22px; font-size: 12px; }
-.pr-views .comment-tools-ask { color: var(--dim); }
 .pr-views .comment-edit { display: grid; gap: var(--space-2); padding: 8px 10px; }
 .pr-views .comment-edit-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: var(--space-2); }
 .pr-views .pr-state-open { color: var(--green); }
@@ -940,7 +939,17 @@ html.macos .header,
 .pr-views .pr-compose-box { justify-items: stretch; }
 .pr-views .pr-compose-box > button[type="submit"] { justify-self: end; }
 
-.modal-actions button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+/* Destructive confirm: a deep crimson that keeps white text above 4.5:1 on dark and light alike
+   (the theme's --red is a soft tint meant for text and icons, too light under white). */
+.modal-actions button.danger { --danger: #C93B32; background: var(--danger); border-color: var(--danger); color: #fff; }
+.modal-actions button.danger:hover:not(:disabled) { background: #B3322A; border-color: #B3322A; }
+.modal-actions button.danger:active:not(:disabled) { background: #9C2B24; border-color: #9C2B24; }
+.modal-actions button.danger:focus-visible { outline-color: #fff; outline-offset: -3px; box-shadow: 0 0 0 2px var(--danger); }
+.modal-actions button.danger:disabled { background: var(--danger); border-color: var(--danger); color: #fff; opacity: .55; }
+.modal-actions button.danger.pending:disabled { opacity: 1; cursor: progress; }
+.comment-delete-dialog { width: min(400px, calc(100vw - 32px)); min-width: 0; gap: 14px; padding: 22px; }
+.comment-delete-dialog p { margin: 0; color: var(--dim); line-height: 1.5; }
+.comment-delete-dialog .modal-actions { margin-top: 4px; }
 
 /* Line comments */
 
