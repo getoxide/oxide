@@ -52,9 +52,11 @@ it("gives a light theme without colours the Titanium Light chrome, focus ring an
   expect(rootStyle().getPropertyValue("--acc-pressed")).toBe(kitTokens.color.light["accent.pressed"]);
   const { theme } = terminalAppearance();
   expect(theme).toMatchObject(terminalColors(kitLight));
-  expect(theme.foreground).toBe(kitLight["terminal.foreground"]);
+  // Block output: the kit's Terminal foreground (#2C2C2E) a step toward the background; see TerminalCommandBlock.test.ts.
+  expect(theme.foreground).toBe("#515153");
   expect(theme.cursor).toBe(kitLight["terminal.cursor"]);
-  expect(theme.selectionBackground).toBe(kitLight["terminal.selection.background"]);
+  // The kit's selection colour, at 60% opacity.
+  expect(theme.selectionBackground).toBe(`${kitLight["terminal.selection.background"]}99`);
 });
 
 it("falls back to Titanium Dark for a theme saved before the rebrand", async () => {
@@ -69,7 +71,8 @@ it("falls back to Titanium Dark for a theme saved before the rebrand", async () 
   expect(fresh.getAppearance()).toMatchObject(saved);
   const { theme } = fresh.terminalAppearance();
   expect(theme).toMatchObject(terminalColors(kitDark));
-  expect(theme.foreground).toBe(kitDark["terminal.foreground"]);
+  // Block output: the kit's Terminal foreground (#E8E6E1) a step toward the background.
+  expect(theme.foreground).toBe("#C3C2BE");
   expect(theme.background).toBe(kitDark["terminal.background"]);
 });
 

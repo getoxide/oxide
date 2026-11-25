@@ -510,6 +510,41 @@ it.each([
   }
 });
 
+// Plain output sits a step under the command (the bright text, semibold) and selection stays a
+// soft tint, with every pairing at WCAG AA on the plain and the failed backgrounds.
+// Expected values are worked by hand from the Titanium palette: output is the Terminal foreground
+// 18% of the way to the background; selection is the selection colour at 60% (inactive 35%).
+it.each([
+  ["Oxide Dark", { output: "#C3C2BE", bright: "#FFFFFF", selection: "#2A4A7899", inactive: "#2A4A7859" }],
+  ["Oxide Light", { output: "#515153", bright: "#1C1C1E", selection: "#BCD6F599", inactive: "#BCD6F559" }],
+])("draws plain output softer than the command and selects it with a soft tint on %s", (themeName, expected) => {
+  const initial = getAppearance();
+  saveAppearance({ ...initial, themeName });
+  try {
+    for (const failed of [false, true]) {
+      const { theme } = terminalAppearance({ failed }) as { theme: Record<string, string> };
+      expect(theme.foreground.toUpperCase()).toBe(expected.output);
+      expect(theme.selectionBackground.toUpperCase()).toBe(expected.selection);
+      expect(theme.selectionInactiveBackground.toUpperCase()).toBe(expected.inactive);
+      // Programs' own colours are left alone, so no selection foreground overrides them.
+      expect(theme.selectionForeground).toBeUndefined();
+      const background = theme.background;
+      // xterm's WebGL renderer paints selection as the selection colour blended over the theme background.
+      const alpha = (hex: string) => parseInt(hex.slice(7, 9), 16) / 255;
+      const selected = mixHex(background, theme.selectionBackground.slice(0, 7), alpha(theme.selectionBackground));
+      const inactive = mixHex(background, theme.selectionInactiveBackground.slice(0, 7), alpha(theme.selectionInactiveBackground));
+      for (const surface of [background, selected, inactive]) {
+        expect(contrast(theme.foreground, surface), `output ${theme.foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(expected.bright, surface), `command ${expected.bright} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+      // The hierarchy: the command reads brighter than its output.
+      expect(contrast(expected.bright, background)).toBeGreaterThan(contrast(theme.foreground, background) * 1.2);
+    }
+  } finally {
+    saveAppearance(initial);
+  }
+});
+
 it("never shows a cursor in a block that has ended, so clicking its output leaves no cursor behind", async () => {
   const render = (ended: boolean) =>
     act(async () =>

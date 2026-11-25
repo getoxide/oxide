@@ -535,6 +535,11 @@ export function saveAppearance(value: Appearance) {
 }
 /** A failed Command block's share of the error red over the Terminal background. */
 const FAILED_TINT = 0.1;
+/** Plain block output sits a step under its command: the Terminal foreground this share of the way to the background. */
+const OUTPUT_SOFTEN = 0.18;
+/** Selected text stays legible: the selection colour at this opacity over the block (xterm's WebGL renderer blends it). */
+const SELECTION_OPACITY = 0.6;
+const INACTIVE_SELECTION_OPACITY = 0.35;
 function rgb(hex: string): number[] {
   const digits = hex.length <= 5 ? [...hex.slice(1, 4)].map((digit) => digit + digit).join("") : hex.slice(1, 7);
   return [0, 2, 4].map((at) => parseInt(digits.slice(at, at + 2), 16));
@@ -547,7 +552,16 @@ function mixColors(base: string, other: string, share: number): string {
     .join("")
     .toUpperCase()}`;
 }
-/** A failed block tints its xterm canvas and its container with the same solid colour (no transparency). */
+/** A colour at an opacity; a theme colour that already has an alpha channel keeps its own. */
+function translucent(hex: string, opacity: number): string {
+  if (hex.length === 5 || hex.length === 9) return hex;
+  const digits = rgb(hex).map((channel) => channel.toString(16).padStart(2, "0")).join("");
+  return `#${digits}${Math.round(opacity * 255).toString(16).padStart(2, "0")}`.toUpperCase();
+}
+/**
+ * A failed block tints its xterm canvas and its container with the same solid colour (no transparency).
+ * Plain output is drawn a step softer than the command above it; colours programs emit are untouched.
+ */
 export function terminalAppearance({ failed = false }: { failed?: boolean } = {}) {
   const fallbacks = activeTheme().appearance === "light" ? TITANIUM_LIGHT_TERMINAL : TITANIUM_DARK;
   const color = (token: string) => themeColor(token, String(fallbacks[token]));
@@ -564,9 +578,12 @@ export function terminalAppearance({ failed = false }: { failed?: boolean } = {}
     fontWeight: fontStyle("terminal").weight,
     theme: {
       background: failed && isColor(background) ? mixColors(background, red, FAILED_TINT) : background,
-      foreground: color("terminal.foreground"),
+      foreground: isColor(background)
+        ? mixColors(color("terminal.foreground"), background, OUTPUT_SOFTEN)
+        : color("terminal.foreground"),
       cursor: color("terminal.cursor"),
-      selectionBackground: color("terminal.selection.background"),
+      selectionBackground: translucent(color("terminal.selection.background"), SELECTION_OPACITY),
+      selectionInactiveBackground: translucent(color("terminal.selection.background"), INACTIVE_SELECTION_OPACITY),
       ...Object.fromEntries(
         [
           "black",
