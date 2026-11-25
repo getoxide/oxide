@@ -13,6 +13,20 @@ export function MarkdownImages({ projectId, signed, children }: { projectId: num
   return <ImagesContext.Provider value={value}>{children}</ImagesContext.Provider>;
 }
 
+/** `children` able to load GitHub images: under the detail view's `MarkdownImages` when there is
+ *  one (with its signed URLs), else through `projectId` alone when it is given. */
+export function MarkdownImagesFallback({ projectId, children }: { projectId?: number; children: ReactNode }) {
+  const images = useContext(ImagesContext);
+  if (images || projectId === undefined) return <>{children}</>;
+  return (
+    <MarkdownImages projectId={projectId} signed={NO_SIGNED}>
+      {children}
+    </MarkdownImages>
+  );
+}
+
+const NO_SIGNED: SignedImage[] = [];
+
 /** An image, loaded once it scrolls near view; its alt text and an "Open image" link when it is
  *  not on GitHub or cannot be loaded. */
 function MarkdownImage({ alt, url }: { alt: string; url: string }) {

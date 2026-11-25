@@ -12,7 +12,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type KeyboardEventHandler } from "react";
 import { applyFormat, type Format } from "./markdownEdit";
 import { filterMentions, mentionQuery } from "./mentions";
-import { Markdown } from "../pull-requests/PullRequestMarkdown";
+import { Markdown, MarkdownImagesFallback } from "../pull-requests/PullRequestMarkdown";
 
 const TOOLS: { format: Format; label: string; Icon: typeof BoldIcon }[] = [
   { format: "heading", label: "Heading", Icon: HeadingIcon },
@@ -40,6 +40,8 @@ interface MarkdownEditorProps {
   mentions?: readonly string[];
   /** Called when the user starts typing a mention: the moment to fetch more candidates. */
   onMentionOpen?: () => void;
+  /** The Project the Preview loads GitHub images through when no detail view provides them. */
+  projectId?: number;
 }
 
 /** GitHub's comment box: Write and Preview tabs, and a toolbar that formats the selection. */
@@ -55,6 +57,7 @@ export function MarkdownEditor({
   onKeyDown,
   mentions,
   onMentionOpen,
+  projectId,
 }: MarkdownEditorProps) {
   const [preview, setPreview] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -159,7 +162,13 @@ export function MarkdownEditor({
       </div>
       {preview ? (
         <div className="md-preview">
-          {value.trim() ? <Markdown source={value} /> : <p className="pr-field-empty">Nothing to preview</p>}
+          {value.trim() ? (
+            <MarkdownImagesFallback projectId={projectId}>
+              <Markdown source={value} />
+            </MarkdownImagesFallback>
+          ) : (
+            <p className="pr-field-empty">Nothing to preview</p>
+          )}
         </div>
       ) : (
         <textarea

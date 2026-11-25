@@ -233,6 +233,7 @@ export function PullRequestCreate({
             disabled={busy}
             placeholder="Describe the change and how you tested it."
             rows={9}
+            projectId={projectId}
             mentions={people.candidates.state === "ready" ? people.candidates.data.users : []}
             onMentionOpen={people.load}
           />

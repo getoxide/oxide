@@ -167,6 +167,7 @@ function IssueForm({ projectId, template, backLabel, onBack, onCreated }: IssueF
             onKeyDown={submitOnModEnter}
             mentions={mentions}
             onMentionOpen={load}
+            projectId={projectId}
           />
         ) : (
           <div className="pr-create-field">
@@ -181,6 +182,7 @@ function IssueForm({ projectId, template, backLabel, onBack, onCreated }: IssueF
               onKeyDown={submitOnModEnter}
               mentions={mentions}
               onMentionOpen={load}
+              projectId={projectId}
             />
           </div>
         )}

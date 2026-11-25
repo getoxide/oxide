@@ -11,10 +11,12 @@ interface IssueTemplateFieldsProps {
   /** Logins offered after `@` in the Markdown fields, and the hook to fetch them. */
   mentions?: readonly string[];
   onMentionOpen?: () => void;
+  /** The Project the Markdown previews load GitHub images through. */
+  projectId?: number;
 }
 
 /** The fields of a GitHub issue form, laid out like the web draws them. */
-export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDown, mentions, onMentionOpen }: IssueTemplateFieldsProps) {
+export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDown, mentions, onMentionOpen, projectId }: IssueTemplateFieldsProps) {
   return (
     <>
       {form.map((el, i) => {
@@ -78,6 +80,7 @@ export function IssueTemplateFields({ form, answers, disabled, onChange, onKeyDo
                   onKeyDown={onKeyDown}
                   mentions={mentions}
                   onMentionOpen={onMentionOpen}
+                  projectId={projectId}
                 />
               ))}
             {el.type === "dropdown" &&

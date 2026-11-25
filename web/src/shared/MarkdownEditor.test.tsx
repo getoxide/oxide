@@ -2,6 +2,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { commands } from "../bindings";
 import { MarkdownEditor } from "./MarkdownEditor";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -39,6 +40,17 @@ it("formats the selected text from the toolbar", async () => {
   area().setSelectionRange(0, 5);
   await act(async () => tool("Bold").click());
   expect(area().value).toBe("**hello** world");
+});
+
+it("previews GitHub images through Core when it knows the Project", async () => {
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockResolvedValue({ status: "ok", data: "data:image/png;base64,iVBORw0KGgo=" });
+  const url = "https://user-images.githubusercontent.com/1/2-preview.png";
+  await act(async () => root.render(<MarkdownEditor label="Comment" projectId={2} value={`![shot](${url})`} onChange={() => {}} />));
+  const preview = [...host.querySelectorAll('[role="tab"]')].find((t) => t.textContent === "Preview") as HTMLElement;
+  await act(async () => preview.click());
+  expect(fetch).toHaveBeenCalledWith(2, url);
+  expect(host.querySelector("img")?.getAttribute("alt")).toBe("shot");
+  vi.restoreAllMocks();
 });
 
 it("hides the toolbar while previewing", async () => {
