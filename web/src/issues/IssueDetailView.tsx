@@ -25,7 +25,7 @@ import { MarkdownEditor } from "../shared/MarkdownEditor";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
-import { Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
+import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
 
@@ -136,12 +136,13 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const phase = issuePhase(detail);
   const open = phase === "open";
 
-  /** Runs a change on GitHub, then shows the issue's new state. */
-  async function change(kind: Pending, run: () => Promise<Result>) {
-    setPending(kind);
+  /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
+   *  nothing else back: the control that asked for it shows its own progress. */
+  async function change(kind: Pending | null, run: () => Promise<Result>) {
+    if (kind) setPending(kind);
     setError(null);
     const result = await run();
-    setPending(null);
+    if (kind) setPending(null);
     if (result.status === "error") {
       setError(result.error.message);
       return false;
@@ -153,6 +154,9 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
 
   const edit = (partial: Partial<IssueEdit>) =>
     change("edit", () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
+  /** People and labels: their picker row or link shows the work. */
+  const quietEdit = (partial: Partial<IssueEdit>) =>
+    change(null, () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
 
   async function saveTitle() {
     if (titleDraft === null) return;
@@ -301,7 +305,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 items={(c) => c.users.map((u) => ({ key: u, label: u, login: u }))}
                 selected={detail.assignees}
                 busy={busy}
-                onToggle={(key, on) => edit(on ? { addAssignees: [key] } : { removeAssignees: [key] })}
+                onToggle={(key, on) => quietEdit(on ? { addAssignees: [key] } : { removeAssignees: [key] })}
                 onClose={closePicker}
               />
             )}
@@ -312,9 +316,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 {detail.viewer && (
                   <>
                     {" – "}
-                    <button className="link" disabled={busy} onClick={() => void edit({ addAssignees: [detail.viewer] })}>
-                      assign yourself
-                    </button>
+                    <AssignYourself disabled={busy} onAssign={() => quietEdit({ addAssignees: [detail.viewer] })} />
                   </>
                 )}
               </p>
@@ -340,7 +342,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 items={(c) => c.labels.map((l) => ({ key: l.name, label: l.name, color: l.color }))}
                 selected={detail.labels.map((l) => l.name)}
                 busy={busy}
-                onToggle={(key, on) => edit(on ? { addLabels: [key] } : { removeLabels: [key] })}
+                onToggle={(key, on) => quietEdit(on ? { addLabels: [key] } : { removeLabels: [key] })}
                 onClose={closePicker}
               />
             )}

@@ -358,11 +358,12 @@ export function PullRequestReview({
   // Only a wait (checks, review) can be left to GitHub; conflicts and a stale branch need the user.
   const canAutoMerge = phase === "open" && method !== null && detail.mergeState === "blocked";
 
-  async function act(kind: Pending, run: () => Promise<Result>) {
-    setPending(kind);
+  /** A change with no kind holds nothing else back: the control that asked for it shows its own progress. */
+  async function act(kind: Pending | null, run: () => Promise<Result>) {
+    if (kind) setPending(kind);
     setError(null);
     const result = await run();
-    setPending(null);
+    if (kind) setPending(null);
     if (result.status === "error") setError(result.error.message);
     else invalidateQueries(githubKeys.pullRequestLists(projectId));
     return result.status === "ok";
@@ -404,15 +405,16 @@ export function PullRequestReview({
   }
 
   /** Runs a change to the pull request on GitHub, then shows its new state. */
-  async function change(kind: Pending, run: () => Promise<Result>) {
+  async function change(kind: Pending | null, run: () => Promise<Result>) {
     const ok = await act(kind, run);
     if (ok) setReload((n) => n + 1);
     return ok;
   }
 
   const setDraft = (draft: boolean) => change("ready", () => commands.setPullRequestDraft(projectId, number, draft));
+  // People and labels: their picker row or "assign yourself" link shows the work.
   const edit = (partial: Partial<PullRequestEdit>) =>
-    change("edit", () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
+    change(null, () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
   return (
     <div className="pr-review">
       {nav}
