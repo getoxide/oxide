@@ -4,10 +4,10 @@
 
 import { relativeTime } from "../shared/relativeTime";
 
-export interface Inline {
-  kind: "text" | "code" | "link" | "strong";
-  text: string;
-}
+export type Inline =
+  | { kind: "text" | "code" | "link" | "strong"; text: string }
+  /** `@login`: `text` is what GitHub shows, `login` a valid GitHub login. */
+  | { kind: "mention"; text: string; login: string };
 
 export type Block =
   | { kind: "heading"; level: number; inline: Inline[] }
@@ -44,18 +44,33 @@ function clean(src: string): string {
   return replaceUntilStable(text, new RegExp(`</?(${TAGS})(\\s[^>]*)?/?>`, "gi"), "");
 }
 
+/** A GitHub login: letters, digits and single inner hyphens, at most 39 characters. The `@` must
+ *  not follow a word character, a dot or another `@`, so `a@b.com` stays an email address. */
+const MENTION = /(?<![\w.+\-@/`])@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?![\w-]|\.\w)/g;
+
+/** Plain text with its `@mentions` read out. */
+function textWithMentions(text: string, out: Inline[]) {
+  let last = 0;
+  for (const m of text.matchAll(MENTION)) {
+    if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+    out.push({ kind: "mention", text: m[0], login: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+}
+
 export function parseInline(text: string): Inline[] {
   const out: Inline[] = [];
   const re = /`([^`]+)`|\*\*([^*]+)\*\*|!\[[^\]]*\]\([^)]*\)|\[([^\]]+)\]\([^)]*\)/g;
   let last = 0;
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+    if (m.index > last) textWithMentions(text.slice(last, m.index), out);
     if (m[1] !== undefined) out.push({ kind: "code", text: m[1] });
     else if (m[2] !== undefined) out.push({ kind: "strong", text: m[2] });
     else if (m[3] !== undefined) out.push({ kind: "link", text: m[3].replace(/`/g, "") });
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+  if (last < text.length) textWithMentions(text.slice(last), out);
   return out;
 }
 
