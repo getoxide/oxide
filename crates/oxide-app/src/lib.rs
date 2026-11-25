@@ -727,6 +727,137 @@ pub struct PullRequestComment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct TimelineComment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineReview {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub state: ReviewState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineCommit {
+    pub oid: String,
+    pub abbreviated_oid: String,
+    pub headline: String,
+    pub author: String,
+    pub committed_at: String,
+    pub verified: bool,
+    pub status: Option<CheckState>,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineForcePush {
+    pub actor: String,
+    pub created_at: String,
+    pub branch: String,
+    pub before: String,
+    pub after: String,
+    pub compare_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelinePerson {
+    pub actor: String,
+    pub created_at: String,
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineLabel {
+    pub actor: String,
+    pub created_at: String,
+    pub label: PullRequestLabel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineClosed {
+    pub actor: String,
+    pub created_at: String,
+    pub state_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineAction {
+    pub actor: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineMerge {
+    pub actor: String,
+    pub created_at: String,
+    pub commit: String,
+    pub base: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineRename {
+    pub actor: String,
+    pub created_at: String,
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineReference {
+    pub actor: String,
+    pub created_at: String,
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    pub pull_request: bool,
+    pub repository: String,
+    pub cross_repository: bool,
+}
+
+/// One entry of an issue's or pull request's Activity Timeline.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TimelineItem {
+    Comment(TimelineComment),
+    Review(TimelineReview),
+    Commit(TimelineCommit),
+    ForcePush(TimelineForcePush),
+    Assigned(TimelinePerson),
+    Unassigned(TimelinePerson),
+    Labeled(TimelineLabel),
+    Unlabeled(TimelineLabel),
+    ReviewRequested(TimelinePerson),
+    ReviewRequestRemoved(TimelinePerson),
+    Closed(TimelineClosed),
+    Reopened(TimelineAction),
+    Merged(TimelineMerge),
+    ConvertedToDraft(TimelineAction),
+    ReadyForReview(TimelineAction),
+    Renamed(TimelineRename),
+    HeadRefDeleted(TimelineAction),
+    HeadRefRestored(TimelineAction),
+    CrossReferenced(TimelineReference),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequestCandidates {
     pub users: Vec<String>,
     pub labels: Vec<PullRequestLabel>,
@@ -770,6 +901,11 @@ pub struct PullRequestDetail {
     pub delete_branch_on_merge: bool,
     /// The number of changed files.
     pub changed_files: u32,
+    /// GitHub's GraphQL node id; empty when the timeline could not be read.
+    pub node_id: String,
+    pub participants: Vec<String>,
+    /// Comments, reviews, commits and activity, oldest first.
+    pub timeline: Vec<TimelineItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -811,6 +947,11 @@ pub struct IssueDetail {
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
     pub viewer: String,
+    /// GitHub's GraphQL node id; empty when the timeline could not be read.
+    pub node_id: String,
+    pub participants: Vec<String>,
+    /// Comments and activity, oldest first.
+    pub timeline: Vec<TimelineItem>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]

@@ -111,7 +111,7 @@ export const commands = {
 	/**  The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none. */
 	issueTemplates: (projectId: number) => typedError<IssueTemplateFile[], AppError>(__TAURI_INVOKE("issue_templates", { projectId })),
 	listIssues: (projectId: number, closed: boolean, mine: boolean, search: string) => typedError<IssueSummary[], AppError>(__TAURI_INVOKE("list_issues", { projectId, closed, mine, search })),
-	issueDetail: (projectId: number, number: number) => typedError<IssueDetail, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number })),
+	issueDetail: (projectId: number, number: number) => typedError<IssueDetail_Serialize, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number })),
 	createIssue: (projectId: number, title: string, body: string, assignees: string[], labels: string[]) => typedError<IssueSummary, AppError>(__TAURI_INVOKE("create_issue", { projectId, title, body, assignees, labels })),
 	commentIssue: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_issue", { projectId, number, body })),
 	/**  Closes an issue with a reason, leaving `comment` first when it is not empty. */
@@ -190,7 +190,9 @@ export type IssueComment = {
 	createdAt: string,
 };
 
-export type IssueDetail = {
+export type IssueDetail = IssueDetail_Serialize | IssueDetail_Deserialize;
+
+export type IssueDetail_Deserialize = {
 	number: number,
 	title: string,
 	body: string,
@@ -203,6 +205,31 @@ export type IssueDetail = {
 	labels: PullRequestLabel[],
 	assignees: string[],
 	viewer: string,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments and activity, oldest first. */
+	timeline: TimelineItem_Deserialize[],
+};
+
+export type IssueDetail_Serialize = {
+	number: number,
+	title: string,
+	body: string,
+	state: string,
+	stateReason: string,
+	author: string,
+	url: string,
+	createdAt: string,
+	comments: IssueComment[],
+	labels: PullRequestLabel[],
+	assignees: string[],
+	viewer: string,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments and activity, oldest first. */
+	timeline: TimelineItem_Serialize[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -408,6 +435,11 @@ export type PullRequestDetail_Deserialize = {
 	deleteBranchOnMerge: boolean,
 	/**  The number of changed files. */
 	changedFiles: number,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments, reviews, commits and activity, oldest first. */
+	timeline: TimelineItem_Deserialize[],
 };
 
 export type PullRequestDetail_Serialize = {
@@ -435,6 +467,11 @@ export type PullRequestDetail_Serialize = {
 	deleteBranchOnMerge: boolean,
 	/**  The number of changed files. */
 	changedFiles: number,
+	/**  GitHub's GraphQL node id; empty when the timeline could not be read. */
+	nodeId: string,
+	participants: string[],
+	/**  Comments, reviews, commits and activity, oldest first. */
+	timeline: TimelineItem_Serialize[],
 };
 
 export type PullRequestDraft = PullRequestDraft_Serialize | PullRequestDraft_Deserialize;
@@ -527,6 +564,188 @@ export type TerminalMatch = {
 export type TerminalSettings = {
 	shell: ShellKind,
 	loadUserConfig: boolean,
+};
+
+export type TimelineAction = {
+	actor: string,
+	createdAt: string,
+};
+
+export type TimelineClosed = {
+	actor: string,
+	createdAt: string,
+	stateReason: string,
+};
+
+export type TimelineComment = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+};
+
+export type TimelineCommit = TimelineCommit_Serialize | TimelineCommit_Deserialize;
+
+export type TimelineCommit_Deserialize = {
+	oid: string,
+	abbreviatedOid: string,
+	headline: string,
+	author: string,
+	committedAt: string,
+	verified: boolean,
+	status?: CheckState | null,
+	url: string,
+};
+
+export type TimelineCommit_Serialize = {
+	oid: string,
+	abbreviatedOid: string,
+	headline: string,
+	author: string,
+	committedAt: string,
+	verified: boolean,
+	status: CheckState | null,
+	url: string,
+};
+
+export type TimelineForcePush = {
+	actor: string,
+	createdAt: string,
+	branch: string,
+	before: string,
+	after: string,
+	compareUrl: string,
+};
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem = TimelineItem_Serialize | TimelineItem_Deserialize;
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem_Deserialize = {
+	kind: "comment",
+} & TimelineComment | {
+	kind: "review",
+} & TimelineReview | {
+	kind: "commit",
+} & TimelineCommit_Deserialize | {
+	kind: "forcePush",
+} & TimelineForcePush | {
+	kind: "assigned",
+} & TimelinePerson | {
+	kind: "unassigned",
+} & TimelinePerson | {
+	kind: "labeled",
+} & TimelineLabel | {
+	kind: "unlabeled",
+} & TimelineLabel | {
+	kind: "reviewRequested",
+} & TimelinePerson | {
+	kind: "reviewRequestRemoved",
+} & TimelinePerson | {
+	kind: "closed",
+} & TimelineClosed | {
+	kind: "reopened",
+} & TimelineAction | {
+	kind: "merged",
+} & TimelineMerge | {
+	kind: "convertedToDraft",
+} & TimelineAction | {
+	kind: "readyForReview",
+} & TimelineAction | {
+	kind: "renamed",
+} & TimelineRename | {
+	kind: "headRefDeleted",
+} & TimelineAction | {
+	kind: "headRefRestored",
+} & TimelineAction | {
+	kind: "crossReferenced",
+} & TimelineReference;
+
+/**  One entry of an issue's or pull request's Activity Timeline. */
+export type TimelineItem_Serialize = {
+	kind: "comment",
+} & TimelineComment | {
+	kind: "review",
+} & TimelineReview | {
+	kind: "commit",
+} & TimelineCommit_Serialize | {
+	kind: "forcePush",
+} & TimelineForcePush | {
+	kind: "assigned",
+} & TimelinePerson | {
+	kind: "unassigned",
+} & TimelinePerson | {
+	kind: "labeled",
+} & TimelineLabel | {
+	kind: "unlabeled",
+} & TimelineLabel | {
+	kind: "reviewRequested",
+} & TimelinePerson | {
+	kind: "reviewRequestRemoved",
+} & TimelinePerson | {
+	kind: "closed",
+} & TimelineClosed | {
+	kind: "reopened",
+} & TimelineAction | {
+	kind: "merged",
+} & TimelineMerge | {
+	kind: "convertedToDraft",
+} & TimelineAction | {
+	kind: "readyForReview",
+} & TimelineAction | {
+	kind: "renamed",
+} & TimelineRename | {
+	kind: "headRefDeleted",
+} & TimelineAction | {
+	kind: "headRefRestored",
+} & TimelineAction | {
+	kind: "crossReferenced",
+} & TimelineReference;
+
+export type TimelineLabel = {
+	actor: string,
+	createdAt: string,
+	label: PullRequestLabel,
+};
+
+export type TimelineMerge = {
+	actor: string,
+	createdAt: string,
+	commit: string,
+	base: string,
+};
+
+export type TimelinePerson = {
+	actor: string,
+	createdAt: string,
+	login: string,
+};
+
+export type TimelineReference = {
+	actor: string,
+	createdAt: string,
+	number: number,
+	title: string,
+	url: string,
+	state: string,
+	pullRequest: boolean,
+	repository: string,
+	crossRepository: boolean,
+};
+
+export type TimelineRename = {
+	actor: string,
+	createdAt: string,
+	from: string,
+	to: string,
+};
+
+export type TimelineReview = {
+	id: string,
+	author: string,
+	body: string,
+	createdAt: string,
+	state: ReviewState,
 };
 
 /* Tauri Specta runtime */
