@@ -251,8 +251,6 @@ it("applies area-specific surface tokens and optional theme fonts, clearing them
           "sidebar.foreground": "#eeeeee",
           "sidebar.item.hover": "#1f1f1f",
           "sidebar.item.active": "#2a2a2a",
-          "sidebar.switch.background": "#181818",
-          "sidebar.switch.active": "#303030",
           "surfaces.background": "#141414",
           "surfaces.header.background": "#191919",
           "surfaces.card.background": "#1d1d1d",
@@ -287,7 +285,6 @@ it("applies area-specific surface tokens and optional theme fonts, clearing them
 
   expect(rootStyle().getPropertyValue("--header-background")).toBe("#111111");
   expect(rootStyle().getPropertyValue("--sidebar-background")).toBe("#121212");
-  expect(rootStyle().getPropertyValue("--sidebar-switch-active")).toBe("#303030");
   expect(rootStyle().getPropertyValue("--surfaces-card-background")).toBe("#1d1d1d");
   expect(rootStyle().getPropertyValue("--editor-tabs-background")).toBe("#151515");
   expect(rootStyle().getPropertyValue("--editor-breadcrumbs-foreground")).toBe("#aaaaaa");

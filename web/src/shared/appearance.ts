@@ -215,8 +215,6 @@ export const SURFACE_TOKENS: Record<string, string> = {
   "sidebar.foreground": "--sidebar-foreground",
   "sidebar.item.hover": "--sidebar-item-hover",
   "sidebar.item.active": "--sidebar-item-active",
-  "sidebar.switch.background": "--sidebar-switch-background",
-  "sidebar.switch.active": "--sidebar-switch-active",
   "surfaces.background": "--surfaces-background",
   "surfaces.header.background": "--surfaces-header-background",
   "surfaces.card.background": "--surfaces-card-background",
