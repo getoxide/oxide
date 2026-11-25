@@ -102,6 +102,7 @@ it("offers the first reaction on a pull request with no description and no react
   const description = host.querySelector('section[aria-label="Description"]');
   expect(description).not.toBeNull();
   expect(description!.querySelector('[aria-label="Add reaction"]')).not.toBeNull();
+  expect(description!.textContent).toContain("No description provided.");
 });
 
 it("links to the pull request on GitHub when its timeline holds more activity than was read", async () => {

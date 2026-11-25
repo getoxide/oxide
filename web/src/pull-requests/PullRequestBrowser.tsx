@@ -713,7 +713,10 @@ function Description({ body, projectId, subjectId, reactions, onError }: {
           </Collapsible>
         </>
       ) : (
-        <h4>Description</h4>
+        <>
+          <h4>Description</h4>
+          <p className="pr-field-empty issue-no-body">No description provided.</p>
+        </>
       )}
       <Reactions projectId={projectId} subjectId={subjectId} reactions={reactions} onError={onError} />
     </section>
