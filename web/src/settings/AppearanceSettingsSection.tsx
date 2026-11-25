@@ -121,7 +121,7 @@ export function AppearanceSettingsSection({
               variant={variant}
               checked={variant.name === appearance.themeName}
               onSelect={() =>
-                onApply({ ...appearance, themeId: undefined, themeJson: DEFAULT_APPEARANCE.themeJson, themeName: variant.name })
+                onApply({ ...appearance, themeJson: DEFAULT_APPEARANCE.themeJson, themeName: variant.name })
               }
             />
           ))}

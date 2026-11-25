@@ -103,6 +103,20 @@ it("gives a profile that stored the previous built-in theme the Titanium one", a
   expect(fresh.activeTheme().style.syntax).toEqual(kitDark.syntax);
 });
 
+it("moves a profile that chose a theme file from the removed Themes section to the matching built-in theme", async () => {
+  const ocean = JSON.stringify({ name: "Ocean", themes: [{ name: "Ocean Light", appearance: "light", style: { background: "#E0F0FF" } }] });
+  localStorage.setItem("oxide:appearance:v1", JSON.stringify({
+    fonts: DEFAULT_APPEARANCE.fonts,
+    themeJson: ocean,
+    themeName: "Ocean Light",
+    themeId: "ocean",
+  }));
+  vi.resetModules();
+  const fresh = await import("./appearance");
+  expect(fresh.getAppearance()).toEqual({ fonts: DEFAULT_APPEARANCE.fonts, themeJson: DEFAULT_APPEARANCE.themeJson, themeName: "Oxide Light" });
+  expect(fresh.activeTheme().style.syntax).toEqual(kitLight.syntax);
+});
+
 it("offers built-in Oxide Light alongside Oxide Dark and applies Titanium Light tokens", () => {
   const themes = parseThemePack(DEFAULT_APPEARANCE.themeJson).themes;
   expect(themes.map((t) => t.name)).toEqual(["Oxide Dark", "Oxide Light"]);
