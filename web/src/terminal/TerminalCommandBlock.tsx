@@ -80,15 +80,14 @@ export function TerminalCommandBlock(props: Props) {
     const contentHeight = () => {
       const { active: isActive, block: current } = callbacks.current;
       if (!isActive && !current.output && current.outputOffset === 0) return 0;
-      return (
-        Math.max(
-          1,
-          Math.min(
-            200,
-            term.buffer.active.baseY + term.buffer.active.cursorY + 1,
-          ),
-        ) * cell
-      );
+      const buffer = term.buffer.active;
+      let rows = buffer.baseY + buffer.cursorY + 1;
+      // Once the block has ended its cursor row is not content: size it to the last row with text.
+      if (!isActive) {
+        while (rows > 0 && !buffer.getLine(rows - 1)?.translateToString(true).trim()) rows--;
+        if (!rows) return 0;
+      }
+      return Math.max(1, Math.min(200, rows)) * cell;
     };
     const fit = () => {
       if (

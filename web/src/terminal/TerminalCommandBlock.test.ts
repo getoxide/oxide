@@ -8,7 +8,12 @@ interface TerminalInstance {
   cols: number;
   options: Record<string, unknown>;
   buffer: {
-    active: { baseY: number; cursorY: number; length: number; getLine: () => undefined };
+    active: {
+      baseY: number;
+      cursorY: number;
+      length: number;
+      getLine: (y: number) => { translateToString: (trimRight?: boolean) => string } | undefined;
+    };
     onBufferChange: (cb: (buffer: { type: "normal" | "alternate" }) => void) => { dispose(): void };
   };
   parser: {
@@ -42,8 +47,15 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     cols = 80;
     options: Record<string, unknown>;
+    lines = [""];
     buffer = {
-      active: { baseY: 0, cursorY: 0, length: 0, getLine: () => undefined },
+      active: {
+        baseY: 0,
+        cursorY: 0,
+        length: 1,
+        getLine: (y: number) =>
+          y < this.lines.length ? { translateToString: () => this.lines[y] } : undefined,
+      },
       onBufferChange: (cb: (buffer: { type: "normal" | "alternate" }) => void) => {
         bufferListeners.push(cb);
         return { dispose() {} };
@@ -61,6 +73,13 @@ vi.mock("@xterm/xterm", () => ({
     open() {}
     write(data: string) {
       this.written.push(data);
+      // A line-oriented model of the buffer: enough to know which rows hold text and where the cursor is.
+      for (const [index, part] of data.replace(/\x1b\[[?\d;]*[A-Za-z]/g, "").split(/\r?\n/).entries()) {
+        if (index > 0) this.lines.push("");
+        this.lines[this.lines.length - 1] += part.replace(/\r/g, "");
+      }
+      this.buffer.active.cursorY = this.lines.length - 1;
+      this.buffer.active.length = this.lines.length;
     }
     paste() {}
     focus() { focused.push(1); }
@@ -446,4 +465,48 @@ it("never shows a cursor in a block restored from the last session", async () =>
   const term = instances[0];
   expect(term.written.join("")).toMatch(/old\r\n.*\x1b\[\?25l/s);
   expect(term.options.disableStdin).toBe(true);
+});
+
+it.each([
+  ["one line of output and the row its cursor moved to", "lorenzo\r\n", "16px"],
+  ["two lines of output", "a\r\nb\r\n", "32px"],
+  ["output made only of line breaks", "\r\n\r\n", "0px"],
+])("sizes an ended block to its text, without the trailing cursor row: %s", async (_, output, height) => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output, ended: true, exitCode: 0 }),
+        active: false,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe(height);
+});
+
+it("keeps the cursor row of a running block, where the program is still typing", async () => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output: "Password:\r\n" }),
+        active: true,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe("32px");
 });
