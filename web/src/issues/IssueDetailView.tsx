@@ -8,6 +8,7 @@ import {
 } from "@primer/octicons-react";
 import { useRef, useState } from "react";
 import { QUERY_STALE_MS, useQuery } from "../shared/queryCache";
+import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { CommentEditForm, CommentTools } from "../shared/CommentTools";
 import {
@@ -72,7 +73,7 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
 export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, onBack, onChanged }: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
-  const query = useQuery(`p${projectId}:issues:detail:${number}`, () => commands.issueDetail(projectId, number), refreshKey + reload, {
+  const query = useQuery(githubKeys.issueDetail(projectId, number), () => commands.issueDetail(projectId, number), refreshKey + reload, {
     staleMs: QUERY_STALE_MS,
     poll: pollKey,
   });

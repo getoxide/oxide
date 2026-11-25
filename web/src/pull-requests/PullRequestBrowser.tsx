@@ -61,13 +61,6 @@ export function PullRequestStateIcon({ draft, size = 16 }: { draft: boolean; siz
   );
 }
 
-/** Where the list's summary of a pull request is cached. The detail query has a different shape
- *  (`PullRequestDetail`), so a summary is never written there:
- *  the review reads this key for an instant hero and lets the detail fetch fill in the rest. */
-export function pullRequestPreviewKey(projectId: number, number: number): string {
-  return `p${projectId}:prs:preview:${number}`;
-}
-
 function Branches({ head, base }: { head: string; base: string }) {
   return (
     <span className="pr-branches" title={`${head} → ${base}`}>
@@ -103,7 +96,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
   }, [outcome]);
 
   if (creating) return <PullRequestCreate projectId={projectId} onCancel={() => setCreating(false)} onCreated={(pr) => {
-    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
+    setQueryData(githubKeys.pullRequestPreview(projectId, pr.number), pr);
     setCreating(false); setOpened(pr.number); onChanged();
   }} />;
 
@@ -159,7 +152,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
         )}
         {list.state === "loading" && <Skeleton label="Loading pull requests…" />}
         {list.state === "error" && (
-          <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(`p${projectId}:`); setManual((v) => v + 1); }} />
+          <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(githubKeys.project(projectId)); setManual((v) => v + 1); }} />
         )}
         {list.state === "ready" && list.data.length === 0 && (
           <div className="pr-empty surface-empty">
@@ -182,7 +175,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
                   onClick={() => {
                     // The list already knows this pull request's summary: hand it to the review
                     // so the hero paints before the much slower detail call returns.
-                    setQueryData(pullRequestPreviewKey(projectId, pr.number), pr);
+                    setQueryData(githubKeys.pullRequestPreview(projectId, pr.number), pr);
                     setOpened(pr.number);
                   }}
                 >
@@ -257,7 +250,7 @@ export function PullRequestReview({
   onChanged,
 }: PullRequestReviewProps) {
   const [reload, setReload] = useState(0);
-  const key = `p${projectId}:prs:detail:${number}`;
+  const key = githubKeys.pullRequestDetail(projectId, number);
   // Checks start and finish within minutes, and GitHub takes a moment to settle a fresh merge
   // state, so follow those closer than the general refresh does, only while the pull request is
   // shown. Soft polls: never two `gh` calls at once, and backed off after failures.
@@ -307,7 +300,7 @@ export function PullRequestReview({
   // What the repository list already told us, if this pull request came from there. It only has
   // the summary fields, so it paints the hero while the detail query supplies checks, diff and
   // comments; it is never written into the detail query's own key.
-  const preview = getQueryData<PullRequest>(pullRequestPreviewKey(projectId, number));
+  const preview = getQueryData<PullRequest>(githubKeys.pullRequestPreview(projectId, number));
   const shownPr = loaded.state === "ready" ? loaded.detail.pullRequest : (preview ?? null);
   const nav = (
     <div className="pr-nav">
@@ -371,13 +364,13 @@ export function PullRequestReview({
     const result = await run();
     setPending(null);
     if (result.status === "error") setError(result.error.message);
-    else invalidateQueries(`p${projectId}:prs:list:`);
+    else invalidateQueries(githubKeys.pullRequestLists(projectId));
     return result.status === "ok";
   }
 
   /** A merged or closed pull request must not linger on the cached lists. */
   const dropFromLists = () =>
-    updateQueries<PullRequest[]>(`p${projectId}:prs:list:`, (prs) => prs.filter((p) => p.number !== number));
+    updateQueries<PullRequest[]>(githubKeys.pullRequestLists(projectId), (prs) => prs.filter((p) => p.number !== number));
 
   async function sendComment() {
     if (await act("comment", () => commands.commentPullRequest(projectId, number, comment))) {

@@ -49,7 +49,7 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
   const [listRevision, setListRevision] = useState(0);
 
   const changed = () => {
-    invalidateQueries(`p${projectId}:issues:list:`);
+    invalidateQueries(githubKeys.issueLists(projectId));
     setListRevision((n) => n + 1);
     onChanged?.();
   };
@@ -58,10 +58,10 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
   // The list starts loading together with the check; only a real setup problem replaces it.
   if (availability.state === "error") {
     content = (
-      <GithubSetup projectId={projectId} guidance={availability.message} onReady={() => invalidateQueries(`p${projectId}:issues:`)} />
+      <GithubSetup projectId={projectId} guidance={availability.message} onReady={() => invalidateQueries(githubKeys.issues(projectId))} />
     );
   } else if (availability.state === "ready" && availability.data.availability !== "ready") {
-    content = <GithubSetup projectId={projectId} guidance={availability.data.guidance ?? "The GitHub CLI is not ready."} onReady={() => invalidateQueries(`p${projectId}:issues:`)} />;
+    content = <GithubSetup projectId={projectId} guidance={availability.data.guidance ?? "The GitHub CLI is not ready."} onReady={() => invalidateQueries(githubKeys.issues(projectId))} />;
   } else if (creating) {
     content = (
       <IssueCreate
