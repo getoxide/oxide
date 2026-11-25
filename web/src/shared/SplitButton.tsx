@@ -101,17 +101,19 @@ interface SplitMenuItemProps {
   /** Marks the action the main half runs now. */
   checked?: boolean;
   disabled?: boolean;
+  /** Red, like a risky split button: the action goes ahead despite a warning (failing checks). */
+  risky?: boolean;
   onSelect: () => void;
 }
 
 /** One action in the menu: a click runs it and closes the menu. */
-export function SplitMenuItem({ title, help, checked, disabled, onSelect }: SplitMenuItemProps) {
+export function SplitMenuItem({ title, help, checked, disabled, risky, onSelect }: SplitMenuItemProps) {
   const close = useContext(CloseMenu);
   return (
     <button
       role={checked === undefined ? "menuitem" : "menuitemradio"}
       aria-checked={checked}
-      className="split-menu-item"
+      className={`split-menu-item${risky ? " risky" : ""}`}
       data-checked={checked}
       disabled={disabled}
       onClick={() => {

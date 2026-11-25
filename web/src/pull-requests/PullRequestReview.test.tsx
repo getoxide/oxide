@@ -269,6 +269,10 @@ it("keeps the menu reachable on a conflicting branch while the merge itself stay
 it("marks the split button risky when checks fail on a mergeable pull request", async () => {
   await render();
   expect(host.querySelector(".split-btn")!.classList.contains("risky")).toBe(true);
+  await openMergeMenu();
+  const methods = [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')];
+  expect(methods).toHaveLength(3);
+  expect(methods.every((b) => b.classList.contains("risky"))).toBe(true);
 });
 
 it("preselects the merge method GitHub's own merge box would, not the first allowed", async () => {

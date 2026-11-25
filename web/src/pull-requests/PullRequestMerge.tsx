@@ -154,6 +154,7 @@ export function MergeFooter(p: MergeFooterProps) {
   const method = p.method;
   // While only a wait blocks the merge, picking a method arms Merge when ready with it.
   const arms = !p.canMerge && p.canAutoMerge;
+  const risky = p.tone === "bad" && !auto;
   const pickHelp = (m: MergeMethod) => (arms ? "Waits for the checks and reviews, then merges this way." : METHOD_HELP[m]);
   return (
     <footer className="pr-merge" aria-label="Merge">
@@ -179,7 +180,7 @@ export function MergeFooter(p: MergeFooterProps) {
           disabled={p.autoMerge || (auto ? p.busy : !p.canMerge)}
           pending={p.pending === "merge" || p.pending === "auto"}
           menuDisabled={p.busy}
-          risky={p.tone === "bad" && !auto}
+          risky={risky}
           menuLabel="Merge options"
           width={320}
         >
@@ -191,6 +192,7 @@ export function MergeFooter(p: MergeFooterProps) {
                 help={pickHelp(m)}
                 checked={m === method}
                 disabled={p.autoMerge}
+                risky={risky}
                 onSelect={() => (p.canMerge ? p.onMerge(m) : arms ? p.onAutoMerge(m) : p.onMethod(m))}
               />
             ))}
