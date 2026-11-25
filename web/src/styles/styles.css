@@ -3,6 +3,11 @@
    Octicons for icons. Every chrome colour comes from a token below. */
 :root {
   color-scheme: dark;
+  /* Window chrome: the titlebar, the Windows caption buttons and the system Close crimson. */
+  --titlebar-height: 34px;
+  --caption-button-width: 46px;
+  --caption-close: #c42b1c;
+  --caption-close-fg: #fff;
   --bg: #1C1C1E;
   --bg2: #242426;
   --bg3: #2C2C2E;
@@ -179,7 +184,7 @@ code { font-family: var(--mono); font-size: 12px; }
 /* ── Window shell ─────────────────────────────────────────── */
 .window { display: flex; flex-direction: column; height: 100vh; }
 .header {
-  height: 34px;
+  height: var(--titlebar-height);
   flex: none;
   display: flex;
   align-items: center;
@@ -828,21 +833,21 @@ html.macos .header,
    Minimize and Maximize take a faint translucent fill (lighter still when pressed, as native);
    Close turns the system crimson. */
 .window.windows .window-controls { display: flex; align-self: stretch; flex: none; margin-left: 4px; }
-.window.windows .window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg-bright); cursor: default; box-shadow: none; }
+.window.windows .window-controls button { display: inline-flex; align-items: center; justify-content: center; width: var(--caption-button-width); height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg-bright); cursor: default; box-shadow: none; }
 .window.windows .window-controls button:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-bright) 9%, transparent); color: var(--fg-bright); }
 .window.windows .window-controls button:active:not(:disabled) { background: color-mix(in srgb, var(--fg-bright) 6%, transparent); color: color-mix(in srgb, var(--fg-bright) 80%, transparent); }
-.window.windows .window-controls .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
-.window.windows .window-controls .window-close:active:not(:disabled) { background: color-mix(in srgb, #c42b1c 90%, transparent); color: #fff; }
+.window.windows .window-controls .window-close:hover:not(:disabled) { background: var(--caption-close); color: var(--caption-close-fg); }
+.window.windows .window-controls .window-close:active:not(:disabled) { background: color-mix(in srgb, var(--caption-close) 90%, transparent); color: var(--caption-close-fg); }
 
 .window-resize { position: fixed; z-index: 1000; }
 .window-resize-north, .window-resize-south { left: 6px; right: 6px; height: 5px; cursor: ns-resize; }
 .window-resize-north { top: 0; } .window-resize-south { bottom: 0; }
 .window-resize-east, .window-resize-west { top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
 .window-resize-east { right: 0; } .window-resize-west { left: 0; }
-/* The caption buttons own the top-right corner: the top edge stops at their 3 x 46px group and the
-   right edge starts below the 34px titlebar, so clicking the very corner closes the window. */
-.window-resize-north { right: 138px; }
-.window-resize-east { top: 34px; }
+/* The caption buttons own the top-right corner: the top edge stops at their group of three and the
+   right edge starts below the titlebar, so clicking the very corner closes the window. */
+.window-resize-north { right: calc(3 * var(--caption-button-width)); }
+.window-resize-east { top: var(--titlebar-height); }
 .window-resize-northwest, .window-resize-southeast, .window-resize-southwest { width: 8px; height: 8px; }
 .window-resize-northwest { top: 0; left: 0; cursor: nwse-resize; }
 .window-resize-southeast { bottom: 0; right: 0; cursor: nwse-resize; }

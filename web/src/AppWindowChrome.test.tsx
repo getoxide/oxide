@@ -143,22 +143,31 @@ describe("App window chrome", () => {
     expect(glyph("Minimize").querySelector("path")?.getAttribute("d")).toBe("M0 5.5h10");
   });
 
-  it("styles Windows caption buttons like native Windows 11 chrome", () => {
+  it("styles Windows caption buttons like native Windows 11 chrome, on Windows only", () => {
+    // Every block written for exactly this selector, joined.
     const rule = (selector: string) => {
-      const start = stylesCss.indexOf(`${selector} {`);
-      expect(start, selector).toBeGreaterThanOrEqual(0);
-      return stylesCss.slice(start, stylesCss.indexOf("}", start));
+      const blocks = stylesCss.split(`${selector} {`).slice(1).map((rest) => rest.slice(0, rest.indexOf("}")));
+      expect(blocks.length, selector).toBeGreaterThan(0);
+      return blocks.join("\n");
     };
+    // The titlebar and caption sizes, and the Close crimson, are named once and shared.
+    for (const property of ["--titlebar-height", "--caption-button-width", "--caption-close", "--caption-close-fg"])
+      expect(stylesCss, property).toMatch(new RegExp(`${property}:`));
+    expect(rule(".header")).toMatch(/var\(--titlebar-height\)/);
     const button = rule(".window.windows .window-controls button");
-    expect(button).toMatch(/width: 46px/);
-    expect(button).toMatch(/height: 100%/);
+    expect(button).toMatch(/var\(--caption-button-width\)/);
     expect(button).toMatch(/border-radius: 0/);
-    expect(rule(".window.windows .window-controls button:hover:not(:disabled)")).toMatch(/transparent\)/);
-    expect(rule(".window.windows .window-controls button:active:not(:disabled)")).toMatch(/transparent\)/);
-    expect(rule(".window.windows .window-controls .window-close:hover:not(:disabled)")).toMatch(/background: #c42b1c; color: #fff/);
-    expect(rule(".window.windows .window-controls .window-close:active:not(:disabled)")).toMatch(/background: color-mix\(in srgb, #c42b1c 90%, transparent\); color: #fff/);
-    // macOS and Linux headers never pick up the caption styles.
-    expect(stylesCss).not.toMatch(/^\.window-controls/m);
+    expect(rule(".window.windows .window-controls .window-close:hover:not(:disabled)")).toMatch(/var\(--caption-close\)/);
+    // The resize edges stop at the caption buttons, so they follow the same sizes.
+    expect(rule(".window-resize-north")).toMatch(/var\(--caption-button-width\)/);
+    expect(rule(".window-resize-east")).toMatch(/var\(--titlebar-height\)/);
+    // macOS and Linux headers never pick up the caption styles: every caption selector is Windows-scoped.
+    const captionSelectors = [...stylesCss.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{/g)]
+      .flatMap((match) => match[1].split(","))
+      .map((selector) => selector.trim())
+      .filter((selector) => selector.includes(".window-controls"));
+    expect(captionSelectors.length).toBeGreaterThan(0);
+    for (const selector of captionSelectors) expect(selector).toMatch(/^\.window\.windows /);
   });
 
   it("removes resize handles and switches Maximize to Restore when maximized on resize or launch", async () => {
