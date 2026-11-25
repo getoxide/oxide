@@ -446,6 +446,80 @@ describe("CodeWorkbench performance", () => {
     expect(indicator.textContent).not.toContain("TypeScript");
   });
 
+  it("shows the language server's live state in the popover, installs support and restarts the server", async () => {
+    let installed = false;
+    const installs: string[] = [];
+    mockIPC((command, payload) => {
+      switch (command) {
+        case "read_file":
+          return { content: "const x = 1;\n", binary: false, truncated: false };
+        case "language_tools":
+          return [{ language: "typescript", name: "TypeScript · typescript-language-server", installed }];
+        case "install_language_support":
+          installs.push((payload as { language: string }).language);
+          installed = true;
+          return { language: "typescript", name: "TypeScript · typescript-language-server", installed: true };
+        default:
+          return null;
+      }
+    });
+    await act(async () =>
+      root.render(
+        <CodeWorkbench projectId={1} rootPath="/repo" contextKey="p1" visible openRequest={{ id: 1, path: "src/app.ts" }} onChanged={vi.fn()} />,
+      ),
+    );
+    await settle();
+    await act(async () => lsp.report("typescript", "Not installed · install it from the language button in the status bar"));
+    const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
+    expect(indicator.textContent).toContain("LSP not installed");
+    await act(async () => indicator.click());
+    await settle();
+
+    const server = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Language"] [aria-label="Language server"]')!;
+    const button = (name: string) => [...server().querySelectorAll("button")].find((b) => b.textContent?.includes(name));
+    expect(server().textContent).toContain("TypeScript · typescript-language-server");
+    expect(server().textContent).toContain("Not installed");
+    expect(button("Restart server")).toBeUndefined();
+
+    await act(async () => button("Install support")!.click());
+    await settle();
+    expect(installs).toEqual(["typescript"]);
+    // A finished install reconnects the language servers of the open files.
+    expect(lsp.reconnects).toBe(1);
+
+    await act(async () => lsp.report("typescript", "Connecting…"));
+    expect(server().textContent).toContain("Connecting");
+    await act(async () => lsp.report("typescript", "Ready"));
+    expect(server().textContent).toContain("Ready");
+    expect(indicator.textContent).toContain("LSP ready");
+    expect(button("Reinstall support")).toBeDefined();
+
+    await act(async () => button("Restart server")!.click());
+    expect(lsp.reconnects).toBe(2);
+
+    await act(async () => lsp.report("typescript", "Server stopped. Reconnect from the language button in the status bar."));
+    expect(server().textContent).toContain("Stopped");
+    expect(server().textContent).toContain("Server stopped.");
+  });
+
+  it("shows no language server section for a language without one", async () => {
+    await act(async () =>
+      root.render(
+        <CodeWorkbench projectId={1} rootPath="/repo" contextKey="p1" visible openRequest={{ id: 1, path: "src/app.ts" }} onChanged={vi.fn()} />,
+      ),
+    );
+    await settle();
+    const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
+    await act(async () => indicator.click());
+    const json = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent === "JSON")!;
+    await act(async () => json.click());
+    expect(indicator.textContent).not.toContain("LSP");
+    await act(async () => indicator.click());
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Language server"]')).toBeNull();
+  });
+
   it("persists open tabs on open/close and updates savedVersionId on save", async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 

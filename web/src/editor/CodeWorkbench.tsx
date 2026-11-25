@@ -24,7 +24,7 @@ import { monaco, editorLanguage, serverLanguage } from "./editorRuntime";
 import { EditorLanguages } from "./editorLanguages";
 import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
-import { LanguagePopover, languageLabel } from "./LanguagePopover";
+import { LanguagePopover, languageLabel, serverStatusLabel } from "./LanguagePopover";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
 import {
@@ -966,13 +966,16 @@ export function CodeWorkbench({
             <CodeIcon size={12} />{" "}
             {current ? languageLabel(current.model.getLanguageId()) : "Plain text"}
             {language &&
-              ` · ${states[language] === "Ready" ? "LSP ready" : "Language tools"}`}
+              ` · ${serverStatusLabel(states[language])}`}
           </button>
         </footer>
         {languageMenu && current && (
           <LanguagePopover
             anchor={languageButton}
             languageId={current.model.getLanguageId()}
+            server={language}
+            serverState={language ? states[language] : undefined}
+            onRestart={() => languages.current?.reconnect()}
             onSelect={(languageId) => {
               setLanguageMenu(false);
               setLanguageMode(current.path, languageId);

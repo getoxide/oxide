@@ -1,7 +1,30 @@
-import { useMemo, useState, type KeyboardEvent, type RefObject } from "react";
-import { CheckIcon } from "@primer/octicons-react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
+import { CheckIcon, SyncIcon } from "@primer/octicons-react";
+import { commands, type LanguageTool } from "../bindings";
 import { Popover } from "../shared/Popover";
 import { monaco } from "./editorRuntime";
+import { InstallLanguageButton } from "./LanguageSupport";
+
+type ServerStatus = "Ready" | "Connecting" | "Not installed" | "Stopped";
+
+/** Reads a language server's reported state (Ready, Connecting…, or an error message) as one of four. */
+function serverStatus(state: string | undefined): ServerStatus {
+  if (state === "Ready") return "Ready";
+  if (state === undefined || state.startsWith("Connecting")) return "Connecting";
+  if (state.startsWith("Not installed")) return "Not installed";
+  return "Stopped";
+}
+
+/** The status bar's short form of a language server's state. */
+export function serverStatusLabel(state: string | undefined): string {
+  return `LSP ${serverStatus(state).toLowerCase()}`;
+}
 
 interface LanguageMode {
   id: string;
@@ -44,16 +67,80 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
   options[next].focus();
 }
 
+/** A managed language server: its live state, Install / Reinstall support and Restart. */
+function LanguageServer({
+  language,
+  state,
+  onRestart,
+}: {
+  language: string;
+  state: string | undefined;
+  onRestart: () => void;
+}) {
+  const [tool, setTool] = useState<LanguageTool | null>(null);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void commands
+        .languageTools()
+        .then((tools) => {
+          if (active) setTool(tools.find((t) => t.language === language) ?? null);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener("oxide-language-tools-changed", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("oxide-language-tools-changed", refresh);
+    };
+  }, [language]);
+  if (!tool) return null;
+  // A server that is installed by now is coming up, whatever it said before the install.
+  const status = !tool.installed
+    ? "Not installed"
+    : serverStatus(state?.startsWith("Not installed") ? undefined : state);
+  return (
+    <section className="language-server" aria-label="Language server">
+      <header>
+        <strong className="grow">{tool.name}</strong>
+        <span className={`language-server-state ${status.toLowerCase().replace(" ", "-")}`}>
+          {status}
+        </span>
+      </header>
+      {status === "Stopped" && state && <p className="dim">{state}</p>}
+      <div className="language-server-actions">
+        <InstallLanguageButton
+          tool={tool}
+          onInstalled={() => setTool({ ...tool, installed: true })}
+        />
+        {tool.installed && (
+          <button className="btn" onClick={onRestart}>
+            <SyncIcon size={14} /> Restart server
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /** The status bar's language control: the buffer's language mode and its language server. */
 export function LanguagePopover({
   anchor,
   languageId,
+  server,
+  serverState,
   onSelect,
+  onRestart,
   onClose,
 }: {
   anchor: RefObject<HTMLElement | null>;
   languageId: string;
+  /** The managed language server of the mode, if it has one. */
+  server: string | null;
+  serverState: string | undefined;
   onSelect: (languageId: string) => void;
+  onRestart: () => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -64,6 +151,14 @@ export function LanguagePopover({
   return (
     <Popover anchor={anchor} label="Language" onClose={onClose}>
       <div className="language-popover">
+        {server && (
+          <LanguageServer
+            key={server}
+            language={server}
+            state={serverState}
+            onRestart={onRestart}
+          />
+        )}
         <section className="language-modes" aria-label="Language mode">
           <input
             aria-label="Filter languages"
