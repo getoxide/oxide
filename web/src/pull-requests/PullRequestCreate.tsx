@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -32,8 +32,12 @@ export function PullRequestCreate({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  // The latest count asked for each base: an older answer, or one asked before the form
+  // reloaded (another project, Try again), is dropped.
+  const counting = useRef<{ next: number; latest: Record<string, number> }>({ next: 0, latest: {} });
   useEffect(() => {
     let active = true;
+    counting.current.latest = {};
     void (async () => {
       try {
         const [defaults, bases] = await Promise.all([
@@ -65,11 +69,16 @@ export function PullRequestCreate({
   // Asks local Git again how many commits the head has beyond `of`.
   const recount = useCallback(
     (of: string) => {
+      const asked = ++counting.current.next;
+      counting.current.latest[of] = asked;
       void commands
         .pullRequestCommitsBeyond(projectId, of)
         .then((result) => (result.status === "ok" ? result.data : null))
         .catch(() => null)
-        .then((count) => setAhead((known) => ({ ...known, [of]: count })));
+        .then((count) => {
+          if (counting.current.latest[of] !== asked) return;
+          setAhead((known) => ({ ...known, [of]: count }));
+        });
     },
     [projectId],
   );

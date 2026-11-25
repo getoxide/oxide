@@ -255,6 +255,30 @@ it("never takes a cached zero as final when coming back to a base", async () => 
   expect(createButton().disabled).toBe(false);
 });
 
+it("drops a count that arrives after the form reloaded for another project", async () => {
+  mockDraft({ commitsBeyond: 2 });
+  const resolvers: ((n: number) => void)[] = [];
+  vi.spyOn(commands, "pullRequestCommitsBeyond").mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolvers.push((n) => r({ status: "ok", data: n }));
+      }),
+  );
+  await open();
+  await chooseBase("dev");
+  await act(async () =>
+    root.render(<PullRequestCreate projectId={2} onCancel={() => {}} onCreated={() => {}} />),
+  );
+  await chooseBase("dev");
+  expect(resolvers).toHaveLength(2);
+  // The first project's answer comes last and must not count for the second.
+  await act(async () => resolvers[0](0));
+  expect(host.textContent).not.toContain("No commits on");
+  expect(createButton().disabled).toBe(true);
+  await act(async () => resolvers[1](4));
+  expect(createButton().disabled).toBe(false);
+});
+
 it("lets the user try when the count for a base cannot be told", async () => {
   mockDraft({ commitsBeyond: 2 });
   vi.spyOn(commands, "pullRequestCommitsBeyond").mockResolvedValue({
