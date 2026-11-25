@@ -634,7 +634,7 @@ function Sidebar({
       {/* The two views of the sidebar: the open Projects with their Terminals, or one Project's files. */}
       {filesProject && (
         <nav className="sidebar-view sidebar-files" id="sidebar-files" aria-label="Files">
-          <button ref={backButton} type="button" className="files-heading" aria-label="Back to Terminals"
+          <button ref={backButton} type="button" className="files-heading" aria-label={`Back to Terminals from ${filesProject.name}`}
             title={readablePath(filesProject.path)} onClick={backToTerminals}>
             <ArrowLeftIcon size={14} className="files-heading-back" />
             <span className="project-name">{filesProject.name}</span>
@@ -683,6 +683,7 @@ function Sidebar({
                       className={`project${expanded ? " open" : ""}`}
                       aria-current={isSelected}
                       aria-expanded={expanded}
+                      aria-controls={expanded ? `project-${project.id}-terminals` : undefined}
                       aria-busy={closingProjectId === project.id}
                       title={readablePath(project.path)}
                       onClick={() => {
@@ -710,7 +711,7 @@ function Sidebar({
                       </button>                    </div>
                   </div>
                   <Collapsible open={expanded}>
-                    <ul className="terminal-list" aria-label={`Terminals of ${project.name}`}>
+                    <ul className="terminal-list" id={`project-${project.id}-terminals`} aria-label={`Terminals of ${project.name}`}>
                       {state.tabs.map((tab) => (
                         <TerminalRow key={tab.id} name={tab.name} running={tab.running}
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}

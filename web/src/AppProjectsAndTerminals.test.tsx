@@ -109,7 +109,7 @@ const removeProject = (project: string) => fromMenu(project, "Close project");
 const filesButton = (index: number) => all(".project-row")[index].querySelector<HTMLButtonElement>(".project-files")!;
 const openFiles = async (index: number) => click(filesButton(index));
 /** The Files view's header button that returns to the Terminals view. */
-const backToTerminals = () => label("Back to Terminals");
+const backToTerminals = () => q<HTMLButtonElement>('[aria-label^="Back to Terminals"]');
 const visibleTerminals = () => all(".terminal-stub").filter((node) => node.dataset.visible === "true");
 
 it("lists the open Projects with their terminals and no empty-list placeholder", () => {
@@ -235,6 +235,8 @@ it("has no Sidebar switch: a Project row's Files button opens its Files view and
   expect(q('nav[aria-label="Files"]')?.textContent).toContain("Project Beta");
   expect(backToTerminals()?.textContent).toContain("Project Beta");
   expect(backToTerminals()?.textContent).toContain("Terminals");
+  // The spoken name carries the visible Project name, so voice control can say what it sees.
+  expect(backToTerminals()?.getAttribute("aria-label")).toBe("Back to Terminals from Project Beta");
   await click(backToTerminals());
   expect(all(".files-panel")).toHaveLength(0);
   expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(false);
@@ -468,6 +470,13 @@ it("selects a Project when its name is clicked, then toggles its Terminals once 
   await click(beta());
   expect(beta().getAttribute("aria-expanded")).toBe("true");
   expect(beta().classList.contains("open")).toBe(true);
+});
+
+it("points a Project's name at the Terminal list it folds", async () => {
+  const beta = all(".project")[1];
+  const list = q('[aria-label="Terminals of Project Beta"]');
+  expect(list?.id).toBeTruthy();
+  expect(beta.getAttribute("aria-controls")).toBe(list?.id);
 });
 
 it("expands a collapsed Project that is not active when its name selects it", async () => {
