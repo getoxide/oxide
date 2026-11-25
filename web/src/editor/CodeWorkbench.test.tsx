@@ -401,6 +401,55 @@ describe("CodeWorkbench performance", () => {
     expect(localStorage.getItem("oxide:code-tabs:p1")).toBe(JSON.stringify([]));
   });
 
+  it("saves every dirty file with Mod+Shift+S and asks before closing a dirty tab", async () => {
+    const writes: string[] = [];
+    const ipc = (command: string, payload: unknown) => {
+      if (command === "write_file") writes.push((payload as { path: string }).path);
+      if (command === "list_dir") return [{ path: "src/app.ts", name: "app.ts", isDir: false }];
+      if (command === "read_file") return { content: "const x = 1;\n", binary: false, truncated: false };
+      if (command === "language_tools") return [];
+      return null;
+    };
+    mockIPC(ipc);
+    const render = (id: number, path: string) =>
+      act(async () =>
+        root.render(
+          <CodeWorkbench
+            projectId={1}
+            rootPath="/repo"
+            contextKey="p1"
+            visible
+            openRequest={{ id, path }}
+            onChanged={vi.fn()}
+          />,
+        ),
+      );
+
+    await render(1, "src/app.ts");
+    await settle();
+    await act(async () => monacoHarness.models[0].__edit("const x = 2;\n"));
+    await render(2, "src/util.ts");
+    await settle();
+    await act(async () => monacoHarness.models[1].__edit("const y = 2;\n"));
+    expect(host.querySelectorAll('[aria-label="Unsaved changes"]')).toHaveLength(2);
+
+    await act(async () => pressMod("s", true));
+    await settle();
+    expect(writes).toHaveLength(2);
+    expect(host.querySelector('[aria-label="Unsaved changes"]')).toBeNull();
+
+    await act(async () => monacoHarness.models[1].__edit("const y = 3;\n"));
+    const close = host.querySelector<HTMLButtonElement>('button[aria-label="Close src/util.ts"]')!;
+    await act(async () => close.click());
+    const dialog = host.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain("src/util.ts has unsaved changes.");
+    const saveChanges = [...dialog!.querySelectorAll("button")].find((b) => b.textContent === "Save changes")!;
+    await act(async () => saveChanges.click());
+    await settle();
+    expect(writes).toHaveLength(3);
+    expect(host.querySelector('.editor-tab[data-path="src/util.ts"]')).toBeNull();
+  });
+
   it("initializes Monaco with saved CodeEditorSettings and broadcasts live updates across all mounted workbenches", async () => {
     saveCodeEditorSettings({
       ...DEFAULT_CODE_EDITOR_SETTINGS,
