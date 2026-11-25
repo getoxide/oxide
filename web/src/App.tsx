@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type Ref } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ScreenFullIcon,
@@ -600,14 +601,19 @@ function Sidebar({
   const [error, setError] = useState<string | null>(null);
   const [closingProjectId, setClosingProjectId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<number[]>([]);
-  const terminalsTab = useRef<HTMLButtonElement>(null);
-  const filesTab = useRef<HTMLButtonElement>(null);
   const filesOpen = filesProject !== null;
-  const canOpenFiles = selected !== null && !selected.missing;
-  const showView = (files: boolean) => {
-    if (files && selected && canOpenFiles) onOpenFiles(selected);
-    if (!files) onCloseFiles();
-  };
+  // Where focus goes once the view has switched: the back button, or the Files button that was pressed.
+  const pendingFocus = useRef<"back" | number | null>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const filesButtons = useRef(new Map<number, HTMLButtonElement>());
+  useLayoutEffect(() => {
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (target === "back") backButton.current?.focus();
+    else if (target !== null) filesButtons.current.get(target)?.focus();
+  }, [filesProject]);
+  const openFilesView = (project: Project) => { pendingFocus.current = "back"; onOpenFiles(project); };
+  const backToTerminals = () => { pendingFocus.current = filesProject?.id ?? null; onCloseFiles(); };
 
   const close = async (project: Project) => {
     if (closingProjectId !== null) return;
@@ -627,32 +633,15 @@ function Sidebar({
 
   return (
     <div className="sidebar">
-      {/* The two views of the sidebar: the open Projects with their Terminals, or the selected Project's files. */}
-      <div className="sidebar-switch" role="tablist" aria-label="Sidebar view"
-        onKeyDown={(event) => {
-          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-          event.preventDefault();
-          const files = event.key === "End" || (event.key !== "Home" && !filesOpen);
-          if (files && !canOpenFiles) return;
-          showView(files);
-          (files ? filesTab : terminalsTab).current?.focus();
-        }}>
-        <button ref={terminalsTab} role="tab" aria-selected={!filesOpen} aria-controls="sidebar-terminals" tabIndex={filesOpen ? -1 : 0}
-          onClick={() => showView(false)}>
-          <TerminalIcon size={14} /> Terminals
-        </button>
-        <button ref={filesTab} role="tab" aria-selected={filesOpen} aria-controls="sidebar-files" tabIndex={filesOpen ? 0 : -1}
-          disabled={!canOpenFiles} title={selected ? `Files of ${selected.name}` : "Select a Project to see its files"}
-          onClick={() => showView(true)}>
-          <FileDirectoryIcon size={14} /> Files
-        </button>
-      </div>
+      {/* The two views of the sidebar: the open Projects with their Terminals, or one Project's files. */}
       {filesProject && (
         <nav className="sidebar-view sidebar-files" id="sidebar-files" aria-label="Files">
-          <div className="files-heading" title={readablePath(filesProject.path)}>
-            <RepoIcon size={13} />
+          <button ref={backButton} type="button" className="files-heading" aria-label="Back to Terminals"
+            title={readablePath(filesProject.path)} onClick={backToTerminals}>
+            <ArrowLeftIcon size={14} className="files-heading-back" />
             <span className="project-name">{filesProject.name}</span>
-          </div>
+            <span className="files-heading-terminals" aria-hidden="true">· Terminals</span>
+          </button>
           <div className="surface-content">
             <Suspense fallback={<Skeleton kind="tree" label="Loading files…" />}>
               <FilesPanel key={filesProject.id} projectId={filesProject.id} rootPath={filesProject.path} revision={0} onOpenFile={onOpenFile} />
@@ -713,6 +702,12 @@ function Sidebar({
                       {!expanded && state.tabs.length > 0 && <span className="project-count" aria-label={`${state.tabs.length} ${state.tabs.length === 1 ? "terminal" : "terminals"}`}>{state.tabs.length}</span>}
                     </button>
                     <div className="project-actions">
+                      <button ref={(node) => { if (node) filesButtons.current.set(project.id, node); else filesButtons.current.delete(project.id); }}
+                        className="row-action project-files" aria-label={`Files of ${project.name}`} title={titleWithShortcut("Open Files", shortcuts.openFiles)}
+                        disabled={project.missing}
+                        onClick={() => openFilesView(project)}>
+                        <FileDirectoryIcon size={14} />
+                      </button>
                       <button className="row-action project-add" aria-label={`New terminal in ${project.name}`} title={titleWithShortcut("New terminal", shortcuts.newTerminal)}
                         disabled={project.missing}
                         onClick={() => { setCollapsed((previous) => previous.filter((id) => id !== project.id)); onNewTerminal(project); }}>

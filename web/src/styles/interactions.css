@@ -76,7 +76,7 @@
     transition-duration: 0ms, 0ms, 0ms, 0ms, 70ms, 0ms;
     transform: scale(.95);
   }
-  :is(.btn, .tab, .sidebar-switch [role="tab"], .sidebar-actions button):active:not(:disabled) { transform: scale(.97); }
+  :is(.btn, .tab, .sidebar-actions button):active:not(:disabled) { transform: scale(.97); }
   :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option, .pr-entry-card,
     .sidebar-footer, [role="menuitem"], [role="option"], .app-menu button, .terminal-input-menu button):active:not(:disabled) {
     transform: none;

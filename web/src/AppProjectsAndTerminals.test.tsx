@@ -105,15 +105,11 @@ const fromMenu = async (project: string, entry: string) => {
 };
 const newTerminal = (project: string) => fromMenu(project, "New terminal");
 const removeProject = (project: string) => fromMenu(project, "Close project");
-/** The Terminals | Files switch at the top of the sidebar. */
-const sidebarTab = (name: "Terminals" | "Files") =>
-  all('.sidebar-switch [role="tab"]').find((tab) => tab.textContent?.trim() === name) as HTMLButtonElement;
-/** The Files tab shows the selected Project's files: select the Project first, then press it. */
-const filesButton = async (index: number) => {
-  if (all(".project")[index].getAttribute("aria-current") !== "true") await click(all(".project")[index]);
-  return sidebarTab("Files");
-};
-const openFiles = async (index: number) => click(await filesButton(index));
+/** The Files button on a Project row, beside its +. */
+const filesButton = (index: number) => all(".project-row")[index].querySelector<HTMLButtonElement>(".project-files")!;
+const openFiles = async (index: number) => click(filesButton(index));
+/** The Files view's header button that returns to the Terminals view. */
+const backToTerminals = () => label("Back to Terminals");
 const visibleTerminals = () => all(".terminal-stub").filter((node) => node.dataset.visible === "true");
 
 it("lists the open Projects with their terminals and no empty-list placeholder", () => {
@@ -228,28 +224,31 @@ it("describes the empty dock without naming Files", async () => {
   expect(host.textContent).not.toContain("holds Files");
 });
 
-it("switches the sidebar to the selected Project's Files and back to the Terminals", async () => {
+it("has no Sidebar switch: a Project row's Files button opens its Files view and the header returns", async () => {
+  expect(q('[role="tablist"][aria-label="Sidebar view"]')).toBeNull();
+  expect(all('#workspace-sidebar [role="tab"]')).toHaveLength(0);
   expect(all(".files-panel")).toHaveLength(0);
-  expect(sidebarTab("Terminals").getAttribute("aria-selected")).toBe("true");
+  expect(filesButton(1).getAttribute("aria-label")).toBe("Files of Project Beta");
   await openFiles(1);
   expect(all(".files-panel").map((node) => node.dataset.project)).toEqual(["2"]);
   expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(true);
-  expect(sidebarTab("Files").getAttribute("aria-selected")).toBe("true");
   expect(q('nav[aria-label="Files"]')?.textContent).toContain("Project Beta");
-  await click(sidebarTab("Terminals"));
+  expect(backToTerminals()?.textContent).toContain("Project Beta");
+  expect(backToTerminals()?.textContent).toContain("Terminals");
+  await click(backToTerminals());
   expect(all(".files-panel")).toHaveLength(0);
   expect(q<HTMLElement>('nav[aria-label="Projects"]')?.hidden).toBe(false);
   expect(all(".project")[1].getAttribute("aria-current")).toBe("true");
 });
 
-it("disables the Files tab while the selected Project's folder is missing", async () => {
+it("disables a Project row's Files button while its folder is missing", async () => {
   await act(async () => root.unmount());
   projects[1].missing = true;
   try {
     root = createRoot(host);
     await act(async () => root.render(<App />));
-    expect(sidebarTab("Files").disabled).toBe(false);
-    expect((await filesButton(1)).disabled).toBe(true);
+    expect(filesButton(0).disabled).toBe(false);
+    expect(filesButton(1).disabled).toBe(true);
   } finally {
     projects[1].missing = false;
   }
@@ -636,16 +635,12 @@ it("restores the split at the remembered divider when widened, unless a half is 
 const press = (element: Element | null) => act(async () => { (element as HTMLElement).focus(); (element as HTMLElement).click(); });
 const focused = () => document.activeElement;
 
-it("keeps focus on the sidebar tabs and moves between them with the arrow keys", async () => {
-  await press(await filesButton(1));
-  expect(focused()).toBe(sidebarTab("Files"));
-  const arrow = (key: string) => act(async () => { focused()!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
-  await arrow("ArrowLeft");
-  expect(focused()).toBe(sidebarTab("Terminals"));
+it("moves focus to the Files view's back button and, going back, to the Project's Files button", async () => {
+  await press(filesButton(1));
+  expect(focused()).toBe(backToTerminals());
+  await press(backToTerminals());
   expect(all(".files-panel")).toHaveLength(0);
-  await arrow("ArrowRight");
-  expect(focused()).toBe(sidebarTab("Files"));
-  expect(all(".files-panel")).toHaveLength(1);
+  expect(focused()).toBe(filesButton(1));
 });
 
 it("keeps focus on the pressed button when a half is maximized or restored", async () => {
@@ -662,13 +657,13 @@ it("keeps focus on the pressed button when a half is maximized or restored", asy
 it("orders the tab stops sidebar, Terminal half, Code half, dock", async () => {
   await newTerminal("Project Alpha");
   await openFile();
-  await click(sidebarTab("Terminals"));
+  await click(backToTerminals());
   const follows = (a: Element | null, b: Element | null) => Boolean(a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING);
   expect(follows(q('nav[aria-label="Projects"]'), q(".centre-terminal-half"))).toBe(true);
   expect(follows(q(".centre-terminal-half"), q(".centre-code-half"))).toBe(true);
   expect(follows(q(".centre-code-half"), q('aside[aria-label="Tools panel"]'))).toBe(true);
   await openFiles(0);
-  expect(follows(sidebarTab("Files"), q(".files-panel"))).toBe(true);
+  expect(follows(backToTerminals(), q(".files-panel"))).toBe(true);
   expect(follows(q(".files-panel"), q(".centre-terminal-half"))).toBe(true);
 });
 
@@ -695,7 +690,7 @@ it("forgets a closed Project's split layout", async () => {
   await openFile();
   await click(label("Maximize Terminal"));
   expect(Object.keys(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!))).toEqual(["1"]);
-  await click(sidebarTab("Terminals"));
+  await click(backToTerminals());
   await removeProject("Project Alpha");
   expect(JSON.parse(localStorage.getItem("oxide:split-layouts:v1")!)).toEqual({});
 });

@@ -48,12 +48,6 @@ kbd {
 .sidebar .terminal-item[aria-current="true"] {
   background: var(--sidebar-item-active, var(--bg4));
 }
-.sidebar-switch {
-  background: var(--sidebar-switch-background, var(--bg3));
-}
-.sidebar-switch::before {
-  background: var(--sidebar-switch-active, var(--bg4));
-}
 .pr-views {
   background: var(--surfaces-background, var(--bg));
   color: var(--surfaces-foreground, var(--fg));
