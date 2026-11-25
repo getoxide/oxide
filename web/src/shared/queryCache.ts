@@ -26,7 +26,7 @@ export const QUERY_STALE_MS = 30_000;
 const ENTRY_BUDGET = 200;
 
 let entries = new LruCache<string, Entry>(ENTRY_BUDGET, () => 1);
-const inflight = new Map<string, number>();
+const inflight = new Map<string, { id: number; settled: Promise<QueryResult<unknown>> }>();
 const listeners = new Map<string, Set<(invalidated: boolean) => void>>();
 let sequence = 0;
 
@@ -54,14 +54,14 @@ function subscribe(key: string, listener: (invalidated: boolean) => void): () =>
 }
 
 /** Fetches `key`, joining a fetch already in flight unless `force`. A result is only applied if no
- *  newer fetch for the same key started meanwhile. */
-function run<T>(key: string, fetch: () => Promise<QueryResult<T>>, force: boolean): void {
-  if (!force && inflight.has(key)) return;
+ *  newer fetch for the same key started meanwhile. Resolves with the outcome of the fetch it ran
+ *  or joined. */
+function run<T>(key: string, fetch: () => Promise<QueryResult<T>>, force: boolean): Promise<QueryResult<T>> {
+  const running = inflight.get(key);
+  if (!force && running) return running.settled as Promise<QueryResult<T>>;
   const id = ++sequence;
-  inflight.set(key, id);
-  notify(key);
-  const settle = (result: QueryResult<T>) => {
-    if (inflight.get(key) !== id) return;
+  const settle = (result: QueryResult<T>): QueryResult<T> => {
+    if (inflight.get(key)?.id !== id) return result;
     inflight.delete(key);
     const previous = entries.get(key);
     entries.set(
@@ -71,8 +71,12 @@ function run<T>(key: string, fetch: () => Promise<QueryResult<T>>, force: boolea
         : { data: previous?.data, error: result.error.message, updatedAt: Date.now() },
     );
     notify(key);
+    return result;
   };
-  fetch().then(settle, (e: unknown) => settle({ status: "error", error: { message: String(e) } }));
+  const settled = fetch().then(settle, (e: unknown) => settle({ status: "error", error: { message: String(e) } }));
+  inflight.set(key, { id, settled });
+  notify(key);
+  return settled;
 }
 
 /** Shows the last known result for `key` at once. By default a mount revalidates in the
@@ -118,6 +122,24 @@ export function useQuery<T>(
   }
   if (entry?.error !== undefined) return { state: "error", message: entry.error };
   return { state: "loading" };
+}
+
+/** Warms `key` in the background, under the same key and in-flight deduplication as `useQuery`:
+ *  a Surface mounted meanwhile joins this fetch instead of starting its own. Fetches only when the
+ *  entry is missing or older than `staleMs` and no fetch for it is running. Resolves with the
+ *  outcome: the cached data when it was fresh enough, else the fetch it ran or joined. */
+export function prefetchQuery<T>(
+  key: string,
+  fetch: () => Promise<QueryResult<T>>,
+  options: { staleMs?: number } = {},
+): Promise<QueryResult<T>> {
+  const running = inflight.get(key);
+  if (running) return running.settled as Promise<QueryResult<T>>;
+  const entry = entries.get(key);
+  if (!isStale(key, options.staleMs ?? 0) && entry?.error === undefined && entry?.data !== undefined) {
+    return Promise.resolve({ status: "ok", data: entry.data as T });
+  }
+  return run(key, fetch, false);
 }
 
 /** Marks every entry under `prefix` stale: mounted queries refetch now, unmounted ones on their next

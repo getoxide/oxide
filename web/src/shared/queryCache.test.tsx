@@ -2,7 +2,7 @@
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearQueryCache, invalidateQueries, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
+import { clearQueryCache, invalidateQueries, prefetchQuery, QUERY_STALE_MS, setQueryData, useQuery, type QueryResult, type QueryState } from "./queryCache";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -172,6 +172,19 @@ describe("query cache", () => {
     await mount("p:1:list", fetcher);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: "two" });
+  });
+
+  it("lets a mount join a prefetch still in flight instead of fetching again", async () => {
+    const preload = deferred<QueryResult<string>>();
+    const prefetched = prefetchQuery("k", () => preload.promise, { staleMs: QUERY_STALE_MS });
+    const fetcher = vi.fn(() => never<string>());
+    await mount("k", fetcher, 0, QUERY_STALE_MS);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(seen.state).toBe("loading");
+
+    await act(async () => preload.resolve(ok("warm")));
+    expect(seen).toMatchObject({ state: "ready", data: "warm" });
+    await expect(prefetched).resolves.toEqual(ok("warm"));
   });
 
   it("stays bounded", async () => {
