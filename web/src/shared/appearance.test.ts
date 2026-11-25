@@ -117,6 +117,36 @@ it("moves a profile that chose a theme file from the removed Themes section to t
   expect(fresh.activeTheme().style.syntax).toEqual(kitLight.syntax);
 });
 
+it("saves the migrated profile so the removed theme file leaves storage", async () => {
+  const ocean = JSON.stringify({ name: "Ocean", themes: [{ name: "Ocean Light", appearance: "light", style: { background: "#E0F0FF" } }] });
+  localStorage.setItem("oxide:appearance:v1", JSON.stringify({ fonts: DEFAULT_APPEARANCE.fonts, themeJson: ocean, themeName: "Ocean Light", themeId: "ocean" }));
+  vi.resetModules();
+  await import("./appearance");
+  const stored = JSON.parse(localStorage.getItem("oxide:appearance:v1")!) as Record<string, unknown>;
+  expect(stored).not.toHaveProperty("themeId");
+  expect(stored.themeJson).toBe(DEFAULT_APPEARANCE.themeJson);
+  expect(stored.themeName).toBe("Oxide Light");
+});
+
+it("keeps fonts and sizes when the removed theme file no longer parses", async () => {
+  const typography = { ui: { size: 15, weight: 500 }, code: { size: 14, weight: 400 }, terminal: { size: 16, weight: 600 } };
+  localStorage.setItem("oxide:appearance:v1", JSON.stringify({
+    fonts: { ui: "Avenir", code: "Menlo", terminal: "Menlo" },
+    typography,
+    themeJson: "{ not json",
+    themeName: "Broken",
+    themeId: "broken",
+  }));
+  vi.resetModules();
+  const fresh = await import("./appearance");
+  expect(fresh.getAppearance()).toEqual({
+    fonts: { ui: "Avenir", code: "Menlo", terminal: "Menlo" },
+    typography,
+    themeJson: DEFAULT_APPEARANCE.themeJson,
+    themeName: "Oxide Dark",
+  });
+});
+
 it("offers built-in Oxide Light alongside Oxide Dark and applies Titanium Light tokens", () => {
   const themes = parseThemePack(DEFAULT_APPEARANCE.themeJson).themes;
   expect(themes.map((t) => t.name)).toEqual(["Oxide Dark", "Oxide Light"]);
