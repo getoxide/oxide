@@ -24,6 +24,7 @@ import { monaco, editorLanguage, serverLanguage } from "./editorRuntime";
 import { EditorLanguages } from "./editorLanguages";
 import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
+import { LanguagePopover } from "./LanguagePopover";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
 import {
@@ -117,6 +118,8 @@ export function CodeWorkbench({
   const root = useRef<HTMLElement>(null);
   const treeToggle = useRef<HTMLButtonElement>(null);
   const [states, setStates] = useState<Record<string, string>>({});
+  const [languageMenu, setLanguageMenu] = useState(false);
+  const languageButton = useRef<HTMLButtonElement>(null);
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [showProblems, setShowProblems] = useState(false);
@@ -944,7 +947,12 @@ export function CodeWorkbench({
           <span className="grow" />
           <CursorReadout editor={editorInstance} />
           <button
+            ref={languageButton}
             title={language ? states[language] : undefined}
+            aria-haspopup="dialog"
+            aria-expanded={languageMenu}
+            disabled={!current}
+            onClick={() => setLanguageMenu((open) => !open)}
           >
             <CodeIcon size={12} />{" "}
             {current?.model.getLanguageId() ?? "Plain text"}
@@ -952,6 +960,12 @@ export function CodeWorkbench({
               ` · ${states[language] === "Ready" ? "LSP ready" : "Language tools"}`}
           </button>
         </footer>
+        {languageMenu && current && (
+          <LanguagePopover
+            anchor={languageButton}
+            onClose={() => setLanguageMenu(false)}
+          />
+        )}
       </div>
       {quickOpen && (
         <QuickOpen

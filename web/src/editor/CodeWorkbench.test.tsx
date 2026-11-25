@@ -10,6 +10,8 @@ interface MockModel {
   setValue: ReturnType<typeof vi.fn<(next: string) => void>>;
   getAlternativeVersionId: () => number;
   getLanguageId: () => string;
+  /** Set by the harness's monaco.editor.setModelLanguage. */
+  __language: string;
   onDidChangeContent: (cb: () => void) => { dispose: () => void };
   dispose: () => void;
   /** Test helpers to simulate typing and undo at the Monaco boundary. */
@@ -30,7 +32,7 @@ const monacoHarness = vi.hoisted(() => {
   const actions: Record<string, { isSupported?: () => boolean; run: ReturnType<typeof vi.fn> }> = {};
   const triggerSpy = vi.fn();
 
-  const makeModel = (initial: string, _lang: string, uri: { path: string; toString: () => string }): MockModel => {
+  const makeModel = (initial: string, lang: string, uri: { path: string; toString: () => string }): MockModel => {
     let text = initial;
     let altVersion = 1;
     let nextVersion = 2;
@@ -44,7 +46,8 @@ const monacoHarness = vi.hoisted(() => {
         for (const cb of listeners) cb();
       }),
       getAlternativeVersionId: () => altVersion,
-      getLanguageId: () => "typescript",
+      __language: lang,
+      getLanguageId: () => model.__language,
       onDidChangeContent: (cb) => {
         listeners.add(cb);
         return { dispose: () => listeners.delete(cb) };
@@ -95,6 +98,14 @@ const monacoHarness = vi.hoisted(() => {
     },
     monaco: {
       MarkerSeverity: { Error: 8, Warning: 4 },
+      languages: {
+        getLanguages: () => [
+          { id: "plaintext", aliases: ["Plain Text", "text"] },
+          { id: "typescript", aliases: ["TypeScript", "ts"] },
+          { id: "json", aliases: ["JSON", "json"] },
+          { id: "python", aliases: ["Python", "py"] },
+        ],
+      },
       Uri: {
         file: (path: string) => ({ path, toString: () => `file://${path}` }),
       },
@@ -134,6 +145,8 @@ const monacoHarness = vi.hoisted(() => {
           };
         },
         createModel: makeModel,
+        setModelLanguage: (m: MockModel, language: string) => { m.__language = language; },
+        setModelMarkers: () => {},
         onDidChangeMarkers: () => ({ dispose: () => {} }),
         getModelMarkers: () => [],
         registerEditorOpener: () => ({ dispose: () => {} }),
@@ -145,16 +158,30 @@ const monacoHarness = vi.hoisted(() => {
 vi.mock("./editorRuntime", () => ({
   monaco: monacoHarness.monaco,
   editorLanguage: () => "typescript",
-  serverLanguage: () => null,
+  serverLanguage: (language: string) =>
+    ({ typescript: "typescript", javascript: "typescript", python: "python", rust: "rust", c: "cpp", cpp: "cpp" })[language] ?? null,
 }));
 
+/** What the workbench asked of its language sessions, and a way to report a server's state back. */
+const lsp = vi.hoisted(() => ({
+  events: [] as string[],
+  reconnects: 0,
+  report: (_language: string, _state: string) => {},
+  reset() {
+    this.events.length = 0;
+    this.reconnects = 0;
+  },
+}));
 vi.mock("./editorLanguages", () => ({
   EditorLanguages: class {
-    add() {}
+    constructor(_projectId: number, onState: (language: string, state: string) => void) {
+      lsp.report = onState;
+    }
+    add(model: MockModel) { lsp.events.push(`add ${model.getLanguageId()}`); }
     changed() {}
     saved() {}
-    remove() {}
-    reconnect() {}
+    remove(model: MockModel) { lsp.events.push(`remove ${model.getLanguageId()}`); }
+    reconnect() { lsp.reconnects++; }
     dispose() {}
   },
 }));
@@ -217,6 +244,7 @@ describe("CodeWorkbench performance", () => {
 
   beforeEach(() => {
     monacoHarness.reset();
+    lsp.reset();
     treeRenders.count = 0;
     dirtyCalls = [];
     localStorage.clear();
@@ -360,6 +388,27 @@ describe("CodeWorkbench performance", () => {
     expect(buttonLabels).not.toContain("Save");
     const pathTexts = [...host.querySelectorAll("span")].filter((s) => s.textContent === "src/app.ts");
     expect(pathTexts).toHaveLength(0);
+  });
+
+  it("opens the language popover from the status bar and closes it with Escape, returning focus", async () => {
+    await act(async () =>
+      root.render(
+        <CodeWorkbench projectId={1} rootPath="/repo" contextKey="p1" visible openRequest={{ id: 1, path: "src/app.ts" }} onChanged={vi.fn()} />,
+      ),
+    );
+    await settle();
+
+    const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
+    expect(indicator.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => indicator.click());
+    await settle();
+    expect(indicator.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).not.toBeNull();
+
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
+    expect(document.activeElement).toBe(indicator);
+    expect(indicator.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("persists open tabs on open/close and updates savedVersionId on save", async () => {
