@@ -526,12 +526,12 @@ it("offers enriched context actions on a Project row's menu and invokes Reveal a
   expect(writeText).toHaveBeenCalledWith("/beta");
 });
 
-it("opens Settings with Appearance, Themes, Terminal, Code, Session, Shortcuts, and GitHub sections, and closes them", async () => {
+it("opens Settings with Appearance, Terminal, Code, Session, Shortcuts, and GitHub sections, and closes them", async () => {
   await click(q(".sidebar-footer"));
   const settings = q('main[aria-label="Settings"]')!;
   const navTabs = Array.from(settings.querySelectorAll('[role="tab"]'));
-  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Themes", "Terminal", "Code", "Session", "Shortcuts", "GitHub"]);
-  expect(settings.querySelectorAll('[role="radio"]').length).toBeGreaterThanOrEqual(2);
+  expect(navTabs.map((tab) => tab.textContent)).toEqual(["Appearance", "Terminal", "Code", "Session", "Shortcuts", "GitHub"]);
+  expect(Array.from(settings.querySelectorAll('[role="radio"]'), (radio) => radio.textContent)).toEqual([expect.stringContaining("Oxide Dark"), expect.stringContaining("Oxide Light")]);
   await click(navTabs.find((tab) => tab.textContent === "Session") ?? null);
   const restore = settings.querySelector<HTMLInputElement>('#settings-panel-session input[role="switch"]')!;
   expect(restore.checked).toBe(true);
