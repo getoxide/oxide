@@ -975,7 +975,9 @@ export function CodeWorkbench({
             languageId={current.model.getLanguageId()}
             server={language}
             serverState={language ? states[language] : undefined}
-            onRestart={() => languages.current?.reconnect()}
+            onRestart={() => {
+              if (language) languages.current?.reconnect(language);
+            }}
             onSelect={(languageId) => {
               setLanguageMenu(false);
               setLanguageMode(current.path, languageId);

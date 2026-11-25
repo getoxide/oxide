@@ -163,3 +163,28 @@ it("shows a buffer only the diagnostics of the server of its current language", 
   expect(fake.markers.get(buffer)).toEqual([expect.objectContaining({ message: "from python" })]);
   languages.dispose();
 });
+
+it("restarts one language's server and reopens only its buffers there", async () => {
+  const languages = sessions();
+  const script = model("/project/app.ts", "typescript");
+  const tool = model("/project/tool.py", "python");
+  languages.add(script);
+  languages.add(tool);
+  await settle();
+  expect(server("typescript")).toHaveLength(1);
+  expect(server("python")).toHaveLength(1);
+
+  languages.reconnect("typescript");
+  await settle();
+
+  const [old, restarted] = server("typescript");
+  expect(old.stopped).toBe(true);
+  expect(restarted?.received.filter((m) => m.method === "textDocument/didOpen").map((m) => m.params?.textDocument?.uri)).toEqual([
+    script.uri.toString(),
+  ]);
+  // The Python server was left alone.
+  expect(server("python")).toHaveLength(1);
+  expect(server("python")[0].stopped).toBe(false);
+  expect(received("python", "textDocument/didOpen")).toHaveLength(1);
+  languages.dispose();
+});

@@ -165,11 +165,12 @@ vi.mock("./editorRuntime", () => ({
 /** What the workbench asked of its language sessions, and a way to report a server's state back. */
 const lsp = vi.hoisted(() => ({
   events: [] as string[],
-  reconnects: 0,
+  /** Each reconnect's language; "all" for every server. */
+  reconnects: [] as string[],
   report: (() => {}) as (language: string, state: string) => void,
   reset() {
     this.events.length = 0;
-    this.reconnects = 0;
+    this.reconnects.length = 0;
   },
 }));
 vi.mock("./editorLanguages", () => ({
@@ -181,7 +182,7 @@ vi.mock("./editorLanguages", () => ({
     changed() {}
     saved() {}
     remove(model: MockModel) { lsp.events.push(`remove ${model.getLanguageId()}`); }
-    reconnect() { lsp.reconnects++; }
+    reconnect(language?: string) { lsp.reconnects.push(language ?? "all"); }
     dispose() {}
   },
 }));
@@ -492,7 +493,7 @@ describe("CodeWorkbench performance", () => {
     await settle();
     expect(installs).toEqual(["typescript"]);
     // A finished install reconnects the language servers of the open files.
-    expect(lsp.reconnects).toBe(1);
+    expect(lsp.reconnects).toEqual(["all"]);
 
     await act(async () => lsp.report("typescript", "Connecting…"));
     expect(server().textContent).toContain("Connecting");
@@ -501,8 +502,9 @@ describe("CodeWorkbench performance", () => {
     expect(indicator.textContent).toContain("LSP ready");
     expect(button("Reinstall support")).toBeDefined();
 
+    // Restart restarts only the buffer's language server.
     await act(async () => button("Restart server")!.click());
-    expect(lsp.reconnects).toBe(2);
+    expect(lsp.reconnects).toEqual(["all", "typescript"]);
 
     await act(async () => lsp.report("typescript", "Server stopped. Reconnect from the language button in the status bar."));
     expect(server().textContent).toContain("Stopped");
