@@ -57,7 +57,16 @@ export function githubAssetId(url: string): string | undefined {
 /** Loaded images, keyed by the URL in the Markdown rather than the short-lived signed URL, so a
  *  refreshed detail view reuses them. Sized by the length of their `data:` URLs. */
 const cache = new LruCache<string, string>(48 * 1024 * 1024, (src) => src.length);
-const loading = new Map<string, Promise<string>>();
+
+/** An image being read, shared by everyone who asked for it. */
+interface Load {
+  promise: Promise<string>;
+  /** Callers still waiting; one without a signal never leaves. */
+  consumers: number;
+  /** Takes it out of the queue if it has not started; whether it did. */
+  cancel: () => boolean;
+}
+const loading = new Map<string, Load>();
 
 export function cachedGithubImage(url: string): string | undefined {
   return cache.get(url);
@@ -66,36 +75,82 @@ export function cachedGithubImage(url: string): string | undefined {
 /** Images read from Core at once: each holds a blocking thread there and a GitHub request. */
 export const MAX_IMAGE_FETCHES = 4;
 let active = 0;
-const waiting: (() => void)[] = [];
+const waiting: { start: () => void; drop: () => void }[] = [];
 
-/** Runs `task` once fewer than `MAX_IMAGE_FETCHES` others run, oldest first. */
-async function queued<T>(task: () => Promise<T>): Promise<T> {
-  if (active >= MAX_IMAGE_FETCHES) await new Promise<void>((resume) => waiting.push(resume));
-  active++;
-  try {
-    return await task();
-  } finally {
-    active--;
-    waiting.shift()?.();
+/** Frees a slot by handing it to the oldest waiting task, so none can slip in between. */
+function release() {
+  const next = waiting.shift();
+  if (next) next.start();
+  else active--;
+}
+
+/** Runs `task` once fewer than `MAX_IMAGE_FETCHES` others run, oldest first. `cancel` takes it
+ *  out of the queue before it starts (its promise then rejects), and does nothing after. */
+function queued<T>(task: () => Promise<T>): { promise: Promise<T>; cancel: () => boolean } {
+  const run = async () => {
+    try {
+      return await task();
+    } finally {
+      release();
+    }
+  };
+  if (active < MAX_IMAGE_FETCHES) {
+    active++;
+    return { promise: run(), cancel: () => false };
   }
+  let slot!: { start: () => void; drop: () => void };
+  const turn = new Promise<void>((start, reject) => {
+    slot = { start, drop: () => reject(new DOMException("No one waits for this image anymore", "AbortError")) };
+    waiting.push(slot);
+  });
+  return {
+    promise: turn.then(run),
+    cancel: () => {
+      const at = waiting.indexOf(slot);
+      if (at < 0) return false;
+      waiting.splice(at, 1);
+      slot.drop();
+      return true;
+    },
+  };
 }
 
 /** The `data:` URL of the image at `url`, read from `source` (its signed URL, when GitHub gave
  *  one). One request at a time per image, and a few at most overall; a failure is not kept, so a
- *  later view tries again. */
-export function loadGithubImage(projectId: number, url: string, source = url): Promise<string> {
+ *  later view tries again. Once every caller's `signal` aborted, an image still waiting for a
+ *  slot is dropped (it rejects); one already being read finishes and is cached. */
+export function loadGithubImage(projectId: number, url: string, source = url, signal?: AbortSignal): Promise<string> {
   const hit = cache.get(url);
   if (hit) return Promise.resolve(hit);
-  let pending = loading.get(url);
-  if (!pending) {
-    pending = queued(() => commands.fetchGithubImage(projectId, source))
-      .then((result) => {
-        if (result.status === "error") throw new Error(result.error.message);
-        cache.set(url, result.data);
-        return result.data;
-      })
-      .finally(() => loading.delete(url));
-    loading.set(url, pending);
+  let load = loading.get(url);
+  if (!load) {
+    const { promise, cancel } = queued(() => commands.fetchGithubImage(projectId, source));
+    const created: Load = {
+      consumers: 0,
+      cancel,
+      promise: promise
+        .then((result) => {
+          if (result.status === "error") throw new Error(result.error.message);
+          cache.set(url, result.data);
+          return result.data;
+        })
+        .finally(() => {
+          if (loading.get(url) === created) loading.delete(url);
+        }),
+    };
+    load = created;
+    loading.set(url, load);
   }
-  return pending;
+  const shared = load;
+  shared.consumers++;
+  signal?.addEventListener(
+    "abort",
+    () => {
+      shared.consumers--;
+      // Dropped at once, so a viewer arriving next queues afresh rather than share the rejection.
+      if (shared.consumers === 0 && shared.cancel() && loading.get(url) === shared) loading.delete(url);
+    },
+    { once: true },
+  );
+  return shared.promise;
 }

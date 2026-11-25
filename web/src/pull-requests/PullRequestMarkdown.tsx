@@ -41,8 +41,10 @@ function MarkdownImage({ alt, url }: { alt: string; url: string }) {
   useEffect(() => {
     if (!loadable || src || projectId === undefined) return;
     let cancelled = false;
+    // Leaving before its turn gives the slot to an image still on screen.
+    const gone = new AbortController();
     const start = () =>
-      void loadGithubImage(projectId, url, source).then(
+      void loadGithubImage(projectId, url, source, gone.signal).then(
         (data) => !cancelled && setSrc(data),
         () => !cancelled && setFailed(true),
       );
@@ -51,6 +53,7 @@ function MarkdownImage({ alt, url }: { alt: string; url: string }) {
       start();
       return () => {
         cancelled = true;
+        gone.abort();
       };
     }
     const observer = new IntersectionObserver(
@@ -64,6 +67,7 @@ function MarkdownImage({ alt, url }: { alt: string; url: string }) {
     observer.observe(element);
     return () => {
       cancelled = true;
+      gone.abort();
       observer.disconnect();
     };
   }, [loadable, src, projectId, url, source]);

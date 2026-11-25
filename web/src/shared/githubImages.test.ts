@@ -36,6 +36,34 @@ it("frees its slot when Core refuses an image", async () => {
   expect(fetch).toHaveBeenCalledTimes(urls.length);
 });
 
+it("drops a queued image whose every viewer has gone before it started, keeping the cap", async () => {
+  const settle: (() => void)[] = [];
+  const fetch = vi.spyOn(commands, "fetchGithubImage").mockImplementation(
+    () => new Promise((resolve) => settle.push(() => resolve({ status: "ok", data: PNG }))),
+  );
+  const url = (name: string) => `https://user-images.githubusercontent.com/1/abort-${name}.png`;
+  const busy = Array.from({ length: MAX_IMAGE_FETCHES }, (_, i) => loadGithubImage(1, url(`busy-${i}`)));
+  const gone = new AbortController();
+  const stays = new AbortController();
+  const dropped = loadGithubImage(1, url("gone"), url("gone"), gone.signal);
+  const shared = [loadGithubImage(1, url("shared"), url("shared"), gone.signal), loadGithubImage(1, url("shared"), url("shared"), stays.signal)];
+  const later = loadGithubImage(1, url("later"));
+  await Promise.resolve();
+  expect(fetch).toHaveBeenCalledTimes(MAX_IMAGE_FETCHES);
+
+  gone.abort();
+  await expect(dropped).rejects.toThrow();
+  settle[0]();
+  settle[1]();
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(MAX_IMAGE_FETCHES + 2));
+  // The image nobody waits for anymore never reached Core; one still watched did.
+  const asked = fetch.mock.calls.map((c) => c[1]);
+  expect(asked).not.toContain(url("gone"));
+  expect(asked.slice(MAX_IMAGE_FETCHES)).toEqual([url("shared"), url("later")]);
+  settle.slice(2).forEach((s) => s());
+  expect(await Promise.all([...busy, ...shared, later])).toHaveLength(MAX_IMAGE_FETCHES + 3);
+});
+
 it("names an uploaded asset by its uuid in both of GitHub's URL forms", () => {
   const id = "84ccda0a-5c4a-4fe4-b897-ed3f90e852b2";
   expect(githubAssetId(`https://github.com/user-attachments/assets/${id}`)).toBe(id);
