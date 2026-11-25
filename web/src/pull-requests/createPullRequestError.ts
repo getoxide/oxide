@@ -1,6 +1,6 @@
 /** Keep CLI diagnostics available while giving the user a concrete next step. */
 export function describeCreatePrError(message: string, base: string) {
-  if (/no commits between/i.test(message)) {
+  if (/no commits (between|beyond)/i.test(message)) {
     return {
       title: "No commits to compare",
       guidance: `This branch has no new commits compared with ${base}. Commit your changes or choose a different base branch, then try again.`,
