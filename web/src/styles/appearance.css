@@ -94,9 +94,6 @@ kbd {
 .terminal-command-block.failed {
   background: var(--terminal-block-failed-tint, color-mix(in srgb, var(--red) 8%, transparent));
 }
-.theme-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.theme-diagnostics { display: grid; gap: 6px; margin-top: 8px; }
-.theme-diagnostic { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--fg); font-size: 12px; }
 .settings-note { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.6; max-width: 75ch; }
 :root[data-appearance="light"] .icon-btn {
   color: var(--dim);
