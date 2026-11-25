@@ -9,6 +9,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// A plain comment, which its author can edit or delete.
@@ -336,10 +337,16 @@ fn timeline_page(
         args.extend(["-f", cursor.as_str()]);
     }
     args.extend(["--jq", &jq]);
-    let out = gh.run(cwd, &args).map_err(crate::Error::from);
-    oxide_platform::diag::best_effort("timeline query", out.as_ref().map(|_| ()));
-    let parsed = super::parse(&out.ok()?);
-    oxide_platform::diag::best_effort("timeline response", parsed.as_ref().map(|_| ()));
+    let parsed = gh
+        .run(cwd, &args)
+        .map_err(crate::Error::from)
+        .and_then(|out| super::parse(&out));
+    // Polled every few seconds: a GitHub that keeps refusing the query is reported once, when
+    // it starts to.
+    let failing = parsed.is_err();
+    if gh.timeline_refused.swap(failing, Ordering::Relaxed) != failing {
+        oxide_platform::diag::best_effort("timeline query", parsed.as_ref().map(|_| ()));
+    }
     parsed.ok()
 }
 

@@ -325,6 +325,8 @@ pub struct Gh {
     default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
     viewer_logins: Cached<PathBuf, Option<String>>,
     timeline_pages: timeline::LaterPages,
+    /// Whether the last timeline query failed, so a failure is logged once, not every poll.
+    timeline_refused: std::sync::atomic::AtomicBool,
 }
 
 /// Whether `gh` can be used, and if not, what to tell the user.
