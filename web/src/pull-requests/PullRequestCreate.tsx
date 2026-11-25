@@ -72,8 +72,9 @@ export function PullRequestCreate({
       .then((count) => setAhead((known) => ({ ...known, [next]: count })));
   }
   // Why no pull request can be opened from here, if it cannot.
+  // A protected branch is fine as a head as long as it has something to compare.
   const blocker =
-    isProtected || (head !== "" && head === base)
+    (head !== "" && head === base) || (isProtected && ahead[base] === 0)
       ? "switch"
       : ahead[base] === 0
         ? "noDiff"

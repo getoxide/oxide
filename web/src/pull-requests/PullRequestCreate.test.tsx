@@ -183,12 +183,19 @@ it("keeps Create disabled and asks for a feature branch when checked out on the 
   expect(create).not.toHaveBeenCalled();
 });
 
-it("asks for a feature branch on a protected branch even when it has commits beyond the base", async () => {
-  mockDraft({ head: "release", base: "main", commitsBeyond: 3, protected: true });
+it("lets a protected branch with commits beyond the base open a pull request", async () => {
+  mockDraft({ head: "master", base: "main", commitsBeyond: 3, protected: true });
+  await open();
+  expect(createButton().disabled).toBe(false);
+  expect(host.textContent).not.toContain("Switch from");
+});
+
+it("asks for a feature branch on a protected branch with nothing to compare", async () => {
+  mockDraft({ head: "master", base: "main", commitsBeyond: 0, protected: true });
   await open();
   expect(createButton().disabled).toBe(true);
   expect(host.textContent).toContain(
-    "Switch from release to a feature branch to open a pull request.",
+    "Switch from master to a feature branch to open a pull request.",
   );
 });
 
