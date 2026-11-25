@@ -835,12 +835,15 @@ html.macos .header,
   .pr-create { animation: project-arrive 220ms cubic-bezier(.16, 1, .3, 1); }
 }
 
-.window-controls { display: flex; align-self: stretch; flex: none; margin-left: 4px; }
-.window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; min-height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); cursor: default; }
-.window-controls button:hover:not(:disabled) { background: var(--bg4); color: var(--fg-bright); }
-.window-controls button:active:not(:disabled) { background: color-mix(in srgb, var(--fg) 14%, var(--bg4)); color: var(--fg-bright); }
-.window-controls .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
-.window-controls .window-close:active:not(:disabled) { background: #b22618; color: #fff; }
+/* Windows 11 caption buttons: 46px wide, the full titlebar high, square, flush with the top-right corner.
+   Minimize and Maximize take a faint translucent fill (lighter still when pressed, as native);
+   Close turns the system crimson. */
+.window.windows .window-controls { display: flex; align-self: stretch; flex: none; margin-left: 4px; }
+.window.windows .window-controls button { display: inline-flex; align-items: center; justify-content: center; width: 46px; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--fg-bright); cursor: default; box-shadow: none; }
+.window.windows .window-controls button:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-bright) 9%, transparent); color: var(--fg-bright); }
+.window.windows .window-controls button:active:not(:disabled) { background: color-mix(in srgb, var(--fg-bright) 6%, transparent); color: color-mix(in srgb, var(--fg-bright) 80%, transparent); }
+.window.windows .window-controls .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
+.window.windows .window-controls .window-close:active:not(:disabled) { background: color-mix(in srgb, #c42b1c 90%, transparent); color: #fff; }
 
 .window-resize { position: fixed; z-index: 1000; }
 .window-resize-north, .window-resize-south { left: 6px; right: 6px; height: 5px; cursor: ns-resize; }

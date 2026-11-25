@@ -794,31 +794,29 @@ function useWindowMaximized(): boolean {
   return maximized;
 }
 
-/** Caption buttons drawn like Windows' own: crisp 10x10 vector icons, 46px wide, flush with the top-right corner. */
+/** A 10x10 caption glyph drawn with a 1px stroke, like the Segoe Fluent Icons Windows uses. */
+function CaptionGlyph({ d, crisp = true }: { d: string; crisp?: boolean }) {
+  // Straight strokes sit on half-pixel coordinates and snap to the pixel grid; the Close cross stays anti-aliased.
+  return <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"
+    shapeRendering={crisp ? "crispEdges" : "geometricPrecision"} aria-hidden="true">
+    <path d={d} />
+  </svg>;
+}
+
+/** Caption buttons drawn like Windows 11's own: 46px wide, the full titlebar high, flush with the top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
   const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
     <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1 5h8" />
-      </svg>
+      <CaptionGlyph d="M0 5.5h10" />
     </button>
     <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>
-      {maximized ? (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <path d="M3 1.5h5.5v5.5M1.5 3h5.5v5.5H1.5z" />
-        </svg>
-      ) : (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <rect x="1.5" y="1.5" width="7" height="7" />
-        </svg>
-      )}
+      {/* Restore layers a front window over the top and right edges of the one behind it. */}
+      <CaptionGlyph d={maximized ? "M0.5 2.5h7v7h-7zM2.5 2.5v-2h7v7h-2" : "M0.5 0.5h9v9h-9z"} />
     </button>
     <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
-      </svg>
+      <CaptionGlyph d="M0 0l10 10M10 0L0 10" crisp={false} />
     </button>
   </div>;
 }
