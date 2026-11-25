@@ -280,33 +280,33 @@ enum Response {
     NotFound,
 }
 
-/// The one client every image is read with, built once: no cookies, no `Referer` (a signed URL
-/// must not leak to the next hop), HTTPS only, every redirect checked.
+/// The one client every image is read with, built once it builds: no cookies, no `Referer` (a
+/// signed URL must not leak to the next hop), HTTPS only, every redirect checked. A build that
+/// failed (e.g. no TLS roots yet) is tried again on the next image rather than kept.
 fn client() -> Result<&'static reqwest::blocking::Client> {
-    static CLIENT: std::sync::OnceLock<Option<reqwest::blocking::Client>> =
-        std::sync::OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            let policy = reqwest::redirect::Policy::custom(|attempt| {
-                if redirect_allowed(attempt.previous().len(), attempt.url()) {
-                    attempt.follow()
-                } else {
-                    attempt.error("redirected too often or away from GitHub")
-                }
-            });
-            let built = reqwest::blocking::Client::builder()
-                .user_agent("Oxide-images/0.1")
-                .https_only(true)
-                .referer(false)
-                .connect_timeout(TIMEOUT)
-                .timeout(TIMEOUT)
-                .redirect(policy)
-                .build();
-            oxide_platform::diag::best_effort("image client", built.as_ref().map(|_| ()));
-            built.ok()
-        })
-        .as_ref()
-        .ok_or_else(failed)
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if redirect_allowed(attempt.previous().len(), attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.error("redirected too often or away from GitHub")
+        }
+    });
+    let built = reqwest::blocking::Client::builder()
+        .user_agent("Oxide-images/0.1")
+        .https_only(true)
+        .referer(false)
+        .connect_timeout(TIMEOUT)
+        .timeout(TIMEOUT)
+        .redirect(policy)
+        .build();
+    oxide_platform::diag::best_effort("image client", built.as_ref().map(|_| ()));
+    // Two first images may build one each; the first kept wins and the other is dropped.
+    let client = built.map_err(|_| failed())?;
+    Ok(CLIENT.get_or_init(|| client))
 }
 
 /// One `GET` without credentials: no cookies, no token, every redirect checked.
