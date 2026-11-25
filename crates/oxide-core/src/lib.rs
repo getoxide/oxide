@@ -381,20 +381,32 @@ impl Core {
         )?)
     }
 
-    /// Title, body and base prefilled for a new pull request of the Project's current branch.
-    pub fn pull_request_draft(&self, project_id: u32) -> Result<PullRequestDraft> {
+    /// Title, body and base prefilled for a new pull request from `head`, or from the head
+    /// the form starts with when `None`, plus the local branches it can be opened from.
+    /// `head` is validated as an existing local branch that is not a main one. Starts `git`.
+    pub fn pull_request_draft(
+        &self,
+        project_id: u32,
+        head: Option<&str>,
+    ) -> Result<PullRequestDraft> {
         let cwd = self.main_checkout(project_id)?;
-        github::pull_request_draft(&self.gh, &cwd)
+        github::pull_request_draft(&self.gh, &cwd, head)
     }
 
-    /// How many commits the Project's current branch has beyond `base`, from local Git only;
-    /// `None` when `base` is unknown locally. `base` is validated as a branch name. Starts `git`.
-    pub fn pull_request_commits_beyond(&self, project_id: u32, base: &str) -> Result<Option<u32>> {
-        github::pull_request_commits_beyond(&self.main_checkout(project_id)?, base)
+    /// How many commits the Project's local branch `head` has beyond `base`, from local Git
+    /// only; `None` when `base` is unknown locally. Both are validated as branch names and
+    /// `head` must exist locally. Starts `git`.
+    pub fn pull_request_commits_beyond(
+        &self,
+        project_id: u32,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<u32>> {
+        github::pull_request_commits_beyond(&self.main_checkout(project_id)?, head, base)
     }
 
-    /// Pushes the current branch of the Project's folder if needed, then opens a pull request
-    /// for it.
+    /// Pushes the chosen head branch of the Project's folder if needed, without checking it
+    /// out, then opens a pull request for it.
     pub fn create_pull_request(
         &self,
         project_id: u32,

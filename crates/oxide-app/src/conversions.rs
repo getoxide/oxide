@@ -409,6 +409,7 @@ impl From<oxide_core::PullRequestDraft> for PullRequestDraft {
             head: d.head,
             commits_beyond: d.commits_beyond,
             protected: d.protected,
+            heads: d.heads,
         }
     }
 }

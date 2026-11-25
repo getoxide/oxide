@@ -60,14 +60,22 @@ export const commands = {
 	stopLanguageServer: (id: number) => typedError<null, AppError>(__TAURI_INVOKE("stop_language_server", { id })),
 	/**  The repository's branches on GitHub, for choosing a pull request's base. */
 	pullRequestBaseBranches: (projectId: number) => typedError<string[], AppError>(__TAURI_INVOKE("pull_request_base_branches", { projectId })),
-	/**  Title, body and base prefilled from the branch's commits. */
-	pullRequestDraft: (projectId: number) => typedError<PullRequestDraft_Serialize, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId })),
 	/**
-	 *  How many commits the checked-out branch has beyond `base`, from local Git only; null when
-	 *  `base` is unknown locally. Core validates `base` as a branch name. Starts `git`.
+	 *  Title, body and base prefilled from the commits of `head` (null: the head the form starts
+	 *  with), plus the local branches a pull request can be opened from. Core validates `head` as
+	 *  an existing local branch that is not a main one. Starts `git`.
 	 */
-	pullRequestCommitsBeyond: (projectId: number, base: string) => typedError<number | null, AppError>(__TAURI_INVOKE("pull_request_commits_beyond", { projectId, base })),
-	/**  Pushes the branch if needed, then opens a pull request for it. */
+	pullRequestDraft: (projectId: number, head: string | null) => typedError<PullRequestDraft_Serialize, AppError>(__TAURI_INVOKE("pull_request_draft", { projectId, head })),
+	/**
+	 *  How many commits the local branch `head` has beyond `base`, from local Git only; null when
+	 *  `base` is unknown locally. Core validates both as branch names and `head` as an existing
+	 *  local branch. Starts `git`.
+	 */
+	pullRequestCommitsBeyond: (projectId: number, head: string, base: string) => typedError<number | null, AppError>(__TAURI_INVOKE("pull_request_commits_beyond", { projectId, head, base })),
+	/**
+	 *  Pushes the chosen head branch if needed, without checking it out, then opens a pull request
+	 *  for it.
+	 */
 	createPullRequest: (projectId: number, pullRequest: NewPullRequest) => typedError<PullRequest, AppError>(__TAURI_INVOKE("create_pull_request", { projectId, pullRequest })),
 	/**  Open pull requests; `mine` keeps the user's own, `search` is a GitHub query. */
 	listPullRequests: (projectId: number, mine: boolean, search: string) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("list_pull_requests", { projectId, mine, search })),
@@ -299,6 +307,8 @@ export type NewPullRequest = {
 	title: string,
 	body: string,
 	base: string,
+	/**  The local branch to open the pull request from; it need not be checked out. */
+	head: string,
 	draft: boolean,
 };
 
@@ -436,8 +446,16 @@ export type PullRequestDraft_Deserialize = {
 	head: string,
 	/**  How many commits `head` has beyond `base`; null when that cannot be told locally. */
 	commitsBeyond?: number | null,
-	/**  Whether `head` is a main branch, which a pull request cannot be opened from. */
+	/**
+	 *  Whether `head` is a main branch, which a pull request cannot be opened from: only when
+	 *  no other local branch exists to offer instead.
+	 */
 	protected: boolean,
+	/**
+	 *  The local branches a pull request can be opened from, most recently committed first;
+	 *  main branches are left out.
+	 */
+	heads: string[],
 };
 
 export type PullRequestDraft_Serialize = {
@@ -447,8 +465,16 @@ export type PullRequestDraft_Serialize = {
 	head: string,
 	/**  How many commits `head` has beyond `base`; null when that cannot be told locally. */
 	commitsBeyond: number | null,
-	/**  Whether `head` is a main branch, which a pull request cannot be opened from. */
+	/**
+	 *  Whether `head` is a main branch, which a pull request cannot be opened from: only when
+	 *  no other local branch exists to offer instead.
+	 */
 	protected: boolean,
+	/**
+	 *  The local branches a pull request can be opened from, most recently committed first;
+	 *  main branches are left out.
+	 */
+	heads: string[],
 };
 
 export type PullRequestEdit = {

@@ -249,8 +249,12 @@ pub struct PullRequestDraft {
     /// How many commits `head` has beyond `base`; `None` when neither the base nor its
     /// remote-tracking branch exists locally, so it cannot be told.
     pub commits_beyond: Option<u32>,
-    /// Whether `head` is a main branch, which a pull request cannot be opened from.
+    /// Whether `head` is a main branch, which a pull request cannot be opened from: only
+    /// when no other local branch exists to offer instead.
     pub protected: bool,
+    /// The local branches a pull request can be opened from, most recently committed first;
+    /// main branches are left out.
+    pub heads: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +262,8 @@ pub struct PullRequestInput {
     pub title: String,
     pub body: String,
     pub base: String,
+    /// The local branch to open the pull request from; it need not be checked out.
+    pub head: String,
     pub draft: bool,
 }
 
@@ -635,17 +641,10 @@ impl Gh {
     }
 
     /// The open pull request of the checked-out branch.
-    fn current_pull_request(&self, cwd: &Path) -> Result<Option<PullRequest>> {
-        let json = match self.run(cwd, &["pr", "view", "--json", PR_FIELDS]) {
-            Ok(json) => json,
-            Err(GhError::Failed(m)) if m.contains("no pull requests found") => return Ok(None),
-            Err(e) => return Err(e.into()),
-        };
-        let v: serde_json::Value = parse(&json)?;
-        if v["state"].as_str() != Some("OPEN") {
-            return Ok(None);
-        }
-        Ok(Some(pull_request_from(&v)))
+    fn pull_request(&self, cwd: &Path, number: u32) -> Result<PullRequest> {
+        let number = number.to_string();
+        let json = self.run(cwd, &["pr", "view", &number, "--json", PR_FIELDS])?;
+        Ok(pull_request_from(&parse(&json)?))
     }
 }
 
@@ -852,22 +851,37 @@ pub fn pull_request_base_branches(gh: &Gh, cwd: &Path) -> Result<Vec<String>> {
     Ok(branches)
 }
 
-/// Title and body from the commits the branch adds to the default branch: a
+/// Title and body from the commits the head adds to the default branch: a
 /// lone commit's own message, or the branch's name over a list of subjects.
-pub fn pull_request_draft(gh: &Gh, cwd: &Path) -> Result<PullRequestDraft> {
+/// The head is `head` when given (validated: an existing local branch, not a main one),
+/// else the checked-out branch unless it is a main one, else the most recently committed
+/// local branch that is not.
+pub fn pull_request_draft(gh: &Gh, cwd: &Path, head: Option<&str>) -> Result<PullRequestDraft> {
+    let chosen = head.map(|head| pull_request_head(cwd, head)).transpose()?;
     gh.require_ready(cwd)?;
-    let status = git::status(cwd)?;
-    let head = status
-        .branch
-        .ok_or_else(|| Error::Github("HEAD is detached; switch to a branch first.".into()))?;
+    let heads: Vec<String> = git::local_branches(cwd)?
+        .into_iter()
+        .filter(|branch| !git::is_protected(branch))
+        .collect();
+    let head = match chosen {
+        Some(head) => head,
+        None => {
+            let current = git::status(cwd)?.branch;
+            current
+                .clone()
+                .filter(|branch| !git::is_protected(branch))
+                .or_else(|| heads.first().cloned())
+                .or(current)
+                .ok_or_else(|| {
+                    Error::Github("HEAD is detached; switch to a branch first.".into())
+                })?
+        }
+    };
     let base = gh.default_branch(cwd)?;
-    let remote_base = format!("origin/{base}");
-    let range = if git::ref_exists(cwd, &remote_base) {
-        format!("{remote_base}..HEAD")
-    } else if git::ref_exists(cwd, &base) {
-        format!("{base}..HEAD")
-    } else {
-        "HEAD".to_string()
+    let tip = format!("refs/heads/{head}");
+    let range = match git::base_reference(cwd, &base) {
+        Some(reference) => format!("{reference}..{tip}"),
+        None => tip,
     };
     let max = format!("--max-count={MAX_PREFILL_COMMITS}");
     let log = git::run(
@@ -893,22 +907,38 @@ pub fn pull_request_draft(gh: &Gh, cwd: &Path) -> Result<PullRequestDraft> {
                 .join("\n"),
         ),
     };
-    let commits_beyond = git::commits_beyond(cwd, &base);
+    let commits_beyond = git::commits_beyond(cwd, &head, &base);
     Ok(PullRequestDraft {
         title,
         body,
         base,
+        protected: git::is_protected(&head),
         head,
         commits_beyond,
-        protected: status.protected,
+        heads,
     })
 }
 
-/// How many commits the checked-out branch has beyond `base`, from local Git only
-/// (no network); `None` when `base` is not known locally. Starts `git`.
-pub fn pull_request_commits_beyond(cwd: &Path, base: &str) -> Result<Option<u32>> {
+/// A head branch from the webview: a valid name (ADR-0016) of an existing local branch
+/// that is not a main branch.
+fn pull_request_head(cwd: &Path, head: &str) -> Result<String> {
+    let head = git::existing_local_branch(cwd, head)?;
+    if git::is_protected(&head) {
+        return Err(Error::Github(format!(
+            "`{head}` is a main branch; choose another branch to open a pull request from."
+        )));
+    }
+    Ok(head)
+}
+
+/// How many commits the local branch `head` has beyond `base`, from local Git only
+/// (no network); `None` when `base` is not known locally. Both are validated as branch
+/// names and `head` must be an existing local branch. Starts `git`.
+pub fn pull_request_commits_beyond(cwd: &Path, head: &str, base: &str) -> Result<Option<u32>> {
+    git::valid_branch_name(head)?;
     let base = git::valid_branch_name(base)?;
-    Ok(git::commits_beyond(cwd, base))
+    let head = git::existing_local_branch(cwd, head)?;
+    Ok(git::commits_beyond(cwd, &head, base))
 }
 
 /// `add-pr-surface` → `Add pr surface`.
@@ -925,23 +955,12 @@ fn humanize(branch: &str) -> String {
     }
 }
 
-fn current_branch(cwd: &Path) -> Result<String> {
-    git::status(cwd)?
-        .branch
-        .ok_or_else(|| Error::Github("HEAD is detached; switch to a branch first.".into()))
-}
-
-/// Pushes the branch if GitHub has not seen all of it, then opens the pull
-/// request. The caller holds the checkout's Git lock.
+/// Pushes the head branch if GitHub has not seen all of it, without checking it out, then
+/// opens the pull request. The caller holds the checkout's Git lock.
 pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Result<PullRequest> {
     gh.require_ready(cwd)?;
-    let status = git::status(cwd)?;
-    let branch = current_branch(cwd)?;
-    if status.protected {
-        return Err(Error::Github(format!(
-            "`{branch}` is a main branch; create a branch to open a pull request from."
-        )));
-    }
+    // The head reaches Git and `gh` as an argument (ADR-0016).
+    let branch = pull_request_head(cwd, input.head.trim())?;
     let title = input.title.trim();
     if title.is_empty() {
         return Err(Error::Github("Write a pull request title.".into()));
@@ -954,14 +973,12 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
     }
     // The base reaches Git and `gh` as an argument (ADR-0016).
     let base = git::valid_branch_name(base)?;
-    if git::commits_beyond(cwd, base) == Some(0) {
+    if git::commits_beyond(cwd, &branch, base) == Some(0) {
         return Err(Error::Github(format!(
             "`{branch}` has no commits beyond `{base}`, so there is nothing to compare. Commit your changes first."
         )));
     }
-    if status.ahead > 0 || status.unpublished {
-        git::push(cwd, false)?;
-    }
+    git::push_branch_if_needed(cwd, &branch)?;
     let mut args = vec![
         "pr",
         "create",
@@ -977,9 +994,18 @@ pub fn create_pull_request(gh: &Gh, cwd: &Path, input: &PullRequestInput) -> Res
     if input.draft {
         args.push("--draft");
     }
-    gh.run(cwd, &args)?;
-    gh.current_pull_request(cwd)?
-        .ok_or_else(|| Error::Github("The pull request was created but could not be read.".into()))
+    let url = gh.run(cwd, &args)?;
+    // `gh pr create` prints the new pull request's URL; read it back by number, since the
+    // head need not be the checked-out branch.
+    let number = url
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().rsplit_once("/pull/"))
+        .and_then(|(_, number)| number.parse::<u32>().ok())
+        .ok_or_else(|| {
+            Error::Github("The pull request was created but could not be read.".into())
+        })?;
+    gh.pull_request(cwd, number)
 }
 
 /// Open pull requests of the repository, optionally only the user's own and
