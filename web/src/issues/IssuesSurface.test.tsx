@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { commands, type IssueDetail, type IssueSummary } from "../bindings";
+import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
 import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
@@ -40,6 +40,9 @@ const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   body: "It **crashes**.",
   comments: [],
   viewer: "me",
+  nodeId: "I_7",
+  participants: [],
+  timeline: [],
   ...over,
 });
 
@@ -202,6 +205,50 @@ it("opens an issue and offers to close it, with the comment going along", async 
   expect(host.querySelector('[aria-label="Edit title"]')).not.toBeNull();
   await act(async () => button("Close as completed").click());
   expect(commands.closeIssue).toHaveBeenCalledWith(1, 7, "completed", "");
+});
+
+it("interleaves activity with comments in the issue Conversation and opens references through the link flow", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        { kind: "labeled", actor: "alice", createdAt: "2026-01-01T01:00:00Z", label: { name: "bug", color: "d73a4a" } },
+        { kind: "assigned", actor: "alice", createdAt: "2026-01-01T02:00:00Z", login: "bob" },
+        { kind: "comment", id: "IC_1", author: "me", body: "On it", createdAt: "2026-01-01T03:00:00Z" },
+        { kind: "renamed", actor: "alice", createdAt: "2026-01-01T04:00:00Z", from: "Crash", to: "Crash on startup" },
+        {
+          kind: "crossReferenced", actor: "erin", createdAt: "2026-01-01T05:00:00Z", number: 9, title: "Fix the crash",
+          url: "https://github.com/other/repo/pull/9", state: "MERGED", pullRequest: true, repository: "other/repo", crossRepository: true,
+        },
+        { kind: "closed", actor: "bob", createdAt: "2026-01-01T06:00:00Z", stateReason: "NOT_PLANNED" },
+        { kind: "reopened", actor: "alice", createdAt: "2026-01-01T07:00:00Z" },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const conversation = host.querySelector('section[aria-label="Conversation"]')!;
+  const rows = [...conversation.querySelectorAll(".pr-timeline-event, .pr-entry")].map((r) => r.textContent ?? "");
+  expect(rows).toHaveLength(7);
+  expect(rows[0]).toMatch(/alice added the\s*bug\s*label/);
+  expect(conversation.querySelector(".pr-timeline-event .pr-label")?.textContent).toBe("bug");
+  expect(rows[1]).toContain("alice assigned bob");
+  expect(rows[2]).toContain("On it");
+  expect(rows[3]).toContain("changed the title");
+  expect(rows[3]).toContain("Crash on startup");
+  expect(rows[4]).toContain("other/repo#9");
+  expect(rows[5]).toContain("bob closed this as not planned");
+  expect(rows[6]).toContain("alice reopened this");
+  // The viewer's own comment can still be edited.
+  expect(conversation.querySelector('[aria-label="Edit comment"]')).not.toBeNull();
+
+  const reference = [...conversation.querySelectorAll<HTMLButtonElement>(".pr-timeline-event button")].find((b) =>
+    b.textContent?.includes("Fix the crash"),
+  )!;
+  await act(async () => reference.click());
+  expect(open).toHaveBeenCalledWith("https://github.com/other/repo/pull/9");
 });
 
 it("closes as not planned with one click in the close split-button's menu, the comment going along", async () => {

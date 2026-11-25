@@ -25,6 +25,7 @@ import { MarkdownEditor } from "../shared/MarkdownEditor";
 import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
+import { ActivityRow, isConversationItem } from "../pull-requests/PullRequestTimeline";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
@@ -134,6 +135,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
 
   const { issue: detail } = loaded;
   const phase = issuePhase(detail);
+  const conversationCount = detail.timeline.filter(isConversationItem).length;
   const open = phase === "open";
 
   /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
@@ -362,9 +364,11 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         <section className="pr-section" aria-label="Conversation">
           <h4>
             <CommentIcon size={14} /> Conversation
-            {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
+            {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.comments.map((c, i) => (
+          {detail.timeline.map((c, i) => !isConversationItem(c) ? (
+            <ActivityRow key={i} item={c} onOpen={(url) => void openLink(url)} />
+          ) : (
             <article key={c.id || i} className="pr-entry">
               <Avatar login={c.author} size={24} />
               <div className="pr-entry-card">
@@ -373,7 +377,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                   {c.author === detail.author && <span className="pr-tag">Author</span>}
                   <span className="pr-entry-action">commented</span>
                   <time dateTime={c.createdAt}>{relativeTime(c.createdAt)}</time>
-                  {c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
+                  {c.kind === "comment" && c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
                     <CommentTools projectId={projectId} id={c.id} onEdit={() => setEditingComment(c.id)} onDeleted={() => setReload((n) => n + 1)} onError={setError} />
                   )}
                 </header>

@@ -22,7 +22,6 @@ import {
   commands,
   type MergeMethod,
   type PullRequest,
-  type PullRequestComment,
   type PullRequestDetail,
   type PullRequestEdit,
 } from "../bindings";
@@ -34,6 +33,7 @@ import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQu
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
 import { Markdown } from "./PullRequestMarkdown";
+import { ActivityRow, type ConversationItem, isConversationItem } from "./PullRequestTimeline";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon } from "./PullRequestPeople";
 import { defaultMergeMethod, mergeRequirements, readiness } from "./pullRequestReview";
@@ -349,6 +349,7 @@ export function PullRequestReview({
   const pr = detail.pullRequest;
   const phase = merged ? "merged" : detail.phase;
   const live = phase === "open" || phase === "draft";
+  const conversationCount = detail.timeline.filter(isConversationItem).length;
   const inputs = { phase, checks: detail.checks, mergeState: detail.mergeState, reviewDecision: detail.reviewDecision ?? null };
   const status = readiness(inputs);
   const requirements = live ? mergeRequirements(inputs) : [];
@@ -473,19 +474,23 @@ export function PullRequestReview({
         <section className="pr-section" aria-label="Conversation">
           <h4>
             <CommentIcon size={14} /> Conversation
-            {detail.comments.length > 0 && <span className="pr-count">{detail.comments.length}</span>}
+            {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.comments.map((c, i) => (
-            <Entry
-              key={c.id ?? i}
-              entry={c}
-              author={pr.author}
-              viewer={detail.viewer}
-              projectId={projectId}
-              onChanged={() => setReload((n) => n + 1)}
-              onError={setError}
-            />
-          ))}
+          {detail.timeline.map((item, i) =>
+            isConversationItem(item) ? (
+              <Entry
+                key={item.id || i}
+                entry={item}
+                author={pr.author}
+                viewer={detail.viewer}
+                projectId={projectId}
+                onChanged={() => setReload((n) => n + 1)}
+                onError={setError}
+              />
+            ) : (
+              <ActivityRow key={i} item={item} head={pr.head} onOpen={(url) => void openLink(url)} />
+            ),
+          )}
           <form
             className="pr-compose"
             onSubmit={(e) => {
@@ -605,7 +610,7 @@ const REVIEW_ACTION = {
 
 /** One conversation entry as the web shows it: who, what they did, when, and what they wrote. */
 function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
-  entry: PullRequestComment;
+  entry: ConversationItem;
   author: string;
   viewer: string;
   projectId: number;
@@ -615,18 +620,19 @@ function Entry({ entry, author, viewer, projectId, onChanged, onError }: {
 }) {
   const [editing, setEditing] = useState(false);
   // Only a plain comment of yours can be rewritten or removed; reviews and others' comments cannot.
-  const id = !entry.review && viewer !== "" && entry.author === viewer ? entry.id : null;
+  const review = entry.kind === "review" ? entry.state : null;
+  const id = !review && viewer !== "" && entry.author === viewer && entry.id ? entry.id : null;
   return (
-    <article className={`pr-entry${entry.review ? ` pr-entry-${entry.review}` : ""}`}>
+    <article className={`pr-entry${review ? ` pr-entry-${review}` : ""}`}>
       <Avatar login={entry.author} size={24} />
       <div className="pr-entry-card">
         <header>
           <strong>{entry.author}</strong>
           {entry.author === author && <span className="pr-tag">Author</span>}
           <span className="pr-entry-action">
-            {entry.review ? (
+            {review ? (
               <>
-                <ReviewStateIcon state={entry.review} size={12} /> {REVIEW_ACTION[entry.review]}
+                <ReviewStateIcon state={review} size={12} /> {REVIEW_ACTION[review]}
               </>
             ) : (
               "commented"

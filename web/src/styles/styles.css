@@ -640,6 +640,25 @@ html.macos .header,
 .pr-views .pr-entry-action { display: inline-flex; align-items: center; gap: 4px; }
 .pr-views .pr-entry-card > .md { padding: 8px 10px; }
 .pr-views .pr-entry-card > header:last-child { border-bottom: 0; }
+/* Activity Timeline rows: compact, between the comment cards, the icon on the avatars' axis. */
+.pr-views .pr-timeline-event { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 0 0 4px; font-size: 12px; color: var(--dim); }
+.pr-views .pr-timeline-icon { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--bg3); color: var(--dim); }
+.pr-views .pr-timeline-text { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.pr-views .pr-timeline-text strong { color: var(--fg-bright); }
+.pr-views .pr-timeline-text time { color: var(--faint); }
+.pr-views .pr-timeline-text code { font-size: 11px; }
+.pr-views .pr-timeline-text del { color: var(--faint); }
+.pr-views .pr-timeline-text ins { text-decoration: none; color: var(--fg-bright); }
+.pr-views .pr-timeline-headline { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-views .pr-timeline-link { min-height: 0; padding: 0; border: 0; background: none; color: var(--acc); font: inherit; cursor: pointer; }
+.pr-views .pr-timeline-link:hover { text-decoration: underline; }
+.pr-views .pr-timeline-sha { font-family: var(--mono); font-size: 11px; }
+.pr-views .pr-timeline-verified { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--green); border-radius: 999px; color: var(--green); font-size: 11px; }
+.pr-views .pr-timeline-status { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pr-views .pr-timeline-status.success { background: var(--green); }
+.pr-views .pr-timeline-status.failure { background: var(--red); }
+.pr-views .pr-timeline-status.pending { background: var(--yellow); }
+.pr-views .pr-timeline-state { text-transform: capitalize; color: var(--faint); }
 .pr-views .pr-compose { display: flex; gap: var(--space-2); align-items: flex-start; }
 .pr-views .pr-compose > .avatar { margin-top: 4px; }
 .pr-views .pr-compose-box { flex: 1; min-width: 0; display: grid; gap: var(--space-2); justify-items: end; }

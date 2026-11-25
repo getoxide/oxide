@@ -48,6 +48,12 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
     defaultMergeMethod: "squash",
     deleteBranchOnMerge: false,
     changedFiles: 3,
+    nodeId: "PR_174",
+    participants: [],
+    timeline: [
+      { kind: "review", id: "PRR_1", author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
+      { kind: "comment", id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z" },
+    ],
     ...overrides,
   };
 }
@@ -89,6 +95,64 @@ it("renders a cached pull request at once on remount without asking GitHub again
   expect(host.querySelector(".skeleton")).toBeNull();
   expect(host.textContent).toContain("chore(deps): bump react-virtual");
   expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(1);
+});
+
+it("interleaves commits, force-pushes, reviews and events with comments, opening links through the link flow", async () => {
+  const open = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      timeline: [
+        {
+          kind: "commit", oid: "1111111aaaa", abbreviatedOid: "1111111", headline: "Bump react-virtual", author: "app/dependabot",
+          committedAt: "2026-10-27T08:00:00Z", verified: true, status: "success", url: "https://github.com/me/oxide/commit/1111111aaaa",
+        },
+        { kind: "reviewRequested", actor: "app/dependabot", createdAt: "2026-10-27T08:01:00Z", login: "bob" },
+        { kind: "review", id: "PRR_1", author: "me", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", state: "changesRequested" },
+        {
+          kind: "forcePush", actor: "app/dependabot", createdAt: "2026-10-27T10:30:00Z", branch: "dependabot/npm/react-virtual",
+          before: "1111111", after: "2222222", compareUrl: "https://github.com/me/oxide/compare/1111111aaaa..2222222bbbb",
+        },
+        { kind: "comment", id: "c1", author: "me", body: "Rebased", createdAt: "2026-10-27T11:00:00Z" },
+        { kind: "labeled", actor: "bob", createdAt: "2026-10-27T11:30:00Z", label: { name: "dependencies", color: "0366d6" } },
+        { kind: "convertedToDraft", actor: "bob", createdAt: "2026-10-27T12:00:00Z" },
+        { kind: "readyForReview", actor: "bob", createdAt: "2026-10-27T12:30:00Z" },
+        { kind: "merged", actor: "bob", createdAt: "2026-10-27T13:00:00Z", commit: "3333333", base: "main" },
+        { kind: "headRefDeleted", actor: "bob", createdAt: "2026-10-27T13:01:00Z" },
+      ],
+    }),
+  });
+  await render();
+
+  const conversation = host.querySelector('section[aria-label="Conversation"]')!;
+  const rows = [...conversation.querySelectorAll(".pr-timeline-event, .pr-entry")];
+  const texts = rows.map((r) => r.textContent ?? "");
+  expect(texts).toHaveLength(10);
+  expect(texts[0]).toContain("Bump react-virtual");
+  expect(texts[0]).toContain("Verified");
+  expect(texts[0]).toContain("1111111");
+  expect(rows[0].querySelector(".pr-timeline-status.success")).not.toBeNull();
+  expect(texts[1]).toContain("requested a review from bob");
+  expect(texts[2]).toContain("requested changes");
+  expect(texts[3]).toContain("force-pushed");
+  expect(texts[3]).toContain("1111111");
+  expect(texts[3]).toContain("2222222");
+  expect(texts[4]).toContain("Rebased");
+  expect(texts[5]).toMatch(/added the\s*dependencies\s*label/);
+  expect(texts[6]).toContain("marked this pull request as draft");
+  expect(texts[7]).toContain("marked this pull request as ready for review");
+  expect(texts[8]).toContain("merged commit 3333333 into main");
+  expect(texts[9]).toContain("deleted the dependabot/npm/react-virtual branch");
+
+  // Only the viewer's plain comment has edit tools; their review does not.
+  expect(rows[2].querySelector('[aria-label="Edit comment"]')).toBeNull();
+  expect(rows[4].querySelector('[aria-label="Edit comment"]')).not.toBeNull();
+
+  const sha = [...rows[0].querySelectorAll("button")].find((b) => b.textContent === "1111111")!;
+  await click(sha);
+  expect(open).toHaveBeenLastCalledWith("https://github.com/me/oxide/commit/1111111aaaa");
+  await click([...rows[3].querySelectorAll("button")].find((b) => b.textContent === "Compare")!);
+  expect(open).toHaveBeenLastCalledWith("https://github.com/me/oxide/compare/1111111aaaa..2222222bbbb");
 });
 
 it("renders the changed file count from changedFiles in singular and plural form", async () => {
