@@ -8,6 +8,8 @@ import { clearQueryCache } from "./shared/queryCache";
 const windowState = vi.hoisted(() => ({
   maximized: false,
   resizeListeners: [] as (() => void)[],
+  close: [] as string[],
+  resizeDrags: [] as string[],
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -21,8 +23,8 @@ vi.mock("@tauri-apps/api/window", () => ({
     }),
     minimize: vi.fn(async () => {}),
     toggleMaximize: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
-    startResizeDragging: vi.fn(async () => {}),
+    close: vi.fn(async () => { windowState.close.push("close"); }),
+    startResizeDragging: vi.fn(async (direction: string) => { windowState.resizeDrags.push(direction); }),
   }),
 }));
 
@@ -60,6 +62,8 @@ beforeEach(() => {
   localStorage.clear();
   windowState.maximized = false;
   windowState.resizeListeners = [];
+  windowState.close = [];
+  windowState.resizeDrags = [];
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -139,6 +143,23 @@ describe("App window chrome", () => {
     expect(host.querySelector(".window-resize-handles")).toBeNull();
     expect(host.querySelector('button[aria-label="Restore"]')?.querySelector("svg")).not.toBeNull();
     expect(host.querySelector('button[aria-label="Maximize"]')).toBeNull();
+  });
+
+  it("leaves the top-right corner to the Close button while the other edges and corners still resize", async () => {
+    await renderAppWithUserAgent(WINDOWS);
+
+    const handles = Array.from(host.querySelectorAll<HTMLElement>(".window-resize-handles .window-resize"));
+    const directions = handles.map((handle) => handle.dataset.direction);
+    expect(directions).not.toContain("NorthEast");
+    expect(directions.sort()).toEqual(["East", "North", "NorthWest", "South", "SouthEast", "SouthWest", "West"]);
+
+    for (const handle of handles) {
+      await act(async () => { handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })); });
+    }
+    expect(windowState.resizeDrags.sort()).toEqual(["East", "North", "NorthWest", "South", "SouthEast", "SouthWest", "West"]);
+
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Close window"]')!.click(); });
+    expect(windowState.close).toEqual(["close"]);
   });
 
   it("starts without resize handles and with Restore when launched maximized", async () => {

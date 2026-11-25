@@ -838,11 +838,13 @@ function ProjectCode({ reportOpenFiles, failOpenFile, ...props }: ProjectCodePro
 
 function WindowResizeHandles() {
   const maximized = useWindowMaximized();
-  // A maximized window cannot be resized, and the handles would cover the Close button's corner.
+  // A maximized window cannot be resized.
   if (maximized) return null;
-  const directions = ["North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
+  // No North-East corner: like a native window, the top-right corner belongs to the Close button,
+  // and the North and East edges stop short of the caption buttons (see styles.css).
+  const directions = ["North", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
   return <div className="window-resize-handles" aria-hidden="true">
-    {directions.map((direction) => <div key={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
+    {directions.map((direction) => <div key={direction} data-direction={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
       onMouseDown={(event) => { if (event.button === 0) void getCurrentWindow().startResizeDragging(direction); }} />)}
   </div>;
 }

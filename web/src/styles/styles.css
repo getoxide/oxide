@@ -847,8 +847,11 @@ html.macos .header,
 .window-resize-north { top: 0; } .window-resize-south { bottom: 0; }
 .window-resize-east, .window-resize-west { top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
 .window-resize-east { right: 0; } .window-resize-west { left: 0; }
-.window-resize-northeast, .window-resize-northwest, .window-resize-southeast, .window-resize-southwest { width: 8px; height: 8px; }
-.window-resize-northeast { top: 0; right: 0; cursor: nesw-resize; }
+/* The caption buttons own the top-right corner: the top edge stops at their 3 x 46px group and the
+   right edge starts below the 34px titlebar, so clicking the very corner closes the window. */
+.window-resize-north { right: 138px; }
+.window-resize-east { top: 34px; }
+.window-resize-northwest, .window-resize-southeast, .window-resize-southwest { width: 8px; height: 8px; }
 .window-resize-northwest { top: 0; left: 0; cursor: nwse-resize; }
 .window-resize-southeast { bottom: 0; right: 0; cursor: nwse-resize; }
 .window-resize-southwest { bottom: 0; left: 0; cursor: nesw-resize; }
