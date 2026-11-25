@@ -337,6 +337,10 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
         Ok(value)
     }
 
+    fn remove(&self, key: &K) {
+        self.0.lock_recover().remove(key);
+    }
+
     fn clear(&self) {
         self.0.lock_recover().clear();
     }
@@ -1366,6 +1370,8 @@ pub fn merge_pull_request(
         args.push("--delete-branch");
     }
     gh.run(cwd, &args)?;
+    // GitHub now preselects the method just used: read it again for the next pull request.
+    gh.default_merge_methods.remove(&cwd.to_path_buf());
     Ok(())
 }
 

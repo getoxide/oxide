@@ -229,6 +229,10 @@ if args[:2] == ["pr", "merge"]:
     merged = by_number(number_arg())
     merged["state"] = "MERGED"
     merged["mergedAt"] = now()
+    # GitHub preselects the method the viewer used last.
+    for method in ("merge", "squash", "rebase"):
+        if "--" + method in args:
+            state["default_merge"] = method.upper()
     save()
     sys.exit(0)
 

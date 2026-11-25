@@ -956,6 +956,24 @@ fn the_default_merge_method_is_github_s_pick_only_when_the_repository_allows_it(
 }
 
 #[test]
+fn after_a_merge_the_next_pull_request_preselects_the_method_just_used() {
+    use oxide_core::MergeMethod;
+    let f = fixture();
+    let mut state = state_with_prs(&[detailed_pr(), pr_json(6, "Add c", "add-c", "other")]);
+    state["default_merge"] = "MERGE".into();
+    install_gh(&f, &state);
+    let detail = f.core.pull_request_detail(f.project.id, 6).unwrap();
+    assert_eq!(detail.default_merge_method, Some(MergeMethod::Merge));
+
+    f.core
+        .merge_pull_request(f.project.id, 5, MergeMethod::Squash, false, false)
+        .unwrap();
+
+    let detail = f.core.pull_request_detail(f.project.id, 6).unwrap();
+    assert_eq!(detail.default_merge_method, Some(MergeMethod::Squash));
+}
+
+#[test]
 fn a_draft_is_marked_ready_and_back_through_gh() {
     let f = fixture();
     let mut pr = detailed_pr();
