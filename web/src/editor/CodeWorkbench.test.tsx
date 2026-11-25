@@ -411,6 +411,41 @@ describe("CodeWorkbench performance", () => {
     expect(indicator.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("switches the buffer's language mode from the popover and moves its LSP tracking", async () => {
+    await act(async () =>
+      root.render(
+        <CodeWorkbench projectId={1} rootPath="/repo" contextKey="p1" visible openRequest={{ id: 1, path: "src/app.ts" }} onChanged={vi.fn()} />,
+      ),
+    );
+    await settle();
+    const indicator = host.querySelector<HTMLButtonElement>('.editor-status button[aria-haspopup="dialog"]')!;
+    expect(indicator.textContent).toContain("TypeScript");
+    await act(async () => indicator.click());
+    await settle();
+
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Language"]');
+    const option = (name: string) =>
+      [...dialog()!.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.includes(name));
+    expect(option("TypeScript")?.getAttribute("aria-selected")).toBe("true");
+    expect(option("Plain Text")?.getAttribute("aria-selected")).toBe("false");
+
+    // The filter narrows the list.
+    const filter = dialog()!.querySelector<HTMLInputElement>('input[aria-label="Filter languages"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(filter, "jso");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...dialog()!.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toEqual(["JSON"]);
+
+    lsp.events.length = 0;
+    await act(async () => option("JSON")!.click());
+    expect(monacoHarness.models[0].getLanguageId()).toBe("json");
+    expect(lsp.events).toEqual(["remove typescript", "add json"]);
+    expect(dialog()).toBeNull();
+    expect(indicator.textContent).toContain("JSON");
+    expect(indicator.textContent).not.toContain("TypeScript");
+  });
+
   it("persists open tabs on open/close and updates savedVersionId on save", async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 

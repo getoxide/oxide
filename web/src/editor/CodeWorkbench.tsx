@@ -24,7 +24,7 @@ import { monaco, editorLanguage, serverLanguage } from "./editorRuntime";
 import { EditorLanguages } from "./editorLanguages";
 import { EditorFileTree } from "./EditorFileTree";
 import { LanguageSupportNotice } from "./LanguageSupport";
-import { LanguagePopover } from "./LanguagePopover";
+import { LanguagePopover, languageLabel } from "./LanguagePopover";
 import { Skeleton } from "../shared/Skeleton";
 import { fontStyle, getAppearance } from "../shared/appearance";
 import {
@@ -609,6 +609,15 @@ export function CodeWorkbench({
     publish();
     setError(null);
   }
+  /** Changes a buffer's language mode, moving it to the language server of the new mode (if any). */
+  function setLanguageMode(path: string, languageId: string) {
+    const doc = records.current.get(path);
+    if (!doc || doc.model.getLanguageId() === languageId) return;
+    languages.current?.remove(doc.model);
+    monaco.editor.setModelLanguage(doc.model, languageId);
+    languages.current?.add(doc.model);
+    publish();
+  }
   const current = documents.find((doc) => doc.path === active);
   const language = current
     ? serverLanguage(current.model.getLanguageId())
@@ -955,7 +964,7 @@ export function CodeWorkbench({
             onClick={() => setLanguageMenu((open) => !open)}
           >
             <CodeIcon size={12} />{" "}
-            {current?.model.getLanguageId() ?? "Plain text"}
+            {current ? languageLabel(current.model.getLanguageId()) : "Plain text"}
             {language &&
               ` · ${states[language] === "Ready" ? "LSP ready" : "Language tools"}`}
           </button>
@@ -963,6 +972,12 @@ export function CodeWorkbench({
         {languageMenu && current && (
           <LanguagePopover
             anchor={languageButton}
+            languageId={current.model.getLanguageId()}
+            onSelect={(languageId) => {
+              setLanguageMenu(false);
+              setLanguageMode(current.path, languageId);
+              languageButton.current?.focus();
+            }}
             onClose={() => setLanguageMenu(false)}
           />
         )}
