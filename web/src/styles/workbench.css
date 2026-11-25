@@ -396,6 +396,8 @@
   display: flex;
   flex-direction: column;
   background: var(--terminal-background, var(--bg));
+  /* The text edge of commands, output and the command line; the $ cues hang left of it. */
+  --terminal-gutter: 34px;
 }
 .workbench-terminal-header {
   display: flex;
@@ -427,7 +429,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 4px 0 8px;
+  padding: 4px 0 0;
 }
 /* Anchor Command blocks to the bottom; margin (not justify-content) keeps overflow scrollable. */
 .terminal-block-scroll > :first-child {
@@ -436,7 +438,6 @@
 .terminal-command-block {
   position: relative;
   flex: none;
-  padding: 12px 20px 10px;
 }
 .terminal-command-block::before {
   content: "";
@@ -462,18 +463,21 @@
 .terminal-command-block.failed {
   background: var(--terminal-failed-background);
 }
+/* The command line of a block sits on a band a shade off the Terminal, its output on the Terminal
+   itself: one read tells where each command starts, without boxing anything. */
 .terminal-command-block > header {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  padding-bottom: 6px;
+  gap: 8px;
+  padding: 6px 20px 6px var(--terminal-gutter);
+  background: color-mix(in srgb, var(--fg-bright) 4%, transparent);
 }
-/* The $ cue hangs in the gutter, so the command keeps the text edge its output starts on. */
+/* The $ cue hangs in the gutter, clear of the rail, so the command keeps its output's text edge. */
 .terminal-block-prompt {
   flex: none;
   width: 8px;
-  margin-left: -16px;
-  margin-right: -4px;
+  margin-left: -20px;
+  margin-right: 4px;
   color: var(--faint);
   font-family: var(--mono);
   font-size: var(--font-terminal-size, 13px);
@@ -494,7 +498,7 @@
   overflow-wrap: anywhere;
   font-family: var(--mono);
   font-size: var(--font-terminal-size, 13px);
-  font-weight: var(--font-terminal-weight, 400);
+  font-weight: calc(var(--font-terminal-weight, 400) + 200);
 }
 .terminal-block-status {
   display: inline-flex;
@@ -525,12 +529,16 @@
   }
 }
 .terminal-truncated {
-  margin: 0 0 6px;
+  margin: 6px 20px 0 var(--terminal-gutter);
   font-size: 11px;
   color: var(--dim);
 }
 .terminal-output-clip {
   overflow: hidden;
+  margin: 6px 20px 8px var(--terminal-gutter);
+}
+.terminal-output-clip.empty {
+  margin: 0;
 }
 .terminal-block-output {
   margin: 0;
@@ -558,6 +566,9 @@
   border: 0;
   background: none;
 }
+.terminal-command-block.fullscreen > .terminal-output-clip {
+  margin: 0;
+}
 .terminal-command-block.fullscreen::before {
   display: none;
 }
@@ -571,11 +582,13 @@
   border-top: 1px solid var(--line);
 }
 /* The command line is the next prompt of the Terminal itself: no card, fill or focus halo, and its
-   $ lines up with the $ of the Command block headers above. */
+   $ lines up with the $ of the Command block headers above. A hairline closes the last block, so the
+   accent $ under it reads as the command about to run. */
 .terminal-command-composer {
   position: relative;
   flex: none;
-  padding: 4px 20px 10px;
+  padding: 6px 20px 6px var(--terminal-gutter);
+  border-top: 1px solid var(--line);
   background: none;
 }
 .terminal-command-entry {
@@ -588,7 +601,8 @@
 .terminal-prompt-symbol {
   flex: none;
   width: 8px;
-  margin-left: -16px;
+  margin-left: -20px;
+  margin-right: 4px;
   padding: 4px 0;
   font: 13px/20px var(--mono);
   color: var(--faint);
@@ -633,7 +647,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 4px 0;
+  padding: 2px 0 0;
   color: var(--dim);
   font-size: 10.5px;
   opacity: 0;
@@ -657,11 +671,13 @@
   .workbench-terminal-header {
     padding: 0 12px;
   }
-  .terminal-command-block {
-    padding-inline: 20px 12px;
-  }
+  .terminal-command-block > header,
   .terminal-command-composer {
-    padding-inline: 20px 12px;
+    padding-right: 12px;
+  }
+  .terminal-output-clip:not(.empty),
+  .terminal-truncated {
+    margin-right: 12px;
   }
   .terminal-command-hint > span:last-child {
     display: none;

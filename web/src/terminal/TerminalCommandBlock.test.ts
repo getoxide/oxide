@@ -312,6 +312,7 @@ it("collapses output clip to 0px when a finished command produced no output", as
   });
   const clip = mount.querySelector<HTMLElement>(".terminal-output-clip")!;
   expect(clip.style.height).toBe("0px");
+  expect(clip.classList.contains("empty")).toBe(true);
 });
 
 it("neither takes focus nor sends keys to the shell until the block has started", async () => {

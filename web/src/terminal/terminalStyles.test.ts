@@ -39,15 +39,46 @@ it("keeps the ghost suggestion on the same font, padding and line as the typed t
   expect(ghost["white-space"]).toBe("pre");
 });
 
-it("hangs both $ prompts in the gutter, so commands, their output and the command line share one text edge", () => {
-  const block = declarations(".terminal-block-prompt");
-  const line = declarations(".terminal-prompt-symbol");
-  expect(block["margin-left"]).toMatch(/^-/);
-  expect(line["margin-left"]).toBe(block["margin-left"]);
-  expect(line.width).toBe(block.width);
-  expect(declarations(".terminal-command-composer").padding.split(" ")[1]).toBe(
-    declarations(".terminal-command-block").padding.split(" ")[1],
+const px = (value: string) => {
+  expect(value, "a length in px").toMatch(/^-?[\d.]+px$/);
+  return parseFloat(value);
+};
+const lastToken = (shorthand: string) => shorthand.split(" ").at(-1);
+
+it("gives commands, their output and the command line one text edge at the gutter", () => {
+  expect(lastToken(declarations(".terminal-command-block > header").padding)).toBe("var(--terminal-gutter)");
+  expect(lastToken(declarations(".terminal-output-clip").margin)).toBe("var(--terminal-gutter)");
+  expect(lastToken(declarations(".terminal-command-composer").padding)).toBe("var(--terminal-gutter)");
+});
+
+it.each([
+  [".terminal-block-prompt", ".terminal-command-block > header"],
+  [".terminal-prompt-symbol", ".terminal-command-entry"],
+])("hangs the %s $ in the gutter, 12px clear of the 2px status rail, ending on the text edge", (prompt, row) => {
+  const gutter = px(declarations(".terminal-workbench")["--terminal-gutter"]);
+  const rail = px(declarations(".terminal-command-block::before").width);
+  const symbol = declarations(prompt);
+  const start = gutter + px(symbol["margin-left"]);
+  expect(start - rail).toBeGreaterThanOrEqual(12);
+  expect(start + px(symbol.width) + px(symbol["margin-right"]) + px(declarations(row).gap)).toBe(gutter);
+});
+
+it("sets the command line apart from its output: a raised header band and a heavier command", () => {
+  const header = declarations(".terminal-command-block > header");
+  // Translucent over the block, so it raises the plain and the red-tinted block alike.
+  expect(header.background).toBe("color-mix(in srgb, var(--fg-bright) 4%, transparent)");
+  expect(declarations(".terminal-command-block > header > code")["font-weight"]).toBe(
+    "calc(var(--font-terminal-weight, 400) + 200)",
   );
+});
+
+it("leaves no output gap under a block without output", () => {
+  expect(declarations(".terminal-output-clip.empty").margin).toBe("0");
+});
+
+it("marks the command line as the next command with a hairline above it, close under the last block", () => {
+  expect(paints(declarations(".terminal-command-composer")["border-top"])).toBe(true);
+  expect(lastToken(declarations(".terminal-block-scroll").padding)).toBe("0");
 });
 
 it("paints no tint behind a running block, whose xterm canvas has the plain Terminal background", () => {

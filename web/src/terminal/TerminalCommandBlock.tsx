@@ -258,7 +258,7 @@ export function TerminalCommandBlock(props: Props) {
           Showing the last 256 KiB of output.
         </p>
       )}
-      <div className="terminal-output-clip" style={{ height }}>
+      <div className={`terminal-output-clip${height ? "" : " empty"}`} style={{ height }}>
         <div className="terminal-block-output" ref={host} />
       </div>
     </section>
