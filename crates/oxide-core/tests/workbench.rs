@@ -282,13 +282,70 @@ fn a_syntax_error_fails_the_block_and_keeps_the_shell_usable() {
     for shell in block_shells(&core) {
         let terminal = start_terminal_in(&core, id, shell);
         let view = drain_terminal(&core, terminal);
-        core.run_terminal_block(terminal, "echo 'unclosed", "broken").unwrap();
+        core.run_terminal_block(terminal, "echo 'unclosed", "broken")
+            .unwrap();
         let (code, _) = block_end(&view, "broken");
         assert_ne!(code, "0", "{shell:?}");
-        core.run_terminal_block(terminal, "echo STILL_''USABLE", "after").unwrap();
+        core.run_terminal_block(terminal, "echo STILL_''USABLE", "after")
+            .unwrap();
         let (code, _) = block_end(&view, "after");
         assert_eq!(code, "0", "{shell:?}");
         assert!(view.text().contains("STILL_USABLE"), "{shell:?}");
+        core.close_terminal(terminal).unwrap();
+    }
+}
+
+/// A user's own hooks and options (a cleared `precmd_functions` or `PROMPT_COMMAND`, a prompt
+/// theme, `nounset`) never stop blocks from ending, Ctrl+C included, and their prompt never
+/// shows up in the Terminal.
+#[test]
+fn user_hooks_and_prompts_never_stop_blocks_from_ending() {
+    use oxide_core::ShellKind;
+    let (_temporary, core, id) = fixture();
+    let core = Arc::new(core);
+    for shell in block_shells(&core) {
+        let terminal = start_terminal_in(&core, id, shell);
+        let view = drain_terminal(&core, terminal);
+        // The prompt text is split in the typed command, so only a printed prompt contains it.
+        let clobber = match shell {
+            ShellKind::Zsh => {
+                "precmd_functions=(); chpwd() { echo CHPWD_RAN; }; PROMPT='OXIDE_''BLEED> '; RPROMPT='OXIDE_''BLEED'; PS2='OXIDE_''BLEED> '; setopt nounset"
+            }
+            ShellKind::Bash => {
+                "PROMPT_COMMAND=':'; PS1='OXIDE_''BLEED> '; PS2='OXIDE_''BLEED> '; set -u"
+            }
+            _ => "function global:prompt { 'OXIDE_' + 'BLEED> ' }",
+        };
+        core.run_terminal_block(terminal, clobber, "clobber")
+            .unwrap();
+        assert_eq!(block_end(&view, "clobber").0, "0", "{shell:?}");
+        let cd = if cfg!(windows) {
+            "Set-Location subdir"
+        } else {
+            "cd subdir"
+        };
+        core.run_terminal_block(terminal, cd, "cd").unwrap();
+        let (code, cwd) = block_end(&view, "cd");
+        assert_eq!(code, "0", "{shell:?}");
+        assert!(cwd.ends_with("subdir"), "{shell:?}: {cwd}");
+        core.run_terminal_block(
+            terminal,
+            "python -c \"import time; print('WAITING_FOR_' + 'INTERRUPT',flush=True); time.sleep(30)\"",
+            "wait",
+        )
+        .unwrap();
+        view.wait_for("WAITING_FOR_INTERRUPT");
+        core.write_terminal(terminal, b"\x03").unwrap();
+        block_end(&view, "wait");
+        core.run_terminal_block(terminal, "echo AFTER_''HOOKS", "after")
+            .unwrap();
+        assert_eq!(block_end(&view, "after").0, "0", "{shell:?}");
+        assert!(view.text().contains("AFTER_HOOKS"), "{shell:?}");
+        assert!(
+            !view.text().contains("OXIDE_BLEED"),
+            "{shell:?}: {}",
+            view.text()
+        );
         core.close_terminal(terminal).unwrap();
     }
 }

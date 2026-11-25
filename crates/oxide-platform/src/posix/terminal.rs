@@ -18,6 +18,37 @@ const BLOCK_PROMPT: &str = r#"$(_oxide_prompt_status=$?; if [ -n "${_oxide_token
 /// The suffix of the `ZDOTDIR` a zsh block terminal starts with; any other init file is bash's.
 const ZSH_INIT_SUFFIX: &str = ".zsh";
 
+/// What every zsh block terminal's `.zshrc` ends with: the hook that marks the end of a block the
+/// wrapper could not finish (Ctrl+C), and empty prompts, as a block shows only what its command
+/// prints. `_oxide_rearm` puts both back first and last in `precmd_functions` after user files,
+/// themes or commands replaced them; it runs here, after `.zlogin` and around every block.
+/// `emulate -L zsh` keeps a user's `nounset` (or any other option) out of them.
+macro_rules! zsh_block_hooks {
+    () => {
+        r#"# The output of a block ends where the block ends: no reverse-video % for a missing newline.
+setopt hist_ignore_space
+unsetopt prompt_cr prompt_sp
+_oxide_precmd() {
+  local _oxide_status=$?
+  emulate -L zsh
+  if [[ -n ${_oxide_token-} ]]; then
+    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
+    _oxide_token=
+  fi
+}
+_oxide_quiet_prompt() {
+  PROMPT= RPROMPT= PS2=
+}
+_oxide_rearm() {
+  emulate -L zsh
+  precmd_functions=(_oxide_precmd ${precmd_functions:#(_oxide_precmd|_oxide_quiet_prompt)} _oxide_quiet_prompt)
+  _oxide_quiet_prompt
+}
+_oxide_rearm
+"#
+    };
+}
+
 /// Each startup file zsh reads from the block terminal's `ZDOTDIR` runs the user's own file of
 /// that name (from their `ZDOTDIR`, else the home), so aliases, `PATH` and plugins load as in
 /// their own terminal. `.zshrc` then adds the hook that marks the end of a block, and `.zlogin`
@@ -46,24 +77,16 @@ fi
     ),
     (
         ".zshrc",
-        r#"[[ $HISTFILE == "$_oxide_zdotdir/.zsh_history" ]] && HISTFILE="$OXIDE_USER_ZDOTDIR/.zsh_history"
+        concat!(
+            r#"[[ $HISTFILE == "$_oxide_zdotdir/.zsh_history" ]] && HISTFILE="$OXIDE_USER_ZDOTDIR/.zsh_history"
 if [[ -f "$OXIDE_USER_ZDOTDIR/.zshrc" ]]; then
   ZDOTDIR=$OXIDE_USER_ZDOTDIR
   builtin source "$OXIDE_USER_ZDOTDIR/.zshrc"
   ZDOTDIR=$_oxide_zdotdir
 fi
-# The output of a block ends where the block ends: no reverse-video % for a missing newline.
-setopt hist_ignore_space
-unsetopt prompt_cr prompt_sp
-_oxide_precmd() {
-  local _oxide_status=$?
-  if [[ -n ${_oxide_token-} ]]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
-    _oxide_token=
-  fi
-}
-precmd_functions=(_oxide_precmd ${precmd_functions[@]})
 "#,
+            zsh_block_hooks!()
+        ),
     ),
     (
         ".zlogin",
@@ -71,26 +94,14 @@ precmd_functions=(_oxide_precmd ${precmd_functions[@]})
   ZDOTDIR=$OXIDE_USER_ZDOTDIR
   builtin source "$OXIDE_USER_ZDOTDIR/.zlogin"
 fi
+_oxide_rearm
 export ZDOTDIR=$OXIDE_USER_ZDOTDIR
 unset _oxide_zdotdir OXIDE_USER_ZDOTDIR
 "#,
     ),
 ];
 
-const ZSH_CLEAN_STARTUP_FILES: [(&str, &str); 1] = [(
-    ".zshrc",
-    r#"setopt hist_ignore_space
-unsetopt prompt_cr prompt_sp
-_oxide_precmd() {
-  local _oxide_status=$?
-  if [[ -n ${_oxide_token-} ]]; then
-    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_status}" "$PWD"
-    _oxide_token=
-  fi
-}
-precmd_functions=(_oxide_precmd ${precmd_functions[@]})
-"#,
-)];
+const ZSH_CLEAN_STARTUP_FILES: [(&str, &str); 1] = [(".zshrc", zsh_block_hooks!())];
 
 const BASH_USER_CONFIG_INIT: &str = r#"if [ -f "$HOME/.bash_profile" ]; then
   . "$HOME/.bash_profile"
@@ -112,17 +123,27 @@ export HISTCONTROL
 _oxide_prompt_command() {
   local _oxide_prompt_status=$?
   if [ -n "${_oxide_token-}" ]; then
-    printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
+    builtin printf '\033]633;Oxide;%s;end;%s;%s\007' "$_oxide_token" "${_oxide_exit:-$_oxide_prompt_status}" "$PWD"
     _oxide_token=
   fi
 }
-if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
-  PROMPT_COMMAND=(_oxide_prompt_command "${PROMPT_COMMAND[@]}")
-elif [ -n "${PROMPT_COMMAND-}" ]; then
-  PROMPT_COMMAND="_oxide_prompt_command; $PROMPT_COMMAND"
-else
-  PROMPT_COMMAND="_oxide_prompt_command"
-fi
+_oxide_quiet_prompt() {
+  PS1= PS2=
+}
+_oxide_rearm() {
+  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+    if [[ "${PROMPT_COMMAND[0]-}" != _oxide_prompt_command || "${PROMPT_COMMAND[${#PROMPT_COMMAND[@]}-1]}" != _oxide_quiet_prompt ]]; then
+      PROMPT_COMMAND=(_oxide_prompt_command "${PROMPT_COMMAND[@]}" _oxide_quiet_prompt)
+    fi
+  else
+    case "${PROMPT_COMMAND-}" in
+      "_oxide_prompt_command; "*"_oxide_quiet_prompt") ;;
+      *) PROMPT_COMMAND="_oxide_prompt_command; ${PROMPT_COMMAND:+$PROMPT_COMMAND; }_oxide_quiet_prompt" ;;
+    esac
+  fi
+  _oxide_quiet_prompt
+}
+_oxide_rearm
 stty isig -echo
 trap ':' INT
 "#;
@@ -299,7 +320,7 @@ pub fn shell_launch(
 pub fn block_script(token: &str, command: &str) -> String {
     let command = ansi_c_quoted(command);
     format!(
-        "\x15 _oxide_token={token}; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=\n"
+        "\x15 _oxide_token={token}; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
     )
 }
 
