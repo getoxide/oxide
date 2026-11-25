@@ -58,7 +58,7 @@ export class EditorLanguages {
           tool,
           (uri, diagnostics) => {
             if (generation === this.generation)
-              this.diagnostics(uri, diagnostics);
+              this.diagnostics(language, uri, diagnostics);
           },
           (state) => {
             if (generation === this.generation) this.onState(language, state);
@@ -202,9 +202,15 @@ export class EditorLanguages {
     this.sentVersions.clear();
     for (const model of this.documents.values()) this.add(model);
   }
-  private diagnostics(uri: string, diagnostics: Diagnostic[]) {
+  /** Shows a server's diagnostics on a buffer, unless the buffer has since moved to another language's server. */
+  private diagnostics(language: string, uri: string, diagnostics: Diagnostic[]) {
     const model = this.documents.get(uri);
-    if (!model || model.isDisposed()) return;
+    if (
+      !model ||
+      model.isDisposed() ||
+      serverLanguage(model.getLanguageId()) !== language
+    )
+      return;
     monaco.editor.setModelMarkers(
       model,
       "oxide-lsp",

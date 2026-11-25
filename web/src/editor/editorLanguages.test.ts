@@ -135,3 +135,31 @@ it("does not open a buffer on its old server when its language changes while tha
   expect(received("python", "textDocument/didClose")).toHaveLength(1);
   languages.dispose();
 });
+
+const publish = (language: string, uri: string) =>
+  server(language).at(-1)!.channel.onmessage(
+    JSON.stringify({
+      method: "textDocument/publishDiagnostics",
+      params: { uri, diagnostics: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, message: `from ${language}`, severity: 1 }] },
+    }),
+  );
+
+it("shows a buffer only the diagnostics of the server of its current language", async () => {
+  const languages = sessions();
+  const buffer = model("/project/notes.ts", "typescript");
+  languages.add(buffer);
+  await settle();
+  expect(received("typescript", "textDocument/didOpen")).toHaveLength(1);
+
+  languages.remove(buffer);
+  fake.monaco.editor.setModelLanguage(buffer, "python");
+  languages.add(buffer);
+  await settle();
+
+  // A late report from the server it left is dropped.
+  publish("typescript", buffer.uri.toString());
+  expect(fake.markers.get(buffer)).toEqual([]);
+  publish("python", buffer.uri.toString());
+  expect(fake.markers.get(buffer)).toEqual([expect.objectContaining({ message: "from python" })]);
+  languages.dispose();
+});
