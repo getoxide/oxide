@@ -25,7 +25,6 @@ export interface Appearance {
   typography?: Partial<Record<FontRole, FontTypography>> & Record<"ui" | "code" | "terminal", FontTypography>;
   themeJson: string;
   themeName: string;
-  themeId?: string;
 }
 // Bundled through fonts.css, so they win over installed copies; the rest cover scripts the subsets do not.
 const SYSTEM =
@@ -382,9 +381,16 @@ export function parseThemePack(raw: string): ThemePack {
 }
 function load(): Appearance {
   try {
-    const stored = readJson(KEY) as Appearance | null;
+    const stored = readJson(KEY) as (Appearance & { themeId?: string }) | null;
     if (!stored) return structuredClone(DEFAULT_APPEARANCE);
     validateAppearance(stored);
+    // Theme files from the removed Themes section: keep the light or dark choice, on the built-in theme.
+    if (stored.themeId !== undefined) {
+      const chosen = parseThemePack(stored.themeJson).themes.find((theme) => theme.name === stored.themeName);
+      stored.themeJson = DEFAULT_APPEARANCE.themeJson;
+      stored.themeName = chosen?.appearance === "light" ? "Oxide Light" : "Oxide Dark";
+      delete stored.themeId;
+    }
     for (const key of Object.keys(stored.fonts) as (keyof Appearance["fonts"])[]) {
       const value = stored.fonts[key];
       if (value) stored.fonts[key] = PREVIOUS_DEFAULT_FONTS[value] ?? value;

@@ -97,9 +97,6 @@ kbd {
 .theme-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .theme-diagnostics { display: grid; gap: 6px; margin-top: 8px; }
 .theme-diagnostic { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--fg); font-size: 12px; }
-.theme-editor { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-.theme-editor-header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
-.theme-editor textarea { width: 100%; min-height: 220px; font-family: var(--mono); font-size: 12px; line-height: 1.5; padding: 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--fg); resize: vertical; }
 .settings-note { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.6; max-width: 75ch; }
 :root[data-appearance="light"] .icon-btn {
   color: var(--dim);
