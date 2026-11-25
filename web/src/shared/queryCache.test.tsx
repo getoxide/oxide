@@ -20,8 +20,8 @@ let host: HTMLDivElement;
 let root: Root;
 let seen: QueryState<unknown>;
 
-function Probe({ k, fetch, refresh = 0, staleMs }: { k: string; fetch: () => Promise<QueryResult<unknown>>; refresh?: number; staleMs?: number }) {
-  const state = useQuery(k, fetch, refresh, staleMs === undefined ? undefined : { staleMs });
+function Probe({ k, fetch, refresh = 0, staleMs, poll }: { k: string; fetch: () => Promise<QueryResult<unknown>>; refresh?: number; staleMs?: number; poll?: number }) {
+  const state = useQuery(k, fetch, refresh, staleMs === undefined && poll === undefined ? undefined : { staleMs, poll });
   useEffect(() => {
     seen = state;
   });
@@ -29,6 +29,9 @@ function Probe({ k, fetch, refresh = 0, staleMs }: { k: string; fetch: () => Pro
 }
 const mount = (k: string, fetch: () => Promise<QueryResult<unknown>>, refresh = 0, staleMs?: number) =>
   act(async () => root.render(<Probe k={k} fetch={fetch} refresh={refresh} staleMs={staleMs} />));
+/** Mounts with a soft poll token: what the auto-refresh timer and focus bump. */
+const poll = (k: string, fetch: () => Promise<QueryResult<unknown>>, token: number) =>
+  act(async () => root.render(<Probe k={k} fetch={fetch} staleMs={QUERY_STALE_MS} poll={token} />));
 
 beforeEach(() => {
   clearQueryCache();
@@ -211,6 +214,22 @@ describe("query cache", () => {
     await mount("k", fetcher, 0, QUERY_STALE_MS);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(seen).toMatchObject({ state: "ready", data: { availability: "ready" } });
+  });
+
+  it("skips a soft poll while a fetch for the key is still in flight, and polls once it settled", async () => {
+    const slow = deferred<QueryResult<string>>();
+    const fetcher = vi.fn(() => slow.promise);
+    await poll("k", fetcher, 0);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await poll("k", fetcher, 1);
+    await poll("k", fetcher, 2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await act(async () => slow.resolve(ok("one")));
+    const next = vi.fn(async () => ok("two"));
+    await poll("k", next, 3);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(seen).toMatchObject({ state: "ready", data: "two" });
   });
 
   it("stays bounded", async () => {
