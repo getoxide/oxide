@@ -88,6 +88,7 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
+import stylesCss from "../styles/styles.css?raw";
 const { formatDuration, TerminalCommandBlock } = await import("./TerminalCommandBlock");
 const { getAppearance, saveAppearance, terminalAppearance } = await import("../shared/appearance");
 
@@ -341,4 +342,59 @@ it("prefixes the Command block header with a $ prompt cue, keeping the command t
   expect(prompt.getAttribute("aria-hidden")).toBe("true");
   expect(header.textContent).toMatch(/^\$\s*cd \.\./);
   expect(header.querySelector("code")?.textContent).toBe("cd ..");
+});
+
+it.each([
+  ["failed", { ended: true, exitCode: 2 }, false],
+  ["running", { ended: false, exitCode: null }, true],
+] as const)("keeps xterm opaque on the Terminal background in a %s block", async (state, overrides, active) => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output: "boom\r\n", outputOffset: 0, ...overrides }),
+        active,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  const section = mount.querySelector("section.terminal-command-block")!;
+  expect(section.classList.contains(state)).toBe(true);
+  const term = instances[0];
+  expect((term.options.theme as { background: string }).background).toBe(terminalAppearance().theme.background);
+  expect(term.options.allowTransparency).not.toBe(true);
+  if (state === "failed") {
+    const status = section.querySelector(".terminal-block-status")!;
+    expect(status.classList.contains("error")).toBe(true);
+    expect(status.textContent).toContain("exit 2");
+  }
+});
+
+function luminance(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a: string, b: string) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+it.each(["Oxide Dark", "Oxide Light"])("keeps failed-block red text at WCAG AA contrast on %s", (themeName) => {
+  const initial = getAppearance();
+  saveAppearance({ ...initial, themeName });
+  try {
+    const { theme } = terminalAppearance() as { theme: Record<string, string> };
+    // A theme without an error colour falls back to the --red of styles.css.
+    const errorRed =
+      document.documentElement.style.getPropertyValue("--red") || /--red:\s*(#[\da-f]{6})/i.exec(stylesCss)![1];
+    for (const red of [errorRed, theme.red, theme.brightRed]) {
+      expect(red, themeName).toMatch(/^#[\da-f]{6}$/i);
+      expect(contrast(red, theme.background), `${red} on ${theme.background}`).toBeGreaterThanOrEqual(4.5);
+    }
+  } finally {
+    saveAppearance(initial);
+  }
 });

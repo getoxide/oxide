@@ -321,7 +321,9 @@ it("applies area-specific surface tokens and optional theme fonts, clearing them
   expect(rootStyle().getPropertyValue("--editor-status-bar-background")).toBe("#171717");
   expect(rootStyle().getPropertyValue("--terminal-header-background")).toBe("#181818");
   expect(rootStyle().getPropertyValue("--terminal-block-running-rail")).toBe("#3399ff");
-  expect(rootStyle().getPropertyValue("--terminal-block-failed-tint")).toBe("#ff555522");
+  expect(rootStyle().getPropertyValue("--terminal-block-failed-rail")).toBe("#ff5555");
+  // Block tints are no longer theme tokens: a tint behind the opaque xterm canvas reads as a dark box.
+  expect(rootStyle().getPropertyValue("--terminal-block-failed-tint")).toBe("");
   expect(rootStyle().getPropertyValue("--font-surfaces")).toBe("Georgia, serif");
   expect(rootStyle().getPropertyValue("--font-surfaces-size")).toBe("14px");
 

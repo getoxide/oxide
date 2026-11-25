@@ -49,3 +49,12 @@ it("hangs both $ prompts in the gutter, so commands, their output and the comman
     declarations(".terminal-command-block").padding.split(" ")[1],
   );
 });
+
+it.each([".terminal-command-block.failed", ".terminal-command-block.running"])(
+  "paints no tint behind %s, so the opaque xterm canvas never shows as a dark box inside it",
+  (selector) => {
+    const rule = declarations(selector);
+    expect(paints(rule.background)).toBe(false);
+    expect(paints(rule["background-color"])).toBe(false);
+  },
+);

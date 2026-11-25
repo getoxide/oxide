@@ -231,9 +231,7 @@ export const SURFACE_TOKENS: Record<string, string> = {
   "terminal.header.background": "--terminal-header-background",
   "terminal.block.border": "--terminal-block-border",
   "terminal.block.running_rail": "--terminal-block-running-rail",
-  "terminal.block.running_tint": "--terminal-block-running-tint",
   "terminal.block.failed_rail": "--terminal-block-failed-rail",
-  "terminal.block.failed_tint": "--terminal-block-failed-tint",
 };
 const LIGHT: Record<string, string> = {
   background: "#FBFBFA",
