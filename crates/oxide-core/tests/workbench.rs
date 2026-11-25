@@ -309,7 +309,11 @@ fn an_exclamation_mark_after_a_quote_runs_as_typed() {
             .unwrap();
         let (code, _) = block_end(&view, "bang");
         assert_eq!(code, "0", "{shell:?}: {}", view.text());
-        assert!(view.text().contains("fix!\r\n"), "{shell:?}: {}", view.text());
+        assert!(
+            view.text().contains("fix!\r\n"),
+            "{shell:?}: {}",
+            view.text()
+        );
         core.close_terminal(terminal).unwrap();
     }
 }

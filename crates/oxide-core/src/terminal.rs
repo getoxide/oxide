@@ -47,8 +47,8 @@ impl TerminalSession {
                 "Invalid command block or command exceeds 64 KiB.".into(),
             ));
         }
-        let script = os::block_script(token, command)
-            .map_err(|error| Error::Terminal(error.to_string()))?;
+        let script =
+            os::block_script(token, command).map_err(|error| Error::Terminal(error.to_string()))?;
         self.write(script.as_bytes())
     }
 
