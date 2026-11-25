@@ -6,6 +6,7 @@ import { commands, type IssueDetail, type IssueSummary } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
 import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS } from "../shared/useAutoRefresh";
+import { preloadGithub } from "../shared/githubQueries";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let host: HTMLDivElement;
@@ -56,6 +57,23 @@ const render = () => act(async () => root.render(<IssuesSurface projectId={1} />
 const listCalls = () => vi.mocked(commands.listIssues).mock.calls.length;
 const button = (name: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === name) as HTMLButtonElement;
+
+it("joins the background preload when opened mid-preload instead of asking gh again", async () => {
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => (finish = resolve));
+  vi.mocked(commands.listIssues).mockImplementation(async () => {
+    await gate;
+    return { status: "ok", data: [summary()] };
+  });
+  const preload = preloadGithub(1);
+  await act(async () => { await Promise.resolve(); });
+  await render();
+  await act(async () => { finish(); await preload; });
+
+  expect(host.textContent).toContain("Crash on startup");
+  expect(commands.issuesState).toHaveBeenCalledTimes(1);
+  expect(listCalls()).toBe(1);
+});
 
 it("lists issues with a full-width search and New issue, and no Refresh or Search button", async () => {
   await render();
