@@ -1181,7 +1181,9 @@ fn pull_request_detail_interleaves_commits_force_pushes_reviews_and_events() {
         TimelineMerge, TimelinePerson, TimelineReview,
     };
     let f = fixture();
-    let mut state = state_with_prs(&[detailed_pr()]);
+    let mut pr = detailed_pr();
+    pr["comments"] = serde_json::json!([]);
+    let mut state = state_with_prs(&[pr]);
     state["timelines"] = serde_json::json!({"5": {
         "id": "PR_kwDO5",
         "url": "https://github.com/fake/repo/pull/5",
@@ -1319,6 +1321,135 @@ fn pull_request_detail_falls_back_to_comments_and_reviews_when_the_timeline_quer
             }),
         ]
     );
+}
+
+/// An ISO timestamp `i` seconds after 10:00.
+fn at_second(i: usize) -> String {
+    format!(
+        "2026-01-03T{:02}:{:02}:{:02}Z",
+        10 + i / 3600,
+        (i / 60) % 60,
+        i % 60
+    )
+}
+
+#[test]
+fn issue_detail_pages_through_a_timeline_longer_than_one_page() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut state = ok_state();
+    let mut issue = issue_42();
+    let comments: Vec<serde_json::Value> = (0..150)
+        .filter(|i| i % 2 == 1)
+        .map(|i| {
+            serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "dave"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+        })
+        .collect();
+    issue["comments"] = comments.into();
+    state["issues"] = serde_json::json!([issue]);
+    let nodes: Vec<serde_json::Value> = (0..150)
+        .map(|i| {
+            if i % 2 == 1 {
+                serde_json::json!({"__typename": "IssueComment", "id": format!("IC_{i}"),
+                    "author": {"login": "dave"}, "body": format!("comment {i}"), "createdAt": at_second(i)})
+            } else {
+                serde_json::json!({"__typename": "ReopenedEvent", "actor": {"login": "dave"},
+                    "createdAt": at_second(i)})
+            }
+        })
+        .collect();
+    state["timelines"] =
+        serde_json::json!({"42": {"id": "I_kwDO42", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.issue_detail(f.project.id, 42).unwrap();
+    assert_eq!(detail.timeline.len(), 150);
+    assert!(!detail.timeline_truncated);
+    assert!(matches!(&detail.timeline[149], TimelineItem::Comment(c) if c.id == "IC_149"));
+    let pages: Vec<Vec<String>> = f
+        .gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .collect();
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    let cursor = pages[1]
+        .iter()
+        .position(|a| a == "cursor=100")
+        .expect("the next cursor");
+    assert_eq!(
+        pages[1][cursor - 1],
+        "-f",
+        "the cursor is passed as a string field"
+    );
+}
+
+#[test]
+fn a_timeline_beyond_the_page_cap_is_flagged_and_keeps_every_comment_and_review() {
+    use oxide_core::TimelineItem;
+    let f = fixture();
+    let mut pr = detailed_pr();
+    let total = 650;
+    pr["comments"] = (0..total)
+        .filter(|i| i % 10 != 0)
+        .map(|i| {
+            serde_json::json!({"id": format!("IC_{i}"), "author": {"login": "reviewer"},
+            "body": format!("comment {i}"), "createdAt": at_second(i)})
+        })
+        .collect::<Vec<_>>()
+        .into();
+    pr["reviews"] = (0..total)
+        .filter(|i| i % 10 == 0)
+        .map(|i| {
+            serde_json::json!({"id": format!("PRR_{i}"), "author": {"login": "bob"},
+            "body": format!("review {i}"), "state": "APPROVED", "submittedAt": at_second(i)})
+        })
+        .collect::<Vec<_>>()
+        .into();
+    let nodes: Vec<serde_json::Value> = (0..total)
+        .map(|i| {
+            if i % 10 == 0 {
+                serde_json::json!({"__typename": "PullRequestReview", "id": format!("PRR_{i}"),
+                    "author": {"login": "bob"}, "body": format!("review {i}"), "state": "APPROVED",
+                    "createdAt": at_second(i), "submittedAt": at_second(i)})
+            } else {
+                serde_json::json!({"__typename": "IssueComment", "id": format!("IC_{i}"),
+                    "author": {"login": "reviewer"}, "body": format!("comment {i}"), "createdAt": at_second(i)})
+            }
+        })
+        .collect();
+    let mut state = state_with_prs(&[pr]);
+    state["timelines"] =
+        serde_json::json!({"5": {"id": "PR_5", "timelineItems": {"nodes": nodes}}});
+    install_gh(&f, &state);
+
+    let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
+    assert!(detail.timeline_truncated, "more than the pages read");
+    let ids: Vec<String> = detail
+        .timeline
+        .iter()
+        .map(|item| match item {
+            TimelineItem::Comment(c) => c.id.clone(),
+            TimelineItem::Review(r) => r.id.clone(),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    let expected: Vec<String> = (0..total)
+        .map(|i| {
+            if i % 10 == 0 {
+                format!("PRR_{i}")
+            } else {
+                format!("IC_{i}")
+            }
+        })
+        .collect();
+    assert_eq!(ids, expected, "every comment and review, oldest first");
+    let pages = f
+        .gh_calls()
+        .into_iter()
+        .filter(|c| c[..2] == ["api", "graphql"] && c.iter().any(|a| a.contains("timelineItems")))
+        .count();
+    assert_eq!(pages, 5, "the pages read are capped");
 }
 
 #[test]

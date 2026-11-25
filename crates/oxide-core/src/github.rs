@@ -255,6 +255,9 @@ pub struct PullRequestDetail {
     /// Comments, reviews, commits and activity, oldest first. Only the comments and reviews
     /// when GitHub refused the timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment and review is still in
+    /// `timeline`.
+    pub timeline_truncated: bool,
     /// The reactions on the description; none when GitHub refused the timeline query.
     pub reactions: Vec<ReactionGroup>,
     /// Signed URLs for the private user attachments shown in the description, comments and
@@ -849,7 +852,8 @@ fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
     entries
 }
 
-/// The timeline `gh pr view` can tell on its own: comments and reviews, oldest first.
+/// The conversation `gh pr view` or `gh issue view` tells on its own: comments and reviews,
+/// oldest first.
 fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
     let mut items: Vec<TimelineItem> = list("comments")
@@ -1191,12 +1195,11 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         node_id,
         participants,
         reactions,
-        items,
+        mut items,
         signed_images,
-    } = timeline.unwrap_or_else(|| Timeline {
-        items: fallback_timeline(&v),
-        ..Timeline::default()
-    });
+        truncated,
+    } = timeline.unwrap_or_default();
+    timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(PullRequestDetail {
         phase: phase_from(&v),
         body: text(&v["body"]),
@@ -1234,6 +1237,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         node_id,
         participants,
         timeline: items,
+        timeline_truncated: truncated,
         reactions,
         signed_images,
     })
@@ -1813,6 +1817,8 @@ pub struct IssueDetail {
     /// Comments and activity, oldest first. Only the comments when GitHub refused the
     /// timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// Whether GitHub has more activity than Oxide read; every comment is still in `timeline`.
+    pub timeline_truncated: bool,
     /// The reactions on the description; none when GitHub refused the timeline query.
     pub reactions: Vec<ReactionGroup>,
     /// Signed URLs for the private user attachments shown in the description and comments;
@@ -2061,23 +2067,11 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         node_id,
         participants,
         reactions,
-        items,
+        mut items,
         signed_images,
-    } = timeline.unwrap_or_else(|| Timeline {
-        items: comments
-            .iter()
-            .map(|c| {
-                TimelineItem::Comment(TimelineComment {
-                    id: c.id.clone(),
-                    author: c.author.clone(),
-                    body: c.body.clone(),
-                    created_at: c.created_at.clone(),
-                    reactions: Vec::new(),
-                })
-            })
-            .collect(),
-        ..Timeline::default()
-    });
+        truncated,
+    } = timeline.unwrap_or_default();
+    timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(IssueDetail {
         number: v["number"].as_u64().unwrap_or(0) as u32,
         title: text(&v["title"]),
@@ -2094,6 +2088,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         node_id,
         participants,
         timeline: items,
+        timeline_truncated: truncated,
         reactions,
         signed_images,
     })

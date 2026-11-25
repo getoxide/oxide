@@ -157,6 +157,14 @@ if args[:2] == ["api", "graphql"]:
         if node is None:
             sys.stderr.write("GraphQL: Could not resolve to an Issue with the number of %s.\n" % number)
             sys.exit(1)
+        # Pages of 100 items; the cursor, passed as `-f cursor=<offset>`, is the offset.
+        start = int(next((a[len("cursor="):] for a in args if a.startswith("cursor=")), "0"))
+        items = node.get("timelineItems", {}).get("nodes", [])
+        end = start + 100
+        node = dict(node, timelineItems={
+            "nodes": items[start:end],
+            "pageInfo": {"hasNextPage": end < len(items), "endCursor": str(end)},
+        })
         print(json.dumps(node))
         sys.exit(0)
     if any("reviewThreads" in a for a in args):

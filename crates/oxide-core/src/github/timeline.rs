@@ -177,6 +177,8 @@ pub(super) struct Timeline {
     pub items: Vec<TimelineItem>,
     /// Signed URLs for the user attachments of the description, comments and reviews.
     pub signed_images: Vec<SignedImage>,
+    /// Whether GitHub holds more entries than the pages read.
+    pub truncated: bool,
 }
 
 /// Which kind of number the query asks for.
@@ -186,8 +188,10 @@ pub(super) enum Subject {
     PullRequest,
 }
 
-/// The timeline entries GitHub keeps, as many as one page holds.
-const MAX_ITEMS: u32 = 100;
+/// The timeline entries one page holds, GitHub's maximum.
+const PAGE_SIZE: u32 = 100;
+/// The pages read at most, so a very long conversation costs a bounded number of round trips.
+const MAX_PAGES: usize = 5;
 
 const ACTOR: &str = "actor{login} createdAt";
 
@@ -225,42 +229,150 @@ fn item_fields(subject: Subject) -> String {
     fields
 }
 
-/// The timeline, node id and participants of issue or pull request `number`. Best effort:
-/// `None` when GitHub refuses the query, so the detail view still shows what `gh` gave.
-pub(super) fn timeline(gh: &Gh, cwd: &Path, subject: Subject, number: u32) -> Option<Timeline> {
+/// One page of the timeline query: the first also reads the node's own fields, the next ones
+/// only the entries after `cursor`.
+fn timeline_page(
+    gh: &Gh,
+    cwd: &Path,
+    subject: Subject,
+    number: u32,
+    cursor: Option<&str>,
+) -> Option<serde_json::Value> {
     let field = match subject {
         Subject::Issue => "issue",
         Subject::PullRequest => "pullRequest",
     };
+    let head = if cursor.is_none() {
+        format!("id url bodyHTML {REACTION_FIELDS} participants(first:50){{nodes{{login}}}} ")
+    } else {
+        String::new()
+    };
     let query = format!(
-        "query=query($owner:String!,$name:String!,$number:Int!){{repository(owner:$owner,name:$name){{\
-         {field}(number:$number){{id url bodyHTML {REACTION_FIELDS} participants(first:50){{nodes{{login}}}} \
-         timelineItems(first:{MAX_ITEMS}){{nodes{{{}}}}}}}}}}}",
+        "query=query($owner:String!,$name:String!,$number:Int!,$cursor:String){{\
+         repository(owner:$owner,name:$name){{{field}(number:$number){{{head}\
+         timelineItems(first:{PAGE_SIZE},after:$cursor){{pageInfo{{hasNextPage endCursor}} \
+         nodes{{{}}}}}}}}}}}",
         item_fields(subject)
     );
     let number = format!("number={number}");
+    let cursor = cursor.map(|cursor| format!("cursor={cursor}"));
     let jq = format!(".data.repository.{field}");
-    let out = gh
-        .run(
-            cwd,
-            &[
-                "api",
-                "graphql",
-                "-F",
-                "owner={owner}",
-                "-F",
-                "name={repo}",
-                "-F",
-                &number,
-                "-f",
-                &query,
-                "--jq",
-                &jq,
-            ],
-        )
-        .ok()?;
-    let node: serde_json::Value = serde_json::from_str(&out).ok()?;
-    Some(timeline_from(&node))
+    let mut args = vec![
+        "api",
+        "graphql",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "name={repo}",
+        "-F",
+        &number,
+        "-f",
+        &query,
+    ];
+    if let Some(cursor) = &cursor {
+        // GitHub's opaque cursor, a string field: never `-F`, which would read `@file`.
+        args.extend(["-f", cursor.as_str()]);
+    }
+    args.extend(["--jq", &jq]);
+    let out = gh.run(cwd, &args).map_err(crate::Error::from);
+    oxide_platform::diag::best_effort("timeline query", out.as_ref().map(|_| ()));
+    let parsed = super::parse(&out.ok()?);
+    oxide_platform::diag::best_effort("timeline response", parsed.as_ref().map(|_| ()));
+    parsed.ok()
+}
+
+/// The timeline, node id and participants of issue or pull request `number`, up to
+/// [`MAX_PAGES`] pages of entries. Best effort: `None` when GitHub refuses the query, so the
+/// detail view still shows what `gh` gave.
+pub(super) fn timeline(gh: &Gh, cwd: &Path, subject: Subject, number: u32) -> Option<Timeline> {
+    let mut node = timeline_page(gh, cwd, subject, number, None)?;
+    let mut items = list(&node["timelineItems"]["nodes"]).to_vec();
+    let mut info = node["timelineItems"]["pageInfo"].clone();
+    for _ in 1..MAX_PAGES {
+        let Some(cursor) = info["endCursor"]
+            .as_str()
+            .filter(|c| info["hasNextPage"].as_bool() == Some(true) && !c.is_empty())
+        else {
+            break;
+        };
+        let Some(page) = timeline_page(gh, cwd, subject, number, Some(cursor)) else {
+            break;
+        };
+        items.extend(list(&page["timelineItems"]["nodes"]).iter().cloned());
+        info = page["timelineItems"]["pageInfo"].clone();
+    }
+    node["timelineItems"]["nodes"] = serde_json::Value::Array(items);
+    Some(Timeline {
+        truncated: info["hasNextPage"].as_bool() == Some(true),
+        ..timeline_from(&node)
+    })
+}
+
+impl TimelineItem {
+    /// When it happened, as GitHub's ISO 8601 timestamp.
+    pub fn at(&self) -> &str {
+        match self {
+            TimelineItem::Comment(c) => &c.created_at,
+            TimelineItem::Review(r) => &r.created_at,
+            TimelineItem::Commit(c) => &c.committed_at,
+            TimelineItem::ForcePush(e) => &e.created_at,
+            TimelineItem::Assigned(e)
+            | TimelineItem::Unassigned(e)
+            | TimelineItem::ReviewRequested(e)
+            | TimelineItem::ReviewRequestRemoved(e) => &e.created_at,
+            TimelineItem::Labeled(e) | TimelineItem::Unlabeled(e) => &e.created_at,
+            TimelineItem::Closed(e) => &e.created_at,
+            TimelineItem::Reopened(e)
+            | TimelineItem::ConvertedToDraft(e)
+            | TimelineItem::ReadyForReview(e)
+            | TimelineItem::HeadRefDeleted(e)
+            | TimelineItem::HeadRefRestored(e) => &e.created_at,
+            TimelineItem::Merged(e) => &e.created_at,
+            TimelineItem::Renamed(e) => &e.created_at,
+            TimelineItem::CrossReferenced(e) => &e.created_at,
+        }
+    }
+
+    /// What tells a comment or a review apart: its node id, or its author and time when
+    /// GitHub gave no id.
+    fn conversation_key(&self) -> Option<String> {
+        let (id, author, at) = match self {
+            TimelineItem::Comment(c) => (&c.id, &c.author, &c.created_at),
+            TimelineItem::Review(r) => (&r.id, &r.author, &r.created_at),
+            _ => return None,
+        };
+        Some(if id.is_empty() {
+            format!("{author}\n{at}")
+        } else {
+            id.clone()
+        })
+    }
+}
+
+/// Adds to `items` each comment and review of `conversation` (oldest first, as `gh` read them)
+/// that the timeline query did not return, in its place by time, so none can go missing when
+/// the timeline was cut short or could not be read.
+pub(super) fn merge_conversation(items: &mut Vec<TimelineItem>, conversation: Vec<TimelineItem>) {
+    let known: std::collections::HashSet<String> = items
+        .iter()
+        .filter_map(TimelineItem::conversation_key)
+        .collect();
+    let mut from = 0;
+    for entry in conversation {
+        if entry
+            .conversation_key()
+            .is_some_and(|key| known.contains(&key))
+        {
+            continue;
+        }
+        let at = items
+            .iter()
+            .skip(from)
+            .position(|item| item.at() > entry.at())
+            .map_or(items.len(), |i| from + i);
+        items.insert(at, entry);
+        from = at + 1;
+    }
 }
 
 fn list(value: &serde_json::Value) -> &[serde_json::Value] {
@@ -293,6 +405,7 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
             .filter_map(|item| item_from(item, repository))
             .collect(),
         signed_images: images,
+        truncated: false,
     }
 }
 
