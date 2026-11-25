@@ -69,7 +69,6 @@ it("Right accepts the latest matching history entry, while Tab requests real she
         ref={createRef<TerminalInputHandle>()}
         history={history}
         sessionId={1}
-        cwd="C:\\project"
         disabled={false}
         visible
         fresh
@@ -96,7 +95,6 @@ it("Up opens searchable history and navigates older commands without executing t
         ref={createRef<TerminalInputHandle>()}
         history={history}
         sessionId={1}
-        cwd="/project"
         disabled={false}
         visible
         fresh
@@ -139,7 +137,6 @@ it.each([
         ref={createRef<TerminalInputHandle>()}
         history={[]}
         sessionId={1}
-        cwd="/project"
         disabled={false}
         visible
         fresh
@@ -158,7 +155,6 @@ it("runs on Enter from an inline command line with no chat-style send button, an
         ref={createRef<TerminalInputHandle>()}
         history={[]}
         sessionId={1}
-        cwd="/project"
         disabled={false}
         visible
         fresh

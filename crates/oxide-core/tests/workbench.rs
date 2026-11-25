@@ -503,12 +503,7 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
     until(&core, terminal.id, &rx, "change;end;0;");
     let line = "cat comp";
     let result = core
-        .complete_terminal(
-            terminal.id,
-            line,
-            line.len(),
-            &temporary.path().join("project/subdir").to_string_lossy(),
-        )
+        .complete_terminal(terminal.id, line, line.len())
         .unwrap();
     assert_eq!(result.replacement_index, 4);
     assert!(
@@ -519,7 +514,7 @@ fn shell_completion_uses_the_live_directory_and_never_runs_the_typed_command() {
         "{result:?}"
     );
     let absent = core
-        .complete_terminal(terminal.id, "cat no-such-file-oxide-123", 25, &terminal.cwd)
+        .complete_terminal(terminal.id, "cat no-such-file-oxide-123", 25)
         .unwrap();
     assert!(absent.matches.is_empty());
     core.close_terminal(terminal.id).unwrap();
@@ -536,11 +531,40 @@ fn a_failing_block_keeps_the_error_the_shell_printed() {
     let start = output.find("fails;start").unwrap();
     let end = output.find("fails;end;").unwrap();
     let block = &output[start..end];
-    assert!(
-        block.to_lowercase().contains("no such file"),
-        "{block:?}"
-    );
+    assert!(block.to_lowercase().contains("no such file"), "{block:?}");
     assert!(output[end..].starts_with("fails;end;1;"), "{output:?}");
+    core.close_terminal(terminal.id).unwrap();
+}
+
+#[test]
+fn shell_completion_follows_the_directory_a_block_moved_the_shell_to() {
+    let (temporary, core, id) = fixture();
+    // Outside every open checkout, as `cd /Users` is.
+    let elsewhere = temporary.path().join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("only-here-dir")).unwrap();
+    std::fs::write(elsewhere.join("only-here.txt"), "fixture").unwrap();
+    let terminal = core.start_block_terminal(id).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+    let change = format!("cd '{}'", elsewhere.to_string_lossy());
+    core.run_terminal_block(terminal.id, &change, "away")
+        .unwrap();
+    until(&core, terminal.id, &rx, "away;end;0;");
+    let result = core.complete_terminal(terminal.id, "ls only", 7).unwrap();
+    let labels: Vec<_> = result
+        .matches
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(labels, ["only-here-dir/", "only-here.txt"], "{result:?}");
+    // Back in the project, its files again.
+    core.run_terminal_block(terminal.id, "cd -", "back")
+        .unwrap();
+    until(&core, terminal.id, &rx, "back;end;0;");
+    let result = core.complete_terminal(terminal.id, "ls sub", 6).unwrap();
+    assert!(
+        result.matches.iter().any(|item| item.label == "subdir/"),
+        "{result:?}"
+    );
     core.close_terminal(terminal.id).unwrap();
 }
 

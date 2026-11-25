@@ -31,7 +31,7 @@ export const commands = {
 	writeTerminal: (terminalId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_terminal", { terminalId, input })),
 	resizeTerminal: (terminalId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_terminal", { terminalId, rows, cols })),
 	closeTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("close_terminal", { terminalId })),
-	completeTerminal: (terminalId: number, line: string, cursor: number, cwd: string) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor, cwd })),
+	completeTerminal: (terminalId: number, line: string, cursor: number) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor })),
 	runTerminalBlock: (terminalId: number, command: string, token: string) => typedError<null, AppError>(__TAURI_INVOKE("run_terminal_block", { terminalId, command, token })),
 	/**
 	 *  Lists one directory of a Project (`""` is the root), minus

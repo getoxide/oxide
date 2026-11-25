@@ -27,6 +27,8 @@ pub struct TerminalSession {
     pub summary: TerminalSummary,
     commands: Sender<SessionCommand>,
     subscribers: Arc<Mutex<Vec<Sender<Vec<u8>>>>>,
+    /// The folder the shell reported at the end of its last block; `summary.cwd` until then.
+    cwd: Arc<Mutex<String>>,
 }
 
 enum SessionCommand {
@@ -153,9 +155,12 @@ impl TerminalSession {
             .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))?;
         let subscribers = Arc::new(Mutex::new(Vec::<Sender<Vec<u8>>>::new()));
         let output_subscribers = Arc::clone(&subscribers);
+        let start_cwd = dunce::simplified(cwd).to_string_lossy().into_owned();
+        let live_cwd = Arc::new(Mutex::new(start_cwd.clone()));
+        let output_cwd = Arc::clone(&live_cwd);
         let (commands, receiver) = unbounded();
         std::thread::spawn(move || {
-            read_output(reader, &output_subscribers, blocks);
+            read_output(reader, &output_subscribers, blocks, &output_cwd);
         });
         std::thread::spawn(move || {
             let mut writer = writer;
@@ -196,12 +201,18 @@ impl TerminalSession {
             summary: TerminalSummary {
                 id,
                 pid,
-                cwd: dunce::simplified(cwd).to_string_lossy().into_owned(),
+                cwd: start_cwd,
                 shell: shell_name,
             },
             commands,
             subscribers,
+            cwd: live_cwd,
         })
+    }
+
+    /// The shell's current folder, as its last block `end` marker reported it.
+    pub fn live_cwd(&self) -> String {
+        self.cwd.lock_recover().clone()
     }
 
     pub fn subscribe(&self) -> Receiver<Vec<u8>> {
@@ -329,12 +340,17 @@ fn read_output(
     mut reader: Box<dyn Read + Send>,
     subscribers: &Mutex<Vec<Sender<Vec<u8>>>>,
     blocks: bool,
+    cwd: &Mutex<String>,
 ) {
     let mut buffer = [0_u8; 16 * 1024];
+    let mut markers = EndMarkers::default();
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(count) => {
+                if blocks && let Some(folder) = markers.push(&buffer[..count]) {
+                    *cwd.lock_recover() = folder;
+                }
                 deliver(subscribers, &buffer[..count]);
             }
         }
@@ -344,6 +360,62 @@ fn read_output(
     }
 }
 
+/// Finds the folder in the block `end` markers the shell hooks print
+/// (`ESC ] 633;Oxide;<token>;end;<exit>;<folder> BEL`), across PTY reads.
+#[derive(Default)]
+struct EndMarkers {
+    pending: Vec<u8>,
+}
+
+impl EndMarkers {
+    const PREFIX: &'static [u8] = b"\x1b]633;Oxide;";
+    /// Longer than any marker a shell prints; an unterminated one past it is dropped.
+    const LIMIT: usize = 8 * 1024;
+
+    /// The folder of the last complete `end` marker, when this chunk finished one.
+    fn push(&mut self, chunk: &[u8]) -> Option<String> {
+        self.pending.extend_from_slice(chunk);
+        let mut folder = None;
+        let mut rest = 0;
+        let mut open = false;
+        while let Some(start) = find(&self.pending[rest..], Self::PREFIX).map(|at| rest + at) {
+            let body = start + Self::PREFIX.len();
+            let Some(length) = self.pending[body..].iter().position(|&b| b == 0x07) else {
+                rest = start;
+                open = true;
+                break;
+            };
+            let marker = String::from_utf8_lossy(&self.pending[body..body + length]);
+            let mut fields = marker.splitn(4, ';');
+            if let (Some(_token), Some("end"), Some(_exit), Some(path)) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+                && Path::new(path).is_absolute()
+            {
+                folder = Some(path.to_string());
+            }
+            rest = body + length + 1;
+        }
+        // Keep an open marker, or else only a tail that could start the next prefix.
+        let keep_from = if open {
+            rest
+        } else {
+            let tail = self.pending.len().saturating_sub(Self::PREFIX.len() - 1);
+            tail.max(rest)
+        };
+        self.pending.drain(..keep_from);
+        if self.pending.len() > Self::LIMIT {
+            self.pending.clear();
+        }
+        folder
+    }
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 pub fn next_id(counter: &AtomicU32) -> u32 {
     counter.fetch_add(1, Ordering::Relaxed)
 }
@@ -351,6 +423,23 @@ pub fn next_id(counter: &AtomicU32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_folder_of_an_end_marker_is_read_across_split_reads() {
+        let mut markers = EndMarkers::default();
+        assert_eq!(
+            markers.push(b"out\x1b]633;Oxide;t1;start\x07error\r\n\x1b]63"),
+            None
+        );
+        assert_eq!(markers.push(b"3;Oxide;t1;end;1;/Users/some;one"), None);
+        assert_eq!(markers.push(b"\x07"), Some("/Users/some;one".to_string()));
+        assert_eq!(
+            markers.push(b"\x1b]633;Oxide;a;end;0;/a\x07\x1b]633;Oxide;b;end;0;/b\x07"),
+            Some("/b".to_string())
+        );
+        // A relative folder is not one the shell reports: it is ignored.
+        assert_eq!(markers.push(b"\x1b]633;Oxide;c;end;0;relative\x07"), None);
+    }
 
     #[test]
     fn a_pty_child_without_a_pid_fails_the_start() {

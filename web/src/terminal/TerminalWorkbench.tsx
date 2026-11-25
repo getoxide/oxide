@@ -511,7 +511,6 @@ export function TerminalWorkbench({
           ref={composer}
           history={history}
           sessionId={sessionId}
-          cwd={cwd}
           disabled={closed || sessionId === null}
           visible={visible}
           fresh={blocks.length === 0}

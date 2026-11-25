@@ -26,8 +26,6 @@ interface Props {
   ref: Ref<TerminalInputHandle>;
   history: CommandHistory[];
   sessionId: number | null;
-  /** Where shell completion resolves paths. */
-  cwd: string;
   disabled: boolean;
   visible: boolean;
   /** No Command has run yet: show the shortcut hint. */
@@ -38,7 +36,6 @@ export function TerminalInput({
   ref,
   history,
   sessionId,
-  cwd,
   disabled,
   visible,
   fresh,
@@ -156,7 +153,6 @@ export function TerminalInput({
         sessionId,
         input,
         cursor,
-        cwd,
       );
       if (captured !== version.current) return;
       if (result.status === "error") throw new Error(result.error.message);
