@@ -136,6 +136,19 @@ if args[:2] == ["api", "graphql"]:
         # The names of the checks branch protection requires, one per line through --jq.
         print("\n".join(state.get("required_checks", [])))
         sys.exit(0)
+    if any("addReaction" in a or "removeReaction" in a for a in args):
+        # A reaction added or removed, recorded in `state["reactions"]`; `reaction_error` refuses it.
+        if state.get("reaction_error"):
+            sys.stderr.write(state["reaction_error"] + "\n")
+            sys.exit(1)
+        field = lambda name: next(a[len(name) + 1:] for a in args if a.startswith(name + "="))
+        add = any("addReaction" in a for a in args)
+        state.setdefault("reactions", []).append(
+            {"subject": field("subject"), "content": field("content"), "add": add}
+        )
+        save()
+        print("{}")
+        sys.exit(0)
     if any("timelineItems" in a for a in args):
         # An issue's or pull request's node, timeline and participants, printed through --jq.
         # `state["timelines"]` maps numbers to that node; absent, GitHub refuses the query.

@@ -1,6 +1,7 @@
 //! The Activity Timeline of an issue or a pull request: its comments, reviews, commits and
 //! events in the order GitHub shows them, read through one `gh api graphql` round trip.
 
+use super::reactions::{REACTION_FIELDS, ReactionGroup, reactions_from};
 use super::{CheckState, Gh, PullRequestLabel, ReviewState, review_state_from, text};
 use serde::Serialize;
 use std::path::Path;
@@ -14,6 +15,7 @@ pub struct TimelineComment {
     pub author: String,
     pub body: String,
     pub created_at: String,
+    pub reactions: Vec<ReactionGroup>,
 }
 
 /// A submitted review. Its node id is kept (to react to it), but it is never edited here.
@@ -25,6 +27,7 @@ pub struct TimelineReview {
     pub body: String,
     pub created_at: String,
     pub state: ReviewState,
+    pub reactions: Vec<ReactionGroup>,
 }
 
 /// A commit pushed to a pull request.
@@ -168,6 +171,8 @@ pub(super) struct Timeline {
     /// The GraphQL node id of the issue or pull request.
     pub node_id: String,
     pub participants: Vec<String>,
+    /// The reactions on the description.
+    pub reactions: Vec<ReactionGroup>,
     pub items: Vec<TimelineItem>,
 }
 
@@ -187,7 +192,7 @@ const ACTOR: &str = "actor{login} createdAt";
 fn item_fields(subject: Subject) -> String {
     let mut fields = format!(
         "__typename \
-         ... on IssueComment{{id author{{login}} body createdAt}} \
+         ... on IssueComment{{id author{{login}} body createdAt {REACTION_FIELDS}}} \
          ... on AssignedEvent{{{ACTOR} assignee{{... on User{{login}} ... on Bot{{login}} ... on Mannequin{{login}} ... on Organization{{login}}}}}} \
          ... on UnassignedEvent{{{ACTOR} assignee{{... on User{{login}} ... on Bot{{login}} ... on Mannequin{{login}} ... on Organization{{login}}}}}} \
          ... on LabeledEvent{{{ACTOR} label{{name color}}}} \
@@ -201,7 +206,7 @@ fn item_fields(subject: Subject) -> String {
     );
     if let Subject::PullRequest = subject {
         fields.push_str(&format!(
-            " ... on PullRequestReview{{id author{{login}} body state createdAt submittedAt}} \
+            " ... on PullRequestReview{{id author{{login}} body state createdAt submittedAt {REACTION_FIELDS}}} \
              ... on PullRequestCommit{{commit{{oid abbreviatedOid messageHeadline committedDate url \
                author{{name user{{login}}}} signature{{isValid}} statusCheckRollup{{state}}}}}} \
              ... on HeadRefForcePushedEvent{{{ACTOR} ref{{name}} beforeCommit{{oid abbreviatedOid}} afterCommit{{oid abbreviatedOid}}}} \
@@ -226,7 +231,7 @@ pub(super) fn timeline(gh: &Gh, cwd: &Path, subject: Subject, number: u32) -> Op
     };
     let query = format!(
         "query=query($owner:String!,$name:String!,$number:Int!){{repository(owner:$owner,name:$name){{\
-         {field}(number:$number){{id url participants(first:50){{nodes{{login}}}} \
+         {field}(number:$number){{id url {REACTION_FIELDS} participants(first:50){{nodes{{login}}}} \
          timelineItems(first:{MAX_ITEMS}){{nodes{{{}}}}}}}}}}}",
         item_fields(subject)
     );
@@ -274,6 +279,7 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
             .map(|p| text(&p["login"]))
             .filter(|login| !login.is_empty())
             .collect(),
+        reactions: reactions_from(node),
         items: list(&node["timelineItems"]["nodes"])
             .iter()
             .filter_map(|item| item_from(item, repository))
@@ -323,6 +329,7 @@ fn item_from(v: &serde_json::Value, repository: &str) -> Option<TimelineItem> {
             author: login(&v["author"]),
             body: text(&v["body"]),
             created_at: created_at(),
+            reactions: reactions_from(v),
         }),
         "PullRequestReview" => {
             let state = review_state_from(v["state"].as_str())?;
@@ -340,6 +347,7 @@ fn item_from(v: &serde_json::Value, repository: &str) -> Option<TimelineItem> {
                     .map(str::to_string)
                     .unwrap_or_else(created_at),
                 state,
+                reactions: reactions_from(v),
             })
         }
         "PullRequestCommit" => {

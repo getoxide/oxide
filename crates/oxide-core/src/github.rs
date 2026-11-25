@@ -15,7 +15,9 @@ use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod reactions;
 mod timeline;
+pub use reactions::{ReactionContent, ReactionGroup, toggle_reaction};
 use timeline::{Subject, Timeline};
 pub use timeline::{
     TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
@@ -251,6 +253,8 @@ pub struct PullRequestDetail {
     /// Comments, reviews, commits and activity, oldest first. Only the comments and reviews
     /// when GitHub refused the timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// The reactions on the description; none when GitHub refused the timeline query.
+    pub reactions: Vec<ReactionGroup>,
 }
 
 /// The form a new pull request starts from.
@@ -804,6 +808,7 @@ fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
                 author: text(&c["author"]["login"]),
                 body: text(&c["body"]),
                 created_at: text(&c["createdAt"]),
+                reactions: Vec::new(),
             })
         })
         .collect();
@@ -821,6 +826,7 @@ fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
             body,
             created_at: text(&review["submittedAt"]),
             state,
+            reactions: Vec::new(),
         }));
     }
     let at = |item: &TimelineItem| match item {
@@ -1132,6 +1138,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
     let Timeline {
         node_id,
         participants,
+        reactions,
         items,
     } = timeline.unwrap_or_else(|| Timeline {
         items: fallback_timeline(&v),
@@ -1174,6 +1181,7 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
         node_id,
         participants,
         timeline: items,
+        reactions,
     })
 }
 
@@ -1402,9 +1410,9 @@ mod tests {
     }
 
     #[test]
-    fn comment_ids_are_base64url_text_never_a_file_reference() {
+    fn node_ids_are_base64url_text_never_a_file_reference() {
         for id in ["IC_kwDOAbc123-_", "MDEyOklzc3VlQ29tbWVudDE="] {
-            assert_eq!(checked_comment_id(id).unwrap(), id);
+            assert_eq!(checked_node_id(id).unwrap(), id);
         }
         for id in [
             "",
@@ -1416,7 +1424,7 @@ mod tests {
             "a/b",
             "é",
         ] {
-            assert!(checked_comment_id(id).is_err(), "{id:?}");
+            assert!(checked_node_id(id).is_err(), "{id:?}");
         }
     }
 
@@ -1557,9 +1565,9 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
-/// A GraphQL node id (`IC_kwDO...`) is base64url-style text. Anything else, notably a leading
+/// A GraphQL node id (`IC_kwDO...`, `PRR_...`, `I_...`) is base64url-style text. Anything else, notably a leading
 /// `@`, which `gh api -F` would read as a file, is refused.
-fn checked_comment_id(id: &str) -> Result<&str> {
+fn checked_node_id(id: &str) -> Result<&str> {
     if !id.is_empty()
         && id.len() <= 256
         && id
@@ -1568,13 +1576,13 @@ fn checked_comment_id(id: &str) -> Result<&str> {
     {
         Ok(id)
     } else {
-        Err(Error::Github("That comment id is not valid.".into()))
+        Err(Error::Github("That GitHub id is not valid.".into()))
     }
 }
 
 /// Rewrites a conversation comment of a pull request or an issue (both are issue comments to GitHub).
 pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
-    let id = checked_comment_id(id)?;
+    let id = checked_node_id(id)?;
     let body = body.trim();
     if body.is_empty() {
         return Err(Error::Github(
@@ -1600,7 +1608,7 @@ pub fn edit_comment(gh: &Gh, cwd: &Path, id: &str, body: &str) -> Result<()> {
 
 /// Deletes a conversation comment of a pull request or an issue.
 pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
-    let id = checked_comment_id(id)?;
+    let id = checked_node_id(id)?;
     gh.require_ready(cwd)?;
     gh.run(
         cwd,
@@ -1751,6 +1759,8 @@ pub struct IssueDetail {
     /// Comments and activity, oldest first. Only the comments when GitHub refused the
     /// timeline query.
     pub timeline: Vec<TimelineItem>,
+    /// The reactions on the description; none when GitHub refused the timeline query.
+    pub reactions: Vec<ReactionGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1993,6 +2003,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
     let Timeline {
         node_id,
         participants,
+        reactions,
         items,
     } = timeline.unwrap_or_else(|| Timeline {
         items: comments
@@ -2003,6 +2014,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
                     author: c.author.clone(),
                     body: c.body.clone(),
                     created_at: c.created_at.clone(),
+                    reactions: Vec::new(),
                 })
             })
             .collect(),
@@ -2024,6 +2036,7 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         node_id,
         participants,
         timeline: items,
+        reactions,
     })
 }
 
