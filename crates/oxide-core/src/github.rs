@@ -295,7 +295,6 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
 #[derive(Default)]
 pub struct Gh {
     search_path: Mutex<Option<Vec<PathBuf>>>,
-    ready_at: Mutex<Option<Instant>>,
     auth_check: AuthCheck,
     default_branches: Cached<PathBuf, String>,
     merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
@@ -323,6 +322,9 @@ struct AuthSlot {
     running: Option<u64>,
     /// The last outcome of the current generation and when it finished.
     last: Option<(Instant, AuthOutcome)>,
+    /// When a check of the current generation last found `gh` ready. Kept with `generation`
+    /// so a search path change clears it in the same step that retires the checks of the old path.
+    ready_at: Option<Instant>,
 }
 
 /// Marks the check of `generation` as no longer running when dropped, and wakes its waiters:
@@ -384,11 +386,11 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
 impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
         *self.search_path.lock_recover() = dirs;
-        *self.ready_at.lock_recover() = None;
         {
             let mut slot = self.auth_check.slot.lock_recover();
             slot.generation += 1;
             slot.last = None;
+            slot.ready_at = None;
         }
         // Callers waiting for a check of the old search path start their own.
         self.auth_check.finished.notify_all();
@@ -538,13 +540,12 @@ impl Gh {
 
     /// [`Gh::availability`] with the `gh auth status` run given, so tests can drive it.
     fn availability_checked_by(&self, check_auth: impl FnOnce() -> AuthOutcome) -> AuthOutcome {
-        let fresh = |at: &Option<Instant>| at.is_some_and(|at| at.elapsed() < CACHE_TTL);
-        if fresh(&self.ready_at.lock_recover()) {
+        let check = &self.auth_check;
+        let mut slot = check.slot.lock_recover();
+        if slot.ready_at.is_some_and(|at| at.elapsed() < CACHE_TTL) {
             return (GithubAvailability::Ready, None);
         }
         let asked = Instant::now();
-        let check = &self.auth_check;
-        let mut slot = check.slot.lock_recover();
         let generation = loop {
             // A check that finished after this caller asked answers it too. An older failure
             // does not: logging in must be noticed on the next ask.
@@ -569,7 +570,7 @@ impl Gh {
         let mut slot = check.slot.lock_recover();
         if slot.generation == generation {
             if outcome.0 == GithubAvailability::Ready {
-                *self.ready_at.lock_recover() = Some(Instant::now());
+                slot.ready_at = Some(Instant::now());
             } else {
                 self.forget_metadata();
             }
@@ -1369,7 +1370,7 @@ mod tests {
         assert_eq!(viewer_login(&gh, cwd.path()).as_deref(), Some("me"));
 
         // The ready answer expires, `gh` is logged out, then logged in as someone else.
-        *gh.ready_at.lock_recover() = None;
+        gh.auth_check.slot.lock_recover().ready_at = None;
         std::fs::write(bin.path().join("state.json"), r#"{"auth": "logged_out"}"#).unwrap();
         assert_eq!(gh.availability(cwd.path()).0, GithubAvailability::LoggedOut);
         std::fs::write(
