@@ -30,12 +30,12 @@ import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
 import { Avatar } from "../shared/Avatar";
 import { githubKeys } from "../shared/githubQueries";
-import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, useQuery, type QueryResult } from "../shared/queryCache";
+import { getQueryData, invalidateQueries, QUERY_STALE_MS, setQueryData, updateQueries, updateQuery, useQuery, type QueryResult } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { Checks } from "./PullRequestChecks";
 import { Markdown, MarkdownImages } from "./PullRequestMarkdown";
 import { ActivityRow, type ConversationItem, isConversationItem, MoreOnGithub } from "./PullRequestTimeline";
-import { Reactions } from "../shared/Reactions";
+import { Reactions, ReactionsSaved, withReaction } from "../shared/Reactions";
 import { MergeFooter, MergeStatus, type Pending, Working } from "./PullRequestMerge";
 import { NO_EDIT, PullRequestPeople, ReviewStateIcon, useCandidates } from "./PullRequestPeople";
 import { conversationPeople, mergeMentions } from "../shared/mentions";
@@ -426,6 +426,11 @@ export function PullRequestReview({
     change(null, () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
   return (
     <MarkdownImages projectId={projectId} signed={detail.signedImages}>
+    <ReactionsSaved.Provider
+      value={(subject, content, add) =>
+        updateQuery<{ detail: PullRequestDetail }>(key, (d) => ({ detail: withReaction(d.detail, subject, content, add) }))
+      }
+    >
     <div className="pr-review">
       {nav}
       <RefreshNotice query={query} />
@@ -590,6 +595,7 @@ export function PullRequestReview({
         </div>
       )}
     </div>
+    </ReactionsSaved.Provider>
     </MarkdownImages>
   );
 }

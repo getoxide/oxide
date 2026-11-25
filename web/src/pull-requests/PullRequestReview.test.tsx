@@ -729,6 +729,32 @@ it("places the loading preview header inside .pr-scroll so it shares the review 
   expect(scroll!.querySelector('.skeleton[role="status"]')).not.toBeNull();
 });
 
+it("keeps a reaction across a remount, and a pending one over a refresh from before it", async () => {
+  let settle!: (value: { status: "ok"; data: null }) => void;
+  vi.spyOn(commands, "toggleReaction").mockImplementation(() => new Promise((resolve) => (settle = resolve)));
+  vi.mocked(commands.pullRequestDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ reactions: [{ content: "heart", count: 3, viewerHasReacted: false }] }),
+  });
+  await render();
+  const heart = () => host.querySelector<HTMLButtonElement>('section[aria-label="Description"] .reactions button[aria-pressed]')!;
+  await click(heart());
+  expect(heart().textContent).toBe("❤️4");
+
+  // A refresh that read GitHub before the reaction landed does not take it back meanwhile.
+  await render({ refreshKey: 1 });
+  expect(vi.mocked(commands.pullRequestDetail)).toHaveBeenCalledTimes(2);
+  expect(heart().textContent).toBe("❤️4");
+  expect(heart().getAttribute("aria-pressed")).toBe("true");
+
+  await act(async () => settle({ status: "ok", data: null }));
+  await act(() => root.unmount());
+  root = createRoot(host);
+  await render({ refreshKey: 1 });
+  expect(heart().textContent).toBe("❤️4");
+  expect(heart().getAttribute("aria-pressed")).toBe("true");
+});
+
 it("shows reactions on the description and reviews, and rolls a refused toggle back", async () => {
   vi.spyOn(commands, "toggleReaction").mockResolvedValue({ status: "error", error: { message: "GitHub refused the reaction" } });
   vi.mocked(commands.pullRequestDetail).mockResolvedValue({

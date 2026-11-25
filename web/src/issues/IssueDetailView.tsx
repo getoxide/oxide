@@ -6,7 +6,7 @@ import {
   PencilIcon,
 } from "@primer/octicons-react";
 import { useState } from "react";
-import { QUERY_STALE_MS, useQuery } from "../shared/queryCache";
+import { QUERY_STALE_MS, updateQuery, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
 import { CommentEditForm, CommentTools } from "../shared/CommentTools";
@@ -27,7 +27,7 @@ import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown, MarkdownImages } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
 import { ActivityRow, isConversationItem, MoreOnGithub } from "../pull-requests/PullRequestTimeline";
-import { Reactions } from "../shared/Reactions";
+import { Reactions, ReactionsSaved, withReaction } from "../shared/Reactions";
 import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
@@ -184,6 +184,11 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
 
   return (
     <MarkdownImages projectId={projectId} signed={detail.signedImages}>
+    <ReactionsSaved.Provider
+      value={(subject, content, add) =>
+        updateQuery<IssueDetail>(githubKeys.issueDetail(projectId, number), (d) => withReaction(d, subject, content, add))
+      }
+    >
     <div className="pr-review">
       <RefreshNotice query={query} />
       {nav}
@@ -507,6 +512,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         )}
       </footer>
     </div>
+    </ReactionsSaved.Provider>
     </MarkdownImages>
   );
 }

@@ -4,9 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
-import { clearQueryCache, QUERY_STALE_MS } from "../shared/queryCache";
+import { clearQueryCache, getQueryData, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
-import { preloadGithub } from "../shared/githubQueries";
+import { githubKeys, preloadGithub } from "../shared/githubQueries";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -625,6 +625,12 @@ it("shows reactions under the description and comments and toggles them optimist
   expect(comment.querySelector(".reactions")?.textContent).toContain("🚀1");
   expect(document.querySelector('[role="dialog"][aria-label="Add reaction"]')).toBeNull();
   await act(async () => finish());
+
+  // What GitHub accepted is kept in the cached issue, so reopening it shows the same.
+  const cached = getQueryData<IssueDetail>(githubKeys.issueDetail(1, 7))!;
+  expect(cached.reactions).toEqual([{ content: "thumbsUp", count: 1, viewerHasReacted: false }]);
+  const cachedComment = cached.timeline[0] as Extract<IssueDetail["timeline"][number], { kind: "comment" }>;
+  expect(cachedComment.reactions.map((r) => r.content)).toEqual(["rocket", "eyes"]);
 });
 
 it("shows the description's private attachment through its signed URL and other hosts as a link", async () => {

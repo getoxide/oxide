@@ -225,6 +225,14 @@ export function setQueryData<T>(key: string, data: T): void {
   notify(key);
 }
 
+/** Rewrites the data of the entry `key`, if it has any, keeping its age. */
+export function updateQuery<T>(key: string, update: (data: T) => T): void {
+  const entry = entries.get(key);
+  if (entry?.data === undefined) return;
+  entries.set(key, { ...entry, data: update(entry.data as T) });
+  notify(key);
+}
+
 /** Rewrites the data of every entry under `prefix`, e.g. to take a merged pull request off cached lists. */
 export function updateQueries<T>(prefix: string, update: (data: T) => T): void {
   for (const key of entries.keys()) {

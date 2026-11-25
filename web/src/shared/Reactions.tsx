@@ -1,6 +1,6 @@
 import { SmileyIcon } from "@primer/octicons-react";
-import { useRef, useState } from "react";
-import { commands, type ReactionContent, type ReactionGroup } from "../bindings";
+import { createContext, useContext, useRef, useState } from "react";
+import { commands, type ReactionContent, type ReactionGroup, type TimelineItem } from "../bindings";
 import { Popover } from "./Popover";
 
 /** GitHub's eight reactions, in the order its picker shows them. */
@@ -27,6 +27,33 @@ export function toggled(groups: ReactionGroup[], content: ReactionContent, add: 
     .sort((a, b) => (ORDER.get(a.content) ?? 0) - (ORDER.get(b.content) ?? 0));
 }
 
+/** `detail` with the viewer's `content` reaction added to or removed from `subjectId`: the
+ *  description when it is the detail's own node, else the comment or review with that id. */
+export function withReaction<T extends { nodeId: string; reactions: ReactionGroup[]; timeline: TimelineItem[] }>(
+  detail: T,
+  subjectId: string,
+  content: ReactionContent,
+  add: boolean,
+): T {
+  return {
+    ...detail,
+    reactions: detail.nodeId === subjectId ? toggled(detail.reactions, content, add) : detail.reactions,
+    timeline: detail.timeline.map((item) =>
+      (item.kind === "comment" || item.kind === "review") && item.id === subjectId
+        ? { ...item, reactions: toggled(item.reactions, content, add) }
+        : item,
+    ),
+  };
+}
+
+/** Where a detail view keeps a reaction GitHub accepted, so its cached detail shows it too. */
+export const ReactionsSaved = createContext<((subjectId: string, content: ReactionContent, add: boolean) => void) | null>(null);
+
+/** `groups` with the toggles still on their way to GitHub applied over them. */
+function withPending(groups: ReactionGroup[], pending: ReadonlyMap<ReactionContent, boolean>): ReactionGroup[] {
+  return [...pending].reduce((current, [content, add]) => toggled(current, content, add), groups);
+}
+
 /** The reaction pills under a description, a comment or a review, and the picker to add one.
  *  A click shows the change at once and takes it back when GitHub refuses it. Without a
  *  `subjectId` (GitHub gave no node id) the counts are shown but cannot be changed. */
@@ -37,30 +64,33 @@ export function Reactions({ projectId, subjectId, reactions, onError }: {
   onError: (message: string) => void;
 }) {
   const [groups, setGroups] = useState(reactions);
-  const [pending, setPending] = useState<ReadonlySet<ReactionContent>>(new Set());
+  const [pending, setPending] = useState<ReadonlyMap<ReactionContent, boolean>>(new Map());
   const [picking, setPicking] = useState(false);
   const add = useRef<HTMLButtonElement>(null);
-  // A reload from GitHub is the truth again.
+  const saved = useContext(ReactionsSaved);
+  // A reload from GitHub is the truth again, except for the toggles it may not know of yet.
   const [loaded, setLoaded] = useState(reactions);
   if (loaded !== reactions) {
     setLoaded(reactions);
-    setGroups(reactions);
+    setGroups(withPending(reactions, pending));
   }
 
   async function toggle(content: ReactionContent) {
     if (pending.has(content)) return;
     const adding = !groups.some((g) => g.content === content && g.viewerHasReacted);
     setGroups((current) => toggled(current, content, adding));
-    setPending((p) => new Set(p).add(content));
+    setPending((p) => new Map(p).set(content, adding));
     const result = await commands.toggleReaction(projectId, subjectId, content, adding);
     setPending((p) => {
-      const next = new Set(p);
+      const next = new Map(p);
       next.delete(content);
       return next;
     });
     if (result.status === "error") {
       setGroups((current) => toggled(current, content, !adding));
       onError(result.error.message);
+    } else {
+      saved?.(subjectId, content, adding);
     }
   }
 
