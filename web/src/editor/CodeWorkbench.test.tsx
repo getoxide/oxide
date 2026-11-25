@@ -439,7 +439,8 @@ describe("CodeWorkbench performance", () => {
     const option = (name: string) =>
       [...dialog()!.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.includes(name));
     expect(option("TypeScript")?.getAttribute("aria-selected")).toBe("true");
-    expect(option("Plain Text")?.getAttribute("aria-selected")).toBe("false");
+    expect(option("Plain text")?.textContent).toBe("Plain text");
+    expect(option("Plain text")?.getAttribute("aria-selected")).toBe("false");
 
     // The filter narrows the list.
     const filter = dialog()!.querySelector<HTMLInputElement>('input[aria-label="Filter languages"]')!;

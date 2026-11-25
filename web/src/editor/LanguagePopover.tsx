@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useState,
   type KeyboardEvent,
   type RefObject,
@@ -22,22 +21,27 @@ interface LanguageMode {
   label: string;
 }
 
-/** The language modes the editor runtime knows, Plain text included, by name. */
-function languageModes(): LanguageMode[] {
-  const modes = new Map<string, LanguageMode>([
-    ["plaintext", { id: "plaintext", label: "Plain Text" }],
-  ]);
-  for (const language of monaco.languages.getLanguages())
-    modes.set(language.id, {
-      id: language.id,
-      label: language.aliases?.[0] ?? language.id,
-    });
-  return [...modes.values()].sort((a, b) => a.label.localeCompare(b.label));
+const PLAIN_TEXT: LanguageMode = { id: "plaintext", label: "Plain text" };
+let catalog: { modes: LanguageMode[]; labels: Map<string, string> } | null = null;
+
+/** The language modes the editor runtime knows, Plain text included, by name. Built once: Oxide registers its languages before any editor opens. */
+function languageCatalog() {
+  if (!catalog) {
+    const labels = new Map<string, string>();
+    for (const language of monaco.languages.getLanguages())
+      labels.set(language.id, language.aliases?.[0] ?? language.id);
+    labels.set(PLAIN_TEXT.id, PLAIN_TEXT.label);
+    const modes = [...labels]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    catalog = { modes, labels };
+  }
+  return catalog;
 }
 
 /** The name a language mode is shown by. */
 export function languageLabel(id: string): string {
-  return languageModes().find((mode) => mode.id === id)?.label ?? id;
+  return languageCatalog().labels.get(id) ?? id;
 }
 
 /** Arrow keys move between the options of the list, and from the filter into it. */
@@ -137,7 +141,7 @@ export function LanguagePopover({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const modes = useMemo(() => languageModes(), []);
+  const { modes } = languageCatalog();
   const shown = modes.filter((mode) =>
     `${mode.label} ${mode.id}`.toLowerCase().includes(query.trim().toLowerCase()),
   );

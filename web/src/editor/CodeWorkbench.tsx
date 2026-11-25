@@ -966,7 +966,7 @@ export function CodeWorkbench({
             onClick={() => setLanguageMenu((open) => !open)}
           >
             <CodeIcon size={12} />{" "}
-            {current ? languageLabel(current.model.getLanguageId()) : "Plain text"}
+            {current ? languageLabel(current.model.getLanguageId()) : languageLabel("plaintext")}
             {language &&
               ` · ${serverStatusLabel(states[language])}`}
           </button>
