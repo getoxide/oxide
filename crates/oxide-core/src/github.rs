@@ -495,7 +495,11 @@ impl Gh {
 
     /// The one hardened `gh` command (ADR-0016): found on the search path, with the hardened
     /// environment and no standard input.
-    fn command(&self, cwd: &Path, args: &[&str]) -> std::result::Result<Command, GhError> {
+    fn command<S: AsRef<std::ffi::OsStr>>(
+        &self,
+        cwd: &Path,
+        args: impl IntoIterator<Item = S>,
+    ) -> std::result::Result<Command, GhError> {
         let path = self.path_var();
         #[cfg(windows)]
         let mut child_path = path.clone();
@@ -568,9 +572,7 @@ impl Gh {
                 Some(body)
             })
         };
-        #[cfg(windows)]
-        let args = args.as_slice();
-        let mut command = self.command(cwd, args)?;
+        let mut command = self.command(cwd, args.iter())?;
         let output = match input {
             Some(input) => pipe_stdin(command, input),
             None => {
