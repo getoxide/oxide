@@ -325,6 +325,24 @@ struct AuthSlot {
     last: Option<(Instant, AuthOutcome)>,
 }
 
+/// Marks the check of `generation` as no longer running when dropped, and wakes its waiters:
+/// on return as on unwind, so a panicking check cannot leave them waiting forever.
+struct RunningCheck<'a> {
+    check: &'a AuthCheck,
+    generation: u64,
+}
+
+impl Drop for RunningCheck<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.check.slot.lock_recover();
+        if slot.running == Some(self.generation) {
+            slot.running = None;
+        }
+        drop(slot);
+        self.check.finished.notify_all();
+    }
+}
+
 /// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
 /// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
 /// reads are kept: a failure is asked again next time.
@@ -510,7 +528,16 @@ impl Gh {
     }
 
     /// Whether `gh` can be used, and if not, what to tell the user.
-    fn availability(&self, cwd: &Path) -> (GithubAvailability, Option<String>) {
+    fn availability(&self, cwd: &Path) -> AuthOutcome {
+        self.availability_checked_by(|| match self.run(cwd, &["auth", "status"]) {
+            Ok(_) => (GithubAvailability::Ready, None),
+            Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
+            Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
+        })
+    }
+
+    /// [`Gh::availability`] with the `gh auth status` run given, so tests can drive it.
+    fn availability_checked_by(&self, check_auth: impl FnOnce() -> AuthOutcome) -> AuthOutcome {
         let fresh = |at: &Option<Instant>| at.is_some_and(|at| at.elapsed() < CACHE_TTL);
         if fresh(&self.ready_at.lock_recover()) {
             return (GithubAvailability::Ready, None);
@@ -536,15 +563,10 @@ impl Gh {
         };
         slot.running = Some(generation);
         drop(slot);
-        let outcome = match self.run(cwd, &["auth", "status"]) {
-            Ok(_) => (GithubAvailability::Ready, None),
-            Err(GhError::Missing) => (GithubAvailability::Missing, Some(INSTALL_GUIDANCE.into())),
-            Err(GhError::Failed(_)) => (GithubAvailability::LoggedOut, Some(LOGIN_GUIDANCE.into())),
-        };
+        // Frees the slot and wakes the waiters even if the check unwinds.
+        let _running = RunningCheck { check, generation };
+        let outcome = check_auth();
         let mut slot = check.slot.lock_recover();
-        if slot.running == Some(generation) {
-            slot.running = None;
-        }
         if slot.generation == generation {
             if outcome.0 == GithubAvailability::Ready {
                 *self.ready_at.lock_recover() = Some(Instant::now());
@@ -554,7 +576,6 @@ impl Gh {
             slot.last = Some((Instant::now(), outcome.clone()));
         }
         drop(slot);
-        check.finished.notify_all();
         outcome
     }
 
@@ -1291,6 +1312,32 @@ mod tests {
                 "{url:?}"
             );
         }
+    }
+
+    /// Runs `ask` on its own thread and gives up after a while, so a hang fails the test.
+    fn within_seconds<T: Send + 'static>(ask: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(ask()));
+        rx.recv_timeout(std::time::Duration::from_secs(10)).ok()
+    }
+
+    #[test]
+    fn a_check_that_panics_does_not_leave_later_callers_waiting_forever() {
+        let bin = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let gh = std::sync::Arc::new(fake_gh(bin.path(), &serde_json::json!({"auth": "ok"})));
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gh.availability_checked_by(|| panic!("gh auth status unwound"))
+        }));
+        assert!(panicked.is_err());
+
+        let later = {
+            let gh = gh.clone();
+            let cwd = cwd.path().to_path_buf();
+            within_seconds(move || gh.availability(&cwd).0)
+        };
+        assert_eq!(later, Some(GithubAvailability::Ready));
     }
 
     /// A `Gh` that finds only the fake `gh` fixture, with the given state.
