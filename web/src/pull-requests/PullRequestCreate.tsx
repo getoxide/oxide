@@ -24,8 +24,8 @@ export function PullRequestCreate({
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
-  // Commits the head has beyond each base checked so far; null when Core cannot tell.
   const [isProtected, setIsProtected] = useState(false);
+  // Commits the head has beyond each base checked so far; null when Core cannot tell.
   const [ahead, setAhead] = useState<Record<string, number | null>>({});
   const [draft, setDraft] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -106,17 +106,10 @@ export function PullRequestCreate({
         : null;
   // The count for a newly chosen base is still on its way.
   const checking = base !== "" && !(base in ahead);
+  const canCreate =
+    !busy && !loading && title.trim() !== "" && base !== "" && base !== head && !blocker && !checking;
   async function submit() {
-    if (
-      busy ||
-      loading ||
-      !title.trim() ||
-      !base ||
-      base === head ||
-      blocker ||
-      checking
-    )
-      return;
+    if (!canCreate) return;
     setBusy(true);
     setError(null);
     try {
@@ -230,14 +223,7 @@ export function PullRequestCreate({
             className="btn primary"
             type="submit"
             aria-describedby={blocker ? "pr-create-hint" : undefined}
-            disabled={
-              busy ||
-              !title.trim() ||
-              !base ||
-              base === head ||
-              !!blocker ||
-              checking
-            }
+            disabled={!canCreate}
           >
             {busy ? (
               <SyncIcon size={14} className="spin" />
