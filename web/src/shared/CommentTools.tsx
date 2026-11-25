@@ -1,5 +1,6 @@
 import { PencilIcon, SyncIcon, TrashIcon } from "@primer/octicons-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { commands } from "../bindings";
 import { MarkdownEditor } from "./MarkdownEditor";
 
@@ -15,6 +16,12 @@ export function CommentTools({ projectId, id, onEdit, onDeleted, onError }: {
   onError: (message: string) => void;
 }) {
   const [step, setStep] = useState<Step>("idle");
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  function cancel() {
+    setStep("idle");
+    trigger.current?.focus();
+  }
 
   async function remove() {
     setStep("deleting");
@@ -27,26 +34,92 @@ export function CommentTools({ projectId, id, onEdit, onDeleted, onError }: {
     }
   }
 
-  if (step !== "idle") {
-    return (
-      <span className="comment-tools" role="group" aria-label="Delete this comment?">
-        <span className="comment-tools-ask">Delete?</span>
-        <button type="button" className="danger" disabled={step === "deleting"} onClick={() => void remove()}>
-          {step === "deleting" ? <><SyncIcon size={12} className="spin" /> Deleting…</> : "Delete"}
-        </button>
-        <button type="button" disabled={step === "deleting"} onClick={() => setStep("idle")}>Cancel</button>
-      </span>
-    );
-  }
   return (
     <span className="comment-tools" role="group" aria-label="Comment actions">
       <button type="button" className="icon-btn sm" title="Edit comment" aria-label="Edit comment" onClick={onEdit}>
         <PencilIcon size={14} />
       </button>
-      <button type="button" className="icon-btn sm" title="Delete comment" aria-label="Delete comment" onClick={() => setStep("confirm")}>
+      <button
+        ref={trigger}
+        type="button"
+        className="icon-btn sm"
+        title="Delete comment"
+        aria-label="Delete comment"
+        aria-haspopup="dialog"
+        onClick={() => setStep("confirm")}
+      >
         <TrashIcon size={14} />
       </button>
+      {step !== "idle" && (
+        <DeleteCommentDialog deleting={step === "deleting"} onCancel={cancel} onConfirm={() => void remove()} />
+      )}
     </span>
+  );
+}
+
+/** Keeps Tab and Shift+Tab among the enabled buttons of a modal: focus wraps around instead of
+ *  leaving it for the page behind. */
+function trapTab(event: React.KeyboardEvent<HTMLElement>) {
+  if (event.key !== "Tab") return;
+  const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")];
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const at = document.activeElement;
+  if (!first) {
+    event.preventDefault();
+    return;
+  }
+  if (event.shiftKey ? at === first || !event.currentTarget.contains(at) : at === last) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
+}
+
+/** Asks before deleting, in a modal over the window so the comment's card cannot clip it. */
+function DeleteCommentDialog({ deleting, onCancel, onConfirm }: {
+  deleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    if (deleting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onCancel();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [deleting, onCancel]);
+
+  return createPortal(
+    <div
+      className="modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !deleting) onCancel();
+      }}
+    >
+      <div
+        className="modal comment-delete-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="comment-delete-title"
+        aria-describedby="comment-delete-text"
+        tabIndex={-1}
+        onKeyDown={trapTab}
+      >
+        <h2 id="comment-delete-title">Delete this comment?</h2>
+        <p id="comment-delete-text">It is removed from GitHub for everyone. This cannot be undone.</p>
+        <div className="modal-actions">
+          <button type="button" autoFocus disabled={deleting} onClick={onCancel}>Cancel</button>
+          <button type="button" className={`danger${deleting ? " pending" : ""}`} disabled={deleting} onClick={onConfirm}>
+            {deleting ? <><SyncIcon size={14} className="spin" /> Deleting…</> : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

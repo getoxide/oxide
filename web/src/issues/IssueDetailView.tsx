@@ -1,12 +1,11 @@
 import { Skeleton } from "../shared/Skeleton";
 import {
   ArrowLeftIcon,
-  ChevronDownIcon,
   CommentIcon,
   MarkGithubIcon,
   PencilIcon,
 } from "@primer/octicons-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { QUERY_STALE_MS, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -23,10 +22,10 @@ import { Avatar } from "../shared/Avatar";
 import { IssueStateIcon } from "./IssueStateIcon";
 import { canSubmitComment, ISSUE_PHASE_LABEL, issuePhase, titleChanged } from "./issueView";
 import { MarkdownEditor } from "../shared/MarkdownEditor";
-import { Popover } from "../shared/Popover";
+import { SplitButton, SplitMenu, SplitMenuItem } from "../shared/SplitButton";
 import { Markdown } from "../pull-requests/PullRequestMarkdown";
 import { Working } from "../pull-requests/PullRequestMerge";
-import { Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
+import { AssignYourself, Field, LabelChip, Picker, useCandidates } from "../pull-requests/PullRequestPeople";
 import { relativeTime } from "../shared/relativeTime";
 import { shortcutLabel } from "../shared/platform";
 
@@ -84,8 +83,6 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const [reason, setReason] = useState<IssueCloseReason>("completed");
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [bodyDraft, setBodyDraft] = useState<string | null>(null);
-  const [reasonOpen, setReasonOpen] = useState(false);
-  const reasonTrigger = useRef<HTMLButtonElement>(null);
   const { candidates, load } = useCandidates(projectId);
   const busy = pending !== null;
 
@@ -105,7 +102,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
         <>
           <CopyLinkButton url={issue.url} onError={setError} />
           <button
-            className="pr-github"
+            className="icon-btn sm"
             onClick={() => void openLink(issue.url)}
             title="Open this issue on GitHub"
             aria-label="Open on GitHub"
@@ -139,12 +136,13 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const phase = issuePhase(detail);
   const open = phase === "open";
 
-  /** Runs a change on GitHub, then shows the issue's new state. */
-  async function change(kind: Pending, run: () => Promise<Result>) {
-    setPending(kind);
+  /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
+   *  nothing else back: the control that asked for it shows its own progress. */
+  async function change(kind: Pending | null, run: () => Promise<Result>) {
+    if (kind) setPending(kind);
     setError(null);
     const result = await run();
-    setPending(null);
+    if (kind) setPending(null);
     if (result.status === "error") {
       setError(result.error.message);
       return false;
@@ -156,6 +154,9 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
 
   const edit = (partial: Partial<IssueEdit>) =>
     change("edit", () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
+  /** People and labels: their picker row or link shows the work. */
+  const quietEdit = (partial: Partial<IssueEdit>) =>
+    change(null, () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
 
   async function saveTitle() {
     if (titleDraft === null) return;
@@ -171,9 +172,9 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
     if (await change("comment", () => commands.commentIssue(projectId, number, comment))) setComment("");
   }
 
-  async function close() {
+  async function close(why: IssueCloseReason) {
     // A comment left in the box goes out with the close, as the web's "Close with comment" does.
-    if (await change("close", () => commands.closeIssue(projectId, number, reason, comment))) setComment("");
+    if (await change("close", () => commands.closeIssue(projectId, number, why, comment))) setComment("");
   }
 
   return (
@@ -304,7 +305,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 items={(c) => c.users.map((u) => ({ key: u, label: u, login: u }))}
                 selected={detail.assignees}
                 busy={busy}
-                onToggle={(key, on) => edit(on ? { addAssignees: [key] } : { removeAssignees: [key] })}
+                onToggle={(key, on) => quietEdit(on ? { addAssignees: [key] } : { removeAssignees: [key] })}
                 onClose={closePicker}
               />
             )}
@@ -315,9 +316,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 {detail.viewer && (
                   <>
                     {" – "}
-                    <button className="link" disabled={busy} onClick={() => void edit({ addAssignees: [detail.viewer] })}>
-                      assign yourself
-                    </button>
+                    <AssignYourself disabled={busy} onAssign={() => quietEdit({ addAssignees: [detail.viewer] })} />
                   </>
                 )}
               </p>
@@ -343,7 +342,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                 items={(c) => c.labels.map((l) => ({ key: l.name, label: l.name, color: l.color }))}
                 selected={detail.labels.map((l) => l.name)}
                 busy={busy}
-                onToggle={(key, on) => edit(on ? { addLabels: [key] } : { removeLabels: [key] })}
+                onToggle={(key, on) => quietEdit(on ? { addLabels: [key] } : { removeLabels: [key] })}
                 onClose={closePicker}
               />
             )}
@@ -436,52 +435,33 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
       <footer className="pr-merge" aria-label="Status">
         {open ? (
           <div className="pr-merge-row">
-            <button
-              className={`primary${pending === "close" ? " pending" : ""}`}
+            <SplitButton
+              label={
+                <Working on={pending === "close"} label="Closing…">
+                  {canSubmitComment(comment) ? "Close with comment" : REASONS.find((r) => r.reason === reason)?.title}
+                </Working>
+              }
+              onClick={() => void close(reason)}
               disabled={busy}
-              onClick={() => void close()}
+              pending={pending === "close"}
+              menuDisabled={busy}
+              menuLabel="Close options"
             >
-              <Working on={pending === "close"} label="Closing…">
-                {canSubmitComment(comment) ? "Close with comment" : REASONS.find((r) => r.reason === reason)?.title}
-              </Working>
-            </button>
-            <button
-              ref={reasonTrigger}
-              className="icon-btn"
-              aria-label="Close reason"
-              aria-haspopup="dialog"
-              aria-expanded={reasonOpen}
-              title="Close reason"
-              onClick={() => setReasonOpen((o) => !o)}
-            >
-              <ChevronDownIcon size={16} />
-            </button>
-            {reasonOpen && (
-              <Popover anchor={reasonTrigger} label="Close reason" onClose={() => setReasonOpen(false)} width={300}>
-                <div className="pr-options">
-                  <h5>Close reason</h5>
-                  <div role="radiogroup" aria-label="Close reason">
-                    {REASONS.map((r) => (
-                      <label key={r.reason} className="pr-option" data-checked={r.reason === reason}>
-                        <input
-                          type="radio"
-                          name="close-reason"
-                          checked={r.reason === reason}
-                          onChange={() => {
-                            setReason(r.reason);
-                            setReasonOpen(false);
-                          }}
-                        />
-                        <span>
-                          <strong>{r.title}</strong>
-                          <small>{r.help}</small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </Popover>
-            )}
+              <SplitMenu label="Close reason">
+                {REASONS.map((r) => (
+                  <SplitMenuItem
+                    key={r.reason}
+                    title={r.title}
+                    help={r.help}
+                    checked={r.reason === reason}
+                    onSelect={() => {
+                      setReason(r.reason);
+                      void close(r.reason);
+                    }}
+                  />
+                ))}
+              </SplitMenu>
+            </SplitButton>
           </div>
         ) : (
           <>

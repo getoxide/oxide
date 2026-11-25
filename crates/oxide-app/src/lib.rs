@@ -852,6 +852,14 @@ pub struct PullRequestDraft {
     pub body: String,
     pub base: String,
     pub head: String,
+    /// How many commits `head` has beyond `base`; null when that cannot be told locally.
+    pub commits_beyond: Option<u32>,
+    /// Whether `head` is a main branch, which a pull request cannot be opened from: only when
+    /// no other local branch exists to offer instead.
+    pub protected: bool,
+    /// The local branches a pull request can be opened from, most recently committed first;
+    /// main branches are left out.
+    pub heads: Vec<String>,
 }
 
 /// What the author chose for a new pull request.
@@ -861,6 +869,8 @@ pub struct NewPullRequest {
     pub title: String,
     pub body: String,
     pub base: String,
+    /// The local branch to open the pull request from; it need not be checked out.
+    pub head: String,
     pub draft: bool,
 }
 
@@ -877,19 +887,42 @@ async fn pull_request_base_branches(
     .await
 }
 
-/// Title, body and base prefilled from the branch's commits.
+/// Title, body and base prefilled from the commits of `head` (null: the head the form starts
+/// with), plus the local branches a pull request can be opened from. Core validates `head` as
+/// an existing local branch that is not a main one. Starts `git`.
 #[tauri::command]
 #[specta::specta]
 async fn pull_request_draft(
     core: State<'_, Arc<Core>>,
     project_id: u32,
+    head: Option<String>,
 ) -> Result<PullRequestDraft, AppError> {
-    git_blocking(&core, move |core| core.pull_request_draft(project_id))
-        .await
-        .map(PullRequestDraft::from)
+    git_blocking(&core, move |core| {
+        core.pull_request_draft(project_id, head.as_deref())
+    })
+    .await
+    .map(PullRequestDraft::from)
 }
 
-/// Pushes the branch if needed, then opens a pull request for it.
+/// How many commits the local branch `head` has beyond `base`, from local Git only; null when
+/// `base` is unknown locally. Core validates both as branch names and `head` as an existing
+/// local branch. Starts `git`.
+#[tauri::command]
+#[specta::specta]
+async fn pull_request_commits_beyond(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    head: String,
+    base: String,
+) -> Result<Option<u32>, AppError> {
+    git_blocking(&core, move |core| {
+        core.pull_request_commits_beyond(project_id, &head, &base)
+    })
+    .await
+}
+
+/// Pushes the chosen head branch if needed, without checking it out, then opens a pull request
+/// for it. Starts `git` (a push the user asked for) and `gh`.
 #[tauri::command]
 #[specta::specta]
 async fn create_pull_request(
@@ -904,6 +937,7 @@ async fn create_pull_request(
                 title: pull_request.title,
                 body: pull_request.body,
                 base: pull_request.base,
+                head: pull_request.head,
                 draft: pull_request.draft,
             },
         )
@@ -1346,6 +1380,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         stop_language_server,
         pull_request_base_branches,
         pull_request_draft,
+        pull_request_commits_beyond,
         create_pull_request,
         list_pull_requests,
         pull_request_detail,

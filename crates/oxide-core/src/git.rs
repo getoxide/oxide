@@ -122,18 +122,122 @@ fn has_unpushed_commits(cwd: &Path) -> bool {
         .is_none_or(|n| n > 0)
 }
 
-/// How many commits HEAD has beyond `base`, preferring its remote-tracking branch;
-/// `None` when neither exists locally, so the caller cannot tell.
-pub(crate) fn commits_beyond(cwd: &Path, base: &str) -> Option<u32> {
-    let remote = format!("origin/{base}");
-    let reference = [remote.as_str(), base]
-        .into_iter()
-        .find(|name| ref_exists(cwd, name))?;
-    run(cwd, &["rev-list", "--count", &format!("{reference}..HEAD")])
+/// The longest base branch name accepted from the webview.
+const MAX_BRANCH_NAME: usize = 255;
+
+/// A branch name from the webview, checked against the rules of
+/// `git check-ref-format --branch` that matter here: nothing that Git could read
+/// as an option, a range, a reflog entry or a revision expression.
+pub(crate) fn valid_branch_name(name: &str) -> Result<&str> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_BRANCH_NAME
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && name != "@"
+        && !name.contains("..")
+        && !name.contains("@{")
+        && !name.contains("//")
+        && !name.contains("/.")
+        && !name.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        });
+    if ok {
+        Ok(name)
+    } else {
+        Err(Error::Git(format!(
+            "{:?} is not a valid branch name.",
+            name.chars().take(64).collect::<String>()
+        )))
+    }
+}
+
+/// How many commits the local branch `head` has beyond `base`, preferring the base's
+/// remote-tracking branch; `None` when neither exists locally, so the caller cannot tell.
+/// Both names must already be valid branch names.
+pub(crate) fn commits_beyond(cwd: &Path, head: &str, base: &str) -> Option<u32> {
+    let reference = base_reference(cwd, base)?;
+    count(cwd, &format!("{reference}..refs/heads/{head}"))
+}
+
+/// `origin/<base>` when it exists locally, else the local `base`, else `None`.
+pub(crate) fn base_reference(cwd: &Path, base: &str) -> Option<String> {
+    [
+        format!("refs/remotes/origin/{base}"),
+        format!("refs/heads/{base}"),
+    ]
+    .into_iter()
+    .find(|name| ref_exists(cwd, name))
+}
+
+fn count(cwd: &Path, range: &str) -> Option<u32> {
+    run(cwd, &["rev-list", "--count", range, "--"])
         .ok()?
         .trim()
         .parse()
         .ok()
+}
+
+/// Whether `branch` is one Oxide never opens a pull request from or pushes to unasked.
+pub(crate) fn is_protected(branch: &str) -> bool {
+    PROTECTED_BRANCHES.contains(&branch)
+}
+
+/// Local branches, most recently committed first.
+pub(crate) fn local_branches(cwd: &Path) -> Result<Vec<String>> {
+    Ok(run(
+        cwd,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:lstrip=2)",
+            "refs/heads/",
+        ],
+    )?
+    .lines()
+    .filter(|name| !name.is_empty())
+    .map(str::to_owned)
+    .collect())
+}
+
+/// A valid branch name from the webview that names an existing local branch.
+pub(crate) fn existing_local_branch(cwd: &Path, name: &str) -> Result<String> {
+    let name = valid_branch_name(name)?;
+    if ref_exists(cwd, &format!("refs/heads/{name}")) {
+        Ok(name.to_string())
+    } else {
+        Err(Error::Git(format!("There is no local branch `{name}`.")))
+    }
+}
+
+/// Pushes the local branch `branch` to the same name on `origin` and tracks it, without
+/// checking it out, unless `origin` already has all of it. There is no force: a rejected
+/// push stays rejected. Refuses a protected branch and one
+/// that has diverged from `origin`. `branch` must be an existing, valid branch name.
+/// A `pre-push` hook runs with HEAD on the checked-out branch, not on the pushed `branch`.
+pub(crate) fn push_branch_if_needed(cwd: &Path, branch: &str) -> Result<()> {
+    if is_protected(branch) {
+        return Err(Error::Git(format!(
+            "`{branch}` is protected; push a new branch instead."
+        )));
+    }
+    let local = format!("refs/heads/{branch}");
+    let remote = format!("refs/remotes/origin/{branch}");
+    if ref_exists(cwd, &remote) {
+        let ahead = count(cwd, &format!("{remote}..{local}")).unwrap_or(1);
+        if ahead == 0 {
+            return Ok(());
+        }
+        if count(cwd, &format!("{local}..{remote}")).unwrap_or(0) > 0 {
+            return Err(Error::Git(format!(
+                "`{branch}` is behind and ahead of `origin/{branch}`. Pull (fast-forward) before pushing."
+            )));
+        }
+    }
+    run_user(cwd, &["push", "-u", "origin", &format!("{local}:{local}")])?;
+    Ok(())
 }
 
 pub(crate) fn ref_exists(cwd: &Path, name: &str) -> bool {
@@ -202,10 +306,7 @@ pub fn status(cwd: &Path) -> Result<GitStatus> {
     status.changed_files = tracked + untracked.len() as u32;
 
     let has_head = succeeds(cwd, &["rev-parse", "--verify", "--quiet", "HEAD"]);
-    status.protected = status
-        .branch
-        .as_deref()
-        .is_some_and(|b| PROTECTED_BRANCHES.contains(&b));
+    status.protected = status.branch.as_deref().is_some_and(is_protected);
     status.unpublished = has_head
         && status.branch.is_some()
         && status.upstream.is_none()
@@ -267,31 +368,4 @@ fn count_lines(path: &Path) -> u32 {
         Ok(Some(newlines + u32::from(unterminated)))
     };
     read().ok().flatten().unwrap_or(0)
-}
-
-/// Pushes the current branch, setting its upstream the first time. There is
-/// no force: a rejected push stays rejected. Protected branches need
-/// `allow_protected`.
-pub fn push(cwd: &Path, allow_protected: bool) -> Result<()> {
-    let status = status(cwd)?;
-    let Some(branch) = status.branch else {
-        return Err(Error::Git(
-            "HEAD is detached; switch to a branch to push.".into(),
-        ));
-    };
-    if status.protected && !allow_protected {
-        return Err(Error::Git(format!(
-            "`{branch}` is protected; confirm pushing to it, or push a new branch instead."
-        )));
-    }
-    if status.ahead > 0 && status.behind > 0 {
-        return Err(Error::Git(
-            "The branch is behind and ahead of its upstream. Pull (fast-forward) before pushing."
-                .into(),
-        ));
-    }
-    // A newly created branch can inherit main's upstream. Never let
-    // push.default or an inherited upstream choose a different branch.
-    run_user(cwd, &["push", "-u", "origin", "HEAD"])?;
-    Ok(())
 }

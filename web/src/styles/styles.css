@@ -43,6 +43,12 @@
   --red: #F27A72;
   --yellow: #E8B84F;
   --purple: #B79CF0;
+  /* Destructive fills (Delete): deeper than --red, a soft tint meant for text and icons that is
+     too light under white text. Each keeps --on-danger above 4.5:1. */
+  --danger: #C93B32;
+  --danger-hover: #B3322A;
+  --danger-active: #9C2B24;
+  --on-danger: #FFFFFF;
   /* Status text on its own tint: the plain status colour misses 4.5:1 once the tint lifts the surface. */
   --green-on-tint: color-mix(in srgb, var(--green) 70%, var(--fg-bright));
   --red-on-tint: color-mix(in srgb, var(--red) 70%, var(--fg-bright));
@@ -51,6 +57,12 @@
   font: 13px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
   color: var(--fg);
+}
+:root[data-appearance="light"] {
+  --danger: #C4281F;
+  --danger-hover: #A5201A;
+  --danger-active: #8E1B16;
+  --on-danger: #FFFFFF;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -90,6 +102,35 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
    coming back: disabled only stops a second click. */
 button.pending:disabled { color: var(--fg-bright); opacity: 1; background: var(--gh-btn); border-color: var(--gh-border); cursor: progress; }
 .btn.primary.pending:disabled, button.primary.pending:disabled { opacity: 1; color: var(--acc-fg); background: var(--acc); border-color: var(--acc); }
+/* Split button: one blue surface, the action on the left and its menu's chevron on the right,
+   parted by a hairline. Each half keeps its own hover, press and disabled state. */
+.split-btn { display: inline-flex; align-items: stretch; min-width: 0; border-radius: 6px; }
+.split-btn > button { margin: 0; }
+.split-btn > .split-btn-main { flex: 1 1 auto; min-width: 0; justify-content: center; border-radius: 6px 0 0 6px; border-right-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-btn > .split-btn-toggle { position: relative; flex: none; justify-content: center; width: var(--control-height); min-width: var(--control-height); padding: 0; border-radius: 0 6px 6px 0; border-left-width: 0; }
+.split-btn > .split-btn-toggle::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--acc-fg) 32%, transparent); pointer-events: none; }
+.split-btn.risky > button:is(:not(:disabled), .pending) { background: var(--bg4); border-color: var(--red); color: var(--fg-bright); }
+.split-btn.risky > button:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 12%, var(--bg4)); border-color: var(--red); }
+.split-btn.risky > button:active:not(:disabled) { background: color-mix(in srgb, var(--red) 22%, var(--bg4)); border-color: var(--red); }
+.split-btn.risky > .split-btn-toggle::before { background: color-mix(in srgb, var(--red) 55%, transparent); }
+.split-menu { display: grid; gap: var(--space-2); padding: var(--space-2); }
+.split-menu h5 { margin: 0; padding: 0 var(--space-2); font-size: 12px; font-weight: 600; color: var(--dim); }
+.split-menu-group + h5, .split-menu-group + .split-menu-section, .split-menu-section + .split-menu-section { margin-top: var(--space-1); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.split-menu-group { display: grid; gap: 2px; }
+/* A plain block, not a grid: WebKit sized a grid button for one line of help, so a wrapped
+   description fell outside the highlight. Block children grow the button with every line. */
+.split-menu-item { display: block; width: 100%; height: auto; min-height: 0; padding: var(--space-2); border: 0; border-radius: var(--radius-control); background: none; color: var(--fg); text-align: left; white-space: normal; font-weight: inherit; }
+.split-menu-item > strong, .split-menu-item > small { display: block; }
+.split-menu-item > small { margin-top: 2px; }
+.split-menu-item:hover:not(:disabled) { background: var(--bg3); }
+.split-menu-item:disabled { background: none; }
+.split-menu-item[data-checked="true"] { background: color-mix(in srgb, var(--acc) 12%, transparent); }
+.split-menu-item strong { font-weight: 600; color: var(--fg-bright); }
+.split-menu-item:disabled strong { color: var(--faint); }
+.split-menu-item small { color: var(--dim); font-size: 12px; line-height: 16px; }
+.split-menu-item.risky:not(:disabled) strong { color: var(--red); }
+.split-menu-item.risky:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 12%, transparent); }
+.split-menu-section { padding-bottom: var(--space-1); }
 .btn.sm { min-height: var(--control-sm); padding: 0 var(--space-2); font-size: 12px; line-height: 18px; }
 .btn.grow { justify-content: center; }
 .icon-btn {
@@ -413,7 +454,8 @@ html.macos .header,
 .search-field { flex: 1 1 auto; display: flex; align-items: center; gap: var(--space-2); height: 28px; min-width: 0; padding: 0 10px; border: 1px solid var(--gh-border); border-radius: var(--radius-control); background: var(--gh-field); color: var(--faint); }
 .search-field:focus-within { border-color: var(--gh-blue); box-shadow: inset 0 0 0 1px var(--gh-blue); color: var(--fg); }
 .search-field input { flex: 1; min-width: 0; min-height: 0; border: 0; background: none; padding: 0; outline: none; box-shadow: none; }
-.pr-chip { min-height: 28px; padding: 0 var(--space-3); border-radius: 99px; background: none; border-color: var(--gh-border); color: var(--dim); font-size: 12px; }
+/* Same box as the Search field and the toolbar's buttons beside it. */
+.pr-chip { height: var(--control-sm); min-height: var(--control-sm); padding: 0 var(--space-3); border: 1px solid var(--gh-border); border-radius: var(--radius-control); background: none; color: var(--dim); font-size: 12px; }
 .pr-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--acc) 15%, transparent); border-color: var(--acc2); color: var(--acc2); }
 
 /* Files */
@@ -527,7 +569,6 @@ html.macos .header,
 .pr-views .pr-tag { display: inline-flex; align-items: center; box-sizing: border-box; height: 18px; font-size: 11px; line-height: 1; padding: 0 7px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--dim); }
 .pr-views .comment-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
 .pr-views .comment-tools button { min-height: 22px; font-size: 12px; }
-.pr-views .comment-tools-ask { color: var(--dim); }
 .pr-views .comment-edit { display: grid; gap: var(--space-2); padding: 8px 10px; }
 .pr-views .comment-edit-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: var(--space-2); }
 .pr-views .pr-state-open { color: var(--green); }
@@ -536,13 +577,14 @@ html.macos .header,
 .pr-views .pr-branch { font-family: var(--mono); font-size: 11.5px; padding: 0 5px; border-radius: 4px; background: var(--bg3); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
 
 /* Review */
-.pr-views .pr-nav { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) 0 var(--pr-pad); flex: none; }
+/* One solid bar across the panel: the content scrolls under its hairline, never past a floating pill. */
+.pr-views .pr-nav { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-2) var(--pr-pad); flex: none; }
 /* Merged or closed: a faint line on the list, easing out on its own. */
 .pr-views .pr-outcome { margin: 0 0 var(--space-2); font-size: 12px; color: var(--faint); animation: pr-outcome-out 4s ease-in forwards; }
 @keyframes pr-outcome-out { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .pr-views .pr-outcome { animation: none; } }
-.pr-views .pr-back { color: var(--dim); min-height: var(--control-sm); margin-left: -6px; padding: 0 6px; border-radius: var(--radius-control); }
-.pr-views .pr-back:hover:not(:disabled) { color: var(--fg); background: var(--bg3); border: 0; }
+.pr-views .pr-back { color: var(--dim); min-height: var(--control-sm); margin-left: -6px; padding: 0 6px; border-radius: var(--radius-control); background: none; border-color: transparent; }
+.pr-views .pr-back:hover:not(:disabled) { color: var(--fg); background: var(--bg4); border-color: transparent; }
 .pr-views .pr-hero { display: grid; gap: var(--space-2); }
 .pr-views .pr-title { margin: 0; font-size: 16px; line-height: 1.3; font-weight: 650; color: var(--fg-bright); overflow-wrap: anywhere; text-wrap: balance; }
 .pr-views .pr-number { color: var(--faint); font-weight: 400; }
@@ -558,9 +600,7 @@ html.macos .header,
 .pr-views .pr-diffstat .add { color: var(--green); }
 .pr-views .pr-diffstat .del { color: var(--red); }
 .pr-views .pr-diffstat-files { font-family: inherit; }
-.pr-views .pr-github { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg3); color: var(--fg); }
-.pr-views .pr-github:hover { background: var(--bg4); color: var(--fg-bright); }
-.pr-views .pr-github[data-copied="true"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--line-strong)); }
+.icon-btn[data-copied="true"], .icon-btn[data-copied="true"]:hover:not(:disabled) { color: var(--green); }
 .avatar { flex: none; display: inline-block; border-radius: 50%; background: var(--bg4); object-fit: cover; vertical-align: middle; }
 .avatar-fallback { display: inline-grid; place-items: center; color: var(--dim); font-weight: 600; line-height: 1; }
 .pr-views .pr-row-meta .avatar { margin-right: -2px; }
@@ -653,6 +693,7 @@ html.macos .header,
 
 /* Popovers: reviewers/assignees/labels pickers and merge options. Portalled to <body>. */
 .pr-popover { position: fixed; z-index: 60; display: flex; flex-direction: column; overflow: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg2); box-shadow: 0 12px 32px #0008; color: var(--fg); }
+.pr-popover[data-side="top"] { box-shadow: 0 -12px 32px #0008; }
 .pr-picker { display: grid; gap: var(--space-2); padding: var(--space-3); min-height: 0; }
 .pr-picker header { display: flex; align-items: center; justify-content: space-between; }
 .pr-picker input { width: 100%; }
@@ -660,6 +701,11 @@ html.macos .header,
 .pr-picker li > button { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 30px; padding: 0 6px; border: 0; background: none; text-align: left; justify-content: flex-start; }
 .pr-picker li > button:hover:not(:disabled) { background: var(--bg3); border: 0; }
 .pr-picker-check { flex: none; width: 14px; display: inline-flex; color: var(--acc2); }
+/* The row GitHub is still updating keeps its look (already showing the asked-for check) and
+   spins quietly at its end; only that row waits, the others stay clickable. */
+.pr-picker li > button.pending:disabled { opacity: 1; color: var(--fg); background: color-mix(in srgb, var(--acc) 8%, transparent); border: 0; cursor: progress; }
+.pr-picker-spin { flex: none; margin-left: auto; color: var(--dim); }
+button.link.pending:disabled { opacity: 1; background: none; border: 0; color: var(--dim); text-decoration: none; cursor: progress; }
 .pr-swatch { flex: none; width: 12px; height: 12px; border-radius: 50%; }
 .pr-picker p { margin: 0; }
 .pr-options { display: grid; gap: var(--space-2); padding: var(--space-3); }
@@ -726,16 +772,13 @@ html.macos .header,
 .pr-views .pr-merge-status.ok { color: var(--green); }
 .pr-views .pr-merge-status.warn { color: var(--yellow); }
 .pr-views .pr-merge-status.bad { color: var(--red); }
-.pr-views .pr-merge-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--space-2); }
-.pr-views .pr-merge-row > button:not(.icon-btn) { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pr-views .pr-merge-row > .primary { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; text-overflow: ellipsis; }
+/* Close on the left, compact; the merge control takes the rest of the row at the same height. */
+.pr-views .pr-merge-row { display: flex; flex-wrap: nowrap; align-items: stretch; gap: var(--space-2); }
+.pr-views .pr-merge-row > button:not(.icon-btn) { flex: none; min-height: 32px; border-radius: var(--radius-control); white-space: nowrap; }
+.pr-views .pr-merge-row > .primary:not(.icon-btn) { flex: 1 1 0; min-width: 0; justify-content: center; overflow: hidden; text-overflow: ellipsis; }
+.pr-views .pr-merge-row > .split-btn { flex: 1 1 0; }
 .pr-views .pr-merge-row > .primary.risky:is(:not(:disabled), .pending) { background: var(--bg4); border-color: var(--red); color: var(--fg-bright); }
 .pr-views .pr-merge-row > .icon-btn { flex: none; width: var(--control-height); height: var(--control-height); border: 1px solid var(--line-strong); background: var(--bg3); }
-/* A narrowed tools panel: the merge button takes its own row and the other actions wrap under it. */
-@container (max-width: 495px) {
-  .pr-views .pr-merge-row { flex-wrap: wrap; }
-  .pr-views .pr-merge-row > .primary { flex: 1 0 100%; }
-}
 .pr-views .pr-merge-note { margin: 0; color: var(--dim); font-size: 12px; }
 .pr-views .pr-merge-note code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
 .pr-views .pr-merge-status.neutral { color: var(--dim); }
@@ -813,15 +856,31 @@ html.macos .header,
 .pr-create > * { flex-shrink: 0; }
 .pr-compose-heading { display: flex; align-items: center; gap: 8px; }
 .pr-create h2 { font-size: 16px; margin: 0; }
-.pr-compose-branches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.pr-compose-branches .mono { flex: 1 1 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.pr-compose-branches label { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.pr-create select { min-width: 0; max-width: 100%; }
+/* "<head> → <base>" on one row; each name ellipsizes before the row wraps. */
+.pr-compose-branches { display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
+.pr-compose-arrow { flex: none; color: var(--faint); }
+.branch-picker { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 100%; height: var(--control-height); min-height: var(--control-height); padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg2); color: var(--fg-bright); font-weight: 500; }
+.branch-picker:hover:not(:disabled) { background: var(--bg3); }
+.branch-picker[aria-expanded="true"] { background: var(--bg3); border-color: var(--control-line); }
+.branch-picker:disabled { opacity: .7; }
+.branch-picker-icon, .branch-picker-chevron { flex: none; color: var(--faint); }
+.branch-picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.branch-list { display: grid; gap: var(--space-2); padding: var(--space-2); min-height: 0; }
+.branch-list input { width: 100%; }
+.branch-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; max-height: 260px; overflow: auto; outline: none; }
+.branch-list li { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; padding: 0 6px; border-radius: var(--radius-control); cursor: pointer; }
+.branch-list li.active { background: var(--bg3); }
+.branch-list ul:focus-visible li.active, .branch-list input:focus-visible ~ ul li.active { box-shadow: inset 0 0 0 1px var(--acc2); }
+.branch-list-check { flex: none; width: 14px; display: inline-flex; color: var(--acc2); }
+.branch-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.branch-list li[aria-selected="true"] .branch-list-name { color: var(--fg-bright); font-weight: 600; }
+.branch-list-empty { margin: 0; padding: 4px 6px; color: var(--dim); }
 .pr-create-title { display: flex; flex-direction: column; gap: 8px; font-weight: 600; }
 .pr-create-title input { width: 100%; }
 .pr-create-draft { display: flex; gap: 8px; align-items: center; }
 .pr-create > p { margin: 0; line-height: 1.6; }
 .pr-create > .primary { justify-content: center; flex: none; }
+.pr-create > .pr-create-hint { color: var(--fg); overflow-wrap: anywhere; }
 .pr-create-error { color: var(--red); overflow-wrap: anywhere; }
 .pr-create-error pre { white-space: pre-wrap; font-size: 12px; }
 @keyframes project-arrive {
@@ -916,7 +975,16 @@ html.macos .header,
 .pr-views .pr-compose-box { justify-items: stretch; }
 .pr-views .pr-compose-box > button[type="submit"] { justify-self: end; }
 
-.modal-actions button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+/* Destructive confirm, from the theme's danger tokens. */
+.modal-actions button.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+.modal-actions button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+.modal-actions button.danger:active:not(:disabled) { background: var(--danger-active); border-color: var(--danger-active); }
+.modal-actions button.danger:focus-visible { outline-color: var(--on-danger); outline-offset: -3px; box-shadow: 0 0 0 2px var(--danger); }
+.modal-actions button.danger:disabled { background: var(--danger); border-color: var(--danger); color: var(--on-danger); opacity: .55; }
+.modal-actions button.danger.pending:disabled { opacity: 1; cursor: progress; }
+.comment-delete-dialog { width: min(400px, calc(100vw - 32px)); min-width: 0; gap: 14px; padding: 22px; }
+.comment-delete-dialog p { margin: 0; color: var(--dim); line-height: 1.5; }
+.comment-delete-dialog .modal-actions { margin-top: 4px; }
 
 /* Line comments */
 

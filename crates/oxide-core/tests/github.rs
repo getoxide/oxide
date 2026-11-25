@@ -174,12 +174,48 @@ fn ok_state() -> serde_json::Value {
 }
 
 fn input(title: &str, base: &str, draft: bool) -> PullRequestInput {
+    input_from("feature", title, base, draft)
+}
+
+fn input_from(head: &str, title: &str, base: &str, draft: bool) -> PullRequestInput {
     PullRequestInput {
         title: title.into(),
         body: "Body".into(),
         base: base.into(),
+        head: head.into(),
         draft,
     }
+}
+
+/// Commits on `branch` (created from the checked-out commit when new) at a fixed commit
+/// time, then returns to the branch checked out before.
+fn commit_on(dir: &Path, branch: &str, name: &str, message: &str, epoch: u64) {
+    let back = git(dir, &["branch", "--show-current"]).trim().to_string();
+    if git(dir, &["branch", "--list", branch]).trim().is_empty() {
+        git(dir, &["checkout", "-q", "-b", branch]);
+    } else {
+        git(dir, &["checkout", "-q", branch]);
+    }
+    std::fs::write(dir.join(name), message).unwrap();
+    git(dir, &["add", name]);
+    let date = format!("@{epoch} +0000");
+    let out = Command::new("git")
+        .args(["commit", "-qm", message])
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    git(dir, &["checkout", "-q", &back]);
 }
 
 #[test]
@@ -288,7 +324,7 @@ fn gh_is_available_through_a_bat_shim() {
     let state = f.core.issues_state(f.project.id).unwrap();
     assert_eq!(state.availability, GithubAvailability::Ready);
     assert_eq!(
-        f.core.pull_request_draft(f.project.id).unwrap().base,
+        f.core.pull_request_draft(f.project.id, None).unwrap().base,
         "main"
     );
 }
@@ -331,11 +367,11 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
     let f = fixture();
     install_gh(&f, &ok_state());
     git(&f.work, &["checkout", "-q", "-b", "feature"]);
-    f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.pull_request_draft(f.project.id, None).unwrap();
     f.core.list_pull_requests(f.project.id, false, "").unwrap();
     let before = f.gh_calls().len();
 
-    f.core.pull_request_draft(f.project.id).unwrap();
+    f.core.pull_request_draft(f.project.id, None).unwrap();
     f.core.list_pull_requests(f.project.id, false, "").unwrap();
 
     let again: Vec<_> = f.gh_calls()[before..]
@@ -500,15 +536,128 @@ fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     install_gh(&f, &ok_state());
     git(&f.work, &["checkout", "-q", "-b", "add-things"]);
     commit_file(&f.work, "b.txt", "b\n", "Add b");
-    let one = f.core.pull_request_draft(f.project.id).unwrap();
+    let one = f.core.pull_request_draft(f.project.id, None).unwrap();
     assert_eq!(one.title, "Add b");
     assert_eq!(one.base, "main");
     assert_eq!(one.head, "add-things");
 
     commit_file(&f.work, "c.txt", "c\n", "Add c");
-    let two = f.core.pull_request_draft(f.project.id).unwrap();
+    let two = f.core.pull_request_draft(f.project.id, None).unwrap();
     assert_eq!(two.title, "Add things");
     assert_eq!(two.body, "- Add b\n- Add c");
+}
+
+#[test]
+fn draft_counts_the_commits_beyond_the_default_branch() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    let empty = f.core.pull_request_draft(f.project.id, None).unwrap();
+    assert_eq!(empty.commits_beyond, Some(0));
+    assert!(!empty.protected);
+
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+    commit_file(&f.work, "c.txt", "c\n", "Add c");
+    assert_eq!(
+        f.core
+            .pull_request_draft(f.project.id, None)
+            .unwrap()
+            .commits_beyond,
+        Some(2)
+    );
+}
+
+#[test]
+fn commits_beyond_any_base_are_counted_locally() {
+    let f = fixture();
+    install_gh(&f, &serde_json::json!({"auth": "logged_out"}));
+    git(&f.work, &["checkout", "-q", "-b", "develop"]);
+    commit_file(&f.work, "d.txt", "d\n", "Add d");
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature", "main")
+            .unwrap(),
+        Some(2)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature", "develop")
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature", "feature")
+            .unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature", "release/unknown")
+            .unwrap(),
+        None
+    );
+    // Local Git only: GitHub is never asked.
+    assert!(f.gh_calls().is_empty());
+}
+
+#[test]
+fn commits_beyond_refuses_a_base_that_is_not_a_branch_name() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let long = "b".repeat(256);
+    for base in [
+        "",
+        " ",
+        "-n",
+        "--output=/tmp/x",
+        "main..HEAD",
+        "main HEAD",
+        "main\n",
+        "main@{1}",
+        "main^",
+        "main~1",
+        "main:x",
+        "ma*n",
+        "ma?n",
+        "[main]",
+        "main\\x",
+        "/main",
+        "main/",
+        "main.lock",
+        long.as_str(),
+    ] {
+        let err = f
+            .core
+            .pull_request_commits_beyond(f.project.id, "feature", base)
+            .unwrap_err();
+        assert!(err.to_string().contains("branch name"), "{base:?}: {err}");
+    }
+    assert!(f.gh_calls().is_empty());
+}
+
+#[test]
+fn commits_beyond_refuses_an_unknown_project() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    assert!(
+        f.core
+            .pull_request_commits_beyond(9999, "feature", "main")
+            .is_err()
+    );
+}
+
+#[test]
+fn draft_on_the_main_branch_reports_it_is_protected() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let draft = f.core.pull_request_draft(f.project.id, None).unwrap();
+    assert_eq!(draft.head, "main");
+    assert!(draft.protected);
+    assert_eq!(draft.commits_beyond, Some(0));
 }
 
 #[test]
@@ -572,6 +721,35 @@ fn create_is_refused_when_the_branch_has_no_commits_beyond_the_base() {
 }
 
 #[test]
+fn create_refuses_a_base_that_is_not_a_branch_name() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    git(&f.work, &["checkout", "-q", "-b", "feature"]);
+    commit_file(&f.work, "b.txt", "b\n", "Add b");
+
+    for base in [
+        "--output=/tmp/x",
+        "-n",
+        "main..HEAD",
+        "main@{1}",
+        "main^",
+        "main:x",
+    ] {
+        let err = f
+            .core
+            .create_pull_request(f.project.id, &input("T", base, false))
+            .unwrap_err();
+        assert!(err.to_string().contains("branch name"), "{base:?}: {err}");
+    }
+    assert!(f.create_calls().is_empty());
+    assert!(
+        git(&f.remote, &["branch", "--list", "feature"])
+            .trim()
+            .is_empty()
+    );
+}
+
+#[test]
 fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
     let f = fixture();
     install_gh(&f, &ok_state());
@@ -592,6 +770,70 @@ fn create_without_draft_omits_the_flag_and_skips_the_push_when_published() {
 }
 
 #[test]
+fn create_from_a_head_already_on_origin_opens_the_pull_request_without_pushing() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    git(&f.work, &["push", "-q", "origin", "feature"]);
+    let before = git(&f.remote, &["rev-parse", "feature"]);
+    // A push URL that cannot be reached proves no push is attempted.
+    let unreachable = f.work.parent().unwrap().join("no-such-remote.git");
+    git(
+        &f.work,
+        &[
+            "config",
+            "remote.origin.pushurl",
+            unreachable.to_str().unwrap(),
+        ],
+    );
+
+    let pr = f
+        .core
+        .create_pull_request(f.project.id, &input("Published", "main", false))
+        .unwrap();
+
+    assert_eq!(pr.number, 7);
+    assert_eq!(git(&f.remote, &["rev-parse", "feature"]), before);
+    assert_eq!(f.create_calls().len(), 1);
+}
+
+#[test]
+fn create_from_a_head_diverged_from_origin_is_refused_before_gh() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    git(&f.work, &["push", "-q", "origin", "feature"]);
+    // Someone else pushes to origin/feature while the local branch moves on.
+    let other = f.work.parent().unwrap().join("other");
+    git(
+        f.work.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            f.remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    git(&other, &["config", "user.name", "T"]);
+    git(&other, &["config", "user.email", "t@example.com"]);
+    git(&other, &["branch", "-q", "feature", "origin/feature"]);
+    commit_on(&other, "feature", "c.txt", "Add c", 1_800_000_100);
+    git(&other, &["push", "-q", "origin", "feature"]);
+    commit_on(&f.work, "feature", "d.txt", "Add d", 1_800_000_200);
+    git(&f.work, &["fetch", "-q", "origin"]);
+    let before = git(&f.remote, &["rev-parse", "feature"]);
+
+    let err = f
+        .core
+        .create_pull_request(f.project.id, &input("Diverged", "main", false))
+        .unwrap_err();
+
+    assert!(err.to_string().contains("behind and ahead"), "{err}");
+    assert!(f.create_calls().is_empty());
+    assert_eq!(git(&f.remote, &["rev-parse", "feature"]), before);
+}
+
+#[test]
 fn create_is_refused_from_the_protected_branch_and_without_gh() {
     let f = fixture();
     let err = f
@@ -603,7 +845,7 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
     install_gh(&f, &ok_state());
     let err = f
         .core
-        .create_pull_request(f.project.id, &input("T", "main", false))
+        .create_pull_request(f.project.id, &input_from("main", "T", "develop", false))
         .unwrap_err();
     assert!(err.to_string().contains("main"), "{err}");
     assert!(f.create_calls().is_empty());
@@ -614,6 +856,184 @@ fn create_is_refused_from_the_protected_branch_and_without_gh() {
         .create_pull_request(f.project.id, &input("  ", "main", false))
         .unwrap_err();
     assert!(err.to_string().contains("title"), "{err}");
+}
+
+#[test]
+fn draft_while_on_main_offers_local_feature_branches_most_recent_first() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "older", "o.txt", "Add older", 1_700_000_000);
+    commit_on(&f.work, "newer", "n.txt", "Add newer", 1_800_000_000);
+    git(&f.work, &["branch", "master"]);
+
+    let draft = f.core.pull_request_draft(f.project.id, None).unwrap();
+
+    assert_eq!(
+        draft.heads,
+        ["newer", "older"],
+        "main branches are never offered"
+    );
+    assert_eq!(draft.head, "newer");
+    assert!(!draft.protected);
+    assert_eq!(draft.title, "Add newer");
+    assert_eq!(draft.commits_beyond, Some(1));
+    assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "main");
+}
+
+#[test]
+fn draft_prefers_the_checked_out_feature_branch_and_follows_a_chosen_head() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "newer", "n.txt", "Add newer", 1_800_000_000);
+    commit_on(&f.work, "older", "o.txt", "Add older", 1_700_000_000);
+    git(&f.work, &["checkout", "-q", "older"]);
+
+    assert_eq!(
+        f.core.pull_request_draft(f.project.id, None).unwrap().head,
+        "older"
+    );
+    let chosen = f
+        .core
+        .pull_request_draft(f.project.id, Some("newer"))
+        .unwrap();
+    assert_eq!(chosen.head, "newer");
+    assert_eq!(chosen.title, "Add newer");
+    assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "older");
+}
+
+#[test]
+fn draft_refuses_a_head_that_is_invalid_unknown_or_protected() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    for head in [
+        "--output=/tmp/x",
+        "main..HEAD",
+        "main@{1}",
+        "",
+        " feature",
+        "nope",
+        "main",
+    ] {
+        assert!(
+            f.core.pull_request_draft(f.project.id, Some(head)).is_err(),
+            "{head:?}"
+        );
+    }
+}
+
+#[test]
+fn draft_on_main_without_feature_branches_reports_it_is_protected() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    let draft = f.core.pull_request_draft(f.project.id, None).unwrap();
+    assert!(draft.heads.is_empty());
+    assert!(draft.protected);
+}
+
+#[test]
+fn create_from_a_branch_not_checked_out_pushes_it_and_opens_its_pull_request() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    let local = git(&f.work, &["rev-parse", "feature"]);
+
+    let pr = f
+        .core
+        .create_pull_request(f.project.id, &input("From main", "main", false))
+        .unwrap();
+
+    assert_eq!(pr.number, 7);
+    assert_eq!(pr.head, "feature");
+    assert_eq!(git(&f.remote, &["rev-parse", "feature"]), local);
+    assert_eq!(
+        f.create_calls(),
+        [[
+            "pr",
+            "create",
+            "--title",
+            "From main",
+            "--body",
+            "Body",
+            "--base",
+            "main",
+            "--head",
+            "feature"
+        ]]
+    );
+    // The checkout never moved.
+    assert_eq!(git(&f.work, &["branch", "--show-current"]).trim(), "main");
+}
+
+#[test]
+fn create_refuses_a_head_that_is_invalid_unknown_protected_or_the_base() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    git(&f.work, &["branch", "master"]);
+    for (head, base, says) in [
+        ("--output=/tmp/x", "main", "branch name"),
+        ("feature..main", "main", "branch name"),
+        ("feature@{1}", "main", "branch name"),
+        ("", "main", "branch name"),
+        (" feature", "main", "branch name"),
+        ("feature ", "main", "branch name"),
+        ("nope", "main", "no local branch"),
+        ("main", "feature", "main branch"),
+        ("master", "main", "main branch"),
+        ("feature", "feature", "other than"),
+    ] {
+        let err = f
+            .core
+            .create_pull_request(f.project.id, &input_from(head, "T", base, false))
+            .unwrap_err();
+        assert!(err.to_string().contains(says), "{head:?}: {err}");
+    }
+    assert!(f.create_calls().is_empty());
+    assert!(
+        git(&f.remote, &["branch", "--list", "feature"])
+            .trim()
+            .is_empty()
+    );
+}
+
+#[test]
+fn commits_beyond_counts_the_chosen_head_and_refuses_a_bad_one() {
+    let f = fixture();
+    install_gh(&f, &ok_state());
+    commit_on(&f.work, "feature", "b.txt", "Add b", 1_800_000_000);
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "feature", "main")
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        f.core
+            .pull_request_commits_beyond(f.project.id, "main", "feature")
+            .unwrap(),
+        Some(0)
+    );
+    for head in [
+        "",
+        " feature",
+        "-n",
+        "main..HEAD",
+        "main@{1}",
+        "main^",
+        "main:x",
+    ] {
+        let err = f
+            .core
+            .pull_request_commits_beyond(f.project.id, head, "main")
+            .unwrap_err();
+        assert!(err.to_string().contains("branch name"), "{head:?}: {err}");
+    }
+    let err = f
+        .core
+        .pull_request_commits_beyond(f.project.id, "nope", "main")
+        .unwrap_err();
+    assert!(err.to_string().contains("no local branch"), "{err}");
+    assert!(f.gh_calls().is_empty());
 }
 
 #[test]

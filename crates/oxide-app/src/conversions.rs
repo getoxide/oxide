@@ -407,6 +407,9 @@ impl From<oxide_core::PullRequestDraft> for PullRequestDraft {
             body: d.body,
             base: d.base,
             head: d.head,
+            commits_beyond: d.commits_beyond,
+            protected: d.protected,
+            heads: d.heads,
         }
     }
 }

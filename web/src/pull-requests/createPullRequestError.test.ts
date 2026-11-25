@@ -3,6 +3,7 @@ import { describeCreatePrError } from "./createPullRequestError";
 
 it.each([
   ["GraphQL: No commits between main and fix/ui (createPullRequest)", "No commits to compare"],
+  ["`fix/ui` has no commits beyond `main`, so there is nothing to compare. Commit your changes first.", "No commits to compare"],
   ["a pull request for branch fix/ui into branch main already exists", "A pull request already exists"],
   ["HTTP 401: Bad credentials", "GitHub authentication required"],
   ["dial tcp: lookup api.github.com: i/o timeout", "Couldn’t reach GitHub"],

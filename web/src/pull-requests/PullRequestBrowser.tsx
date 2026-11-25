@@ -141,7 +141,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
             Mine
           </button>
         </SurfaceSearch>
-        <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from the Project's current branch"><GitPullRequestIcon size={14} /> New pull request</button>
+        <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from a local branch"><GitPullRequestIcon size={14} /> New pull request</button>
       </div>
       <div className="pr-scroll">
         <RefreshNotice query={list} />
@@ -163,7 +163,7 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
                 ? "Nothing in this Project’s repository matches these filters."
                 : "Pull requests opened from this Project’s branches appear here."}
             </p>
-            <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from the Project's current branch"><GitPullRequestIcon size={14} /> New pull request</button>
+            <button className="btn sm primary" onClick={() => setCreating(true)} title="Open a pull request from a local branch"><GitPullRequestIcon size={14} /> New pull request</button>
           </div>
         )}
         {list.state === "ready" && list.data.length > 0 && (
@@ -312,7 +312,7 @@ export function PullRequestReview({
         <>
           <CopyLinkButton url={shownPr.url} onError={setError} />
           <button
-            className="pr-github"
+            className="icon-btn sm"
             onClick={() => void openLink(shownPr.url)}
             title="Open this pull request on GitHub"
             aria-label="Open on GitHub"
@@ -358,11 +358,12 @@ export function PullRequestReview({
   // Only a wait (checks, review) can be left to GitHub; conflicts and a stale branch need the user.
   const canAutoMerge = phase === "open" && method !== null && detail.mergeState === "blocked";
 
-  async function act(kind: Pending, run: () => Promise<Result>) {
-    setPending(kind);
+  /** A change with no kind holds nothing else back: the control that asked for it shows its own progress. */
+  async function act(kind: Pending | null, run: () => Promise<Result>) {
+    if (kind) setPending(kind);
     setError(null);
     const result = await run();
-    setPending(null);
+    if (kind) setPending(null);
     if (result.status === "error") setError(result.error.message);
     else invalidateQueries(githubKeys.pullRequestLists(projectId));
     return result.status === "ok";
@@ -379,9 +380,9 @@ export function PullRequestReview({
     }
   }
 
-  async function merge() {
-    if (method === null) return;
-    if (await act("merge", () => commands.mergePullRequest(projectId, number, method, deleteBranch, false))) {
+  async function merge(how: MergeMethod) {
+    setMethod(how);
+    if (await act("merge", () => commands.mergePullRequest(projectId, number, how, deleteBranch, false))) {
       setMerged(true);
       dropFromLists();
       onChanged();
@@ -390,9 +391,9 @@ export function PullRequestReview({
     }
   }
 
-  async function mergeWhenReady() {
-    if (method === null) return;
-    if (await act("auto", () => commands.mergePullRequest(projectId, number, method, deleteBranch, true))) setAutoMerge(true);
+  async function mergeWhenReady(how: MergeMethod) {
+    setMethod(how);
+    if (await act("auto", () => commands.mergePullRequest(projectId, number, how, deleteBranch, true))) setAutoMerge(true);
   }
 
   async function closePullRequest() {
@@ -404,15 +405,16 @@ export function PullRequestReview({
   }
 
   /** Runs a change to the pull request on GitHub, then shows its new state. */
-  async function change(kind: Pending, run: () => Promise<Result>) {
+  async function change(kind: Pending | null, run: () => Promise<Result>) {
     const ok = await act(kind, run);
     if (ok) setReload((n) => n + 1);
     return ok;
   }
 
   const setDraft = (draft: boolean) => change("ready", () => commands.setPullRequestDraft(projectId, number, draft));
+  // People and labels: their picker row or "assign yourself" link shows the work.
   const edit = (partial: Partial<PullRequestEdit>) =>
-    change("edit", () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
+    change(null, () => commands.editPullRequest(projectId, number, { ...NO_EDIT, ...partial }));
   return (
     <div className="pr-review">
       {nav}
@@ -543,8 +545,8 @@ export function PullRequestReview({
           status={status.label}
           onMethod={setMethod}
           onDeleteBranch={setDeleteBranch}
-          onMerge={() => void merge()}
-          onAutoMerge={() => void mergeWhenReady()}
+          onMerge={(how) => void merge(how)}
+          onAutoMerge={(how) => void mergeWhenReady(how)}
           onReady={() => void setDraft(false)}
           onClose={() => void closePullRequest()}
         />
