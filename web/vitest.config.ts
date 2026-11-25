@@ -8,5 +8,7 @@ export default defineConfig({
     // isolated jsdom environments than the machine can comfortably run,
     // which caused flaky canvas/jsdom failures in AppGithubDock.
     maxWorkers: 4,
+    // Stylesheets imported with ?raw keep their text, so tests can check shell CSS rules jsdom cannot lay out.
+    css: { include: [/\/src\/styles\/[^/]+\.css\?raw$/] },
   },
 });

@@ -260,8 +260,7 @@ export function App() {
     setVisitedTools({ ...visitedTools, [`${selected.id}:${activeTool}`]: true });
   }
 
-  const revealProject = async (projectId = selected?.id) => {
-    if (projectId === undefined) return;
+  const revealProject = async (projectId: number) => {
     const result = await commands.revealInFinder(projectId);
     setOpenError(result.status === "error" ? result.error.message : null);
   };
@@ -394,25 +393,9 @@ export function App() {
             <RepoIcon size={16} />
           </button>
         )}
-        <div className="header-project" data-tauri-drag-region>
-          {selected ? (
-            <span className="title project-label" data-tauri-drag-region title={`Project: ${readablePath(selected.path)}`}>
-              <RepoIcon size={13} />
-              <strong>{selected.name}</strong>
-              {selected.missing && <span className="badge">missing</span>}
-            </span>
-          ) : !isWindows ? (
-            <span className="title" data-tauri-drag-region><strong>Oxide</strong></span>
-          ) : null}
-        </div>
-        {!isWindows && <span className="grow" data-tauri-drag-region />}
+        <span className="grow" data-tauri-drag-region />
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
-          {selected && !selected.missing && (
-            <button className="icon-btn" title={revealInFileManagerLabel()} aria-label={revealInFileManagerLabel()} onClick={() => void revealProject()}>
-              <FileDirectoryIcon size={16} />
-            </button>
-          )}
           <button
             className="icon-btn"
             aria-pressed={dockVisible}
@@ -811,31 +794,29 @@ function useWindowMaximized(): boolean {
   return maximized;
 }
 
-/** Caption buttons drawn like Windows' own: crisp 10x10 vector icons, 46px wide, flush with the top-right corner. */
+/** A 10x10 caption glyph drawn with a 1px stroke, like the Segoe Fluent Icons Windows uses. */
+function CaptionGlyph({ d, crisp = true }: { d: string; crisp?: boolean }) {
+  // Straight strokes sit on half-pixel coordinates and snap to the pixel grid; the Close cross stays anti-aliased.
+  return <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"
+    shapeRendering={crisp ? "crispEdges" : "geometricPrecision"} aria-hidden="true">
+    <path d={d} />
+  </svg>;
+}
+
+/** Caption buttons drawn like Windows 11's own: 46px wide, the full titlebar high, flush with the top-right corner. */
 function WindowControls() {
   const window = getCurrentWindow();
   const maximized = useWindowMaximized();
   return <div className="window-controls" role="group" aria-label="Window controls">
     <button type="button" aria-label="Minimize" title="Minimize" onClick={() => void window.minimize()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1 5h8" />
-      </svg>
+      <CaptionGlyph d="M0 5.5h10" />
     </button>
     <button type="button" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void window.toggleMaximize()}>
-      {maximized ? (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <path d="M3 1.5h5.5v5.5M1.5 3h5.5v5.5H1.5z" />
-        </svg>
-      ) : (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-          <rect x="1.5" y="1.5" width="7" height="7" />
-        </svg>
-      )}
+      {/* Restore layers a front window over the top and right edges of the one behind it. */}
+      <CaptionGlyph d={maximized ? "M0.5 2.5h7v7h-7zM2.5 2.5v-2h7v7h-2" : "M0.5 0.5h9v9h-9z"} />
     </button>
     <button type="button" className="window-close" aria-label="Close window" title="Close" onClick={() => void window.close()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true">
-        <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
-      </svg>
+      <CaptionGlyph d="M0 0l10 10M10 0L0 10" crisp={false} />
     </button>
   </div>;
 }
@@ -855,11 +836,13 @@ function ProjectCode({ reportOpenFiles, failOpenFile, ...props }: ProjectCodePro
 
 function WindowResizeHandles() {
   const maximized = useWindowMaximized();
-  // A maximized window cannot be resized, and the handles would cover the Close button's corner.
+  // A maximized window cannot be resized.
   if (maximized) return null;
-  const directions = ["North", "NorthEast", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
+  // No North-East corner: like a native window, the top-right corner belongs to the Close button,
+  // and the North and East edges stop short of the caption buttons (see styles.css).
+  const directions = ["North", "East", "SouthEast", "South", "SouthWest", "West", "NorthWest"] as const;
   return <div className="window-resize-handles" aria-hidden="true">
-    {directions.map((direction) => <div key={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
+    {directions.map((direction) => <div key={direction} data-direction={direction} className={`window-resize window-resize-${direction.toLowerCase()}`}
       onMouseDown={(event) => { if (event.button === 0) void getCurrentWindow().startResizeDragging(direction); }} />)}
   </div>;
 }

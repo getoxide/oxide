@@ -6,6 +6,10 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./shared/queryCache";
 import { App } from "./App";
 import { revealInFileManagerLabel } from "./shared/platform";
+import stylesCss from "./styles/styles.css?raw";
+import interactionsCss from "./styles/interactions.css?raw";
+import workbenchCss from "./styles/workbench.css?raw";
+import appearanceCss from "./styles/appearance.css?raw";
 
 const failingOpens = vi.hoisted(() => ({ current: false }));
 vi.mock("./shared/QuitDialog", () => ({ QuitDialog: () => null }));
@@ -183,6 +187,23 @@ it("closing a Project ends its terminals and asks Core to keep it known but clos
   await removeProject("Project Alpha");
   expect(calls.some((call) => call.command === "set_project_open" && JSON.stringify(call.args) === JSON.stringify({ id: 1, open: false }))).toBe(true);
   expect(all(".terminal-stub").map((node) => node.dataset.project)).toEqual(["2"]);
+});
+
+it("toggles the right dock open and closed at once, with no transition under any motion preference", async () => {
+  const dock = q<HTMLElement>("#workspace-tools")!;
+  expect(dock.hidden).toBe(true);
+  await click(label("Toggle tools panel"));
+  expect(dock.hidden).toBe(false);
+  await click(label("Toggle tools panel"));
+  expect(dock.hidden).toBe(true);
+
+  // Any rule naming the dock itself (`.tools`, `.tools[hidden]`) must not animate it.
+  for (const css of [stylesCss, interactionsCss, workbenchCss, appearanceCss]) {
+    expect(css.length).toBeGreaterThan(0);
+    const dockRules = [...css.matchAll(/(?:^|[},])\s*\.tools(?:\[hidden\])?\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    for (const body of dockRules) expect(body).not.toMatch(/transition|animation|translate|opacity: 0|allow-discrete/);
+    expect(css).not.toMatch(/@starting-style\s*\{[^}]*\.tools\b/);
+  }
 });
 
 it("gives the right dock only Issues and Pull request, Issues first, without naming Files", async () => {

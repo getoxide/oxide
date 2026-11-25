@@ -4,10 +4,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { clearQueryCache } from "./shared/queryCache";
+import stylesCss from "./styles/styles.css?raw";
 
 const windowState = vi.hoisted(() => ({
   maximized: false,
   resizeListeners: [] as (() => void)[],
+  close: [] as string[],
+  resizeDrags: [] as string[],
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -21,8 +24,8 @@ vi.mock("@tauri-apps/api/window", () => ({
     }),
     minimize: vi.fn(async () => {}),
     toggleMaximize: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
-    startResizeDragging: vi.fn(async () => {}),
+    close: vi.fn(async () => { windowState.close.push("close"); }),
+    startResizeDragging: vi.fn(async (direction: string) => { windowState.resizeDrags.push(direction); }),
   }),
 }));
 
@@ -43,6 +46,8 @@ Object.assign(globalThis, {
 
 let host: HTMLDivElement;
 let root: Root;
+let projects: { id: number; name: string; path: string; hidden: boolean; open: boolean; missing: boolean }[] = [];
+let calls: { command: string; args: unknown }[] = [];
 
 async function renderAppWithUserAgent(userAgent: string) {
   vi.resetModules();
@@ -58,16 +63,21 @@ beforeEach(() => {
   localStorage.clear();
   windowState.maximized = false;
   windowState.resizeListeners = [];
+  windowState.close = [];
+  windowState.resizeDrags = [];
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  mockIPC((command) => {
+  projects = [];
+  calls = [];
+  mockIPC((command, args) => {
+    calls.push({ command, args });
     switch (command) {
       case "list_projects":
       case "rescan_projects":
-        return [];
+        return projects;
       case "last_selection":
-        return null;
+        return projects[0]?.id ?? null;
       case "plugin:event|listen":
         return 1;
       default:
@@ -84,7 +94,26 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+const MACOS = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+const LINUX = "Mozilla/5.0 (X11; Linux x86_64)";
+const alpha = { id: 1, name: "Project Alpha", path: "/alpha", hidden: false, open: true, missing: false };
+
 describe("App window chrome", () => {
+  it.each([["Windows", WINDOWS], ["macOS", MACOS], ["Linux", LINUX]])(
+    "keeps the %s header free of the active Project name and Reveal button, with a drag region spacer",
+    async (_name, userAgent) => {
+      projects = [alpha];
+      await renderAppWithUserAgent(userAgent);
+      expect(host.querySelector(".project-name")?.textContent).toBe("Project Alpha");
+
+      const header = host.querySelector("header.header")!;
+      expect(header.textContent).not.toContain("Project Alpha");
+      expect(header.querySelector('[aria-label^="Reveal in"]')).toBeNull();
+      expect(header.querySelector('.grow[data-tauri-drag-region]')).not.toBeNull();
+    },
+  );
+
   it("renders visible SVG icons inside Windows caption buttons", async () => {
     await renderAppWithUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
@@ -97,6 +126,39 @@ describe("App window chrome", () => {
     expect(min?.querySelector("svg")).not.toBeNull();
     expect(max?.querySelector("svg")).not.toBeNull();
     expect(close?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("draws Windows caption glyphs as crisp 1px strokes on the pixel grid", async () => {
+    await renderAppWithUserAgent(WINDOWS);
+    const glyph = (name: string) => host.querySelector(`.window-controls button[aria-label="${name}"] svg`)!;
+
+    for (const name of ["Minimize", "Maximize", "Close window"]) {
+      expect(glyph(name).getAttribute("viewBox")).toBe("0 0 10 10");
+      expect(glyph(name).getAttribute("stroke-width")).toBe("1");
+    }
+    // Horizontal and vertical strokes snap to whole device pixels; the Close cross stays anti-aliased.
+    expect(glyph("Minimize").getAttribute("shape-rendering")).toBe("crispEdges");
+    expect(glyph("Maximize").getAttribute("shape-rendering")).toBe("crispEdges");
+    // A 1px stroke centred on y=5 straddles two pixel rows and blurs; native Minimize sits on one row.
+    expect(glyph("Minimize").querySelector("path")?.getAttribute("d")).toBe("M0 5.5h10");
+  });
+
+  it("styles Windows caption buttons like native Windows 11 chrome", () => {
+    const rule = (selector: string) => {
+      const start = stylesCss.indexOf(`${selector} {`);
+      expect(start, selector).toBeGreaterThanOrEqual(0);
+      return stylesCss.slice(start, stylesCss.indexOf("}", start));
+    };
+    const button = rule(".window.windows .window-controls button");
+    expect(button).toMatch(/width: 46px/);
+    expect(button).toMatch(/height: 100%/);
+    expect(button).toMatch(/border-radius: 0/);
+    expect(rule(".window.windows .window-controls button:hover:not(:disabled)")).toMatch(/transparent\)/);
+    expect(rule(".window.windows .window-controls button:active:not(:disabled)")).toMatch(/transparent\)/);
+    expect(rule(".window.windows .window-controls .window-close:hover:not(:disabled)")).toMatch(/background: #c42b1c; color: #fff/);
+    expect(rule(".window.windows .window-controls .window-close:active:not(:disabled)")).toMatch(/background: color-mix\(in srgb, #c42b1c 90%, transparent\); color: #fff/);
+    // macOS and Linux headers never pick up the caption styles.
+    expect(stylesCss).not.toMatch(/^\.window-controls/m);
   });
 
   it("removes resize handles and switches Maximize to Restore when maximized on resize or launch", async () => {
@@ -115,6 +177,23 @@ describe("App window chrome", () => {
     expect(host.querySelector(".window-resize-handles")).toBeNull();
     expect(host.querySelector('button[aria-label="Restore"]')?.querySelector("svg")).not.toBeNull();
     expect(host.querySelector('button[aria-label="Maximize"]')).toBeNull();
+  });
+
+  it("leaves the top-right corner to the Close button while the other edges and corners still resize", async () => {
+    await renderAppWithUserAgent(WINDOWS);
+
+    const handles = Array.from(host.querySelectorAll<HTMLElement>(".window-resize-handles .window-resize"));
+    const directions = handles.map((handle) => handle.dataset.direction);
+    expect(directions).not.toContain("NorthEast");
+    expect(directions.sort()).toEqual(["East", "North", "NorthWest", "South", "SouthEast", "SouthWest", "West"]);
+
+    for (const handle of handles) {
+      await act(async () => { handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })); });
+    }
+    expect(windowState.resizeDrags.sort()).toEqual(["East", "North", "NorthWest", "South", "SouthEast", "SouthWest", "West"]);
+
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Close window"]')!.click(); });
+    expect(windowState.close).toEqual(["close"]);
   });
 
   it("starts without resize handles and with Restore when launched maximized", async () => {
