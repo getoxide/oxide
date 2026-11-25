@@ -38,7 +38,6 @@ const summary = (over: Partial<IssueSummary> = {}): IssueSummary => ({
 const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   ...summary(),
   body: "It **crashes**.",
-  comments: [],
   viewer: "me",
   nodeId: "I_7",
   reactions: [],

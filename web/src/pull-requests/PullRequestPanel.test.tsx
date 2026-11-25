@@ -162,7 +162,6 @@ const detail = (title: string): PullRequestDetail_Serialize => ({
   body: "Full body from GitHub",
   headSha: "abc123",
   checks: [],
-  comments: [],
   nodeId: "",
   reactions: [],
   participants: [],

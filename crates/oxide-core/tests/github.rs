@@ -1083,6 +1083,22 @@ fn detailed_pr() -> serde_json::Value {
     pr
 }
 
+/// The comments and reviews of a timeline, oldest first: author, body and review state.
+fn conversation(
+    items: &[oxide_core::TimelineItem],
+) -> Vec<(String, String, Option<oxide_core::ReviewState>)> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            oxide_core::TimelineItem::Comment(c) => Some((c.author.clone(), c.body.clone(), None)),
+            oxide_core::TimelineItem::Review(r) => {
+                Some((r.author.clone(), r.body.clone(), Some(r.state)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn numbers(prs: &[oxide_core::PullRequest]) -> Vec<u32> {
     prs.iter().map(|p| p.number).collect()
 }
@@ -1147,9 +1163,10 @@ fn detail_has_description_checks_comments_and_changed_files() {
             ("ci/legacy", "success")
         ]
     );
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].author, "reviewer");
-    assert_eq!(detail.comments[0].body, "Looks good");
+    assert_eq!(
+        conversation(&detail.timeline),
+        [("reviewer".into(), "Looks good".into(), None)]
+    );
     assert_eq!(detail.changed_files, 4);
 
     let calls = f.gh_calls();
@@ -1481,7 +1498,7 @@ fn comment_sends_the_body_and_shows_up_on_the_next_view() {
         )
     );
     let detail = f.core.pull_request_detail(f.project.id, 5).unwrap();
-    assert_eq!(detail.comments.last().unwrap().body, "Thanks!");
+    assert_eq!(conversation(&detail.timeline).last().unwrap().1, "Thanks!");
 
     let before = f.gh_calls().len();
     assert!(f.core.comment_pull_request(f.project.id, 5, "  ").is_err());
@@ -1611,16 +1628,15 @@ fn detail_reports_who_reviews_who_is_assigned_and_whether_it_can_merge() {
         ]
     );
     // The review with a body joins the conversation, in order; the empty comment-only one does not.
-    let thread: Vec<(&str, Option<ReviewState>)> = detail
-        .comments
-        .iter()
-        .map(|c| (c.author.as_str(), c.review))
+    let thread: Vec<(String, Option<ReviewState>)> = conversation(&detail.timeline)
+        .into_iter()
+        .map(|(author, _, review)| (author, review))
         .collect();
     assert_eq!(
         thread,
         [
-            ("reviewer", None),
-            ("bob", Some(ReviewState::ChangesRequested))
+            ("reviewer".to_string(), None),
+            ("bob".to_string(), Some(ReviewState::ChangesRequested))
         ]
     );
 }
@@ -1956,9 +1972,10 @@ fn view_issue_detail_with_comments() {
     assert_eq!(detail.author, "charlie");
     assert_eq!(detail.state, "OPEN");
     assert_eq!(detail.url, "https://github.com/fake/repo/issues/42");
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].author, "dave");
-    assert_eq!(detail.comments[0].body, "Can confirm on macOS");
+    assert_eq!(
+        conversation(&detail.timeline),
+        [("dave".into(), "Can confirm on macOS".into(), None)]
+    );
 }
 
 fn issue_42() -> serde_json::Value {
@@ -2145,8 +2162,8 @@ fn create_comment_and_close_issue_calling_gh() {
         .comment_issue(f.project.id, 10, "First thought")
         .unwrap();
     let detail = f.core.issue_detail(f.project.id, 10).unwrap();
-    assert_eq!(detail.comments.len(), 1);
-    assert_eq!(detail.comments[0].body, "First thought");
+    assert_eq!(conversation(&detail.timeline).len(), 1);
+    assert_eq!(conversation(&detail.timeline)[0].1, "First thought");
 
     // Close: it leaves the open list and shows in the closed one, with its reason
     f.core

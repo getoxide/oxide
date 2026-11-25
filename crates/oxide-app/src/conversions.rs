@@ -254,18 +254,6 @@ impl From<oxide_core::PullRequestLabel> for PullRequestLabel {
     }
 }
 
-impl From<oxide_core::PullRequestComment> for PullRequestComment {
-    fn from(c: oxide_core::PullRequestComment) -> Self {
-        Self {
-            id: c.id,
-            author: c.author,
-            body: c.body,
-            created_at: c.created_at,
-            review: c.review.map(Into::into),
-        }
-    }
-}
-
 impl From<oxide_core::TimelineComment> for TimelineComment {
     fn from(x: oxide_core::TimelineComment) -> Self {
         Self {
@@ -493,7 +481,6 @@ impl From<oxide_core::PullRequestDetail> for PullRequestDetail {
             body: d.body,
             head_sha: d.head_sha,
             checks: d.checks.into_iter().map(Into::into).collect(),
-            comments: d.comments.into_iter().map(Into::into).collect(),
             merge_state: d.merge_state.into(),
             review_decision: d.review_decision.map(Into::into),
             reviewers: d.reviewers.into_iter().map(Into::into).collect(),
@@ -521,17 +508,6 @@ impl From<oxide_core::SignedImage> for SignedImage {
         Self {
             asset_id: i.asset_id,
             signed_url: i.signed_url,
-        }
-    }
-}
-
-impl From<oxide_core::IssueComment> for IssueComment {
-    fn from(c: oxide_core::IssueComment) -> Self {
-        Self {
-            id: c.id,
-            author: c.author,
-            body: c.body,
-            created_at: c.created_at,
         }
     }
 }
@@ -564,7 +540,6 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             author: d.author,
             url: d.url,
             created_at: d.created_at,
-            comments: d.comments.into_iter().map(Into::into).collect(),
             labels: d.labels.into_iter().map(Into::into).collect(),
             assignees: d.assignees,
             viewer: d.viewer,

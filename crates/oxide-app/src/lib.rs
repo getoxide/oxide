@@ -725,18 +725,6 @@ pub struct PullRequestLabel {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct PullRequestComment {
-    /// Set on a plain comment, which can be edited or deleted; reviews have none.
-    pub id: Option<String>,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    /// Set when the entry is a review rather than a plain comment.
-    pub review: Option<ReviewState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct TimelineComment {
     pub id: String,
     pub author: String,
@@ -918,7 +906,6 @@ pub struct PullRequestDetail {
     /// The commit the pull request's head points at.
     pub head_sha: String,
     pub checks: Vec<PullRequestCheck>,
-    pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
     pub review_decision: Option<ReviewDecision>,
     pub reviewers: Vec<PullRequestReviewer>,
@@ -952,15 +939,6 @@ pub struct PullRequestDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct IssueComment {
-    pub id: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct IssueSummary {
     pub number: u32,
     pub title: String,
@@ -985,7 +963,6 @@ pub struct IssueDetail {
     pub author: String,
     pub url: String,
     pub created_at: String,
-    pub comments: Vec<IssueComment>,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
     pub viewer: String,

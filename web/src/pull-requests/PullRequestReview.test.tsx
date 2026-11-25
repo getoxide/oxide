@@ -32,10 +32,6 @@ function detail(overrides: Partial<PullRequestDetail_Serialize> = {}): PullReque
       { name: "web", state: "failure", url: "https://github.com/me/oxide/actions/runs/1", required: true },
       { name: "rust", state: "success", url: null, required: false },
     ],
-    comments: [
-      { id: null, author: "bob", body: "Rename this", createdAt: "2026-10-27T10:00:00Z", review: "changesRequested" },
-      { id: "c1", author: "app/dependabot", body: "Rebased", createdAt: "2026-10-27T11:00:00Z", review: null },
-    ],
     mergeState: "clean",
     reviewDecision: null,
     reviewers: [{ login: "bob", state: "changesRequested" }],

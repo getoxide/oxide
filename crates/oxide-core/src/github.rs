@@ -187,19 +187,6 @@ pub struct PullRequestLabel {
     pub color: String,
 }
 
-/// A conversation entry: a comment, or a review that said something.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestComment {
-    /// GitHub's node id of a plain comment, which can be edited or deleted; none for a review.
-    pub id: Option<String>,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-    /// Set when the entry is a review rather than a plain comment.
-    pub review: Option<ReviewState>,
-}
-
 /// Who and what a pull request can be assigned, for the settings pickers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -230,7 +217,6 @@ pub struct PullRequestDetail {
     /// The commit the pull request's head points at.
     pub head_sha: String,
     pub checks: Vec<PullRequestCheck>,
-    pub comments: Vec<PullRequestComment>,
     pub merge_state: MergeState,
     pub review_decision: Option<ReviewDecision>,
     pub reviewers: Vec<PullRequestReviewer>,
@@ -819,39 +805,6 @@ fn labels_from(value: &serde_json::Value) -> Vec<PullRequestLabel> {
         .collect()
 }
 
-/// Comments and the reviews that said something, oldest first, as the web conversation shows them.
-fn conversation_from(v: &serde_json::Value) -> Vec<PullRequestComment> {
-    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
-    let mut entries: Vec<PullRequestComment> = list("comments")
-        .iter()
-        .map(|c| PullRequestComment {
-            id: Some(text(&c["id"])).filter(|id| !id.is_empty()),
-            author: text(&c["author"]["login"]),
-            body: text(&c["body"]),
-            created_at: text(&c["createdAt"]),
-            review: None,
-        })
-        .collect();
-    for review in list("reviews") {
-        let Some(state) = review_state_from(review["state"].as_str()) else {
-            continue;
-        };
-        let body = text(&review["body"]);
-        if body.trim().is_empty() && state == ReviewState::Commented {
-            continue;
-        }
-        entries.push(PullRequestComment {
-            id: None,
-            author: text(&review["author"]["login"]),
-            body,
-            created_at: text(&review["submittedAt"]),
-            review: Some(state),
-        });
-    }
-    entries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    entries
-}
-
 /// The conversation `gh pr view` or `gh issue view` tells on its own: comments and reviews,
 /// oldest first.
 fn fallback_timeline(v: &serde_json::Value) -> Vec<TimelineItem> {
@@ -1152,6 +1105,13 @@ pub fn list_pull_requests(
         .unwrap_or_default())
 }
 
+/// The value of a scoped thread, re-raising its panic on the caller.
+fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 /// One pull request with its description, checks, conversation, the merge
 /// methods the repository allows and its changed-file count.
 pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullRequestDetail> {
@@ -1171,11 +1131,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
             let default_method = scope.spawn(|| viewer_default_merge_method(gh, cwd));
             let viewer = scope.spawn(|| viewer_login(gh, cwd));
             let view = gh.run(cwd, &["pr", "view", &n, "--json", &fields]);
-            fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
-                handle
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            }
             (
                 view,
                 join(settings),
@@ -1190,7 +1145,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
 
     let pull_request = pull_request_from(&v);
     let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
-    let comments = conversation_from(&v);
     let Timeline {
         node_id,
         participants,
@@ -1212,7 +1166,6 @@ pub fn pull_request_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<PullReque
                 check
             })
             .collect(),
-        comments,
         merge_state: merge_state_from(&v),
         review_decision: match v["reviewDecision"].as_str() {
             Some("APPROVED") => Some(ReviewDecision::Approved),
@@ -1623,8 +1576,8 @@ pub fn comment_pull_request(gh: &Gh, cwd: &Path, number: u32, body: &str) -> Res
     Ok(())
 }
 
-/// A GraphQL node id (`IC_kwDO...`, `PRR_...`, `I_...`) is base64url-style text. Anything else, notably a leading
-/// `@`, which `gh api -F` would read as a file, is refused.
+/// A GraphQL node id (`IC_kwDO...`, `PRR_...`, `I_...`) is base64url-style text. Anything else,
+/// notably a leading `@`, which `gh api -F` would read as a file, is refused.
 fn checked_node_id(id: &str) -> Result<&str> {
     if !id.is_empty()
         && id.len() <= 256
@@ -1769,16 +1722,6 @@ const ISSUE_DETAIL_FIELDS: &str =
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IssueComment {
-    /// GitHub's node id, to edit or delete the comment.
-    pub id: String,
-    pub author: String,
-    pub body: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct IssueSummary {
     pub number: u32,
     pub title: String,
@@ -1805,7 +1748,6 @@ pub struct IssueDetail {
     pub author: String,
     pub url: String,
     pub created_at: String,
-    pub comments: Vec<IssueComment>,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
     /// The signed-in GitHub user.
@@ -2045,24 +1987,9 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         let viewer = scope.spawn(|| viewer_login(gh, cwd));
         let timeline = scope.spawn(|| timeline::timeline(gh, cwd, Subject::Issue, number));
         let view = gh.run(cwd, &["issue", "view", &n, "--json", ISSUE_DETAIL_FIELDS]);
-        fn join<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
-            handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        }
         (view, join(viewer), join(timeline))
     });
     let v = parse(&view?)?;
-    let list = |key: &str| v[key].as_array().map(Vec::as_slice).unwrap_or_default();
-    let comments: Vec<IssueComment> = list("comments")
-        .iter()
-        .map(|c| IssueComment {
-            id: text(&c["id"]),
-            author: text(&c["author"]["login"]),
-            body: text(&c["body"]),
-            created_at: text(&c["createdAt"]),
-        })
-        .collect();
     let Timeline {
         node_id,
         participants,
@@ -2081,7 +2008,6 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32) -> Result<IssueDetail> {
         author: text(&v["author"]["login"]),
         url: text(&v["url"]),
         created_at: text(&v["createdAt"]),
-        comments,
         labels: labels_from(&v["labels"]),
         assignees: logins_from(&v["assignees"]),
         viewer: viewer.unwrap_or_default(),

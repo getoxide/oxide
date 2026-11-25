@@ -195,13 +195,6 @@ export type GithubRepository = {
 
 export type IssueCloseReason = "completed" | "notPlanned";
 
-export type IssueComment = {
-	id: string,
-	author: string,
-	body: string,
-	createdAt: string,
-};
-
 export type IssueDetail = IssueDetail_Serialize | IssueDetail_Deserialize;
 
 export type IssueDetail_Deserialize = {
@@ -213,7 +206,6 @@ export type IssueDetail_Deserialize = {
 	author: string,
 	url: string,
 	createdAt: string,
-	comments: IssueComment[],
 	labels: PullRequestLabel[],
 	assignees: string[],
 	viewer: string,
@@ -239,7 +231,6 @@ export type IssueDetail_Serialize = {
 	author: string,
 	url: string,
 	createdAt: string,
-	comments: IssueComment[],
 	labels: PullRequestLabel[],
 	assignees: string[],
 	viewer: string,
@@ -410,28 +401,6 @@ export type PullRequestCheck_Serialize = {
 	required: boolean,
 };
 
-export type PullRequestComment = PullRequestComment_Serialize | PullRequestComment_Deserialize;
-
-export type PullRequestComment_Deserialize = {
-	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
-	id?: string | null,
-	author: string,
-	body: string,
-	createdAt: string,
-	/**  Set when the entry is a review rather than a plain comment. */
-	review?: ReviewState | null,
-};
-
-export type PullRequestComment_Serialize = {
-	/**  Set on a plain comment, which can be edited or deleted; reviews have none. */
-	id: string | null,
-	author: string,
-	body: string,
-	createdAt: string,
-	/**  Set when the entry is a review rather than a plain comment. */
-	review: ReviewState | null,
-};
-
 export type PullRequestDetail = PullRequestDetail_Serialize | PullRequestDetail_Deserialize;
 
 export type PullRequestDetail_Deserialize = {
@@ -441,7 +410,6 @@ export type PullRequestDetail_Deserialize = {
 	/**  The commit the pull request's head points at. */
 	headSha: string,
 	checks: PullRequestCheck_Deserialize[],
-	comments: PullRequestComment_Deserialize[],
 	mergeState: MergeState,
 	reviewDecision?: ReviewDecision | null,
 	reviewers: PullRequestReviewer[],
@@ -482,7 +450,6 @@ export type PullRequestDetail_Serialize = {
 	/**  The commit the pull request's head points at. */
 	headSha: string,
 	checks: PullRequestCheck_Serialize[],
-	comments: PullRequestComment_Serialize[],
 	mergeState: MergeState,
 	reviewDecision: ReviewDecision | null,
 	reviewers: PullRequestReviewer[],
