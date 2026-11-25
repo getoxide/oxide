@@ -97,6 +97,10 @@ export function TerminalWorkbench({
   useEffect(() => { reportRunning.current = onRunningChange; });
   useEffect(() => { reportRunning.current?.(running ? runningCommand.current : null); }, [running]);
   const composer = useRef<TerminalInputHandle>(null);
+  // Read by the output listener, which lives as long as the shell and would otherwise keep the
+  // visibility the Terminal had when the shell started.
+  const visibleRef = useRef(visible);
+  useLayoutEffect(() => { visibleRef.current = visible; });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -203,7 +207,7 @@ export function TerminalWorkbench({
             activeBlock.current = null;
             setRunning(false);
             inCommand = false;
-            if (visible) requestAnimationFrame(() => composer.current?.focus());
+            if (visibleRef.current) requestAnimationFrame(() => composer.current?.focus());
           }
         }
       }

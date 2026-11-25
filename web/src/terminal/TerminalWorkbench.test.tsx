@@ -8,6 +8,7 @@ import { TerminalWorkbench } from "./TerminalWorkbench";
 import { ContextMenu } from "../shared/ContextMenu";
 
 const xtermSelection = { text: "" };
+const dataListeners: Array<(data: string) => void> = [];
 
 // xterm needs a real canvas and layout; the Command block around it is what is under test.
 vi.mock("@xterm/xterm", () => ({
@@ -26,7 +27,7 @@ vi.mock("@xterm/xterm", () => ({
     focus() {}
     blur() {}
     dispose() {}
-    onData() { return { dispose() {} }; }
+    onData(listener: (data: string) => void) { dataListeners.push(listener); return { dispose() {} }; }
     onWriteParsed() { return { dispose() {} }; }
   },
 }));
@@ -42,6 +43,7 @@ const writes: string[] = [];
 let now = 0;
 beforeEach(() => {
   writes.length = 0;
+  dataListeners.length = 0;
   xtermSelection.text = "";
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
@@ -318,4 +320,61 @@ it.each([
   await act(async () => channel.onmessage([...new TextEncoder().encode("\x1b[6n")]));
   await settle();
   expect(written.includes("\x1b[1;1R")).toBe(answers);
+});
+
+it("keeps keys typed during a block's launch out of the shell until the block starts", async () => {
+  const written: string[] = [];
+  let channel: Channel<number[]>;
+  let token = "";
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") token = (args as { token: string }).token;
+    if (name === "write_terminal") written.push(new TextDecoder().decode(new Uint8Array((args as { input: number[] }).input)));
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "cat");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await settle();
+  const type = (data: string) => act(async () => { for (const listener of dataListeners) listener(data); });
+  await type("early");
+  await settle();
+  expect(written).not.toContain("early");
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};start\x07`)]));
+  await settle();
+  await type("late");
+  await settle();
+  expect(written).toContain("late");
+});
+
+it("leaves focus alone when a block ends in a Terminal that has been hidden since", async () => {
+  let channel: Channel<number[]>;
+  let token = "";
+  mockIPC((name, args) => {
+    if (name === "start_block_terminal") { channel = (args as { onOutput: Channel<number[]> }).onOutput; return { id: 1 }; }
+    if (name === "run_terminal_block") token = (args as { token: string }).token;
+    return null;
+  });
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible />));
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "sleep 1");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  await settle();
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};start\x07`)]));
+  await settle();
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  elsewhere.focus();
+  await act(async () => root.render(<TerminalWorkbench projectId={1} rootPath="/test" contextKey="1" visible={false} />));
+  await act(async () => channel!.onmessage([...new TextEncoder().encode(`\x1b]633;Oxide;${token};end;0;/test\x07`)]));
+  await settle();
+  expect(document.activeElement).toBe(elsewhere);
+  elsewhere.remove();
 });
