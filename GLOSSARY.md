@@ -43,7 +43,7 @@ The sidebar's other state: the file tree of one Project. The Files button on a P
 _Avoid_: Files panel, Files Surface, explorer, navigator
 
 **Code workspace**:
-The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored; maximizing or a narrow centre hides the other half without closing it. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed.
+The Project's editor, shown in the **Code half** of the centre beside the **Terminal half** while a file is open. Either half can be maximized and restored; maximizing or a narrow centre hides the other half without closing it. It owns the file tabs, Monaco and the language servers; the **Files view** opens files into it. Each Project keeps its own Code workspace, so moving between Projects or Terminals keeps the open buffers and unsaved changes, and remembers the split, divider and maximized half. Opening the first file of a language offers to download its language support; downloads happen only after Install is pressed. The language button in its status bar opens a popover to switch the buffer's language mode and to see, install or restart that language's server.
 _Avoid_: Editor pane, code tab, work mode
 
 **Terminal half** and **Code half**:
