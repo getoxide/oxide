@@ -732,6 +732,7 @@ pub struct TimelineComment {
     pub author: String,
     pub body: String,
     pub created_at: String,
+    pub reactions: Vec<ReactionGroup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -742,6 +743,30 @@ pub struct TimelineReview {
     pub body: String,
     pub created_at: String,
     pub state: ReviewState,
+    pub reactions: Vec<ReactionGroup>,
+}
+
+/// One of the eight reactions GitHub offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ReactionContent {
+    ThumbsUp,
+    ThumbsDown,
+    Laugh,
+    Hooray,
+    Confused,
+    Heart,
+    Rocket,
+    Eyes,
+}
+
+/// How many people gave one reaction, and whether the signed-in user is one of them.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionGroup {
+    pub content: ReactionContent,
+    pub count: u32,
+    pub viewer_has_reacted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -906,6 +931,8 @@ pub struct PullRequestDetail {
     pub participants: Vec<String>,
     /// Comments, reviews, commits and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// The reactions on the description.
+    pub reactions: Vec<ReactionGroup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -952,6 +979,8 @@ pub struct IssueDetail {
     pub participants: Vec<String>,
     /// Comments and activity, oldest first.
     pub timeline: Vec<TimelineItem>,
+    /// The reactions on the description.
+    pub reactions: Vec<ReactionGroup>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -1177,6 +1206,24 @@ async fn delete_comment(
     id: String,
 ) -> Result<(), AppError> {
     git_blocking(&core, move |core| core.delete_comment(project_id, &id)).await
+}
+
+/// Adds (`add`) or removes the signed-in user's reaction on an issue, a pull request, a
+/// comment or a review. `subject_id` is its GraphQL node id, validated in Core; the call
+/// goes to GitHub through `gh api graphql`.
+#[tauri::command]
+#[specta::specta]
+async fn toggle_reaction(
+    core: State<'_, Arc<Core>>,
+    project_id: u32,
+    subject_id: String,
+    content: ReactionContent,
+    add: bool,
+) -> Result<(), AppError> {
+    git_blocking(&core, move |core| {
+        core.toggle_reaction(project_id, &subject_id, content.into(), add)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1528,6 +1575,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         comment_pull_request,
         edit_comment,
         delete_comment,
+        toggle_reaction,
         merge_pull_request,
         close_pull_request,
         open_link,

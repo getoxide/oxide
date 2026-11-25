@@ -86,6 +86,12 @@ export const commands = {
 	editComment: (projectId: number, id: string, body: string) => typedError<null, AppError>(__TAURI_INVOKE("edit_comment", { projectId, id, body })),
 	/**  Deletes a comment of a pull request or an issue. */
 	deleteComment: (projectId: number, id: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_comment", { projectId, id })),
+	/**
+	 *  Adds (`add`) or removes the signed-in user's reaction on an issue, a pull request, a
+	 *  comment or a review. `subject_id` is its GraphQL node id, validated in Core; the call
+	 *  goes to GitHub through `gh api graphql`.
+	 */
+	toggleReaction: (projectId: number, subjectId: string, content: ReactionContent, add: boolean) => typedError<null, AppError>(__TAURI_INVOKE("toggle_reaction", { projectId, subjectId, content, add })),
 	mergePullRequest: (projectId: number, number: number, method: MergeMethod, deleteBranch: boolean, auto: boolean) => typedError<null, AppError>(__TAURI_INVOKE("merge_pull_request", { projectId, number, method, deleteBranch, auto })),
 	/**  Closes a pull request without merging it. */
 	closePullRequest: (projectId: number, number: number) => typedError<null, AppError>(__TAURI_INVOKE("close_pull_request", { projectId, number })),
@@ -210,6 +216,8 @@ export type IssueDetail_Deserialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
 };
 
 export type IssueDetail_Serialize = {
@@ -230,6 +238,8 @@ export type IssueDetail_Serialize = {
 	participants: string[],
 	/**  Comments and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -440,6 +450,8 @@ export type PullRequestDetail_Deserialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Deserialize[],
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
 };
 
 export type PullRequestDetail_Serialize = {
@@ -472,6 +484,8 @@ export type PullRequestDetail_Serialize = {
 	participants: string[],
 	/**  Comments, reviews, commits and activity, oldest first. */
 	timeline: TimelineItem_Serialize[],
+	/**  The reactions on the description. */
+	reactions: ReactionGroup[],
 };
 
 export type PullRequestDraft = PullRequestDraft_Serialize | PullRequestDraft_Deserialize;
@@ -535,6 +549,16 @@ export type PullRequestReviewer = {
 	state: ReviewState,
 };
 
+/**  One of the eight reactions GitHub offers. */
+export type ReactionContent = "thumbsUp" | "thumbsDown" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+
+/**  How many people gave one reaction, and whether the signed-in user is one of them. */
+export type ReactionGroup = {
+	content: ReactionContent,
+	count: number,
+	viewerHasReacted: boolean,
+};
+
 export type ReviewDecision = "approved" | "changesRequested" | "reviewRequired";
 
 export type ReviewState = "requested" | "approved" | "changesRequested" | "commented" | "dismissed";
@@ -582,6 +606,7 @@ export type TimelineComment = {
 	author: string,
 	body: string,
 	createdAt: string,
+	reactions: ReactionGroup[],
 };
 
 export type TimelineCommit = TimelineCommit_Serialize | TimelineCommit_Deserialize;
@@ -746,6 +771,7 @@ export type TimelineReview = {
 	body: string,
 	createdAt: string,
 	state: ReviewState,
+	reactions: ReactionGroup[],
 };
 
 /* Tauri Specta runtime */
