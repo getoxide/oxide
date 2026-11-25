@@ -33,7 +33,7 @@ interface TerminalInstance {
   blur(): void;
   dispose(): void;
   onData(cb: (data: string) => void): { dispose(): void };
-  onWriteParsed(): { dispose(): void };
+  onWriteParsed(cb: () => void): { dispose(): void };
 }
 
 const instances: TerminalInstance[] = [];
@@ -92,7 +92,9 @@ vi.mock("@xterm/xterm", () => ({
       }
       this.buffer.active.cursorY = this.lines.length - 1;
       this.buffer.active.length = this.lines.length;
+      for (const parsed of this.parsedListeners) parsed();
     }
+    parsedListeners: Array<() => void> = [];
     paste() {}
     focus() { focused.push(1); }
     blur() {}
@@ -101,7 +103,10 @@ vi.mock("@xterm/xterm", () => ({
       dataListeners.push(cb);
       return { dispose() {} };
     }
-    onWriteParsed() { return { dispose() {} }; }
+    onWriteParsed(cb: () => void) {
+      this.parsedListeners.push(cb);
+      return { dispose() {} };
+    }
   },
 }));
 vi.mock("@xterm/addon-fit", () => ({
@@ -128,6 +133,7 @@ vi.mock("@xterm/addon-webgl", () => ({
 
 import stylesCss from "../styles/styles.css?raw";
 const { formatDuration, TerminalCommandBlock } = await import("./TerminalCommandBlock");
+const { RUNNING_INDICATOR_DELAY_MS } = await import("./runningIndicator");
 const { getAppearance, saveAppearance, terminalAppearance } = await import("../shared/appearance");
 
 Object.assign(globalThis, {
@@ -616,7 +622,7 @@ it.each([
   expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe(height);
 });
 
-it("keeps the cursor row of a running block, where the program is still typing", async () => {
+it("keeps the cursor row of a block running past the running indicator delay, where the program may read input", async () => {
   await act(async () =>
     root.render(
       createElement(TerminalCommandBlock, {
@@ -631,7 +637,7 @@ it("keeps the cursor row of a running block, where the program is still typing",
     ),
   );
   await act(async () => {
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50));
   });
   expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe("32px");
 });
@@ -712,5 +718,62 @@ describe("running indicator", () => {
     await render(true);
     expect(section().classList.contains("running")).toBe(false);
     expect(spinner()).toBeNull();
+  });
+});
+
+
+describe("height of a block while its command runs", () => {
+  // Blocks are bottom-anchored above the command line: a row that comes and goes in the newest
+  // block moves every block above it. Only rows with text count while a command runs.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const clipHeight = () => mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height;
+  const render = (block: Partial<Parameters<typeof TerminalCommandBlock>[0]["block"]>, active: boolean) =>
+    act(async () =>
+      root.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ command: "cd ..", ...block }),
+          active,
+          visible: true,
+          onInput: () => {},
+          onReady: () => {},
+          onResize: () => {},
+          onScreen: () => {},
+        }),
+      ),
+    );
+  const frame = () => act(async () => { vi.advanceTimersByTime(16); });
+
+  it("never gives a fast command without output an output area", async () => {
+    const seen: string[] = [];
+    await render({ started: false }, true);
+    seen.push(clipHeight());
+    await frame();
+    seen.push(clipHeight());
+    await render({ started: true }, true);
+    seen.push(clipHeight());
+    await frame();
+    seen.push(clipHeight());
+    await render({ started: true, ended: true, exitCode: 0, completedAt: 1012 }, false);
+    seen.push(clipHeight());
+    await frame();
+    seen.push(clipHeight());
+    expect(seen).toEqual(["0px", "0px", "0px", "0px", "0px", "0px"]);
+  });
+
+  it("grows the output area of a command printing one line exactly once", async () => {
+    const seen: string[] = [];
+    await render({ command: "echo hi" }, true);
+    await frame();
+    seen.push(clipHeight());
+    await render({ command: "echo hi", output: "hi\r\n" }, true);
+    seen.push(clipHeight());
+    await frame();
+    seen.push(clipHeight());
+    await render({ command: "echo hi", output: "hi\r\n", ended: true, exitCode: 0 }, false);
+    seen.push(clipHeight());
+    await frame();
+    seen.push(clipHeight());
+    expect(seen).toEqual(["0px", "16px", "16px", "16px", "16px"]);
   });
 });

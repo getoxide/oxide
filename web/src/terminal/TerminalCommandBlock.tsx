@@ -45,8 +45,13 @@ export function TerminalCommandBlock(props: Props) {
   const callbacks = useRef(props);
   const written = useRef(0);
   const fitSurface = useRef<() => void>(() => {});
+  const measure = useRef<() => void>(() => {});
   const [screen, setScreen] = useState(false);
-  const [height, setHeight] = useState(16);
+  const [height, setHeight] = useState(0);
+  // A running command shows as running once it runs past the running indicator delay; from then on
+  // its block also keeps xterm's cursor row, where a program may be waiting for input on a blank line.
+  const showRunning = useRunningIndicator(active);
+  const keepCursorRow = useRef(false);
   useLayoutEffect(() => {
     callbacks.current = props;
   });
@@ -78,16 +83,21 @@ export function TerminalCommandBlock(props: Props) {
       last = "",
       interactive = false,
       settle = 0;
-    // `trim`: the height the reader sees. Once the block has ended its cursor row is not content,
-    // so the clip stops at the last row with text. The xterm itself keeps every row through the
-    // cursor's: fitted any shorter, xterm scrolls to keep the cursor on screen and the text with
-    // it out of view (a one-line error would show as an empty row and a scrollbar).
+    // `trim`: the height the reader sees. Only rows with text count, never a bare cursor row, so
+    // a command's block grows with its output and never shrinks when it ends: blocks sit on the
+    // command line, and a row that came and went would move every block above it. The one
+    // exception is a command still running past the running indicator delay, which keeps its
+    // cursor row for a program reading input there (a row with a prompt on it has text anyway).
+    // The xterm itself keeps every row through the cursor's: fitted any shorter, xterm scrolls to
+    // keep the cursor on screen and the text with it out of view (a one-line error would show as
+    // an empty row and a scrollbar).
     const contentHeight = (trim = true) => {
       const { active: isActive, block: current } = callbacks.current;
-      if (!isActive && !current.output && current.outputOffset === 0) return 0;
+      const cursorRow = isActive && keepCursorRow.current;
+      if (!cursorRow && !current.output && current.outputOffset === 0) return 0;
       const buffer = term.buffer.active;
       let rows = buffer.baseY + buffer.cursorY + 1;
-      if (!isActive && trim) {
+      if (!cursorRow && trim) {
         while (rows > 0 && !buffer.getLine(rows - 1)?.translateToString(true).trim()) rows--;
         if (!rows) return 0;
       }
@@ -100,8 +110,7 @@ export function TerminalCommandBlock(props: Props) {
         !element.clientWidth
       )
         return;
-      viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
-      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
+      viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);      element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
       addon.fit();
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
       if (screenElement && term.rows)
@@ -171,13 +180,13 @@ export function TerminalCommandBlock(props: Props) {
       const { active, block } = callbacks.current;
       if (active && block.started) callbacks.current.onInput(data);
     });
-    const parsed = term.onWriteParsed(() => {
+    measure.current = () =>
       setHeight(
         interactive && callbacks.current.active
           ? viewport
           : Math.min(viewport || 800, contentHeight()),
       );
-    });
+    const parsed = term.onWriteParsed(() => measure.current());
     scheduleFit();
     return () => {
       cancelAnimationFrame(frame);
@@ -217,7 +226,10 @@ export function TerminalCommandBlock(props: Props) {
     term.write("\x1b[?25l");
   }, [active]);
   const failed = isFailed(props);
-  const showRunning = useRunningIndicator(active);
+  useEffect(() => {
+    keepCursorRow.current = showRunning;
+    measure.current();
+  }, [showRunning]);
   useEffect(() => {
     const term = terminal.current;
     if (term) term.options.theme = terminalAppearance({ failed }).theme;
