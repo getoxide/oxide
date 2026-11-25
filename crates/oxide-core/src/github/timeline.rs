@@ -422,7 +422,7 @@ fn later_pages(
 
 impl TimelineItem {
     /// When it happened, as GitHub's ISO 8601 timestamp.
-    pub fn at(&self) -> &str {
+    fn at(&self) -> &str {
         match self {
             TimelineItem::Comment(c) => &c.created_at,
             TimelineItem::Review(r) => &r.created_at,
