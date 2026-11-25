@@ -38,3 +38,14 @@ it("keeps the ghost suggestion on the same font, padding and line as the typed t
   expect(ghost.padding).toBe(typed.padding);
   expect(ghost["white-space"]).toBe("pre");
 });
+
+it("hangs both $ prompts in the gutter, so commands, their output and the command line share one text edge", () => {
+  const block = declarations(".terminal-block-prompt");
+  const line = declarations(".terminal-prompt-symbol");
+  expect(block["margin-left"]).toMatch(/^-/);
+  expect(line["margin-left"]).toBe(block["margin-left"]);
+  expect(line.width).toBe(block.width);
+  expect(declarations(".terminal-command-composer").padding.split(" ")[1]).toBe(
+    declarations(".terminal-command-block").padding.split(" ")[1],
+  );
+});

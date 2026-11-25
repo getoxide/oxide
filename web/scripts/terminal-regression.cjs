@@ -76,9 +76,7 @@ const repository = path.resolve(__dirname, "../..");
     attached = true;
     const command = "python tui_fixture.py";
     await input.fill(command);
-    await page
-      .getByRole("button", { name: "Run command", exact: true })
-      .click();
+    await input.press("Enter");
     await page.waitForFunction(() =>
       document.querySelector('.terminal-workbench[data-fullscreen="true"]'),
     );
@@ -103,9 +101,7 @@ const repository = path.resolve(__dirname, "../..");
     await page.screenshot({ path: path.join(output, "native-fullscreen.png") });
     await input.waitFor({ state: "visible" });
     await input.fill("echo WORKBENCH_READY");
-    await page
-      .getByRole("button", { name: "Run command", exact: true })
-      .click();
+    await input.press("Enter");
     await input.waitFor({ state: "visible" });
     const layout = await page.locator(".terminal-command-block").last().evaluate((block) => {
       const command = block.querySelector("header code");
