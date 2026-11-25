@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
-const BLOCK_PROMPT_COMMAND: &str = r#"function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write(([char]27)+"]633;Oxide;$($global:oxideCommandToken);end;$oxideCode;$($pwd.ProviderPath)"+[char]7); $global:oxideCommandToken=$null }; ' ' }"#;
+/// Oxide's prompt and `oxideEnd`, which returns the end marker of the running block (and forgets
+/// its token) for the prompt to write and the block wrapper to emit as pipeline output.
+const BLOCK_PROMPT_COMMAND: &str = r#"function global:oxideEnd($oxideCode) { $oxideMarker=([char]27)+']633;Oxide;'+$global:oxideCommandToken+';end;'+$oxideCode+';'+$pwd.ProviderPath+[char]7; $global:oxideCommandToken=$null; $oxideMarker }; function global:prompt { if ($null -ne $global:oxideCommandToken) { $oxideCode=if($null -ne $global:oxideExitCode){$global:oxideExitCode}else{if($global:LASTEXITCODE){$global:LASTEXITCODE}else{1}}; [Console]::Write((oxideEnd $oxideCode)) }; ' ' }"#;
 
 fn resolve_pwsh() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH")
@@ -115,14 +117,17 @@ fn let_children_receive_ctrl_c() {
 
 /// What to type into the shell to run `command` as a block marked by `token`. The leading `;`
 /// ends whatever stray input sits in the line editor as a statement of its own, and the prompt
-/// is defined again in case a block replaced it. The command runs from base64 (a syntax error
-/// fails the block), then the end is marked inline, as pipeline output so it follows any output
-/// PowerShell is still formatting; the prompt marks the end only of a block stopped by Ctrl+C.
-pub fn block_script(token: &str, command: &str) -> String {
+/// is defined before and after the command, so a block that replaces it never gets its own
+/// printed. The command runs from base64 (a syntax error fails the block), then the end is marked
+/// inline, as pipeline output so it follows any output PowerShell is still formatting; the prompt
+/// marks the end only of a block stopped by Ctrl+C. A token other than ASCII letters, digits and
+/// `-` is refused.
+pub fn block_script(token: &str, command: &str) -> io::Result<String> {
+    let token = crate::block_token(token)?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(command);
-    format!(
-        "; {BLOCK_PROMPT_COMMAND}; [Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}; if ($null -ne $global:oxideCommandToken) {{ \"$([char]27)]633;Oxide;{token};end;$($global:oxideExitCode);$($pwd.ProviderPath)$([char]7)\"; $global:oxideCommandToken=$null }}\r"
-    )
+    Ok(format!(
+        "; {BLOCK_PROMPT_COMMAND}; [Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}; if ($null -ne $global:oxideCommandToken) {{ oxideEnd $global:oxideExitCode }}; {BLOCK_PROMPT_COMMAND}\r"
+    ))
 }
 
 /// A script that asks PowerShell itself for completions (`TabExpansion2`) and prints the answer
@@ -177,16 +182,36 @@ mod tests {
 
     #[test]
     fn the_block_wrapper_is_one_line_that_marks_its_own_end() {
-        let script = block_script("tok", "Write-Output 'a'\nWrite-Output \"b\"");
+        let script = block_script("tok", "Write-Output 'a'\nWrite-Output \"b\"").expect("script");
         assert_eq!(script.matches('\r').count(), 1, "{script}");
         assert!(!script.contains('\n'), "{script}");
         assert!(script.ends_with('\r'));
         assert!(script.starts_with("; "), "{script}");
-        assert!(script.contains("function global:prompt"), "{script}");
+        assert!(script.contains("$global:oxideCommandToken='tok'"), "{script}");
         let start = script.find("Oxide;tok;start").expect("start marker");
-        let end = script.find("Oxide;tok;end;").expect("inline end marker");
+        let end = script.find("oxideEnd $global:oxideExitCode").expect("inline end marker");
         assert!(start < end);
-        assert!(script[end..].contains("$global:oxideCommandToken=$null"));
+        // The prompt and the end marker live in one place, shared by the prompt and the wrapper.
+        assert!(BLOCK_PROMPT_COMMAND.contains("function global:oxideEnd"));
+        assert!(BLOCK_PROMPT_COMMAND.contains("$global:oxideCommandToken=$null"));
+    }
+
+    /// A block that defines its own `prompt` gets Oxide's back before and after it runs, so the
+    /// user's prompt never prints into the Terminal.
+    #[test]
+    fn the_block_wrapper_restores_the_prompt_after_the_command() {
+        let script = block_script("tok", "function global:prompt { 'mine> ' }").expect("script");
+        let end = script.find("oxideEnd $global:oxideExitCode").expect("inline end marker");
+        let before = script[..end].find("function global:prompt");
+        let after = script[end..].find("function global:prompt");
+        assert!(before.is_some() && after.is_some(), "{script}");
+    }
+
+    #[test]
+    fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
+        for token in ["", "a'b", "a;b", "a\"b", "a b", "$x"] {
+            assert!(block_script(token, "Write-Output hi").is_err(), "{token:?}");
+        }
     }
 
     #[test]

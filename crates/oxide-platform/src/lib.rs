@@ -39,6 +39,24 @@ pub use implementation::{fs, process, system, terminal};
 
 use serde::{Deserialize, Serialize};
 
+/// `token` when it is a valid Command block token (ASCII letters, digits and `-`), which every
+/// OS's `terminal::block_script` embeds in shell code: anything else could end the quoting
+/// around it (ADR-0016).
+fn block_token(token: &str) -> std::io::Result<&str> {
+    if !token.is_empty()
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        Ok(token)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a Command block token is ASCII letters, digits and '-'",
+        ))
+    }
+}
+
 /// The shell a Terminal runs, chosen from the OS allowlist (ADR-0016).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

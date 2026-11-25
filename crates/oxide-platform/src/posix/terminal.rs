@@ -313,15 +313,18 @@ pub fn shell_launch(
 /// What to type into the shell to run `command` as a block marked by `token`: one line, so a
 /// syntax error in `command` is reported by `eval` instead of leaving the shell at a continuation
 /// prompt. Ctrl+U first empties the line editor of anything typed or replied before it. The
-/// wrapper re-arms the prompt hooks, marks the start, runs the command in the live shell (its
-/// `cd`, variables, aliases and functions stay) and marks the end itself; the prompt hook only
-/// marks the end of a command that never got back to the wrapper (Ctrl+C). The leading space
-/// keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`).
-pub fn block_script(token: &str, command: &str) -> String {
+/// wrapper re-arms the prompt hooks, marks the start, runs the command at the top level of the
+/// live shell through `eval`, exactly as typed (its `cd`, variables, aliases and functions stay,
+/// and `return` or bash's `local` behave as at the prompt), and marks the end itself; the prompt
+/// hook only marks the end of a command that never got back to the wrapper (Ctrl+C). The leading
+/// space keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`). A
+/// token other than ASCII letters, digits and `-` is refused.
+pub fn block_script(token: &str, command: &str) -> io::Result<String> {
+    let token = crate::block_token(token)?;
     let command = ansi_c_quoted(command);
-    format!(
-        "\x15 _oxide_token={token}; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
-    )
+    Ok(format!(
+        "\x15 _oxide_token='{token}'; _oxide_exit=; {{ _oxide_rearm; }} 2>/dev/null; builtin printf '\\033]633;Oxide;%s;start\\007' \"$_oxide_token\"; eval {command}; _oxide_exit=$?; builtin printf '\\033]633;Oxide;%s;end;%s;%s\\007' \"$_oxide_token\" \"$_oxide_exit\" \"$PWD\"; _oxide_token=; {{ _oxide_rearm; }} 2>/dev/null\n"
+    ))
 }
 
 /// `text` as one `$'...'` word, which bash and zsh both read back unchanged, with every line
@@ -638,7 +641,7 @@ mod tests {
     #[test]
     fn the_block_wrapper_is_one_line_that_runs_the_command_unchanged() {
         let command = "printf '%s|' \"it's\" 'a\\b' \"$(printf 'x\\001y' | od -An -c | tr -s ' ')\"\nprintf 'second line\\n'";
-        let script = block_script("tok", command);
+        let script = block_script("tok", command).expect("script");
         assert_eq!(script.matches('\n').count(), 1, "{script}");
         assert!(script.ends_with('\n'));
         for shell in [resolve_zsh(), resolve_bash()].into_iter().flatten() {
@@ -668,9 +671,16 @@ mod tests {
     }
 
     #[test]
+    fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
+        for token in ["", "a'b", "a;b", "a\"b", "a b", "$(x)"] {
+            assert!(block_script(token, "echo hi").is_err(), "{token:?}");
+        }
+    }
+
+    #[test]
     fn the_block_wrapper_stays_out_of_the_shell_history() {
         // Ctrl+U clears the line editor; the line it then reads starts with a space.
-        let script = block_script("token", "echo hi");
+        let script = block_script("token", "echo hi").expect("script");
         assert!(script.strip_prefix('\u{15}').unwrap().starts_with(' '));
     }
 }
