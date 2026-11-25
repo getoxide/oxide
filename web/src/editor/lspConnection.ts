@@ -132,7 +132,7 @@ export class LspConnection {
         };
         this.onDiagnostics(params.uri, params.diagnostics);
       } else if (message.method === "$/oxide/serverExited") {
-        this.onState("Server stopped. Reconnect from Language tools.");
+        this.onState("Server stopped. Restart it from the language button in the status bar.");
         this.rejectPending("Language server exited.");
       }
       return;

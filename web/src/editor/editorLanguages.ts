@@ -52,7 +52,7 @@ export class EditorLanguages {
         const result = await commands.languageTools();
         const tool = result.find((t) => t.language === language);
         if (!tool?.installed)
-          throw new Error("Not installed · open Language tools");
+          throw new Error("Not installed · install it from the language button in the status bar");
         const connection = new LspConnection(
           this.projectId,
           tool,
@@ -450,7 +450,7 @@ export class EditorLanguages {
             }
             return {
               edits: [],
-              rejectReason: "Rename is unavailable. Check Language tools.",
+              rejectReason: "Rename is unavailable. Check the language button in the status bar.",
             };
           },
         }),
