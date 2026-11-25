@@ -290,14 +290,54 @@ fn pipe_stdin(mut command: Command, input: &str) -> std::io::Result<std::process
 pub struct Gh {
     search_path: Mutex<Option<Vec<PathBuf>>>,
     ready_at: Mutex<Option<Instant>>,
-    default_branches: Mutex<HashMap<PathBuf, (Instant, String)>>,
+    default_branches: Cached<PathBuf, String>,
+    merge_settings: Cached<PathBuf, (Vec<MergeMethod>, bool)>,
+    default_merge_methods: Cached<PathBuf, Option<MergeMethod>>,
+    viewer_logins: Cached<(), Option<String>>,
+}
+
+/// Values GitHub rarely changes (repository settings, the signed-in viewer), kept per key for
+/// `CACHE_TTL` so repeated reads of a pull request spawn fewer `gh` processes. Only successful
+/// reads are kept: a failure is asked again next time.
+struct Cached<K, V>(Mutex<HashMap<K, (Instant, V)>>);
+
+impl<K, V> Default for Cached<K, V> {
+    fn default() -> Self {
+        Self(Mutex::new(HashMap::new()))
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cached<K, V> {
+    fn get_or<E>(
+        &self,
+        key: &K,
+        fetch: impl FnOnce() -> std::result::Result<V, E>,
+    ) -> std::result::Result<V, E> {
+        if let Some((at, value)) = self.0.lock_recover().get(key)
+            && at.elapsed() < CACHE_TTL
+        {
+            return Ok(value.clone());
+        }
+        let value = fetch()?;
+        self.0
+            .lock_recover()
+            .insert(key.clone(), (Instant::now(), value.clone()));
+        Ok(value)
+    }
+
+    fn clear(&self) {
+        self.0.lock_recover().clear();
+    }
 }
 
 impl Gh {
     pub fn set_search_path(&self, dirs: Option<Vec<PathBuf>>) {
         *self.search_path.lock_recover() = dirs;
         *self.ready_at.lock_recover() = None;
-        self.default_branches.lock_recover().clear();
+        self.default_branches.clear();
+        self.merge_settings.clear();
+        self.default_merge_methods.clear();
+        self.viewer_logins.clear();
     }
 
     fn path_var(&self) -> OsString {
@@ -447,21 +487,14 @@ impl Gh {
     }
 
     fn default_branch(&self, cwd: &Path) -> Result<String> {
-        if let Some((at, branch)) = self.default_branches.lock_recover().get(cwd)
-            && at.elapsed() < CACHE_TTL
-        {
-            return Ok(branch.clone());
-        }
-        let json = self.run(cwd, &["repo", "view", "--json", "defaultBranchRef"])?;
-        let value: serde_json::Value = parse(&json)?;
-        let branch = value["defaultBranchRef"]["name"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| Error::Github("GitHub did not report a default branch.".into()))?;
-        self.default_branches
-            .lock_recover()
-            .insert(cwd.to_path_buf(), (Instant::now(), branch.clone()));
-        Ok(branch)
+        self.default_branches.get_or(&cwd.to_path_buf(), || {
+            let json = self.run(cwd, &["repo", "view", "--json", "defaultBranchRef"])?;
+            let value: serde_json::Value = parse(&json)?;
+            value["defaultBranchRef"]["name"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| Error::Github("GitHub did not report a default branch.".into()))
+        })
     }
 
     /// The open pull request of the checked-out branch.
@@ -926,6 +959,15 @@ fn required_check_names(gh: &Gh, cwd: &Path, number: u32) -> Vec<String> {
 
 /// The method the web merge box preselects for the signed-in user, if GitHub says.
 fn viewer_default_merge_method(gh: &Gh, cwd: &Path) -> Option<MergeMethod> {
+    gh.default_merge_methods
+        .get_or(&cwd.to_path_buf(), || read_viewer_default_merge_method(gh, cwd))
+        .ok()?
+}
+
+fn read_viewer_default_merge_method(
+    gh: &Gh,
+    cwd: &Path,
+) -> std::result::Result<Option<MergeMethod>, GhError> {
     let out = gh
         .run(
             cwd,
@@ -941,19 +983,22 @@ fn viewer_default_merge_method(gh: &Gh, cwd: &Path) -> Option<MergeMethod> {
                 "--jq",
                 ".data.repository.viewerDefaultMergeMethod",
             ],
-        )
-        .ok()?;
-    match out.trim() {
+        )?;
+    Ok(match out.trim() {
         "MERGE" => Some(MergeMethod::Merge),
         "SQUASH" => Some(MergeMethod::Squash),
         "REBASE" => Some(MergeMethod::Rebase),
         _ => None,
-    }
+    })
 }
 
 fn viewer_login(gh: &Gh, cwd: &Path) -> Option<String> {
-    let out = gh.run(cwd, &["api", "user", "--jq", ".login"]).ok()?;
-    Some(out.trim().to_string()).filter(|login| !login.is_empty())
+    gh.viewer_logins
+        .get_or(&(), || {
+            let out = gh.run(cwd, &["api", "user", "--jq", ".login"])?;
+            Ok::<_, GhError>(Some(out.trim().to_string()).filter(|login| !login.is_empty()))
+        })
+        .ok()?
 }
 
 /// Moves a pull request out of draft, or back into it.
@@ -1239,6 +1284,11 @@ pub fn delete_comment(gh: &Gh, cwd: &Path, id: &str) -> Result<()> {
 /// The merge methods the repository allows, and whether it deletes merged
 /// branches on its own.
 fn merge_settings(gh: &Gh, cwd: &Path) -> Result<(Vec<MergeMethod>, bool)> {
+    gh.merge_settings
+        .get_or(&cwd.to_path_buf(), || read_merge_settings(gh, cwd))
+}
+
+fn read_merge_settings(gh: &Gh, cwd: &Path) -> Result<(Vec<MergeMethod>, bool)> {
     let repo = parse(&gh.run(
         cwd,
         &[

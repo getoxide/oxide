@@ -358,6 +358,38 @@ fn reloading_the_surface_reuses_auth_status_and_default_branch() {
 }
 
 #[test]
+fn reloading_a_pull_request_reuses_the_repository_and_viewer_metadata() {
+    let f = fixture();
+    install_gh(&f, &state_with_prs(&[detailed_pr()]));
+    f.core.pull_request_detail(f.project.id, 5).unwrap();
+    let before = f.gh_calls().len();
+
+    let again = f.core.pull_request_detail(f.project.id, 5).unwrap();
+
+    assert_eq!(again.viewer, "me");
+    let calls = &f.gh_calls()[before..];
+    let kinds: Vec<String> = calls
+        .iter()
+        .map(|c| {
+            if c.iter().any(|a| a.contains("viewerDefaultMergeMethod")) {
+                "default merge method".to_string()
+            } else if c.iter().any(|a| a.contains("isRequired")) {
+                "required checks".to_string()
+            } else {
+                c[..2].join(" ")
+            }
+        })
+        .collect();
+    let mut kinds = kinds;
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        ["pr view", "required checks"],
+        "merge settings, the viewer's login and default merge method are reused"
+    );
+}
+
+#[test]
 fn draft_is_prefilled_from_the_commits_against_the_default_branch() {
     let f = fixture();
     install_gh(&f, &ok_state());
