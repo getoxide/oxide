@@ -169,3 +169,25 @@ it("keeps Create disabled and explains why when the branch has no commits beyond
   await submit();
   expect(create).not.toHaveBeenCalled();
 });
+
+it("keeps Create disabled and asks for a feature branch when checked out on the protected base", async () => {
+  mockDraft({ head: "main", base: "main", commitsBeyond: 0, protected: true });
+  const create = vi.spyOn(commands, "createPullRequest");
+  await open();
+  expect(createButton().disabled).toBe(true);
+  expect(host.textContent).toContain(
+    "Switch from main to a feature branch to open a pull request.",
+  );
+  expect(host.textContent).not.toContain("No commits on");
+  await submit();
+  expect(create).not.toHaveBeenCalled();
+});
+
+it("asks for a feature branch on a protected branch even when it has commits beyond the base", async () => {
+  mockDraft({ head: "release", base: "main", commitsBeyond: 3, protected: true });
+  await open();
+  expect(createButton().disabled).toBe(true);
+  expect(host.textContent).toContain(
+    "Switch from release to a feature branch to open a pull request.",
+  );
+});

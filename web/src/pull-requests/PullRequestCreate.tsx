@@ -25,6 +25,7 @@ export function PullRequestCreate({
   const [head, setHead] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
   // Commits the head has beyond each base checked so far; null when Core cannot tell.
+  const [isProtected, setIsProtected] = useState(false);
   const [ahead, setAhead] = useState<Record<string, number | null>>({});
   const [draft, setDraft] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -47,6 +48,7 @@ export function PullRequestCreate({
         setTitle(defaults.data.title);
         setBody(defaults.data.body);
         setBase(defaults.data.base);
+        setIsProtected(defaults.data.protected);
         setAhead({ [defaults.data.base]: defaults.data.commitsBeyond });
         setBranches([...new Set([defaults.data.base, ...bases.data])]);
       } catch (cause) {
@@ -60,7 +62,13 @@ export function PullRequestCreate({
       active = false;
     };
   }, [projectId, retry]);
-  const noDiff = ahead[base] === 0;
+  // Why no pull request can be opened from here, if it cannot.
+  const blocker =
+    isProtected || (head !== "" && head === base)
+      ? "switch"
+      : ahead[base] === 0
+        ? "noDiff"
+        : null;
   async function submit() {
     if (
       busy ||
@@ -68,7 +76,7 @@ export function PullRequestCreate({
       !title.trim() ||
       !base ||
       base === head ||
-      noDiff
+      blocker
     )
       return;
     setBusy(true);
@@ -164,7 +172,12 @@ export function PullRequestCreate({
             />{" "}
             Create as draft
           </label>
-          {noDiff ? (
+          {blocker === "switch" ? (
+            <p className="pr-create-hint" id="pr-create-hint">
+              Switch from <span className="mono">{head}</span> to a feature
+              branch to open a pull request.
+            </p>
+          ) : blocker === "noDiff" ? (
             <p className="pr-create-hint" id="pr-create-hint">
               No commits on <span className="mono">{head}</span> beyond{" "}
               <span className="mono">{base}</span>. Commit changes before
@@ -178,9 +191,9 @@ export function PullRequestCreate({
           <button
             className="btn primary"
             type="submit"
-            aria-describedby={noDiff ? "pr-create-hint" : undefined}
+            aria-describedby={blocker ? "pr-create-hint" : undefined}
             disabled={
-              busy || !title.trim() || !base || base === head || noDiff
+              busy || !title.trim() || !base || base === head || !!blocker
             }
           >
             {busy ? (
