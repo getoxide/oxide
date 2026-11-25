@@ -59,11 +59,17 @@ const COUNT_KEY: Record<PullRequestCheck["state"], keyof CheckCounts> = {
   skipped: "skipped",
 };
 
-/** How many checks are in each state, one per name, as the Checks list shows them. */
+/** How many checks are in each state, one per name, as the Checks list shows them. Counts every
+ *  check, required or not: for what holds the merge up, use `countDecidingChecks`. */
 export function countChecks(checks: PullRequestCheck[]): CheckCounts {
   const counts = { failing: 0, pending: 0, passing: 0, neutral: 0, skipped: 0 };
   for (const c of dedupeChecks(checks)) counts[COUNT_KEY[c.state]]++;
   return counts;
+}
+
+/** How many of the checks that decide the merge are in each state (see `decidingChecks`). */
+export function countDecidingChecks(checks: PullRequestCheck[]): CheckCounts {
+  return countChecks(decidingChecks(checks));
 }
 
 export type Tone = "ok" | "warn" | "bad" | "neutral";
@@ -104,7 +110,7 @@ export function mergeRequirements({ phase, checks, mergeState, reviewDecision }:
     rows.push({ kind: "review", tone: "ok", title: "Changes approved" });
   }
   // Neutral and skipped checks never hold the merge up, as on GitHub.
-  const { failing, pending, passing } = countChecks(decidingChecks(checks));
+  const { failing, pending, passing } = countDecidingChecks(checks);
   if (failing > 0) {
     rows.push({ kind: "checks", tone: "bad", title: `${plural(failing, "check")} failing`, detail: "Open a failing check to see what went wrong." });
   } else if (pending === 0 && checks.length > 0) {
@@ -142,7 +148,7 @@ export function mergeRequirements({ phase, checks, mergeState, reviewDecision }:
 export function readiness(inputs: MergeInputs): { tone: Tone; label: string } {
   const first = mergeRequirements(inputs)[0];
   // Running checks get no row in the merge box (the Checks list shows them), but they still mean "not yet".
-  if (first?.tone === "ok" && countChecks(decidingChecks(inputs.checks)).pending > 0) return { tone: "warn", label: "Checks still running" };
+  if (first?.tone === "ok" && countDecidingChecks(inputs.checks).pending > 0) return { tone: "warn", label: "Checks still running" };
   if (!first) return { tone: "neutral", label: "No checks reported" };
   if (first.tone === "ok") return { tone: "ok", label: "Ready to merge" };
   return { tone: first.tone, label: first.title };

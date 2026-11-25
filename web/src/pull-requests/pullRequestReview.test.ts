@@ -3,6 +3,7 @@ import type { PullRequestCheck } from "../bindings";
 import {
   avatarUrl,
   countChecks,
+  countDecidingChecks,
   dedupeChecks,
   defaultMergeMethod,
   mergeLabel,
@@ -139,6 +140,11 @@ describe("countChecks", () => {
   it("counts every listed check, required or not, so the count matches the rows beneath it", () => {
     const checks = [required("rust", "pending"), required("web", "success"), check("rust (macos-latest)", "pending"), check("supply-chain", "failure")];
     expect(countChecks(checks)).toEqual({ failing: 1, pending: 2, passing: 1, neutral: 0, skipped: 0 });
+  });
+
+  it("counts only the deciding checks for the merge: the required ones once any are named", () => {
+    const checks = [required("rust", "pending"), required("web", "success"), check("rust (macos-latest)", "pending"), check("supply-chain", "failure")];
+    expect(countDecidingChecks(checks)).toEqual({ failing: 0, pending: 1, passing: 1, neutral: 0, skipped: 0 });
   });
 
   it("never folds neutral or skipped checks into the passed count", () => {
