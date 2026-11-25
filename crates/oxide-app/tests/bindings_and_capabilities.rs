@@ -26,6 +26,12 @@ fn bindings_are_up_to_date() {
         "startBlindReview",
         "restoreTurn",
         "checkForAppUpdate",
+        // Custom theme files went with the Settings Themes section (#569).
+        "listThemes",
+        "saveTheme",
+        "deleteTheme",
+        "openThemesFolder",
+        "ThemeSummary",
     ] {
         assert!(!ts.contains(gone), "`{gone}` is still exported");
     }
