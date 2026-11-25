@@ -149,3 +149,34 @@ it.each([
   );
   expect(container.querySelector(".terminal-prompt-symbol")?.textContent).toBe("$");
 });
+
+it("runs on Enter from an inline command line with no chat-style send button, and Shift+Enter keeps editing", async () => {
+  const runs: string[] = [];
+  await act(async () =>
+    root.render(
+      <TerminalInput
+        ref={createRef<TerminalInputHandle>()}
+        history={[]}
+        sessionId={1}
+        cwd="/project"
+        disabled={false}
+        visible
+        fresh
+        onRun={(command) => runs.push(command)}
+      />,
+    ),
+  );
+  expect(container.querySelector('[aria-label="Run command"]')).toBeNull();
+  expect(container.querySelectorAll(".terminal-command-entry button")).toHaveLength(0);
+  await type("echo one");
+  await act(async () => {
+    input().dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }),
+    );
+  });
+  expect(runs).toEqual([]);
+  await type("echo one\necho two");
+  await key("Enter");
+  expect(runs).toEqual(["echo one\necho two"]);
+  expect(input().value).toBe("");
+});

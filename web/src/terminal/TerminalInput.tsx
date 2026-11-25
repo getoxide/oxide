@@ -8,7 +8,6 @@ import {
 } from "react";
 import {
   HistoryIcon,
-  PlayIcon,
   SearchIcon,
   XIcon,
 } from "@primer/octicons-react";
@@ -390,14 +389,6 @@ export function TerminalInput({
             }}
           />
         </div>
-        <button
-          type="submit"
-          className="icon-btn"
-          disabled={disabled || !input.trim()}
-          aria-label="Run command"
-        >
-          <PlayIcon size={16} />
-        </button>
       </div>
       {fresh && (
         <div className="terminal-command-hint">
@@ -406,7 +397,7 @@ export function TerminalInput({
               ? "Completing…"
               : suggestion
                 ? "→ accept suggestion · Tab complete · ↑ history"
-                : "Tab complete · ↑ history · Shift+Enter new line"}
+                : "Enter run · Tab complete · ↑ history · Shift+Enter new line"}
           </span>
           <button
             type="button"

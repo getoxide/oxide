@@ -617,18 +617,6 @@
 .terminal-ghost > span {
   visibility: hidden;
 }
-/* The run button is quiet until there is a command to run. */
-.terminal-command-entry > .icon-btn {
-  min-width: 28px;
-  height: 28px;
-  color: var(--acc2);
-}
-.terminal-command-entry > .icon-btn:disabled {
-  opacity: 1;
-  color: var(--line-strong);
-  background: none;
-  border-color: transparent;
-}
 .terminal-command-hint {
   display: flex;
   align-items: center;
