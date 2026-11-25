@@ -200,21 +200,29 @@ it("promotes Merge when ready on a blocked pull request and turns auto-merge on 
   expect(onChanged).not.toHaveBeenCalled();
 });
 
-it("runs Merge when ready straight from the split button's menu, with the chosen method", async () => {
+it("arms Merge when ready with a method picked from the menu in one click, and remembers it", async () => {
   const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
   blocked();
   await render();
   await openMergeMenu();
-  // A direct merge would be refused, so picking a method only remembers it for Merge when ready.
+  // A direct merge would be refused, so the method's help says it waits, and picking it arms auto-merge.
+  expect(menuItem(/Rebase and merge/)!.textContent).toContain("Waits for the checks and reviews, then merges this way.");
   await click(menuItem(/Rebase and merge/)!);
-  expect(merge).not.toHaveBeenCalled();
-  await openMergeMenu();
-  expect(menuItem(/Rebase and merge/)!.getAttribute("aria-checked")).toBe("true");
-  await click(menuItem(/Merge when ready/)!);
   expect(merge).toHaveBeenCalledTimes(1);
   expect(merge).toHaveBeenCalledWith(1, 174, "rebase", false, true);
   expect(document.querySelector('[role="menu"]')).toBeNull();
   expect(button(/Auto-merge on/).disabled).toBe(true);
+  await openMergeMenu();
+  expect(menuItem(/Rebase and merge/)!.getAttribute("aria-checked")).toBe("true");
+});
+
+it("runs Merge when ready from the menu with the method shown as chosen", async () => {
+  const merge = vi.spyOn(commands, "mergePullRequest").mockResolvedValue({ status: "ok", data: null });
+  blocked();
+  await render();
+  await openMergeMenu();
+  await click(menuItem(/Merge when ready/)!);
+  expect(merge).toHaveBeenCalledWith(1, 174, "squash", false, true);
 });
 
 it("does not offer auto-merge when nothing is waiting", async () => {

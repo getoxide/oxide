@@ -391,9 +391,9 @@ export function PullRequestReview({
     }
   }
 
-  async function mergeWhenReady() {
-    if (method === null) return;
-    if (await act("auto", () => commands.mergePullRequest(projectId, number, method, deleteBranch, true))) setAutoMerge(true);
+  async function mergeWhenReady(how: MergeMethod) {
+    setMethod(how);
+    if (await act("auto", () => commands.mergePullRequest(projectId, number, how, deleteBranch, true))) setAutoMerge(true);
   }
 
   async function closePullRequest() {
@@ -546,7 +546,7 @@ export function PullRequestReview({
           onMethod={setMethod}
           onDeleteBranch={setDeleteBranch}
           onMerge={(how) => void merge(how)}
-          onAutoMerge={() => void mergeWhenReady()}
+          onAutoMerge={(how) => void mergeWhenReady(how)}
           onReady={() => void setDraft(false)}
           onClose={() => void closePullRequest()}
         />

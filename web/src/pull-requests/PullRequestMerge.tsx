@@ -93,7 +93,8 @@ interface MergeFooterProps {
   onDeleteBranch: (on: boolean) => void;
   /** Merges now, with this method (the menu's pick, remembered for the next time). */
   onMerge: (method: MergeMethod) => void;
-  onAutoMerge: () => void;
+  /** Turns on Merge when ready with this method (remembered for the next time). */
+  onAutoMerge: (method: MergeMethod) => void;
   onReady: () => void;
   onClose: () => void;
 }
@@ -151,8 +152,9 @@ export function MergeFooter(p: MergeFooterProps) {
   // Blocked only by a wait: what the user can do now is leave the merge to GitHub.
   const auto = p.canAutoMerge || p.autoMerge;
   const method = p.method;
-  const pickHelp = (m: MergeMethod) =>
-    p.canMerge ? METHOD_HELP[m] : p.canAutoMerge ? "Waits for the checks and reviews, then merges this way." : METHOD_HELP[m];
+  // While only a wait blocks the merge, picking a method arms Merge when ready with it.
+  const arms = !p.canMerge && p.canAutoMerge;
+  const pickHelp = (m: MergeMethod) => (arms ? "Waits for the checks and reviews, then merges this way." : METHOD_HELP[m]);
   return (
     <footer className="pr-merge" aria-label="Merge">
       <p className={`pr-merge-status ${p.tone}`}>
@@ -173,7 +175,7 @@ export function MergeFooter(p: MergeFooterProps) {
             )
           }
           title={auto ? "Merge by itself once the required checks pass" : undefined}
-          onClick={auto ? p.onAutoMerge : () => p.onMerge(method)}
+          onClick={() => (auto ? p.onAutoMerge(method) : p.onMerge(method))}
           disabled={p.autoMerge || (auto ? p.busy : !p.canMerge)}
           pending={p.pending === "merge" || p.pending === "auto"}
           menuDisabled={p.busy}
@@ -188,14 +190,14 @@ export function MergeFooter(p: MergeFooterProps) {
                 title={mergeLabel(m)}
                 help={pickHelp(m)}
                 checked={m === method}
-                onSelect={() => (p.canMerge ? p.onMerge(m) : p.onMethod(m))}
+                onSelect={() => (p.canMerge ? p.onMerge(m) : arms ? p.onAutoMerge(m) : p.onMethod(m))}
               />
             ))}
             {p.canAutoMerge && !p.autoMerge && (
               <SplitMenuItem
                 title="Merge when ready"
                 help="GitHub merges it by itself once the required checks pass."
-                onSelect={p.onAutoMerge}
+                onSelect={() => p.onAutoMerge(method)}
               />
             )}
           </SplitMenu>
