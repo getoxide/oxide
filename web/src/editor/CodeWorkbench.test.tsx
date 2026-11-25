@@ -409,6 +409,13 @@ describe("CodeWorkbench performance", () => {
     expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
     expect(document.activeElement).toBe(indicator);
     expect(indicator.getAttribute("aria-expanded")).toBe("false");
+
+    // A click outside closes it too.
+    await act(async () => indicator.click());
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).not.toBeNull();
+    await act(async () => document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+    expect(document.querySelector('[role="dialog"][aria-label="Language"]')).toBeNull();
   });
 
   it("switches the buffer's language mode from the popover and moves its LSP tracking", async () => {
