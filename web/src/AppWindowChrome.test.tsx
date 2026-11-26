@@ -125,6 +125,7 @@ describe("App window chrome", () => {
     updateState = {
       channel: "inApp", currentVersion: "0.1.0", lastCheckedAt: 1,
       available: { version: "0.2.0", releaseNotesUrl: "https://github.com/getoxide/oxide/releases/tag/v0.2.0" },
+      operation: { kind: "idle" }, error: null,
     };
     await act(async () => root.unmount());
     root = createRoot(host);

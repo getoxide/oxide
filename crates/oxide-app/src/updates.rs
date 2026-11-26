@@ -5,6 +5,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use oxide_core::LockExt as _;
 use oxide_core::{BundleKind, Core, DebugOverride, UpdatePlan, diag};
 use semver::Version;
 use serde::Serialize;
@@ -51,10 +52,15 @@ pub struct UpdateState {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum UpdateOperation {
     Idle,
-    Downloading { downloaded: f64, total: Option<f64> },
+    Downloading {
+        downloaded: f64,
+        total: Option<f64>,
+    },
     Installing,
     /// Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits.
-    Installed { staged: bool },
+    Installed {
+        staged: bool,
+    },
 }
 
 impl From<oxide_core::UpdateOperation> for UpdateOperation {
@@ -257,7 +263,9 @@ async fn run_install(
             |chunk, total| {
                 downloaded += chunk as u64;
                 // About a hundred pushes per download, however many chunks arrive.
-                let step = total.map_or(downloaded / (256 * 1024), |size| downloaded * 100 / size.max(1));
+                let step = total.map_or(downloaded / (256 * 1024), |size| {
+                    downloaded * 100 / size.max(1)
+                });
                 if step != last_pushed
                     && let Some(state) = core.record_update_progress(downloaded, total)
                 {
@@ -273,8 +281,7 @@ async fn run_install(
         push(app, state);
     }
     if cfg!(windows) {
-        *installer.staged.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(Staged { update, bytes });
+        *installer.staged.lock_recover() = Some(Staged { update, bytes });
         return Ok(true);
     }
     tauri::async_runtime::spawn_blocking(move || update.install(bytes))
@@ -293,13 +300,12 @@ pub fn run_staged_install(app: &AppHandle, core: &Core) {
     let Some(installer) = app.try_state::<Arc<Installer>>() else {
         return;
     };
-    let staged = installer
-        .staged
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
+    let staged = installer.staged.lock_recover().take();
     if let Some(staged) = staged {
-        diag::best_effort("staged update install", staged.update.install(&staged.bytes));
+        diag::best_effort(
+            "staged update install",
+            staged.update.install(&staged.bytes),
+        );
     }
 }
 

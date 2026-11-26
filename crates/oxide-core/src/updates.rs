@@ -156,11 +156,16 @@ pub struct UpdateState {
 pub enum UpdateOperation {
     Idle,
     /// The package is downloading; the signature is verified before the bytes are handed over.
-    Downloading { downloaded: u64, total: Option<u64> },
+    Downloading {
+        downloaded: u64,
+        total: Option<u64>,
+    },
     Installing,
     /// The new version is installed and waits for a restart. `staged` (Windows): the verified
     /// installer is kept and runs when Oxide quits, because the installer ends the process.
-    Installed { staged: bool },
+    Installed {
+        staged: bool,
+    },
 }
 
 /// Why an install could not start.
@@ -251,7 +256,11 @@ impl UpdateTracker {
     }
 
     /// Download progress; `None` when no download is running (nothing to push).
-    pub(crate) fn record_progress(&self, downloaded: u64, total: Option<u64>) -> Option<UpdateState> {
+    pub(crate) fn record_progress(
+        &self,
+        downloaded: u64,
+        total: Option<u64>,
+    ) -> Option<UpdateState> {
         let mut state = self.state.lock_recover();
         if !matches!(state.operation, UpdateOperation::Downloading { .. }) {
             return None;
@@ -509,12 +518,18 @@ mod tests {
         tracker.begin_install().unwrap();
         tracker.begin_installing();
         let state = tracker.finish_install(false);
-        assert_eq!(state.operation, UpdateOperation::Installed { staged: false });
+        assert_eq!(
+            state.operation,
+            UpdateOperation::Installed { staged: false }
+        );
         // The running binary is still 0.1.0, so the next check still offers 0.2.0.
         tracker.record_check(Some("0.2.0"), 9);
         tracker.record_check(None, 10);
         let state = tracker.snapshot();
-        assert_eq!(state.operation, UpdateOperation::Installed { staged: false });
+        assert_eq!(
+            state.operation,
+            UpdateOperation::Installed { staged: false }
+        );
         assert_eq!(state.available.unwrap().version, "0.2.0");
     }
 
@@ -525,7 +540,10 @@ mod tests {
         tracker.record_check(None, 5);
         let state = tracker.snapshot();
         assert_eq!(state.available.unwrap().version, "0.2.0");
-        assert!(matches!(state.operation, UpdateOperation::Downloading { .. }));
+        assert!(matches!(
+            state.operation,
+            UpdateOperation::Downloading { .. }
+        ));
     }
 
     #[test]
@@ -542,7 +560,10 @@ mod tests {
         in_place.begin_install().unwrap();
         in_place.begin_installing();
         in_place.finish_install(false);
-        assert!(!in_place.staged_install_due_at_quit(), "already replaced on disk");
+        assert!(
+            !in_place.staged_install_due_at_quit(),
+            "already replaced on disk"
+        );
     }
 
     #[test]

@@ -1533,6 +1533,7 @@ fn confirm_quit(app: tauri::AppHandle, core: State<'_, Arc<Core>>) -> Result<(),
 /// The quit prompt was cancelled: a later quit is a plain quit, not an update restart.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn cancel_quit(core: State<'_, Arc<Core>>) {
     core.cancel_update_restart_request();
 }
@@ -1542,10 +1543,8 @@ fn cancel_quit(core: State<'_, Arc<Core>>) {
 /// Session restore runs as after any quit. On Windows the staged installer runs as Oxide exits.
 #[tauri::command]
 #[specta::specta]
-fn restart_for_update(
-    app: tauri::AppHandle,
-    core: State<'_, Arc<Core>>,
-) -> Result<(), AppError> {
+#[allow(clippy::needless_pass_by_value)]
+fn restart_for_update(app: tauri::AppHandle, core: State<'_, Arc<Core>>) -> Result<(), AppError> {
     if !core.request_update_restart() {
         return Err(AppError {
             message: "No update is waiting for a restart.".into(),

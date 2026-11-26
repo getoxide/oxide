@@ -242,7 +242,11 @@ impl Core {
     }
 
     /// Download progress, for the shell to push; `None` when no download is running.
-    pub fn record_update_progress(&self, downloaded: u64, total: Option<u64>) -> Option<UpdateState> {
+    pub fn record_update_progress(
+        &self,
+        downloaded: u64,
+        total: Option<u64>,
+    ) -> Option<UpdateState> {
         self.updates.record_progress(downloaded, total)
     }
 
