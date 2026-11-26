@@ -22,6 +22,7 @@ mod redact;
 mod system;
 mod terminal;
 mod terminal_completion;
+mod updates;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
@@ -46,6 +47,10 @@ pub use github::{
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use oxide_platform::{AvailableShell, ShellKind};
 pub use system::{System, system_fonts};
+pub use updates::{
+    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, PRERELEASE_FEED,
+    STABLE_FEED, UpdatePlan, UpdateState, feed_for, is_newer,
+};
 pub use terminal::TerminalSummary;
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
@@ -126,6 +131,7 @@ pub struct Core {
     git: git::GitState,
     gh: Arc<github::Gh>,
     system: Mutex<Arc<dyn System>>,
+    updates: updates::UpdateTracker,
 }
 
 impl Core {
@@ -189,6 +195,7 @@ impl Core {
             git: git::GitState::default(),
             gh: Arc::new(github::Gh::default()),
             system: Mutex::new(Arc::new(NoSystem)),
+            updates: updates::UpdateTracker::new(),
         })
     }
 
@@ -211,6 +218,22 @@ impl Core {
     /// Installs the operating-system side of Core: opening links and revealing folders.
     pub fn set_system(&self, system: Arc<dyn System>) {
         *self.system.lock_recover() = system;
+    }
+
+    /// Tells Core how this install updates (ADR-0021) and which version is running.
+    pub fn configure_updates(&self, channel: InstallChannel, current_version: &str) {
+        self.updates.configure(channel, current_version);
+    }
+
+    /// What the window shows about updates.
+    pub fn update_state(&self) -> UpdateState {
+        self.updates.snapshot()
+    }
+
+    /// Records a check that reached the feed; `found` is the version it offers, if any.
+    /// Returns the new state when it changed, for the shell to push to the window.
+    pub fn record_update_check(&self, found: Option<&str>, now_unix: i64) -> Option<UpdateState> {
+        self.updates.record_check(found, now_unix)
     }
 
     fn system(&self) -> Arc<dyn System> {

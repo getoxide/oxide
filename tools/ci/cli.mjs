@@ -8,6 +8,11 @@
 //   node tools/ci/cli.mjs tauri-alignment
 //   node tools/ci/cli.mjs release-notes <tag> [<previous-tag>]
 //   node tools/ci/cli.mjs downloads <dir>               prints the Downloads table for the installers in <dir>
+//   node tools/ci/cli.mjs require-secrets <NAME>...     fails naming each secret the environment leaves unset or empty
+//   node tools/ci/cli.mjs updater-feed <tag> <dir>      prints latest.json from the packages' .sig files in <dir>
+//   node tools/ci/cli.mjs release-checksums <file>      prints a sha256sum listing without the updater-only assets
+//   node tools/ci/cli.mjs feed-urls <feed.json>         prints every package URL of a feed
+//   node tools/ci/cli.mjs check-feeds <tag> <stable.json> <prerelease.json>
 //   node tools/ci/cli.mjs dependabot                    env DEPENDENCIES_JSON
 //   node tools/ci/cli.mjs bump <version>                writes the three manifests and Cargo.lock
 //
@@ -19,7 +24,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
-  downloadsSection, previousReleaseTag, releaseNotes,
+  downloadsSection, previousReleaseTag, releaseNotes, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -84,6 +89,33 @@ const commands = {
   },
   downloads([dir]) {
     process.stdout.write(downloadsSection(readdirSync(dir)));
+  },
+  "require-secrets"(names) {
+    const missing = missingSecrets(process.env, names);
+    report(missing.length > 0
+      ? { ok: false, message: `The release environment has no value for: ${missing.join(", ")}. Add ${missing.length > 1 ? "them" : "it"} as secret${missing.length > 1 ? "s" : ""} of the \`release\` environment before tagging.` }
+      : { ok: true, message: `The release environment has ${names.join(", ")}.` });
+  },
+  "updater-feed"([tag, dir]) {
+    const version = String(tag ?? "").replace(/^v/, "");
+    const signatures = {};
+    for (const { asset } of UPDATER_PLATFORMS) {
+      const path = join(dir, `${asset(version)}.sig`);
+      if (existsSync(path)) signatures[asset(version)] = readFileSync(path, "utf8");
+    }
+    const repository = process.env.GITHUB_REPOSITORY ?? "getoxide/oxide";
+    const pubDate = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    process.stdout.write(`${JSON.stringify(buildUpdateFeed({ tag, repository, signatures, pubDate }), null, 2)}\n`);
+  },
+  "release-checksums"([file]) {
+    process.stdout.write(releaseChecksums(readFileSync(file, "utf8")));
+  },
+  "feed-urls"([file]) {
+    console.log(feedUrls(JSON.parse(readFileSync(file, "utf8"))).join("\n"));
+  },
+  "check-feeds"([tag, stableFile, prereleaseFile]) {
+    const parse = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; } };
+    report(checkPublishedFeeds({ tag, stable: parse(stableFile), prerelease: parse(prereleaseFile), repository: process.env.GITHUB_REPOSITORY ?? "getoxide/oxide" }));
   },
   dependabot() {
     let dependencies;
