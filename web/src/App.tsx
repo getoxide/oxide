@@ -84,6 +84,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [activeTool, setActiveTool] = useState("Issues");
   const [visitedTools, setVisitedTools] = useState<Record<string, boolean>>({});
+  const [toolReset, setToolReset] = useState<Record<string, number>>({});
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   // With session restore on, the Terminals, Code workspaces and halves of the last session.
@@ -259,6 +260,9 @@ export function App() {
   }, []);
 
   const selectTool = (name: string) => {
+    if (dockVisible && activeTool === name) {
+      setToolReset((previous) => ({ ...previous, [name]: (previous[name] ?? 0) + 1 }));
+    }
     setActiveTool(name);
     setVisitedTools((previous) => selected ? { ...previous, [`${selected.id}:${name}`]: true } : previous);
     setShowTools(true);
@@ -554,14 +558,14 @@ export function App() {
           {selected && visitedTools[`${selected.id}:Pull request`] && (
             <div className="surface-content" hidden={activeTool !== "Pull request"}>
               <Suspense fallback={<Skeleton kind="list" label="Loading pull requests…" />}>
-                <PullRequestPanel projectId={selected.id} refreshKey={0} active={dockVisible && activeTool === "Pull request"} onChanged={() => {}} />
+                <PullRequestPanel projectId={selected.id} refreshKey={0} resetKey={toolReset["Pull request"] ?? 0} active={dockVisible && activeTool === "Pull request"} onChanged={() => {}} />
               </Suspense>
             </div>
           )}
           {selected && visitedTools[`${selected.id}:Issues`] && (
             <div className="surface-content" hidden={activeTool !== "Issues"}>
               <Suspense fallback={<Skeleton kind="list" label="Loading issues…" />}>
-                <IssuesSurface projectId={selected.id} active={dockVisible && activeTool === "Issues"} />
+                <IssuesSurface projectId={selected.id} resetKey={toolReset["Issues"] ?? 0} active={dockVisible && activeTool === "Issues"} />
               </Suspense>
             </div>
           )}

@@ -51,10 +51,16 @@ function LinkButton({ url, onOpen, children, className }: {
   );
 }
 
-function Row({ icon, actor, at, children }: { icon: ReactNode; actor?: string; at: string; children: ReactNode }) {
+function Row({ icon, tone, actor, at, children }: {
+  icon: ReactNode;
+  tone?: "open" | "merged" | "neutral";
+  actor?: string;
+  at: string;
+  children: ReactNode;
+}) {
   return (
     <div className="pr-timeline-event">
-      <span className="pr-timeline-icon" aria-hidden="true">
+      <span className={`pr-timeline-icon${tone ? ` is-${tone}` : ""}`} aria-hidden="true">
         {icon}
       </span>
       <p className="pr-timeline-text">
@@ -95,7 +101,7 @@ export function ActivityRow({ item, head, onOpen }: { item: ActivityItem; head?:
       return (
         <div className="pr-timeline-event pr-timeline-commit">
           <span className="pr-timeline-icon" aria-hidden="true">
-            <GitCommitIcon size={14} />
+            <GitCommitIcon size={12} />
           </span>
           <p className="pr-timeline-text">
             <Avatar login={item.author} size={16} /> <span className="pr-timeline-headline">{item.headline}</span>{" "}
@@ -114,7 +120,7 @@ export function ActivityRow({ item, head, onOpen }: { item: ActivityItem; head?:
       );
     case "forcePush":
       return (
-        <Row icon={<RepoPushIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<RepoPushIcon size={12} />} actor={item.actor} at={item.createdAt}>
           force-pushed the <code>{item.branch}</code> branch from <code>{item.before || "an unknown commit"}</code> to{" "}
           <code>{item.after || "an unknown commit"}</code>
           {item.compareUrl && (
@@ -129,39 +135,40 @@ export function ActivityRow({ item, head, onOpen }: { item: ActivityItem; head?:
       );
     case "assigned":
       return (
-        <Row icon={<PersonIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<PersonIcon size={12} />} actor={item.actor} at={item.createdAt}>
           {item.actor === item.login ? "self-assigned this" : <>assigned <strong>{item.login}</strong></>}
         </Row>
       );
     case "unassigned":
       return (
-        <Row icon={<PersonIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<PersonIcon size={12} />} actor={item.actor} at={item.createdAt}>
           {item.actor === item.login ? "removed their assignment" : <>unassigned <strong>{item.login}</strong></>}
         </Row>
       );
     case "labeled":
     case "unlabeled":
       return (
-        <Row icon={<TagIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<TagIcon size={12} />} actor={item.actor} at={item.createdAt}>
           {item.kind === "labeled" ? "added" : "removed"} the <LabelChip label={item.label} /> label
         </Row>
       );
     case "reviewRequested":
       return (
-        <Row icon={<EyeIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<EyeIcon size={12} />} actor={item.actor} at={item.createdAt}>
           requested a review from <strong>{item.login}</strong>
         </Row>
       );
     case "reviewRequestRemoved":
       return (
-        <Row icon={<EyeClosedIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<EyeClosedIcon size={12} />} actor={item.actor} at={item.createdAt}>
           removed the review request for <strong>{item.login}</strong>
         </Row>
       );
     case "closed":
       return (
         <Row
-          icon={item.stateReason === "NOT_PLANNED" ? <SkipIcon size={14} /> : <IssueClosedIcon size={14} />}
+          icon={item.stateReason === "NOT_PLANNED" ? <SkipIcon size={12} /> : <IssueClosedIcon size={12} />}
+          tone={item.stateReason === "NOT_PLANNED" ? "neutral" : "merged"}
           actor={item.actor}
           at={item.createdAt}
         >
@@ -170,53 +177,67 @@ export function ActivityRow({ item, head, onOpen }: { item: ActivityItem; head?:
       );
     case "reopened":
       return (
-        <Row icon={<IssueReopenedIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<IssueReopenedIcon size={12} />} tone="open" actor={item.actor} at={item.createdAt}>
           reopened this
         </Row>
       );
     case "merged":
       return (
-        <Row icon={<GitMergeIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<GitMergeIcon size={12} />} tone="merged" actor={item.actor} at={item.createdAt}>
           merged commit <code>{item.commit}</code> into <code>{item.base}</code>
         </Row>
       );
     case "convertedToDraft":
       return (
-        <Row icon={<GitPullRequestDraftIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<GitPullRequestDraftIcon size={12} />} actor={item.actor} at={item.createdAt}>
           marked this pull request as draft
         </Row>
       );
     case "readyForReview":
       return (
-        <Row icon={<EyeIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<EyeIcon size={12} />} actor={item.actor} at={item.createdAt}>
           marked this pull request as ready for review
         </Row>
       );
     case "renamed":
       return (
-        <Row icon={<PencilIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<PencilIcon size={12} />} actor={item.actor} at={item.createdAt}>
           changed the title <del>{item.from}</del> <ins>{item.to}</ins>
         </Row>
       );
     case "headRefDeleted":
     case "headRefRestored":
       return (
-        <Row icon={<GitBranchIcon size={14} />} actor={item.actor} at={item.createdAt}>
+        <Row icon={<GitBranchIcon size={12} />} actor={item.actor} at={item.createdAt}>
           {item.kind === "headRefDeleted" ? "deleted" : "restored"} the {head ? <code>{head}</code> : "head"} branch
         </Row>
       );
-    case "crossReferenced":
+    case "crossReferenced": {
+      const state = item.state.toLowerCase();
+      const stateLabel =
+        state === "open" ? "Open" : state === "merged" ? "Merged" : state === "closed" ? "Closed" : item.state;
       return (
-        <Row icon={<CrossReferenceIcon size={14} />} actor={item.actor} at={item.createdAt}>
-          mentioned this in{" "}
-          <LinkButton url={item.url} onOpen={onOpen}>
-            <span className="pr-timeline-ref">
-              {item.crossRepository ? item.repository : ""}#{item.number}
-            </span>{" "}
-            {item.title}
-          </LinkButton>{" "}
-          <span className={`pr-timeline-state ${item.state.toLowerCase()}`}>{item.state.toLowerCase()}</span>
-        </Row>
+        <div className="pr-timeline-event pr-timeline-crossref">
+          <span className="pr-timeline-icon" aria-hidden="true">
+            <CrossReferenceIcon size={12} />
+          </span>
+          <div className="pr-timeline-body">
+            <p className="pr-timeline-text">
+              <Avatar login={item.actor} size={16} /> <strong>{item.actor}</strong> mentioned this{" "}
+              <time dateTime={item.createdAt}>{relativeTime(item.createdAt)}</time>
+            </p>
+            <div className="pr-timeline-ref-card">
+              <LinkButton url={item.url} onOpen={onOpen} className="pr-timeline-ref-link">
+                <span className="pr-timeline-ref-title">{item.title}</span>{" "}
+                <span className="pr-timeline-ref">
+                  {item.crossRepository ? item.repository : ""}#{item.number}
+                </span>
+              </LinkButton>
+              {stateLabel && <span className={`pr-timeline-state ${state}`}>{stateLabel}</span>}
+            </div>
+          </div>
+        </div>
       );
+    }
   }
 }

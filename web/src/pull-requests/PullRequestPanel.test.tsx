@@ -33,9 +33,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const render = (active = true) =>
+const render = (active = true, resetKey = 0) =>
   act(async () =>
-    root.render(<PullRequestPanel projectId={1} refreshKey={0} active={active} onChanged={() => {}} />),
+    root.render(<PullRequestPanel projectId={1} refreshKey={0} resetKey={resetKey} active={active} onChanged={() => {}} />),
   );
 const listCalls = () => vi.mocked(commands.listPullRequests).mock.calls.length;
 
@@ -265,4 +265,15 @@ it("stops polling while the Surface is hidden, and revalidates silently once sho
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("returns to the pull request list when resetKey increments while viewing a pull request", async () => {
+  vi.mocked(commands.listPullRequests).mockResolvedValue({ status: "ok", data: [pr(1, "First PR")] });
+  vi.spyOn(commands, "pullRequestDetail").mockResolvedValue({ status: "ok", data: detail("First PR") });
+  await render(true, 0);
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  expect(host.querySelector(".pr-nav .pr-title")?.textContent).toContain("First PR");
+
+  await render(true, 1);
+  expect(host.querySelector('ul[aria-label="Open pull requests"]')).not.toBeNull();
 });

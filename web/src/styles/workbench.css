@@ -91,7 +91,8 @@
   min-height: 0;
 }
 .editor-tabs {
-  min-height: 35px;
+  min-height: 0;
+  height: 100%;
   display: flex;
   align-items: stretch;
   overflow-x: auto;
@@ -135,8 +136,8 @@
   border-radius: 0;
   background: transparent;
   padding: 0 6px 0 12px;
-  height: 35px;
-  min-height: 35px;
+  height: 100%;
+  min-height: 0;
   font-size: 12px;
   font-weight: 400;
   color: var(--faint);
@@ -453,7 +454,8 @@
   align-items: center;
   gap: 8px;
   padding: 0 20px;
-  min-height: 36px;
+  height: var(--panel-bar-height);
+  min-height: var(--panel-bar-height);
   flex: none;
   border-bottom: 1px solid var(--line);
   color: var(--dim);
@@ -922,7 +924,7 @@
 .tools-tab-strip::-webkit-scrollbar { display: none; }
 .tools-tab-actions { display: flex; align-items: center; flex: none; gap: 2px; padding: 0 8px 0 4px; }
 .tools-tab-actions .icon-btn { flex: none; }
-.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; }
+.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 9px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; min-height: 0; font-size: 13px; }
 .header > .icon-btn { flex: none; min-width: 28px; }
 
 /* Project terminal tabs: one strip, scrolling sideways so many shells never displace the Surface tabs. */
@@ -938,6 +940,7 @@
 .editor-tabs-bar {
   display: flex;
   align-items: stretch;
+  height: var(--panel-bar-height);
   min-width: 0;
   background: var(--bg2);
   border-bottom: 1px solid var(--line);

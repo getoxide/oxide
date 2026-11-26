@@ -1747,6 +1747,12 @@ pub struct LinkedIssue {
     pub repository: String,
     /// Whether this linked issue lives in a different repository than the current one.
     pub cross_repository: bool,
+    /// GitHub logins assigned to this linked issue.
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    /// Count of open blockers on this linked issue.
+    #[serde(default)]
+    pub blocked_by_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

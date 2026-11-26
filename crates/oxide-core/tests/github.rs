@@ -2794,7 +2794,9 @@ fn issue_detail_reads_parent_subissues_and_dependencies() {
                                 "state": "OPEN",
                                 "stateReason": "",
                                 "url": "https://github.com/fake/repo/issues/12",
-                                "repository": {"nameWithOwner": "fake/repo"}
+                                "repository": {"nameWithOwner": "fake/repo"},
+                                "assignees": {"nodes": [{"login": "alice"}]},
+                                "issueDependenciesSummary": {"blockedBy": 2}
                             }
                         ]
                     },
@@ -2815,7 +2817,8 @@ fn issue_detail_reads_parent_subissues_and_dependencies() {
                                 "state": "OPEN",
                                 "stateReason": "",
                                 "url": "https://github.com/other/repo/issues/99",
-                                "repository": {"nameWithOwner": "other/repo"}
+                                "repository": {"nameWithOwner": "other/repo"},
+                                "assignees": {"nodes": [{"login": "bob"}, {"login": "carol"}]}
                             }
                         ]
                     },
@@ -2847,12 +2850,18 @@ fn issue_detail_reads_parent_subissues_and_dependencies() {
     assert_eq!(detail.sub_issues.len(), 2);
     assert_eq!(detail.sub_issues[0].number, 11);
     assert_eq!(detail.sub_issues[0].state_reason, "COMPLETED");
+    assert!(detail.sub_issues[0].assignees.is_empty());
+    assert_eq!(detail.sub_issues[0].blocked_by_count, 0);
+    assert_eq!(detail.sub_issues[1].assignees, vec!["alice"]);
+    assert_eq!(detail.sub_issues[1].blocked_by_count, 2);
     // Open blocker count comes from issueDependenciesSummary.blockedBy (1), not totalBlockedBy (2).
     assert_eq!(detail.blocked_by_count, 1);
     assert_eq!(detail.blocked_by.len(), 2);
     assert!(!detail.blocked_by[0].cross_repository);
     assert!(detail.blocked_by[1].cross_repository);
     assert_eq!(detail.blocked_by[1].repository, "other/repo");
+    assert_eq!(detail.blocked_by[1].assignees, vec!["bob", "carol"]);
+    assert_eq!(detail.blocked_by[1].blocked_by_count, 0);
     assert_eq!(detail.blocking.len(), 1);
     assert_eq!(detail.blocking[0].number, 20);
 

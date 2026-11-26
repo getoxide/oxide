@@ -522,6 +522,8 @@ impl From<oxide_core::LinkedIssue> for LinkedIssue {
             url: i.url,
             repository: i.repository,
             cross_repository: i.cross_repository,
+            assignees: i.assignees,
+            blocked_by_count: i.blocked_by_count,
         }
     }
 }

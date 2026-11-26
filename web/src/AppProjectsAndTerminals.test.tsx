@@ -19,8 +19,12 @@ vi.mock("./terminal/TerminalWorkbench", () => ({
     <div className="terminal-stub" data-project={projectId} data-context={contextKey} data-visible={String(visible)}>{headerAction}</div>
   ),
 }));
-vi.mock("./pull-requests/PullRequestPanel", () => ({ PullRequestPanel: () => <div className="pr-panel">PR content</div> }));
-vi.mock("./issues/IssuesSurface", () => ({ IssuesSurface: () => <div className="issues-surface">Issues content</div> }));
+vi.mock("./pull-requests/PullRequestPanel", () => ({
+  PullRequestPanel: ({ resetKey = 0 }: { resetKey?: number }) => <div className="pr-panel" data-reset={resetKey}>PR content</div>,
+}));
+vi.mock("./issues/IssuesSurface", () => ({
+  IssuesSurface: ({ resetKey = 0 }: { resetKey?: number }) => <div className="issues-surface" data-reset={resetKey}>Issues content</div>,
+}));
 vi.mock("./editor/FilesPanel", () => ({
   FilesPanel: ({ projectId, onOpenFile }: { projectId: number; onOpenFile: (path: string) => void }) => (
     <div className="files-panel" data-project={projectId} onDoubleClick={() => onOpenFile("src/main.ts")}>Files content</div>
@@ -214,8 +218,14 @@ it("gives the right dock only Issues and Pull request, Issues first, without nam
   expect(q(".files-panel")).toBeNull();
   await click(label("Pull request"));
   expect(host.textContent).toContain("PR content");
+  expect(q<HTMLElement>(".pr-panel")?.dataset.reset).toBe("0");
+  await click(label("Pull request"));
+  expect(q<HTMLElement>(".pr-panel")?.dataset.reset).toBe("1");
   await click(label("Issues"));
   expect(host.textContent).toContain("Issues content");
+  expect(q<HTMLElement>(".issues-surface")?.dataset.reset).toBe("0");
+  await click(label("Issues"));
+  expect(q<HTMLElement>(".issues-surface")?.dataset.reset).toBe("1");
 });
 
 it("describes the empty dock without naming Files", async () => {

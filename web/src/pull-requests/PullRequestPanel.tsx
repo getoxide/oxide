@@ -7,6 +7,8 @@ export interface PullRequestPanelProps {
   projectId: number;
   /** Changes after the user's own changes (a merge, a new pull request), which refresh the panel. */
   refreshKey: number;
+  /** Incremented when the user re-clicks the active Pull request tab to return to the list. */
+  resetKey?: number;
   /** Whether the Surface is shown (the dock is open on it). Hidden, it stops polling GitHub. */
   active?: boolean;
   /** Called after a pull request was created or merged, so other views reload. */
@@ -21,12 +23,12 @@ export function PullRequestPanel(props: PullRequestPanelProps) {
   return <PullRequestViews key={props.projectId} {...props} />;
 }
 
-function PullRequestViews({ active = true, ...props }: PullRequestPanelProps) {
+function PullRequestViews({ active = true, resetKey = 0, ...props }: PullRequestPanelProps) {
   const poll = useAutoRefresh({ enabled: active });
   return (
     <div className="pr-views">
       <section className="pr-panel pr-panel-flush" aria-label="Pull requests">
-        <PullRequestBrowser {...props} active={active} pollKey={poll} />
+        <PullRequestBrowser {...props} active={active} pollKey={poll} resetKey={resetKey} />
       </section>
     </div>
   );
