@@ -43,6 +43,14 @@ mkdir -p "$out/assets" "$out/dnf/rpm"
 gpg --batch --export "$fingerprint" > "$out/assets/oxide-repository.gpg"
 gpg --batch --armor --export "$fingerprint" > "$out/assets/oxide-repository.asc"
 
+# The .deb ships the public key (crates/oxide-app/linux/repository/) and write it on install: a
+# release signed with any other key would leave every installed package trusting the wrong one.
+shipped="$root/crates/oxide-app/linux/repository"
+cmp -s "$out/assets/oxide-repository.gpg" "$shipped/oxide-repository.gpg" || {
+  echo "The repository signing key is not the one the .deb ships ($shipped/oxide-repository.gpg). Run tools/ci/export-repository-key.sh with the new public key, rebuild and try again." >&2
+  exit 1
+}
+
 # Every .rpm carries the signature, so gpgcheck passes.
 for name in $rpms; do
   cp "$packages/$name" "$out/assets/$name"

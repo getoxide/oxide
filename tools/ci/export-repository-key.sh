@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Writes the three public-key files that the .deb and .rpm ship (crates/oxide-app/linux/repository/) from
+# Writes the public-key file that the .deb ships (crates/oxide-app/linux/repository/) from
 # the armored PUBLIC key of the repository signing key. Run it once when the key is made or replaced:
 #
 #   tools/ci/export-repository-key.sh <oxide-repository.asc>
@@ -23,8 +23,5 @@ fi
 fingerprint=$(gpg --batch --with-colons --list-keys | awk -F: '/^fpr:/ { print $10; exit }')
 [ -n "$fingerprint" ] || { echo "No public key in $source." >&2; exit 1; }
 mkdir -p "$dest"
-gpg --batch --armor --export "$fingerprint" > "$dest/oxide-repository.asc"
 gpg --batch --export "$fingerprint" > "$dest/oxide-repository.gpg"
-# rpm names an imported key gpg-pubkey-<last 8 hex digits of the fingerprint, lower case>-<creation time>.
-printf '%s\n' "$(printf '%s' "$fingerprint" | tail -c 8 | tr 'A-F' 'a-f')" > "$dest/oxide-repository.keyid"
-echo "Wrote the key files for $fingerprint to $dest"
+echo "Wrote the key file for $fingerprint to $dest"

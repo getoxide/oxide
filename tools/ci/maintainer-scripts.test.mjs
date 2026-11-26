@@ -19,7 +19,7 @@ const SCRIPTS = {
   rpmPostInstall: "crates/oxide-app/linux/rpm/post.sh",
   rpmPreRemove: "crates/oxide-app/linux/rpm/preun.sh",
 };
-const KEY_FILES = ["oxide-repository.gpg", "oxide-repository.asc", "oxide-repository.keyid"];
+const KEY_FILE = "oxide-repository.gpg";
 
 describe("Linux package maintainer scripts", () => {
   test("tauri.conf.json wires each script and ships the key files", () => {
@@ -28,9 +28,8 @@ describe("Linux package maintainer scripts", () => {
     assert.equal(deb.postRemoveScript, "linux/deb/postrm");
     assert.equal(rpm.postInstallScript, "linux/rpm/post.sh");
     assert.equal(rpm.preRemoveScript, "linux/rpm/preun.sh");
-    for (const files of [deb.files, rpm.files]) {
-      assert.deepEqual(files, Object.fromEntries(KEY_FILES.map((name) => [`${SHARE}/${name}`, `linux/repository/${name}`])));
-    }
+    assert.deepEqual(deb.files, { [`${SHARE}/${KEY_FILE}`]: `linux/repository/${KEY_FILE}` });
+    assert.equal(rpm.files, undefined, "the .rpm cannot import a key in a scriptlet");
     for (const path of [...Object.values(deb.files), deb.postInstallScript, deb.postRemoveScript, rpm.postInstallScript, rpm.preRemoveScript]) {
       assert.ok(existsSync(join(app, path)), path);
     }
@@ -59,7 +58,7 @@ describe("Linux package maintainer scripts", () => {
   test("the scripts touch no absolute path but Oxide's own files and the system tools", () => {
     const allowed = new Set([
       APT_SOURCE_PATH, APT_KEYRING_PATH, DNF_REPO_PATH, "/etc/apt/sources.list", "/etc/apt/sources.list.d", "/etc/yum.repos.d", "/usr/share/keyrings",
-      SHARE, ...KEY_FILES.map((name) => `${SHARE}/${name}`), "/bin/sh", "/dev/null",
+      SHARE, `${SHARE}/${KEY_FILE}`, "/bin/sh", "/dev/null",
     ]);
     for (const path of Object.values(SCRIPTS)) {
       const text = read(path).split("\n").filter((line) => !line.trim().startsWith("#")).join("\n");

@@ -47,20 +47,11 @@
     "macOS": { "minimumSystemVersion": "11.0" },
     "linux": {
       "deb": {
-        "files": {
-          "/usr/share/oxide/repository/oxide-repository.gpg": "linux/repository/oxide-repository.gpg",
-          "/usr/share/oxide/repository/oxide-repository.asc": "linux/repository/oxide-repository.asc",
-          "/usr/share/oxide/repository/oxide-repository.keyid": "linux/repository/oxide-repository.keyid"
-        },
+        "files": { "/usr/share/oxide/repository/oxide-repository.gpg": "linux/repository/oxide-repository.gpg" },
         "postInstallScript": "linux/deb/postinst",
         "postRemoveScript": "linux/deb/postrm"
       },
       "rpm": {
-        "files": {
-          "/usr/share/oxide/repository/oxide-repository.gpg": "linux/repository/oxide-repository.gpg",
-          "/usr/share/oxide/repository/oxide-repository.asc": "linux/repository/oxide-repository.asc",
-          "/usr/share/oxide/repository/oxide-repository.keyid": "linux/repository/oxide-repository.keyid"
-        },
         "postInstallScript": "linux/rpm/post.sh",
         "preRemoveScript": "linux/rpm/preun.sh"
       }
