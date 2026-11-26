@@ -7,7 +7,7 @@ import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
-  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, isRepositoryAsset, repositoryPlan,
+  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, repositoryPlan,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -690,6 +690,13 @@ describe("repository index files", () => {
       "metadata_expire=6h",
       "",
     ].join("\n"));
+  });
+
+  test("the APT source file is the documented one-line source, signed by the Oxide keyring", () => {
+    assert.equal(aptSourceFile(), "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./\n");
+    assert.equal(APT_SOURCE_PATH, "/etc/apt/sources.list.d/oxide.list");
+    assert.equal(APT_KEYRING_PATH, "/usr/share/keyrings/oxide.gpg");
+    assert.equal(DNF_REPO_PATH, "/etc/yum.repos.d/oxide.repo");
   });
 
   test("repository files and the key are release assets, kept out of the notes' checksums", () => {

@@ -414,6 +414,19 @@ export function aptReleaseFile({ packagesText, date }) {
 /** The update site, which serves the DNF metadata and the key (GitHub Pages from the `updates` branch). */
 export const UPDATE_SITE = "https://getoxide.github.io/oxide/";
 
+/** Where the documented setup, and the packages' maintainer scripts, put Oxide's APT source, its key and the DNF repo file. */
+export const APT_SOURCE_PATH = "/etc/apt/sources.list.d/oxide.list";
+export const APT_KEYRING_PATH = "/usr/share/keyrings/oxide.gpg";
+export const DNF_REPO_PATH = "/etc/yum.repos.d/oxide.repo";
+
+/** The flat APT repository: the assets of the latest release, which GitHub never resolves to a draft or a pre-release. */
+const LATEST_ASSET_BASE = "https://github.com/getoxide/oxide/releases/latest/download/";
+
+/** The one line of the APT source: the flat repository of the latest release, signed by the Oxide keyring only. */
+export function aptSourceFile() {
+  return `deb [signed-by=${APT_KEYRING_PATH}] ${LATEST_ASSET_BASE} ./\n`;
+}
+
 /** The `.repo` file users add to `/etc/yum.repos.d/`: both package and metadata signatures are checked. */
 export function dnfRepoFile() {
   return [
