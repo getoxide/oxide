@@ -263,6 +263,94 @@ export function downloadsSection(artifactNames) {
   return `### Downloads\n\n| Platform | Format | File |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
 }
 
+/**
+ * The in-app update packages (ADR-0021). Windows and Linux update from the installer
+ * they already ship (the NSIS installer, the AppImage); macOS needs the `.app` archive.
+ * `key` is the platform name of Tauri's updater feed; `asset` names the package of a version.
+ */
+export const UPDATER_PLATFORMS = [
+  { key: "darwin-aarch64", asset: (version) => `Oxide_${version}_macos_arm64.app.tar.gz` },
+  { key: "windows-x86_64", asset: (version) => `Oxide_${version}_windows_x64.exe` },
+  { key: "windows-aarch64", asset: (version) => `Oxide_${version}_windows_arm64.exe` },
+  { key: "linux-x86_64", asset: (version) => `Oxide_${version}_linux_x64.AppImage` },
+  { key: "linux-aarch64", asset: (version) => `Oxide_${version}_linux_arm64.AppImage` },
+];
+
+/** Where a release's assets are served; the update feed points here and the check accepts nothing else. */
+function releaseAssetBase(repository, tag) {
+  return `https://github.com/${repository}/releases/download/${tag}/`;
+}
+
+/**
+ * The `latest.json` of a release. `signatures` maps each package name to the contents of its
+ * `.sig` file. A missing or blank signature throws: an unsigned package would be refused by every install.
+ */
+export function buildUpdateFeed({ tag, repository, signatures, pubDate }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
+  const platforms = {};
+  for (const { key, asset } of UPDATER_PLATFORMS) {
+    const name = asset(version);
+    const signature = String(signatures?.[name] ?? "").trim();
+    if (!signature) throw new Error(`The signature of ${name} is missing or empty.`);
+    platforms[key] = { url: `${releaseAssetBase(repository, tag)}${name}`, signature };
+  }
+  return { version, notes: `https://github.com/${repository}/releases/tag/${tag}`, pub_date: pubDate, platforms };
+}
+
+/** Whether a release asset exists only for the updater, so notes and the Downloads table leave it out. */
+export function isUpdaterOnlyAsset(name) {
+  return /\.sig$/.test(name) || /\.app\.tar\.gz$/.test(name) || name === "latest.json";
+}
+
+/** The `sha256sum` listing of a release without the updater-only assets, for the notes. */
+export function releaseChecksums(listing) {
+  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
+}
+
+/** Every package URL in a feed, for the reachability check. */
+export function feedUrls(feed) {
+  return Object.values(feed?.platforms ?? {}).map((entry) => entry.url);
+}
+
+function feedProblems(feed, label, { repository, tag }) {
+  if (!feed || typeof feed !== "object") return [`the ${label} is missing or not JSON`];
+  const problems = [];
+  const entries = Object.entries(feed.platforms ?? {});
+  if (entries.length === 0) problems.push(`the ${label} has no platforms`);
+  for (const [key, entry] of entries) {
+    if (!String(entry?.signature ?? "").trim()) problems.push(`the ${label} has no signature for ${key}`);
+    if (!String(entry?.url ?? "").startsWith(releaseAssetBase(repository, tag))) problems.push(`the ${label} points ${key} outside ${tag}'s assets`);
+  }
+  return problems;
+}
+
+/**
+ * The post-publish check of both feeds. The pre-release feed always names the published
+ * release. The stable feed names it only when it is stable, and must never name a pre-release.
+ */
+export function checkPublishedFeeds({ tag, stable, prerelease, repository = "getoxide/oxide" }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) return { ok: false, message: `The tag "${tag}" is not a release tag.` };
+  const isStable = !version.includes("-");
+  const problems = [];
+  if (prerelease?.version !== version) problems.push(`the pre-release feed names ${prerelease?.version ?? "nothing"}, not ${version}`);
+  problems.push(...feedProblems(prerelease, "pre-release feed", { repository, tag }));
+  if (isStable) {
+    if (stable?.version !== version) problems.push(`the stable feed names ${stable?.version ?? "nothing"}, not ${version}`);
+    problems.push(...feedProblems(stable, "stable feed", { repository, tag }));
+  } else if (stable?.version === version) {
+    problems.push(`the stable feed names the pre-release ${version}`);
+  }
+  if (problems.length > 0) return { ok: false, message: `Feeds are wrong for ${tag}: ${problems.join("; ")}.` };
+  return { ok: true, message: `Both feeds are right for ${tag}.` };
+}
+
+/** The names among `names` that `env` does not set to a non-blank value. */
+export function missingSecrets(env, names) {
+  return names.filter((name) => !String(env?.[name] ?? "").trim());
+}
+
 // Packages that break when moved alone, or whose bumps change generated bindings.
 const MANUAL_GROUPS = new Set(["tauri", "specta"]);
 

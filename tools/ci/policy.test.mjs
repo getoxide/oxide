@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
+  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -506,5 +507,109 @@ describe("ADVISORY_SCANS", () => {
     const advisories = read("advisories.yml");
     assert.match(advisories, /^ {2}pnpm-audit:$/m);
     assert.match(advisories, /Security advisories found in JavaScript dependencies/);
+  });
+});
+
+const REPO = "getoxide/oxide";
+const signaturesFor = (version) => Object.fromEntries(UPDATER_PLATFORMS.map(({ asset }) => [asset(version), `SIG ${asset(version)}`]));
+
+describe("buildUpdateFeed", () => {
+  const input = (overrides = {}) => ({ tag: "v0.1.0", repository: REPO, signatures: signaturesFor("0.1.0"), pubDate: "2026-12-01T10:00:00Z", ...overrides });
+
+  test("names every in-app platform with the signed package of that release", () => {
+    const feed = buildUpdateFeed(input());
+    assert.equal(feed.version, "0.1.0");
+    assert.equal(feed.pub_date, "2026-12-01T10:00:00Z");
+    assert.deepEqual(Object.keys(feed.platforms).sort(), ["darwin-aarch64", "linux-aarch64", "linux-x86_64", "windows-aarch64", "windows-x86_64"]);
+    assert.deepEqual(feed.platforms["darwin-aarch64"], {
+      url: "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_macos_arm64.app.tar.gz",
+      signature: "SIG Oxide_0.1.0_macos_arm64.app.tar.gz",
+    });
+    assert.equal(feed.platforms["windows-x86_64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_windows_x64.exe");
+    assert.equal(feed.platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_linux_arm64.AppImage");
+  });
+
+  test("points the notes at the release page", () => {
+    assert.equal(buildUpdateFeed(input()).notes, "https://github.com/getoxide/oxide/releases/tag/v0.1.0");
+  });
+
+  test("rejects a missing signature, naming the package", () => {
+    const signatures = signaturesFor("0.1.0");
+    delete signatures["Oxide_0.1.0_windows_arm64.exe"];
+    assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide_0\.1\.0_windows_arm64\.exe/);
+  });
+
+  test("rejects an empty or blank signature", () => {
+    for (const blank of ["", "  \n"]) {
+      const signatures = { ...signaturesFor("0.1.0"), "Oxide_0.1.0_linux_x64.AppImage": blank };
+      assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide_0\.1\.0_linux_x64\.AppImage/);
+    }
+  });
+
+  test("rejects a tag that is not a version", () => {
+    assert.throws(() => buildUpdateFeed(input({ tag: "main" })), /tag/);
+  });
+
+  test("keeps a pre-release version whole", () => {
+    assert.equal(buildUpdateFeed(input({ tag: "v0.2.0-rc.1", signatures: signaturesFor("0.2.0-rc.1") })).version, "0.2.0-rc.1");
+  });
+});
+
+describe("updater-only assets", () => {
+  test("are the macOS archive, every signature and the feed", () => {
+    for (const name of ["Oxide_0.1.0_macos_arm64.app.tar.gz", "Oxide_0.1.0_windows_x64.exe.sig", "latest.json"]) assert.ok(isUpdaterOnlyAsset(name), name);
+    for (const name of ["Oxide_0.1.0_macos_arm64.dmg", "Oxide_0.1.0_windows_x64.exe", "Oxide_0.1.0_linux_x64.AppImage"]) assert.ok(!isUpdaterOnlyAsset(name), name);
+  });
+
+  test("the Downloads table ignores them", () => {
+    assert.equal(downloadsSection(["Oxide_0.1.0_macos_arm64.app.tar.gz", "Oxide_0.1.0_windows_x64.exe.sig", "latest.json"]), "");
+  });
+
+  test("the notes' checksum list drops them and keeps the installers", () => {
+    const sums = ["aaa  Oxide_0.1.0_macos_arm64.dmg", "bbb  Oxide_0.1.0_macos_arm64.app.tar.gz", "ccc  Oxide_0.1.0_windows_x64.exe.sig", "ddd  Oxide_0.1.0_windows_x64.exe", "eee  latest.json"].join("\n") + "\n";
+    assert.equal(releaseChecksums(sums), "aaa  Oxide_0.1.0_macos_arm64.dmg\nddd  Oxide_0.1.0_windows_x64.exe\n");
+  });
+});
+
+describe("checkPublishedFeeds", () => {
+  const feed = (version, tag = `v${version}`) => buildUpdateFeed({ tag, repository: REPO, signatures: signaturesFor(version), pubDate: "2026-12-01T10:00:00Z" });
+
+  test("a stable release must be named by both feeds", () => {
+    assert.equal(checkPublishedFeeds({ tag: "v0.1.0", stable: feed("0.1.0"), prerelease: feed("0.1.0") }).ok, true);
+    const stale = checkPublishedFeeds({ tag: "v0.1.0", stable: feed("0.0.9"), prerelease: feed("0.1.0") });
+    assert.equal(stale.ok, false);
+    assert.match(stale.message, /stable feed/);
+    assert.equal(checkPublishedFeeds({ tag: "v0.1.0", stable: feed("0.1.0"), prerelease: feed("0.0.9") }).ok, false);
+  });
+
+  test("a pre-release is named by the pre-release feed and never by the stable one", () => {
+    assert.equal(checkPublishedFeeds({ tag: "v0.2.0-rc.1", stable: feed("0.1.0"), prerelease: feed("0.2.0-rc.1") }).ok, true);
+    const leaked = checkPublishedFeeds({ tag: "v0.2.0-rc.1", stable: feed("0.2.0-rc.1"), prerelease: feed("0.2.0-rc.1") });
+    assert.equal(leaked.ok, false);
+    assert.match(leaked.message, /stable feed/);
+  });
+
+  test("an entry with an empty signature or a foreign URL fails", () => {
+    const bad = feed("0.1.0");
+    bad.platforms["linux-x86_64"].signature = "";
+    assert.equal(checkPublishedFeeds({ tag: "v0.1.0", stable: bad, prerelease: feed("0.1.0") }).ok, false);
+    const foreign = feed("0.1.0");
+    foreign.platforms["linux-x86_64"].url = "https://example.com/Oxide.AppImage";
+    assert.equal(checkPublishedFeeds({ tag: "v0.1.0", stable: feed("0.1.0"), prerelease: foreign }).ok, false);
+  });
+
+  test("a missing feed fails", () => {
+    assert.equal(checkPublishedFeeds({ tag: "v0.1.0", stable: undefined, prerelease: feed("0.1.0") }).ok, false);
+  });
+
+  test("feedUrls lists every package URL for the reachability check", () => {
+    assert.equal(feedUrls(feed("0.1.0")).length, 5);
+  });
+});
+
+describe("missingSecrets", () => {
+  test("lists the secrets that are unset or empty", () => {
+    assert.deepEqual(missingSecrets({ A: "x", B: "", C: "  " }, ["A", "B", "C", "D"]), ["B", "C", "D"]);
+    assert.deepEqual(missingSecrets({ A: "x" }, ["A"]), []);
   });
 });
