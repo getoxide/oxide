@@ -14,6 +14,11 @@ use std::path::Path;
 
 const VARIABLES: [&str; 2] = ["OXIDE_UPDATE_FEED", "OXIDE_UPDATE_CHANNEL"];
 
+/// A source file with `\n` line ends, whatever the checkout wrote (Windows checks out CRLF).
+fn read_source(path: &Path) -> String {
+    fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+}
+
 fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -37,7 +42,7 @@ fn debug_module(text: &str) -> (usize, usize) {
 #[test]
 fn only_a_module_compiled_out_of_release_builds_reads_the_override_variables() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let updates = fs::read_to_string(root.join("src/updates.rs")).unwrap();
+    let updates = read_source(&root.join("src/updates.rs"));
     let (start, end) = debug_module(&updates);
     let before = updates[..start].trim_end();
     assert!(
@@ -55,7 +60,7 @@ fn only_a_module_compiled_out_of_release_builds_reads_the_override_variables() {
     sources(&root.join("src"), &mut files);
     sources(&root.join("../oxide-core/src"), &mut files);
     for file in files {
-        let text = fs::read_to_string(&file).unwrap();
+        let text = read_source(&file);
         let outside = if file.ends_with("src/updates.rs") && file.starts_with(root) {
             format!("{}{}", &text[..start], &text[end..])
         } else {
@@ -74,7 +79,7 @@ fn only_a_module_compiled_out_of_release_builds_reads_the_override_variables() {
 #[test]
 fn the_resolver_is_told_a_build_is_debug_only_by_cfg() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let updates = fs::read_to_string(root.join("src/updates.rs")).unwrap();
+    let updates = read_source(&root.join("src/updates.rs"));
     let call = updates
         .find("UpdatePlan::resolve(")
         .expect("the call to the resolver");
