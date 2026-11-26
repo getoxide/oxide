@@ -170,8 +170,10 @@ export function TerminalCommandBlock(props: Props) {
         setScreen(true);
         scheduleFit();
       }
-      return false;
     };
+    // Only the alternate screen is full screen. A prompt that redraws itself in the normal buffer
+    // (cursor up, cursor position: readline, Ink, multiselect pickers) stays inline, at the
+    // block's own width, so it never jumps to the edge or rewraps when it ends.
     const alternate = term.buffer.onBufferChange((buffer) => {
       if (buffer.type === "alternate") markScreen();
       else if (interactive) {
@@ -180,9 +182,6 @@ export function TerminalCommandBlock(props: Props) {
         scheduleFit();
       }
     });
-    // Only the alternate screen is full screen. A prompt that redraws itself in the normal buffer
-    // (cursor up, cursor position: readline, Ink, multiselect pickers) stays inline, at the
-    // block's own width, so it never jumps to the edge or rewraps when it ends.
     // Until the shell marks the start, it is still reading the block's own command line: a key
     // (or a terminal reply) sent then would land in that line instead of reaching the program.
     const input = term.onData((data) => {

@@ -64,8 +64,8 @@ export function readSession(): SessionSnapshot | null {
       .map((tab) => ({
         id: tab.id,
         name: tab.name.slice(0, 200),
-        // Snapshots from before the flag: a name other than the default one was given by hand.
-        customName: typeof tab.customName === "boolean" ? tab.customName : !/^Terminal \d+$/.test(tab.name),
+        // Snapshots from before the flag: a name other than the tab's own default was given by hand.
+        customName: typeof tab.customName === "boolean" ? tab.customName : tab.name !== `Terminal ${tab.id}`,
         running: null,
       }));
     const selectedId = tabs.some((tab) => tab.id === project.selectedId) ? (project.selectedId as number) : tabs[0]?.id ?? null;

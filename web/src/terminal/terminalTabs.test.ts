@@ -12,6 +12,8 @@ it("names the program a command line runs, past assignments, wrappers and paths"
   expect(programName("./scripts/dev.sh --watch")).toBe("dev.sh");
   expect(programName("cargo build && cargo test | tee log")).toBe("cargo");
   expect(programName("  \nnpm run dev")).toBe("npm");
+  expect(programName('FOO="a b" cargo run')).toBe("cargo");
+  expect(programName("(cd web && pnpm dev)")).toBe("cd");
   expect(programName("FOO=1")).toBeNull();
   expect(programName("")).toBeNull();
   expect(programName(null)).toBeNull();

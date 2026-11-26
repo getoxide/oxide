@@ -2,13 +2,14 @@
 import { act } from "react";
 import type { Channel } from "@tauri-apps/api/core";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { TerminalWorkbench } from "./TerminalWorkbench";
 import { RUNNING_INDICATOR_DELAY_MS } from "./runningIndicator";
 import { ContextMenu } from "../shared/ContextMenu";
 
 const xtermSelection = { text: "" };
+const resizeCallbacks: Array<() => void> = [];
 const dataListeners: Array<(data: string) => void> = [];
 
 // xterm needs a real canvas and layout; the Command block around it is what is under test.
@@ -34,7 +35,7 @@ vi.mock("@xterm/xterm", () => ({
 }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class { onContextLoss() {} dispose() {} } }));
-Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { observe() {} disconnect() {} } });
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, ResizeObserver: class { constructor(callback: () => void) { resizeCallbacks.push(callback); } observe() {} disconnect() {} } });
 HTMLElement.prototype.scrollIntoView = vi.fn();
 for (const size of ["clientWidth", "clientHeight"]) Object.defineProperty(HTMLElement.prototype, size, { configurable: true, get: () => 600 });
 const container = document.createElement("div");
@@ -464,4 +465,55 @@ it("keeps what was typed during a running command, and a refused Enter keeps it 
   expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
   expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(false);
   expect(input().value).toBe("git sta");
+});
+
+describe("following output", () => {
+  /** The scroll area with a settable height; setting scrollTop fires scroll, as a browser does. */
+  function scroller() {
+    const el = container.querySelector<HTMLElement>(".terminal-block-scroll")!;
+    const box = { height: 600, top: 0 };
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => box.height });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => box.top,
+      set: (value: number) => {
+        box.top = Math.max(0, Math.min(value, box.height - 600));
+        el.dispatchEvent(new Event("scroll"));
+      },
+    });
+    const grow = (height: number) => act(async () => {
+      box.height = height;
+      for (const callback of resizeCallbacks) callback();
+    });
+    const scrollTo = (top: number) => act(async () => { el.scrollTop = top; });
+    return { box, grow, scrollTo };
+  }
+
+  it("stays at the bottom as a block grows after its bytes are parsed and when the Interrupt bar appears", async () => {
+    const shell = await openShell();
+    await shell.submit("sudo dnf install zapfast");
+    await shell.start();
+    const view = scroller();
+    await view.grow(2000);
+    expect(view.box.top).toBe(1400);
+    await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
+    expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
+    // The bar takes room from the scroll area: still pinned, so it covers no output.
+    await view.grow(2300);
+    expect(view.box.top).toBe(1700);
+  });
+
+  it("pauses when the reader scrolls up and resumes once they are back at the bottom", async () => {
+    const shell = await openShell();
+    await shell.submit("cargo test");
+    await shell.start();
+    const view = scroller();
+    await view.grow(2000);
+    await view.scrollTo(500);
+    await view.grow(3000);
+    expect(view.box.top).toBe(500);
+    await view.scrollTo(3000 - 600 - 10);
+    await view.grow(4000);
+    expect(view.box.top).toBe(3400);
+  });
 });

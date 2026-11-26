@@ -3,7 +3,10 @@ import { TerminalIcon, XIcon } from "@primer/octicons-react";
 import { showContextMenu } from "../shared/ContextMenu";
 
 interface Props {
+  /** The name shown: the Terminal's own, or the program it runs. */
   name: string;
+  /** The Terminal's own name, kept in the tooltip while a program's name is shown. */
+  baseName?: string;
   current: boolean;
   /** The command the Terminal runs, or `null` when its shell is idle. */
   running: string | null;
@@ -18,7 +21,7 @@ interface Props {
  * click, a Force Click on a Mac trackpad, or Rename on its menu turn the title into a field with
  * the name selected. Enter or leaving the field keeps the name, Escape restores it.
  */
-export function TerminalRow({ name, current, running, onSelect, onRename, onNewTerminal, onClose }: Props) {
+export function TerminalRow({ name, baseName, current, running, onSelect, onRename, onNewTerminal, onClose }: Props) {
   const [editing, setEditing] = useState(false);
   const item = useRef<HTMLButtonElement>(null);
   const field = useRef<HTMLInputElement>(null);
@@ -87,7 +90,7 @@ export function TerminalRow({ name, current, running, onSelect, onRename, onNewT
             ref={item}
             className="terminal-item"
             aria-current={current}
-            title={`${name}${running ? ` — running ${running}` : ""}. Double-click or Force Click to rename.`}
+            title={`${name}${baseName && baseName !== name ? ` (${baseName})` : ""}${running ? ` — running ${running}` : ""}. Double-click or Force Click to rename.`}
             onClick={onSelect}
             onDoubleClick={(event) => {
               event.preventDefault();

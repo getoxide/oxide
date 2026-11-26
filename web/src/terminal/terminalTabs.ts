@@ -21,12 +21,14 @@ const VALUE_FLAGS: Record<string, string[]> = {
 /**
  * The program a command line runs, for a Terminal's name: the first command before any shell
  * operator, past variable assignments and wrappers (`sudo`, `env`, …) and their flags, as a
- * basename. `null` when the line names none. Plain shell parsing: no program is special.
+ * basename. `null` when the line names none. Only the shell's own wrappers are skipped: no program
+ * is special-cased, and the name is a label, never a status (ADR-0018).
  */
 export function programName(command: string | null): string | null {
   if (!command) return null;
   const line = command.split(/\r?\n/).find((part) => part.trim()) ?? "";
-  const segment = line.split(/\|\||&&|[|;&]/)[0] ?? "";
+  // A quoted assignment (`FOO="a b"`) is one word; a subshell or group opens on its first command.
+  const segment = (line.split(/\|\||&&|[|;&]/)[0] ?? "").replace(/=("[^"]*"|'[^']*')/g, "=_").replace(/^[\s({]+/, "");
   const words = segment.trim().split(/\s+/).filter(Boolean);
   let index = 0;
   while (index < words.length) {
@@ -87,7 +89,7 @@ export function closeTerminal(state: TerminalsByProject, projectId: number, tabI
   return { ...state, [projectId]: { ...project, tabs, selectedId } };
 }
 
-/** A blank name keeps the old one. A name the user gives (even the shown one) stays from then on. */
+/** A blank name keeps the old one. A name the user gives stays from then on: programs never replace it. */
 export function renameTerminal(state: TerminalsByProject, projectId: number, tabId: number, name: string): TerminalsByProject {
   const project = of(state, projectId);
   const trimmed = name.trim();

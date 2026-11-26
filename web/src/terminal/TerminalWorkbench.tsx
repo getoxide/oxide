@@ -279,6 +279,8 @@ export function TerminalWorkbench({
   // Following output means staying pinned to the bottom whatever grows or shrinks: a block's
   // height changes only after xterm has parsed its bytes, and the Interrupt bar takes room from
   // the scroll area when it appears. Only the reader scrolling up stops it (see onScroll).
+  // Re-observe when blocks are replaced, not only added: a clear and a new command keep the count.
+  const blockKeys = blocks.map((block) => block.token).join(" ");
   const pin = useCallback(() => {
     const el = scroll.current;
     if (el && following.current) el.scrollTop = el.scrollHeight;
@@ -293,7 +295,7 @@ export function TerminalWorkbench({
     observer.observe(el);
     for (const child of Array.from(el.children)) observer.observe(child);
     return () => observer.disconnect();
-  }, [blocks.length, pin]);
+  }, [blockKeys, pin]);
 
   const write = useCallback(
     async (text: string) => {

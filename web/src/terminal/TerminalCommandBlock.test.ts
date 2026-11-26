@@ -723,6 +723,28 @@ it("stays inline when a prompt redraws itself in the normal buffer", async () =>
   expect(mount.querySelector("section")!.classList.contains("fullscreen")).toBe(false);
 });
 
+it("keeps rows a program draws below its cursor inside the block", async () => {
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output: "> prompt\r\n\r\n? for shortcuts" }),
+        active: true,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  await act(async () => {
+    const term = instances[0] as TerminalInstance & { parsedListeners: Array<() => void> };
+    term.buffer.active.cursorY = 0; // the cursor went back up to the prompt
+    for (const parsed of term.parsedListeners) parsed();
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(mount.querySelector<HTMLElement>(".terminal-output-clip")!.style.height).toBe("48px");
+});
 
 describe("running indicator", () => {
   // The running treatment (status rail, accent $, spinner) is time based: a command that ends
