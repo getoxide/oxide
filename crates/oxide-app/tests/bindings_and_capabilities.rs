@@ -47,7 +47,7 @@ fn webview_capabilities_grant_no_filesystem_or_shell_access() {
     let cap: serde_json::Value = serde_json::from_str(&raw).unwrap();
     for p in cap["permissions"].as_array().unwrap() {
         let p = p.as_str().unwrap();
-        for denied in ["fs", "shell", "opener", "process", "http"] {
+        for denied in ["fs", "shell", "opener", "process", "http", "updater"] {
             assert!(
                 !p.contains(denied),
                 "capability `{p}` grants `{denied}` access"

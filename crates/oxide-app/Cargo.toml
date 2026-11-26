@@ -11,6 +11,7 @@ name = "oxide_app_lib"
 [dependencies]
 oxide-core = { path = "../oxide-core" }
 oxide-platform = { path = "../oxide-platform" }
+semver = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 specta = { version = "=2.0.0-rc.26", features = ["derive"] }

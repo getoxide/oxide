@@ -140,6 +140,7 @@ export const commands = {
 	rememberSelection: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("remember_selection", { projectId })),
 	/**  The user confirmed quitting with unsaved editors (saved or discarded): exit. */
 	confirmQuit: () => typedError<null, AppError>(__TAURI_INVOKE("confirm_quit")),
+	updateState: () => __TAURI_INVOKE<UpdateState_Serialize>("update_state"),
 };
 
 /* Types */
@@ -151,6 +152,11 @@ export type AvailableShell = {
 	kind: ShellKind,
 	label: string,
 	isDefault: boolean,
+};
+
+export type AvailableUpdate = {
+	version: string,
+	releaseNotesUrl: string,
 };
 
 export type CheckState = "success" | "failure" | "pending" | "neutral" | "skipped";
@@ -196,6 +202,8 @@ export type GithubRepository = {
 	description: string,
 	isPrivate: boolean,
 };
+
+export type InstallChannel = "inApp" | "apt" | "dnf" | "development";
 
 export type IssueCloseReason = "completed" | "notPlanned";
 
@@ -853,6 +861,24 @@ export type TimelineReview_Serialize = {
 	state: ReviewState,
 	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
 	reactions: ReactionGroup[] | null,
+};
+
+export type UpdateState = UpdateState_Serialize | UpdateState_Deserialize;
+
+export type UpdateState_Deserialize = {
+	channel: InstallChannel,
+	currentVersion: string,
+	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
+	lastCheckedAt?: number | null,
+	available?: AvailableUpdate | null,
+};
+
+export type UpdateState_Serialize = {
+	channel: InstallChannel,
+	currentVersion: string,
+	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
+	lastCheckedAt: number | null,
+	available: AvailableUpdate | null,
 };
 
 /* Tauri Specta runtime */

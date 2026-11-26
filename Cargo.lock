@@ -2488,6 +2488,7 @@ version = "0.0.4"
 dependencies = [
  "oxide-core",
  "oxide-platform",
+ "semver",
  "serde",
  "serde_json",
  "specta",

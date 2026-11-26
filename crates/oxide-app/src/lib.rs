@@ -4,6 +4,7 @@
 mod conversions;
 mod shell_path;
 mod system;
+mod updates;
 use oxide_core::diag;
 
 use std::sync::Arc;
@@ -1644,7 +1645,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         edit_issue,
         last_selection,
         remember_selection,
-        confirm_quit
+        confirm_quit,
+        updates::update_state
     ])
 }
 
@@ -1675,6 +1677,7 @@ pub fn run() {
 
     let built = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(builder.invoke_handler())
         .menu(build_menu)
         .on_window_event(|window, event| {
@@ -1722,7 +1725,9 @@ pub fn run() {
                 window.hide_menu()?;
                 window.set_decorations(false)?;
             }
-            app.manage(Arc::new(core));
+            let core = Arc::new(core);
+            updates::start(app.handle(), &core);
+            app.manage(core);
             Ok(())
         })
         .build(tauri::generate_context!());
