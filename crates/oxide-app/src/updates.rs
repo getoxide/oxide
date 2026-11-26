@@ -27,6 +27,24 @@ pub enum InstallChannel {
     Development,
 }
 
+/// Whether an install can update itself where it sits: a macOS app outside the Applications
+/// folders must be moved first.
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum InstallLocation {
+    Allowed,
+    MoveToApplications,
+}
+
+impl From<oxide_core::InstallLocation> for InstallLocation {
+    fn from(location: oxide_core::InstallLocation) -> Self {
+        match location {
+            oxide_core::InstallLocation::Allowed => Self::Allowed,
+            oxide_core::InstallLocation::MoveToApplications => Self::MoveToApplications,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailableUpdate {
@@ -34,13 +52,26 @@ pub struct AvailableUpdate {
     pub release_notes_url: String,
 }
 
+/// A finished check; `at` is Unix seconds (a float: the bindings forbid 64-bit integers).
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LastCheck {
+    pub at: f64,
+    pub succeeded: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateState {
     pub channel: InstallChannel,
+    pub install_location: InstallLocation,
     pub current_version: String,
     /// Unix seconds (a float: the bindings forbid 64-bit integers).
     pub last_checked_at: Option<f64>,
+    /// The last check that finished, successful or not: a failed one shows only in Settings.
+    pub last_check: Option<LastCheck>,
+    /// A check is running.
+    pub checking: bool,
     pub available: Option<AvailableUpdate>,
     pub operation: UpdateOperation,
     /// Why the last install failed; the installed Oxide keeps running and the update is offered again.
@@ -93,8 +124,14 @@ impl From<oxide_core::UpdateState> for UpdateState {
     fn from(state: oxide_core::UpdateState) -> Self {
         Self {
             channel: state.channel.into(),
+            install_location: state.install_location.into(),
             current_version: state.current_version,
             last_checked_at: state.last_checked_at.map(|seconds| seconds as f64),
+            last_check: state.last_check.map(|check| LastCheck {
+                at: check.at as f64,
+                succeeded: check.succeeded,
+            }),
+            checking: state.checking,
             available: state.available.map(|update| AvailableUpdate {
                 version: update.version,
                 release_notes_url: update.release_notes_url,
@@ -148,6 +185,18 @@ fn bundle_kind() -> Option<BundleKind> {
     })
 }
 
+/// A debug build runs from the build folder and is never placed: only a release build is held to the rule.
+fn install_location() -> oxide_core::InstallLocation {
+    if cfg!(debug_assertions) {
+        return oxide_core::InstallLocation::Allowed;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return oxide_core::InstallLocation::Allowed;
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    oxide_core::InstallLocation::detect(bundle_kind(), &exe, home.as_deref())
+}
+
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -169,6 +218,7 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
         &debug_override(),
     );
     core.configure_updates(plan.channel, &current);
+    core.set_update_install_location(install_location());
     app.manage(Arc::new(Installer {
         feed: plan.feed.clone(),
         current: current.clone(),
@@ -185,13 +235,11 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
             .name("updates".into())
             .spawn(move || {
                 loop {
-                    // A failed check is silent: no state change, no event, the next one comes in 4 hours.
-                    if let Ok(found) =
-                        tauri::async_runtime::block_on(check(&app, &plan.feed, &current))
-                        && let Some(state) = core.record_update_check(found.as_deref(), unix_now())
-                    {
-                        diag::best_effort("emit", app.emit(STATE_EVENT, UpdateState::from(state)));
-                    }
+                    // Skipped while an install or another check runs. A failure is recorded for
+                    // the Updates section; the window shows nothing, the next check is in 4 hours.
+                    let _skipped = tauri::async_runtime::block_on(run_check(
+                        &app, &core, &plan.feed, &current,
+                    ));
                     std::thread::sleep(oxide_core::CHECK_INTERVAL);
                 }
             }),
@@ -224,6 +272,25 @@ async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<Stri
         .await
         .map_err(|error| error.to_string())?;
     Ok(update.map(|update| update.version))
+}
+
+/// One check from start to finish: marks Core as checking, asks the feed, records the outcome and
+/// pushes each change. `Err(Busy)` when an install or another check is running.
+async fn run_check(
+    app: &AppHandle,
+    core: &Arc<Core>,
+    feed: &str,
+    current: &str,
+) -> Result<(), oxide_core::UpdateError> {
+    push(app, core.begin_update_check()?);
+    let state = match check(app, feed, current).await {
+        Ok(found) => core.record_update_check(found.as_deref(), unix_now()),
+        Err(_) => Some(core.record_update_check_failure(unix_now())),
+    };
+    if let Some(state) = state {
+        push(app, state);
+    }
+    Ok(())
 }
 
 /// A verified Windows installer kept for the quit: the installer ends the process, so it cannot run before.
@@ -322,6 +389,9 @@ pub fn install_update(
     let (_, state) = core.begin_update_install().map_err(|error| match error {
         oxide_core::UpdateError::Busy => "An update is already being installed.".to_string(),
         oxide_core::UpdateError::NothingToInstall => "There is no update to install.".to_string(),
+        oxide_core::UpdateError::WrongLocation => {
+            "Move Oxide to the Applications folder, then reopen it to update.".to_string()
+        }
     })?;
     push(&app, state);
     let core = Arc::clone(&core);
@@ -334,6 +404,29 @@ pub fn install_update(
         push(&app, finished);
     });
     Ok(())
+}
+
+/// Checks the feed now, on demand from the Updates section, and returns the new state. A check that
+/// cannot reach the feed is not an error: it is recorded in the state and shown only in Settings.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn check_for_updates(
+    app: AppHandle,
+    core: tauri::State<'_, Arc<Core>>,
+    installer: tauri::State<'_, Arc<Installer>>,
+) -> Result<UpdateState, String> {
+    run_check(&app, &core, &installer.feed, &installer.current)
+        .await
+        .map_err(|error| match error {
+            oxide_core::UpdateError::Busy => {
+                "An update check or install is already running.".to_string()
+            }
+            oxide_core::UpdateError::NothingToInstall | oxide_core::UpdateError::WrongLocation => {
+                "This install does not check for updates.".to_string()
+            }
+        })?;
+    Ok(core.update_state().into())
 }
 
 #[tauri::command]

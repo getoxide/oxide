@@ -154,6 +154,11 @@ export const commands = {
 	 *  arrive as `update-state-changed`. Only one operation runs at a time.
 	 */
 	installUpdate: () => typedError<null, string>(__TAURI_INVOKE("install_update")),
+	/**
+	 *  Checks the feed now, on demand from the Updates section, and returns the new state. A check that
+	 *  cannot reach the feed is not an error: it is recorded in the state and shown only in Settings.
+	 */
+	checkForUpdates: () => typedError<UpdateState_Serialize, string>(__TAURI_INVOKE("check_for_updates")),
 };
 
 /* Types */
@@ -217,6 +222,12 @@ export type GithubRepository = {
 };
 
 export type InstallChannel = "inApp" | "apt" | "dnf" | "development";
+
+/**
+ *  Whether an install can update itself where it sits: a macOS app outside the Applications
+ *  folders must be moved first.
+ */
+export type InstallLocation = "allowed" | "moveToApplications";
 
 export type IssueCloseReason = "completed" | "notPlanned";
 
@@ -400,6 +411,12 @@ export type LanguageTool_Serialize = {
 	resolvedPath: string | null,
 	installCommand: string,
 	documentation: string,
+};
+
+/**  A finished check; `at` is Unix seconds (a float: the bindings forbid 64-bit integers). */
+export type LastCheck = {
+	at: number | null,
+	succeeded: boolean,
 };
 
 export type LinkedIssue = {
@@ -893,9 +910,14 @@ export type UpdateState = UpdateState_Serialize | UpdateState_Deserialize;
 
 export type UpdateState_Deserialize = {
 	channel: InstallChannel,
+	installLocation: InstallLocation,
 	currentVersion: string,
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt?: number | null,
+	/**  The last check that finished, successful or not: a failed one shows only in Settings. */
+	lastCheck?: LastCheck | null,
+	/**  A check is running. */
+	checking: boolean,
 	available?: AvailableUpdate | null,
 	operation: UpdateOperation_Deserialize,
 	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */
@@ -904,9 +926,14 @@ export type UpdateState_Deserialize = {
 
 export type UpdateState_Serialize = {
 	channel: InstallChannel,
+	installLocation: InstallLocation,
 	currentVersion: string,
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt: number | null,
+	/**  The last check that finished, successful or not: a failed one shows only in Settings. */
+	lastCheck: LastCheck | null,
+	/**  A check is running. */
+	checking: boolean,
 	available: AvailableUpdate | null,
 	operation: UpdateOperation_Serialize,
 	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */

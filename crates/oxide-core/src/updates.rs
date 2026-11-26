@@ -4,6 +4,7 @@
 
 use oxide_platform::sync::LockExt as _;
 use semver::Version;
+use std::path::{Component, Path};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -70,6 +71,41 @@ impl InstallChannel {
             "dnf" => Some(Self::Dnf),
             "none" => Some(Self::Development),
             _ => None,
+        }
+    }
+}
+
+/// Whether the running install sits where an in-place update can replace it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallLocation {
+    Allowed,
+    /// A macOS app outside `/Applications` and `~/Applications` (the mounted disk image, Downloads,
+    /// a path Gatekeeper translocated): an update would fail or land in the wrong place.
+    MoveToApplications,
+}
+
+impl InstallLocation {
+    /// A pure rule over the path of the running executable; `home` is the user's home directory.
+    /// Only a macOS `.app` is placed: every other kind of install is allowed wherever it is.
+    pub fn detect(bundle: Option<BundleKind>, exe: &Path, home: Option<&Path>) -> Self {
+        if bundle != Some(BundleKind::App) {
+            return Self::Allowed;
+        }
+        let Some(app) = exe
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|ext| ext == "app"))
+        else {
+            return Self::MoveToApplications;
+        };
+        let clean = app
+            .components()
+            .all(|part| !matches!(part, Component::ParentDir | Component::CurDir));
+        let in_applications = app.starts_with("/Applications")
+            || home.is_some_and(|home| app.starts_with(home.join("Applications")));
+        if clean && in_applications {
+            Self::Allowed
+        } else {
+            Self::MoveToApplications
         }
     }
 }
@@ -141,14 +177,28 @@ pub struct AvailableUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateState {
     pub channel: InstallChannel,
+    /// Where the install sits; outside the Applications folders on macOS, no install may start.
+    pub install_location: InstallLocation,
     pub current_version: String,
     /// Unix seconds of the last check that reached the feed.
     pub last_checked_at: Option<i64>,
+    /// The last check that finished, successful or not, so the Updates section can say when a check failed.
+    pub last_check: Option<LastCheck>,
+    /// A check is running; it excludes installs and other checks.
+    pub checking: bool,
     pub available: Option<AvailableUpdate>,
     /// What the install of `available` is doing right now.
     pub operation: UpdateOperation,
     /// Why the last install failed; cleared when the next one starts. The installed Oxide keeps running.
     pub error: Option<String>,
+}
+
+/// A finished check: when, and whether it reached the feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LastCheck {
+    /// Unix seconds.
+    pub at: i64,
+    pub succeeded: bool,
 }
 
 /// The one update operation that may run at a time.
@@ -175,6 +225,8 @@ pub enum UpdateError {
     Busy,
     /// No update is available, or this install does not update itself.
     NothingToInstall,
+    /// The install is not in an Applications folder (macOS): it must be moved first.
+    WrongLocation,
 }
 
 pub(crate) struct UpdateTracker {
@@ -187,8 +239,11 @@ impl UpdateTracker {
         Self {
             state: Mutex::new(UpdateState {
                 channel: InstallChannel::Development,
+                install_location: InstallLocation::Allowed,
                 current_version: String::new(),
                 last_checked_at: None,
+                last_check: None,
+                checking: false,
                 available: None,
                 operation: UpdateOperation::Idle,
                 error: None,
@@ -202,22 +257,58 @@ impl UpdateTracker {
         state.channel = channel;
         state.current_version = current_version.to_string();
         state.last_checked_at = None;
+        state.last_check = None;
+        state.checking = false;
         state.available = None;
         state.operation = UpdateOperation::Idle;
         state.error = None;
+    }
+
+    pub(crate) fn set_install_location(&self, location: InstallLocation) {
+        self.state.lock_recover().install_location = location;
     }
 
     pub(crate) fn snapshot(&self) -> UpdateState {
         self.state.lock_recover().clone()
     }
 
+    /// Starts a check on demand (or the periodic one). It excludes installs and other checks.
+    pub(crate) fn begin_check(&self) -> Result<UpdateState, UpdateError> {
+        let mut state = self.state.lock_recover();
+        if !state.channel.checks() {
+            return Err(UpdateError::NothingToInstall);
+        }
+        if state.checking || state.operation != UpdateOperation::Idle {
+            return Err(UpdateError::Busy);
+        }
+        state.checking = true;
+        Ok(state.clone())
+    }
+
+    /// A check that could not reach the feed or read its answer. The window stays silent about it;
+    /// only the Updates section shows it. The last answer about what is available is kept.
+    pub(crate) fn record_check_failure(&self, now: i64) -> UpdateState {
+        let mut state = self.state.lock_recover();
+        state.checking = false;
+        state.last_check = Some(LastCheck {
+            at: now,
+            succeeded: false,
+        });
+        state.clone()
+    }
+
     /// Records a check that reached the feed. `found` is the version the feed offers, if any.
     /// Returns the new state when it changed, so the caller pushes it to the window.
     pub(crate) fn record_check(&self, found: Option<&str>, now: i64) -> Option<UpdateState> {
         let mut state = self.state.lock_recover();
+        let before = state.clone();
+        state.checking = false;
+        state.last_check = Some(LastCheck {
+            at: now,
+            succeeded: true,
+        });
         if state.operation != UpdateOperation::Idle {
             // The update being installed stays what it is; only the time moves.
-            let before = state.clone();
             state.last_checked_at = Some(now);
             return (*state != before).then(|| state.clone());
         }
@@ -227,7 +318,6 @@ impl UpdateTracker {
                 version: version.to_string(),
                 release_notes_url: format!("{RELEASE_PAGE}v{version}"),
             });
-        let before = state.clone();
         state.available = available;
         state.last_checked_at = Some(now);
         (*state != before).then(|| state.clone())
@@ -236,11 +326,14 @@ impl UpdateTracker {
     /// Starts downloading the available update: the version to fetch and the new state.
     pub(crate) fn begin_install(&self) -> Result<(String, UpdateState), UpdateError> {
         let mut state = self.state.lock_recover();
-        if state.operation != UpdateOperation::Idle {
+        if state.checking || state.operation != UpdateOperation::Idle {
             return Err(UpdateError::Busy);
         }
         if state.channel != InstallChannel::InApp {
             return Err(UpdateError::NothingToInstall);
+        }
+        if state.install_location != InstallLocation::Allowed {
+            return Err(UpdateError::WrongLocation);
         }
         let version = state
             .available
@@ -324,6 +417,68 @@ impl UpdateTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn location(bundle: Option<BundleKind>, exe: &str) -> InstallLocation {
+        InstallLocation::detect(bundle, Path::new(exe), Some(Path::new("/Users/ada")))
+    }
+
+    #[test]
+    fn applications_and_user_applications_allow_updates() {
+        for exe in [
+            "/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Applications/Utilities/Oxide.app/Contents/MacOS/oxide",
+        ] {
+            assert_eq!(
+                location(Some(BundleKind::App), exe),
+                InstallLocation::Allowed,
+                "{exe}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_disk_image_downloads_or_translocated_path_asks_for_a_move() {
+        for exe in [
+            "/Volumes/Oxide/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Downloads/Oxide.app/Contents/MacOS/oxide",
+            "/private/var/folders/ab/T/AppTranslocation/1234-ABCD/d/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Desktop/Oxide.app/Contents/MacOS/oxide",
+            "/Users/bob/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Applications/../tmp/Oxide.app/Contents/MacOS/oxide",
+            "/ApplicationsX/Oxide.app/Contents/MacOS/oxide",
+        ] {
+            assert_eq!(
+                location(Some(BundleKind::App), exe),
+                InstallLocation::MoveToApplications,
+                "{exe}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_macos_app_is_placed() {
+        for bundle in [
+            None,
+            Some(BundleKind::Nsis),
+            Some(BundleKind::AppImage),
+            Some(BundleKind::Deb),
+        ] {
+            assert_eq!(
+                location(bundle, "/Volumes/x/oxide"),
+                InstallLocation::Allowed
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_home_only_the_system_applications_folder_counts() {
+        let exe = Path::new("/Users/ada/Applications/Oxide.app/Contents/MacOS/oxide");
+        assert_eq!(
+            InstallLocation::detect(Some(BundleKind::App), exe, None),
+            InstallLocation::MoveToApplications
+        );
+    }
 
     fn v(text: &str) -> Version {
         Version::parse(text).unwrap()
@@ -628,6 +783,70 @@ mod tests {
         let tracker = tracker("0.1.0", InstallChannel::InApp);
         assert!(tracker.record_check(Some("0.2.0"), 100).is_some());
         assert!(tracker.record_check(Some("0.2.0"), 100).is_none());
+    }
+
+    #[test]
+    fn a_check_on_demand_marks_the_state_as_checking_until_it_is_recorded() {
+        let tracker = tracker("0.1.0", InstallChannel::InApp);
+        let state = tracker.begin_check().unwrap();
+        assert!(state.checking);
+        let state = tracker.record_check(Some("0.2.0"), 50).unwrap();
+        assert!(!state.checking);
+        assert_eq!(
+            state.last_check,
+            Some(LastCheck {
+                at: 50,
+                succeeded: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_failed_check_is_recorded_with_its_time_and_keeps_the_last_answer() {
+        let tracker = tracker("0.1.0", InstallChannel::InApp);
+        tracker.record_check(Some("0.2.0"), 10);
+        tracker.begin_check().unwrap();
+        let state = tracker.record_check_failure(20);
+        assert!(!state.checking);
+        assert_eq!(
+            state.last_check,
+            Some(LastCheck {
+                at: 20,
+                succeeded: false
+            })
+        );
+        assert_eq!(state.last_checked_at, Some(10), "the last success stays");
+        assert_eq!(state.available.unwrap().version, "0.2.0");
+    }
+
+    #[test]
+    fn a_check_and_an_install_never_run_together() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_check().unwrap();
+        assert_eq!(tracker.begin_check(), Err(UpdateError::Busy));
+        assert_eq!(tracker.begin_install(), Err(UpdateError::Busy));
+        tracker.record_check_failure(2);
+        tracker.begin_install().unwrap();
+        assert_eq!(tracker.begin_check(), Err(UpdateError::Busy));
+    }
+
+    #[test]
+    fn an_install_outside_applications_learns_of_the_version_but_cannot_install() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.set_install_location(InstallLocation::MoveToApplications);
+        assert_eq!(tracker.begin_install(), Err(UpdateError::WrongLocation));
+        assert_eq!(tracker.snapshot().operation, UpdateOperation::Idle);
+        assert!(tracker.begin_check().is_ok(), "checking still works");
+        tracker.record_check(Some("0.3.0"), 5);
+        assert_eq!(tracker.snapshot().available.unwrap().version, "0.3.0");
+        tracker.set_install_location(InstallLocation::Allowed);
+        assert!(tracker.begin_install().is_ok());
+    }
+
+    #[test]
+    fn a_development_build_does_not_check_on_demand() {
+        let tracker = tracker("0.1.0", InstallChannel::Development);
+        assert_eq!(tracker.begin_check(), Err(UpdateError::NothingToInstall));
     }
 
     #[test]

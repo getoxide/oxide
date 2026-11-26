@@ -1683,7 +1683,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         cancel_quit,
         restart_for_update,
         updates::update_state,
-        updates::install_update
+        updates::install_update,
+        updates::check_for_updates
     ])
 }
 
