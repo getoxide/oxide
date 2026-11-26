@@ -2,14 +2,15 @@
 //! at launch and every 4 hours, hands what it found to Core, and pushes Core's state to the window.
 //! The plugin is used from Rust only: the webview has no updater permission and cannot reach it.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_core::{BundleKind, Core, DebugOverride, UpdatePlan, diag};
 use semver::Version;
 use serde::Serialize;
 use specta::Type;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_updater::Update;
 use tauri_plugin_updater::UpdaterExt;
 
 /// The event the window listens to for every change of the update state.
@@ -40,6 +41,35 @@ pub struct UpdateState {
     /// Unix seconds (a float: the bindings forbid 64-bit integers).
     pub last_checked_at: Option<f64>,
     pub available: Option<AvailableUpdate>,
+    pub operation: UpdateOperation,
+    /// Why the last install failed; the installed Oxide keeps running and the update is offered again.
+    pub error: Option<String>,
+}
+
+/// Sizes are floats: the bindings forbid 64-bit integers.
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum UpdateOperation {
+    Idle,
+    Downloading { downloaded: f64, total: Option<f64> },
+    Installing,
+    /// Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits.
+    Installed { staged: bool },
+}
+
+impl From<oxide_core::UpdateOperation> for UpdateOperation {
+    #[allow(clippy::cast_precision_loss)]
+    fn from(operation: oxide_core::UpdateOperation) -> Self {
+        match operation {
+            oxide_core::UpdateOperation::Idle => Self::Idle,
+            oxide_core::UpdateOperation::Downloading { downloaded, total } => Self::Downloading {
+                downloaded: downloaded as f64,
+                total: total.map(|bytes| bytes as f64),
+            },
+            oxide_core::UpdateOperation::Installing => Self::Installing,
+            oxide_core::UpdateOperation::Installed { staged } => Self::Installed { staged },
+        }
+    }
 }
 
 impl From<oxide_core::InstallChannel> for InstallChannel {
@@ -63,6 +93,8 @@ impl From<oxide_core::UpdateState> for UpdateState {
                 version: update.version,
                 release_notes_url: update.release_notes_url,
             }),
+            operation: state.operation.into(),
+            error: state.error,
         }
     }
 }
@@ -131,6 +163,11 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
         &debug_override(),
     );
     core.configure_updates(plan.channel, &current);
+    app.manage(Arc::new(Installer {
+        feed: plan.feed.clone(),
+        current: current.clone(),
+        staged: Mutex::new(None),
+    }));
     if !plan.channel.checks() {
         return;
     }
@@ -155,13 +192,14 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
     );
 }
 
-/// The version the feed offers when it is newer than the running one. The plugin verifies nothing
-/// until a package is installed; the signature is checked against the compiled-in public key then.
-async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<String>, String> {
+fn build_updater(
+    app: &AppHandle,
+    feed: &str,
+    current: &str,
+) -> Result<tauri_plugin_updater::Updater, String> {
     let url = feed.parse().map_err(|error| format!("{error}"))?;
     let current = current.to_string();
-    let updater = app
-        .updater_builder()
+    app.updater_builder()
         .endpoints(vec![url])
         .map_err(|error| error.to_string())?
         .timeout(REQUEST_TIMEOUT)
@@ -169,9 +207,127 @@ async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<Stri
             oxide_core::is_newer(&current, &remote.version.to_string())
         })
         .build()
+        .map_err(|error| error.to_string())
+}
+
+/// The version the feed offers when it is newer than the running one. The plugin verifies nothing
+/// until a package is downloaded; the signature is checked against the compiled-in public key then.
+async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<String>, String> {
+    let update = build_updater(app, feed, current)?
+        .check()
+        .await
         .map_err(|error| error.to_string())?;
-    let update = updater.check().await.map_err(|error| error.to_string())?;
     Ok(update.map(|update| update.version))
+}
+
+/// A verified Windows installer kept for the quit: the installer ends the process, so it cannot run before.
+struct Staged {
+    update: Update,
+    bytes: Vec<u8>,
+}
+
+/// What an install needs besides Core's state: where the feed is and the staged installer.
+pub struct Installer {
+    feed: String,
+    current: String,
+    staged: Mutex<Option<Staged>>,
+}
+
+fn push(app: &AppHandle, state: oxide_core::UpdateState) {
+    diag::best_effort("emit", app.emit(STATE_EVENT, UpdateState::from(state)));
+}
+
+/// Downloads (the plugin verifies the signature before returning the bytes), then installs or,
+/// on Windows, stages. Always starts from a fresh check, so an install many releases behind
+/// goes straight to what the feed offers now.
+async fn run_install(
+    app: &AppHandle,
+    core: &Arc<Core>,
+    installer: &Installer,
+) -> Result<bool, String> {
+    let update = build_updater(app, &installer.feed, &installer.current)?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("The update is no longer available.")?;
+    let mut downloaded: u64 = 0;
+    let mut last_pushed = 0;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                // About a hundred pushes per download, however many chunks arrive.
+                let step = total.map_or(downloaded / (256 * 1024), |size| downloaded * 100 / size.max(1));
+                if step != last_pushed
+                    && let Some(state) = core.record_update_progress(downloaded, total)
+                {
+                    last_pushed = step;
+                    push(app, state);
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(state) = core.begin_update_installing() {
+        push(app, state);
+    }
+    if cfg!(windows) {
+        *installer.staged.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(Staged { update, bytes });
+        return Ok(true);
+    }
+    tauri::async_runtime::spawn_blocking(move || update.install(bytes))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    Ok(false)
+}
+
+/// Runs the staged Windows installer when Oxide quits (after Core stopped its shells). Passive
+/// mode: no wizard pages. The installer ends this process and the new version starts.
+pub fn run_staged_install(app: &AppHandle, core: &Core) {
+    if !core.staged_update_due_at_quit() {
+        return;
+    }
+    let Some(installer) = app.try_state::<Arc<Installer>>() else {
+        return;
+    };
+    let staged = installer
+        .staged
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some(staged) = staged {
+        diag::best_effort("staged update install", staged.update.install(&staged.bytes));
+    }
+}
+
+/// Starts the install of the available update and returns at once: progress and the outcome
+/// arrive as `update-state-changed`. Only one operation runs at a time.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn install_update(
+    app: AppHandle,
+    core: tauri::State<'_, Arc<Core>>,
+    installer: tauri::State<'_, Arc<Installer>>,
+) -> Result<(), String> {
+    let (_, state) = core.begin_update_install().map_err(|error| match error {
+        oxide_core::UpdateError::Busy => "An update is already being installed.".to_string(),
+        oxide_core::UpdateError::NothingToInstall => "There is no update to install.".to_string(),
+    })?;
+    push(&app, state);
+    let core = Arc::clone(&core);
+    let installer = Arc::clone(&installer);
+    tauri::async_runtime::spawn(async move {
+        let finished = match run_install(&app, &core, &installer).await {
+            Ok(staged) => core.finish_update_install(staged),
+            Err(reason) => core.fail_update_install(&reason),
+        };
+        push(&app, finished);
+    });
+    Ok(())
 }
 
 #[tauri::command]

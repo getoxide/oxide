@@ -140,7 +140,20 @@ export const commands = {
 	rememberSelection: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("remember_selection", { projectId })),
 	/**  The user confirmed quitting with unsaved editors (saved or discarded): exit. */
 	confirmQuit: () => typedError<null, AppError>(__TAURI_INVOKE("confirm_quit")),
+	/**  The quit prompt was cancelled: a later quit is a plain quit, not an update restart. */
+	cancelQuit: () => __TAURI_INVOKE<void>("cancel_quit"),
+	/**
+	 *  "Restart now" after an update was installed. It goes through the normal quit path: unsaved
+	 *  editors get the usual prompt (and `confirm_quit` restarts); otherwise Oxide restarts at once.
+	 *  Session restore runs as after any quit. On Windows the staged installer runs as Oxide exits.
+	 */
+	restartForUpdate: () => typedError<null, AppError>(__TAURI_INVOKE("restart_for_update")),
 	updateState: () => __TAURI_INVOKE<UpdateState_Serialize>("update_state"),
+	/**
+	 *  Starts the install of the available update and returns at once: progress and the outcome
+	 *  arrive as `update-state-changed`. Only one operation runs at a time.
+	 */
+	installUpdate: () => typedError<null, string>(__TAURI_INVOKE("install_update")),
 };
 
 /* Types */
@@ -863,6 +876,19 @@ export type TimelineReview_Serialize = {
 	reactions: ReactionGroup[] | null,
 };
 
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation = UpdateOperation_Serialize | UpdateOperation_Deserialize;
+
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation_Deserialize = { kind: "idle" } | { kind: "downloading"; downloaded: number | null; total?: number | null } | { kind: "installing" } | 
+/**  Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits. */
+{ kind: "installed"; staged: boolean };
+
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation_Serialize = { kind: "idle" } | { kind: "downloading"; downloaded: number | null; total: number | null } | { kind: "installing" } | 
+/**  Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits. */
+{ kind: "installed"; staged: boolean };
+
 export type UpdateState = UpdateState_Serialize | UpdateState_Deserialize;
 
 export type UpdateState_Deserialize = {
@@ -871,6 +897,9 @@ export type UpdateState_Deserialize = {
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt?: number | null,
 	available?: AvailableUpdate | null,
+	operation: UpdateOperation_Deserialize,
+	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */
+	error?: string | null,
 };
 
 export type UpdateState_Serialize = {
@@ -879,6 +908,9 @@ export type UpdateState_Serialize = {
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt: number | null,
 	available: AvailableUpdate | null,
+	operation: UpdateOperation_Serialize,
+	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */
+	error: string | null,
 };
 
 /* Tauri Specta runtime */
