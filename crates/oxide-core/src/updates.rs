@@ -5,6 +5,7 @@
 use oxide_platform::sync::LockExt as _;
 use semver::Version;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Stable installs read the `latest.json` of the latest GitHub release. GitHub's "latest" never
 /// resolves to a draft or a pre-release. Compiled into every install: changing it strands them.
@@ -144,10 +145,36 @@ pub struct UpdateState {
     /// Unix seconds of the last check that reached the feed.
     pub last_checked_at: Option<i64>,
     pub available: Option<AvailableUpdate>,
+    /// What the install of `available` is doing right now.
+    pub operation: UpdateOperation,
+    /// Why the last install failed; cleared when the next one starts. The installed Oxide keeps running.
+    pub error: Option<String>,
+}
+
+/// The one update operation that may run at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOperation {
+    Idle,
+    /// The package is downloading; the signature is verified before the bytes are handed over.
+    Downloading { downloaded: u64, total: Option<u64> },
+    Installing,
+    /// The new version is installed and waits for a restart. `staged` (Windows): the verified
+    /// installer is kept and runs when Oxide quits, because the installer ends the process.
+    Installed { staged: bool },
+}
+
+/// Why an install could not start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateError {
+    /// Another update operation is running or waiting for its restart.
+    Busy,
+    /// No update is available, or this install does not update itself.
+    NothingToInstall,
 }
 
 pub(crate) struct UpdateTracker {
     state: Mutex<UpdateState>,
+    restart_requested: AtomicBool,
 }
 
 impl UpdateTracker {
@@ -158,7 +185,10 @@ impl UpdateTracker {
                 current_version: String::new(),
                 last_checked_at: None,
                 available: None,
+                operation: UpdateOperation::Idle,
+                error: None,
             }),
+            restart_requested: AtomicBool::new(false),
         }
     }
 
@@ -168,6 +198,8 @@ impl UpdateTracker {
         state.current_version = current_version.to_string();
         state.last_checked_at = None;
         state.available = None;
+        state.operation = UpdateOperation::Idle;
+        state.error = None;
     }
 
     pub(crate) fn snapshot(&self) -> UpdateState {
@@ -178,6 +210,12 @@ impl UpdateTracker {
     /// Returns the new state when it changed, so the caller pushes it to the window.
     pub(crate) fn record_check(&self, found: Option<&str>, now: i64) -> Option<UpdateState> {
         let mut state = self.state.lock_recover();
+        if state.operation != UpdateOperation::Idle {
+            // The update being installed stays what it is; only the time moves.
+            let before = state.clone();
+            state.last_checked_at = Some(now);
+            return (*state != before).then(|| state.clone());
+        }
         let available = found
             .filter(|version| state.channel.checks() && is_newer(&state.current_version, version))
             .map(|version| AvailableUpdate {
@@ -188,6 +226,89 @@ impl UpdateTracker {
         state.available = available;
         state.last_checked_at = Some(now);
         (*state != before).then(|| state.clone())
+    }
+
+    /// Starts downloading the available update: the version to fetch and the new state.
+    pub(crate) fn begin_install(&self) -> Result<(String, UpdateState), UpdateError> {
+        let mut state = self.state.lock_recover();
+        if state.operation != UpdateOperation::Idle {
+            return Err(UpdateError::Busy);
+        }
+        if state.channel != InstallChannel::InApp {
+            return Err(UpdateError::NothingToInstall);
+        }
+        let version = state
+            .available
+            .as_ref()
+            .map(|update| update.version.clone())
+            .ok_or(UpdateError::NothingToInstall)?;
+        state.operation = UpdateOperation::Downloading {
+            downloaded: 0,
+            total: None,
+        };
+        state.error = None;
+        Ok((version, state.clone()))
+    }
+
+    /// Download progress; `None` when no download is running (nothing to push).
+    pub(crate) fn record_progress(&self, downloaded: u64, total: Option<u64>) -> Option<UpdateState> {
+        let mut state = self.state.lock_recover();
+        if !matches!(state.operation, UpdateOperation::Downloading { .. }) {
+            return None;
+        }
+        state.operation = UpdateOperation::Downloading { downloaded, total };
+        Some(state.clone())
+    }
+
+    /// The download is verified: the package is being installed (or staged).
+    pub(crate) fn begin_installing(&self) -> Option<UpdateState> {
+        let mut state = self.state.lock_recover();
+        if !matches!(state.operation, UpdateOperation::Downloading { .. }) {
+            return None;
+        }
+        state.operation = UpdateOperation::Installing;
+        Some(state.clone())
+    }
+
+    pub(crate) fn finish_install(&self, staged: bool) -> UpdateState {
+        let mut state = self.state.lock_recover();
+        state.operation = UpdateOperation::Installed { staged };
+        state.clone()
+    }
+
+    /// A download, verification or install failed: back to "available", with the reason.
+    pub(crate) fn fail_install(&self, reason: &str) -> UpdateState {
+        let mut state = self.state.lock_recover();
+        state.operation = UpdateOperation::Idle;
+        state.error = Some(reason.to_string());
+        state.clone()
+    }
+
+    /// Whether quitting must now run a staged installer (Windows).
+    pub(crate) fn staged_install_due_at_quit(&self) -> bool {
+        self.state.lock_recover().operation == UpdateOperation::Installed { staged: true }
+    }
+
+    /// Remembers that the next confirmed quit is an update restart. False when nothing is installed.
+    pub(crate) fn request_restart(&self) -> bool {
+        let installed = matches!(
+            self.state.lock_recover().operation,
+            UpdateOperation::Installed { .. }
+        );
+        if installed {
+            self.restart_requested.store(true, Ordering::SeqCst);
+        }
+        installed
+    }
+
+    /// Whether the quit being confirmed is an update restart; clears the request.
+    pub(crate) fn take_restart_request(&self) -> bool {
+        self.restart_requested.swap(false, Ordering::SeqCst)
+    }
+
+    /// The user cancelled the quit that was meant to restart.
+    pub(crate) fn cancel_restart_request(&self) {
+        self.restart_requested.store(false, Ordering::SeqCst);
     }
 }
 
@@ -302,6 +423,149 @@ mod tests {
             Some(InstallChannel::Development)
         );
         assert_eq!(InstallChannel::parse_override("bogus"), None);
+    }
+
+    fn ready(current: &str, offered: &str) -> UpdateTracker {
+        let tracker = tracker(current, InstallChannel::InApp);
+        tracker.record_check(Some(offered), 1);
+        tracker
+    }
+
+    #[test]
+    fn an_install_starts_from_an_available_update_and_downloads() {
+        let tracker = ready("0.1.0", "0.2.0");
+        let (version, state) = tracker.begin_install().unwrap();
+        assert_eq!(version, "0.2.0");
+        assert_eq!(
+            state.operation,
+            UpdateOperation::Downloading {
+                downloaded: 0,
+                total: None
+            }
+        );
+        assert_eq!(tracker.snapshot(), state);
+    }
+
+    #[test]
+    fn only_one_update_operation_runs_at_a_time() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_install().unwrap();
+        assert_eq!(tracker.begin_install(), Err(UpdateError::Busy));
+        tracker.begin_installing();
+        assert_eq!(tracker.begin_install(), Err(UpdateError::Busy));
+        tracker.finish_install(false);
+        assert_eq!(tracker.begin_install(), Err(UpdateError::Busy));
+    }
+
+    #[test]
+    fn nothing_installs_without_an_available_update_or_on_a_package_channel() {
+        let none = tracker("0.1.0", InstallChannel::InApp);
+        assert_eq!(none.begin_install(), Err(UpdateError::NothingToInstall));
+        for channel in [InstallChannel::Apt, InstallChannel::Dnf] {
+            let package = tracker("0.1.0", channel);
+            package.record_check(Some("0.2.0"), 1);
+            assert_eq!(package.begin_install(), Err(UpdateError::NothingToInstall));
+        }
+    }
+
+    #[test]
+    fn download_progress_is_recorded_only_while_downloading() {
+        let tracker = ready("0.1.0", "0.2.0");
+        assert_eq!(tracker.record_progress(5, Some(10)), None);
+        tracker.begin_install().unwrap();
+        let state = tracker.record_progress(5, Some(10)).unwrap();
+        assert_eq!(
+            state.operation,
+            UpdateOperation::Downloading {
+                downloaded: 5,
+                total: Some(10)
+            }
+        );
+        tracker.begin_installing();
+        assert_eq!(tracker.record_progress(9, Some(10)), None);
+        assert_eq!(tracker.snapshot().operation, UpdateOperation::Installing);
+    }
+
+    #[test]
+    fn a_failure_returns_to_available_with_the_reason_and_allows_a_retry() {
+        for failing_step in 0..2 {
+            let tracker = ready("0.1.0", "0.2.0");
+            tracker.begin_install().unwrap();
+            if failing_step == 1 {
+                tracker.begin_installing();
+            }
+            let state = tracker.fail_install("signature mismatch");
+            assert_eq!(state.operation, UpdateOperation::Idle);
+            assert_eq!(state.error.as_deref(), Some("signature mismatch"));
+            assert_eq!(state.available.as_ref().unwrap().version, "0.2.0");
+            let (_, retry) = tracker.begin_install().unwrap();
+            assert_eq!(retry.error, None, "a retry clears the old error");
+        }
+    }
+
+    #[test]
+    fn an_installed_update_waits_for_the_restart_and_survives_later_checks() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_install().unwrap();
+        tracker.begin_installing();
+        let state = tracker.finish_install(false);
+        assert_eq!(state.operation, UpdateOperation::Installed { staged: false });
+        // The running binary is still 0.1.0, so the next check still offers 0.2.0.
+        tracker.record_check(Some("0.2.0"), 9);
+        tracker.record_check(None, 10);
+        let state = tracker.snapshot();
+        assert_eq!(state.operation, UpdateOperation::Installed { staged: false });
+        assert_eq!(state.available.unwrap().version, "0.2.0");
+    }
+
+    #[test]
+    fn a_check_during_a_download_does_not_drop_the_update_being_installed() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_install().unwrap();
+        tracker.record_check(None, 5);
+        let state = tracker.snapshot();
+        assert_eq!(state.available.unwrap().version, "0.2.0");
+        assert!(matches!(state.operation, UpdateOperation::Downloading { .. }));
+    }
+
+    #[test]
+    fn a_staged_windows_install_runs_at_quit_and_only_then() {
+        let tracker = ready("0.1.0", "0.2.0");
+        assert!(!tracker.staged_install_due_at_quit());
+        tracker.begin_install().unwrap();
+        assert!(!tracker.staged_install_due_at_quit(), "still downloading");
+        tracker.begin_installing();
+        tracker.finish_install(true);
+        assert!(tracker.staged_install_due_at_quit());
+
+        let in_place = ready("0.1.0", "0.2.0");
+        in_place.begin_install().unwrap();
+        in_place.begin_installing();
+        in_place.finish_install(false);
+        assert!(!in_place.staged_install_due_at_quit(), "already replaced on disk");
+    }
+
+    #[test]
+    fn a_restart_request_is_remembered_until_the_quit_is_confirmed() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_install().unwrap();
+        tracker.begin_installing();
+        tracker.finish_install(false);
+        assert!(!tracker.take_restart_request());
+        tracker.request_restart();
+        assert!(tracker.take_restart_request());
+        assert!(!tracker.take_restart_request());
+    }
+
+    #[test]
+    fn restarting_is_only_possible_after_an_install() {
+        let tracker = ready("0.1.0", "0.2.0");
+        assert!(!tracker.request_restart());
+        tracker.begin_install().unwrap();
+        assert!(!tracker.request_restart());
+        tracker.begin_installing();
+        tracker.finish_install(false);
+        assert!(tracker.request_restart());
     }
 
     fn tracker(current: &str, channel: InstallChannel) -> UpdateTracker {
