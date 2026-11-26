@@ -218,9 +218,10 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
     });
     // Managed first, whatever the version says: the commands take this state and must never meet it missing.
     app.manage(Arc::new(Installer {
-        feed: plan
-            .as_ref()
-            .map_or_else(|| oxide_core::STABLE_FEED.to_string(), |plan| plan.feed.clone()),
+        feed: plan.as_ref().map_or_else(
+            || oxide_core::STABLE_FEED.to_string(),
+            |plan| plan.feed.clone(),
+        ),
         current: current.clone(),
         staged: Mutex::new(None),
     }));
@@ -382,7 +383,10 @@ pub fn run_staged_install(app: &AppHandle, core: &Core) {
         let relaunch = core.update_exit_restarts();
         diag::best_effort(
             "staged update install",
-            staged.update.restart_after_install(relaunch).install(&staged.bytes),
+            staged
+                .update
+                .restart_after_install(relaunch)
+                .install(&staged.bytes),
         );
     }
 }

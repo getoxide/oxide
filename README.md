@@ -170,7 +170,7 @@ flowchart LR
 - `crates/oxide-platform`: the only crate with OS-specific code, plus the process, lock and diagnostics primitives ([ADR-0019](docs/adr/0019-platform-layer.md)).
 - `crates/oxide-core`: Projects, SQLite storage, terminals and their shells, files, Git, GitHub and language servers. It knows nothing about Tauri.
 - `crates/oxide-app`: the thin Tauri shell that exposes Core to the webview.
-- `web/`: the React frontend, grouped by area under `web/src` (`projects`, `terminal`, `editor`, `issues`, `pull-requests`, `settings`, `shared`, `styles`).
+- `web/`: the React frontend, grouped by area under `web/src` (`projects`, `terminal`, `editor`, `issues`, `pull-requests`, `settings`, `updates`, `shared`, `styles`).
 - `assets/`: the app icon masters and the palette ([assets/README.md](assets/README.md)).
 
 - **Core owns files and processes.** The webview gets no filesystem or shell permission. Every action goes through a typed Tauri command generated with [tauri-specta](https://github.com/specta-rs/tauri-specta), and every shell is a process Core owns ([ADR-0016](docs/adr/0016-security-boundaries.md)).

@@ -243,7 +243,9 @@ impl UpdateError {
             Self::NothingToInstall => {
                 "There is nothing to update: this install does not update itself, or no update is available."
             }
-            Self::WrongLocation => "Move Oxide to the Applications folder, then reopen it to update.",
+            Self::WrongLocation => {
+                "Move Oxide to the Applications folder, then reopen it to update."
+            }
         }
     }
 }
@@ -567,13 +569,26 @@ mod tests {
     fn package_installs_read_the_stable_feed_even_on_a_prerelease_version() {
         for version in ["0.1.0", "0.1.0-rc.1"] {
             for bundle in [BundleKind::Deb, BundleKind::Rpm] {
-                let plan = UpdatePlan::resolve(&v(version), Some(bundle), false, &DebugOverride::default());
-                assert!(matches!(plan.channel, InstallChannel::Apt | InstallChannel::Dnf));
+                let plan = UpdatePlan::resolve(
+                    &v(version),
+                    Some(bundle),
+                    false,
+                    &DebugOverride::default(),
+                );
+                assert!(matches!(
+                    plan.channel,
+                    InstallChannel::Apt | InstallChannel::Dnf
+                ));
                 assert_eq!(plan.feed, STABLE_FEED, "{version} {bundle:?}");
             }
         }
         // Everything else still follows its own version.
-        let plan = UpdatePlan::resolve(&v("0.1.0-rc.1"), Some(BundleKind::AppImage), false, &DebugOverride::default());
+        let plan = UpdatePlan::resolve(
+            &v("0.1.0-rc.1"),
+            Some(BundleKind::AppImage),
+            false,
+            &DebugOverride::default(),
+        );
         assert_eq!(plan.feed, PRERELEASE_FEED);
     }
 
@@ -806,10 +821,21 @@ mod tests {
 
     #[test]
     fn every_update_error_has_its_own_message() {
-        let messages = [UpdateError::Busy, UpdateError::NothingToInstall, UpdateError::WrongLocation].map(UpdateError::message);
+        let messages = [
+            UpdateError::Busy,
+            UpdateError::NothingToInstall,
+            UpdateError::WrongLocation,
+        ]
+        .map(UpdateError::message);
         assert!(messages[2].contains("Applications folder"));
-        assert!(!messages[2].contains("does not"), "a wrong location is not a missing check");
-        assert_eq!(messages[0], "An update check or install is already running.");
+        assert!(
+            !messages[2].contains("does not"),
+            "a wrong location is not a missing check"
+        );
+        assert_eq!(
+            messages[0],
+            "An update check or install is already running."
+        );
         assert_ne!(messages[0], messages[1]);
         assert_eq!(UpdateError::Busy.to_string(), messages[0]);
     }
