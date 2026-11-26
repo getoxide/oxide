@@ -950,6 +950,10 @@ pub struct LinkedIssue {
     pub url: String,
     pub repository: String,
     pub cross_repository: bool,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    #[serde(default)]
+    pub blocked_by_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

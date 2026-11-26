@@ -1,6 +1,6 @@
 import { Skeleton } from "../shared/Skeleton";
 import { SurfaceSearch } from "../shared/SurfaceSearch";
-import { BlockedIcon, ChecklistIcon, CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
+import { BlockedIcon, ChecklistIcon, CommentIcon, IssueOpenedIcon, IssueTrackedByIcon, PlusIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -21,6 +21,8 @@ export interface IssuesSurfaceProps {
   /** Names the repository whose issues are listed. */
   /** Changes after the user's own actions that should reload the surface. */
   refreshKey?: number;
+  /** Incremented when the user re-clicks the active Issues tab to return to the list. */
+  resetKey?: number;
   /** Whether the Surface is shown (the dock is open on it). Hidden, it stops polling GitHub. */
   active?: boolean;
   /** Called after issue mutations (create/close/comment), so parent views can react if needed. */
@@ -37,7 +39,7 @@ export function IssuesSurface(props: IssuesSurfaceProps) {
   return <IssuesViews key={props.projectId} {...props} />;
 }
 
-function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: IssuesSurfaceProps) {
+function IssuesViews({ projectId, refreshKey = 0, resetKey = 0, active = true, onChanged }: IssuesSurfaceProps) {
   const poll = useAutoRefresh({ enabled: active });
   const availability = useQuery(githubKeys.issuesState(projectId), () => commands.issuesState(projectId), refreshKey, {
     staleMs: QUERY_STALE_MS,
@@ -49,6 +51,15 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
   const [creating, setCreating] = useState(false);
   // Bumped after the list changed under it (a new issue, a closed one), beyond the timer.
   const [listRevision, setListRevision] = useState(0);
+  const [seenReset, setSeenReset] = useState(resetKey);
+  if (seenReset !== resetKey) {
+    setSeenReset(resetKey);
+    if (stack.length > 0 || creating) {
+      setStack([]);
+      setCreating(false);
+      setListRevision((n) => n + 1);
+    }
+  }
 
   const openIssue = (number: number) => {
     setStack((s) => (s[s.length - 1] === number ? s : [...s, number]));
@@ -191,38 +202,11 @@ function IssueList({ projectId, refreshKey, pollKey, onOpen, onCreate }: IssueLi
                   <IssueStateIcon phase={issuePhase(issue)} />
                   <span className="pr-row-body">
                     <span className="pr-row-title">{issue.title}</span>
-                    {(issue.labels.length > 0 || issue.blockedByCount > 0 || issue.subIssuesTotal > 0 || issue.parent) && (
-                      <span className="pr-labels">
-                        {issue.blockedByCount > 0 && (
-                          <span className="issue-badge blocked">
-                            <BlockedIcon size={12} />
-                            {issue.blockedByCount > 1 ? `Blocked · ${issue.blockedByCount}` : "Blocked"}
-                          </span>
-                        )}
-                        {issue.subIssuesTotal > 0 && (
-                          <span
-                            className="issue-badge subissues"
-                            title={`${issue.subIssuesCompleted} of ${issue.subIssuesTotal} sub-issues completed`}
-                          >
-                            <ChecklistIcon size={12} />
-                            {issue.subIssuesCompleted}/{issue.subIssuesTotal}
-                          </span>
-                        )}
-                        {issue.parent && (
-                          <span className="issue-parent-cue" title={`Parent: #${issue.parent.number} ${issue.parent.title}`}>
-                            #{issue.parent.number}
-                          </span>
-                        )}
-                        {issue.labels.map((l) => (
-                          <LabelChip key={l.name} label={l} />
-                        ))}
-                      </span>
-                    )}
                     <span className="pr-row-meta">
-                      <Avatar login={issue.author} size={16} />
-                      <span className="pr-row-author">{issue.author}</span>
+                      <span className="pr-row-number">#{issue.number}</span>
                       <span aria-hidden>·</span>
-                      <span>#{issue.number}</span>
+                      <Avatar login={issue.author} size={14} />
+                      <span className="pr-row-author">{issue.author}</span>
                       {issue.createdAt && (
                         <>
                           <span aria-hidden>·</span>
@@ -235,6 +219,33 @@ function IssueList({ projectId, refreshKey, pollKey, onOpen, onCreate }: IssueLi
                         </span>
                       )}
                     </span>
+                    {(issue.labels.length > 0 || issue.blockedByCount > 0 || issue.subIssuesTotal > 0 || issue.parent) && (
+                      <span className="pr-labels">
+                        {issue.blockedByCount > 0 && (
+                          <span className="issue-badge blocked">
+                            <BlockedIcon size={11} />
+                            {issue.blockedByCount > 1 ? `Blocked · ${issue.blockedByCount}` : "Blocked"}
+                          </span>
+                        )}
+                        {issue.subIssuesTotal > 0 && (
+                          <span
+                            className="issue-badge subissues"
+                            title={`${issue.subIssuesCompleted} of ${issue.subIssuesTotal} sub-issues completed`}
+                          >
+                            <ChecklistIcon size={11} />
+                            {issue.subIssuesCompleted}/{issue.subIssuesTotal}
+                          </span>
+                        )}
+                        {issue.parent && (
+                          <span className="issue-badge parent issue-parent-cue" title={`Parent: #${issue.parent.number} ${issue.parent.title}`}>
+                            <IssueTrackedByIcon size={11} /> Parent #{issue.parent.number}
+                          </span>
+                        )}
+                        {issue.labels.map((l) => (
+                          <LabelChip key={l.name} label={l} />
+                        ))}
+                      </span>
+                    )}
                   </span>
                   {issue.assignees.length > 0 && (
                     <span className="issue-assignees" title={`Assigned to ${issue.assignees.join(", ")}`}>

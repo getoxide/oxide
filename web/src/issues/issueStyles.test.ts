@@ -52,3 +52,10 @@ it("constrains linked issue sections and items so long titles truncate without o
   expect(list.some((d) => d["grid-template-columns"] === "minmax(0, 1fr)" && d["min-width"] === "0")).toBe(true);
   expect(item.some((d) => d["min-width"] === "0" && d.overflow === "hidden")).toBe(true);
 });
+
+it("draws a vertical connecting rail on .pr-timeline and uses 36px panel headers", () => {
+  const rail = rules(stylesCss, (s) => s === ".pr-views .pr-timeline::before");
+  expect(rail.some((d) => d.width === "2px" && d.position === "absolute")).toBe(true);
+  const rootVars = rules(stylesCss, (s) => s === ":root");
+  expect(rootVars.some((d) => d["--panel-bar-height"] === "36px")).toBe(true);
+});

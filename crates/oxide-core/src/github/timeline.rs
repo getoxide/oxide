@@ -302,17 +302,20 @@ fn item_fields(subject: Subject) -> String {
     fields
 }
 
-macro_rules! linked_issue_fields {
+macro_rules! linked_issue_base_fields {
     () => {
         "number title state stateReason url repository{nameWithOwner}"
     };
 }
 
-const LINKED_ISSUE_FIELDS: &str = linked_issue_fields!();
+const LINKED_ISSUE_FIELDS: &str = concat!(
+    linked_issue_base_fields!(),
+    " assignees(first:5){nodes{login}} issueDependenciesSummary{blockedBy}"
+);
 
 pub(super) const ISSUE_LIST_RELATIONSHIP_FIELDS: &str = concat!(
     "parent{",
-    linked_issue_fields!(),
+    linked_issue_base_fields!(),
     "} subIssuesSummary{total completed} issueDependenciesSummary{blockedBy}"
 );
 
@@ -631,6 +634,14 @@ pub(super) fn linked_issue_from(v: &serde_json::Value, current_repo: &str) -> Op
         url: https(&v["url"]),
         repository,
         cross_repository,
+        assignees: list(&v["assignees"]["nodes"])
+            .iter()
+            .map(|a| text(&a["login"]))
+            .filter(|login| !login.is_empty())
+            .collect(),
+        blocked_by_count: v["issueDependenciesSummary"]["blockedBy"]
+            .as_u64()
+            .unwrap_or(0) as u32,
     })
 }
 

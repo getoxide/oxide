@@ -47,6 +47,8 @@ interface PullRequestBrowserProps {
   projectId: number;
   /** Changes when the user's own change should reload the list. */
   refreshKey: number;
+  /** Incremented when the user re-clicks the active Pull request tab to return to the list. */
+  resetKey?: number;
   /** Changes on the auto-refresh timer or focus: a soft ask that never overlaps a fetch in flight. */
   pollKey?: number;
   /** Whether the Surface is shown; hidden, an open pull request stops following its checks. */
@@ -75,7 +77,7 @@ function Branches({ head, base }: { head: string; base: string }) {
 }
 
 /** Open pull requests of the repository: list, search, and one pull request to review. */
-export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active = true, onChanged }: PullRequestBrowserProps) {
+export function PullRequestBrowser({ projectId, refreshKey, resetKey = 0, pollKey = 0, active = true, onChanged }: PullRequestBrowserProps) {
   const [creating, setCreating] = useState(false);
   const [mine, setMine] = useState(false);
   const [query, setQuery] = useState("");
@@ -91,6 +93,15 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
   const [opened, setOpened] = useState<number | null>(null);
   // A quiet line on the list after a pull request was merged or closed; it fades on its own.
   const [outcome, setOutcome] = useState<{ kind: "merged" | "closed"; number: number } | null>(null);
+  const [seenReset, setSeenReset] = useState(resetKey);
+  if (seenReset !== resetKey) {
+    setSeenReset(resetKey);
+    if (opened !== null || creating) {
+      setOpened(null);
+      setCreating(false);
+      setManual((n) => n + 1);
+    }
+  }
 
   useEffect(() => {
     if (outcome === null) return;
@@ -186,10 +197,10 @@ export function PullRequestBrowser({ projectId, refreshKey, pollKey = 0, active 
                   <span className="pr-row-body">
                     <span className="pr-row-title">{pr.title}</span>
                     <span className="pr-row-meta">
-                      <Avatar login={pr.author} size={16} />
-                      <span className="pr-row-author">{pr.author}</span>
+                      <span className="pr-row-number">#{pr.number}</span>
                       <span aria-hidden>·</span>
-                      <span>#{pr.number}</span>
+                      <Avatar login={pr.author} size={14} />
+                      <span className="pr-row-author">{pr.author}</span>
                       {pr.createdAt && (
                         <>
                           <span aria-hidden>·</span>
@@ -311,9 +322,17 @@ export function PullRequestReview({
       <button className="pr-back" onClick={() => onBack()}>
         <ArrowLeftIcon size={14} /> Pull requests
       </button>
-      <span className="grow" />
+      <div className="pr-nav-title">
+        {shownPr ? (
+          <h3 className="pr-title" title={`${shownPr.title} #${shownPr.number}`}>
+            {shownPr.title} <span className="pr-number">#{shownPr.number}</span>
+          </h3>
+        ) : (
+          <span className="pr-nav-number">#{number}</span>
+        )}
+      </div>
       {shownPr && (
-        <>
+        <div className="pr-nav-actions">
           <CopyLinkButton url={shownPr.url} onError={setError} />
           <button
             className="icon-btn sm"
@@ -321,9 +340,9 @@ export function PullRequestReview({
             title="Open this pull request on GitHub"
             aria-label="Open on GitHub"
           >
-            <MarkGithubIcon size={16} />
+            <MarkGithubIcon size={15} />
           </button>
-        </>
+        </div>
       )}
     </div>
   );
@@ -436,36 +455,37 @@ export function PullRequestReview({
       <RefreshNotice query={query} />
       <div className="pr-scroll">
         <header className="pr-hero">
-          <h3 className="pr-title">
-            {pr.title} <span className="pr-number">#{pr.number}</span>
-          </h3>
           <div className="pr-hero-meta">
             <span className={`pr-status ${phase}`}>
               {phase === "merged" ? (
-                <GitMergeIcon size={14} />
+                <GitMergeIcon size={13} />
               ) : phase === "closed" ? (
-                <GitPullRequestClosedIcon size={14} />
+                <GitPullRequestClosedIcon size={13} />
               ) : (
-                <PullRequestStateIcon draft={phase === "draft"} size={14} />
+                <PullRequestStateIcon draft={phase === "draft"} size={13} />
               )}
               {{ merged: "Merged", closed: "Closed", draft: "Draft", open: "Open" }[phase]}
             </span>
-            <Avatar login={pr.author} size={20} />
-            <span className="pr-row-author">
-              <strong>{pr.author}</strong>
-              {pr.createdAt && <> opened {relativeTime(pr.createdAt)} ago</>}
+            <span className="pr-hero-author">
+              <Avatar login={pr.author} size={20} />
+              <span className="pr-row-author">
+                <strong>{pr.author}</strong>
+                {pr.createdAt && <> opened {relativeTime(pr.createdAt)} ago</>}
+              </span>
             </span>
           </div>
-          <Branches head={pr.head} base={pr.base} />
-          {(detail.additions > 0 || detail.deletions > 0) && (
-            <p className="pr-diffstat" aria-label={`${detail.additions} additions, ${detail.deletions} deletions`}>
-              <span className="add">+{detail.additions}</span> <span className="del">−{detail.deletions}</span>
-              <span className="pr-diffstat-files">
-                {" "}
-                in {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
-              </span>
-            </p>
-          )}
+          <div className="pr-hero-branch-row">
+            <Branches head={pr.head} base={pr.base} />
+            {(detail.additions > 0 || detail.deletions > 0) && (
+              <p className="pr-diffstat" aria-label={`${detail.additions} additions, ${detail.deletions} deletions`}>
+                <span className="add">+{detail.additions}</span> <span className="del">−{detail.deletions}</span>
+                <span className="pr-diffstat-files">
+                  {" "}
+                  in {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
+                </span>
+              </p>
+            )}
+          </div>
         </header>
 
         {(detail.body.trim() || detail.reactions.length > 0 || detail.nodeId !== "") && (
@@ -492,24 +512,28 @@ export function PullRequestReview({
             <CommentIcon size={14} /> Conversation
             {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.timeline.map((item, i) =>
-            isConversationItem(item) ? (
-              <Entry
-                key={item.id || i}
-                entry={item}
-                author={pr.author}
-                viewer={detail.viewer}
-                projectId={projectId}
-                mentions={mentions}
-                onMentionOpen={people.load}
-                onChanged={() => setReload((n) => n + 1)}
-                onError={setError}
-              />
-            ) : (
-              <ActivityRow key={i} item={item} head={pr.head} onOpen={(url) => void openLink(url)} />
-            ),
+          {(detail.timeline.length > 0 || detail.timelineTruncated) && (
+            <div className="pr-timeline">
+              {detail.timeline.map((item, i) =>
+                isConversationItem(item) ? (
+                  <Entry
+                    key={item.id || i}
+                    entry={item}
+                    author={pr.author}
+                    viewer={detail.viewer}
+                    projectId={projectId}
+                    mentions={mentions}
+                    onMentionOpen={people.load}
+                    onChanged={() => setReload((n) => n + 1)}
+                    onError={setError}
+                  />
+                ) : (
+                  <ActivityRow key={i} item={item} head={pr.head} onOpen={(url) => void openLink(url)} />
+                ),
+              )}
+              {detail.timelineTruncated && <MoreOnGithub url={pr.url} onOpen={(url) => void openLink(url)} />}
+            </div>
           )}
-          {detail.timelineTruncated && <MoreOnGithub url={pr.url} onOpen={(url) => void openLink(url)} />}
           <form
             className="pr-compose"
             onSubmit={(e) => {
@@ -604,21 +628,22 @@ export function PullRequestReview({
 function PreviewHeader({ pr }: { pr: PullRequest }) {
   return (
     <header className="pr-hero">
-      <h3 className="pr-title">
-        {pr.title} <span className="pr-number">#{pr.number}</span>
-      </h3>
       <div className="pr-hero-meta">
         <span className={`pr-status ${pr.draft ? "draft" : "open"}`}>
-          <PullRequestStateIcon draft={pr.draft} size={14} />
+          <PullRequestStateIcon draft={pr.draft} size={13} />
           {pr.draft ? "Draft" : "Open"}
         </span>
-        <Avatar login={pr.author} size={20} />
-        <span className="pr-row-author">
-          <strong>{pr.author}</strong>
-          {pr.createdAt && <> opened {relativeTime(pr.createdAt)} ago</>}
+        <span className="pr-hero-author">
+          <Avatar login={pr.author} size={20} />
+          <span className="pr-row-author">
+            <strong>{pr.author}</strong>
+            {pr.createdAt && <> opened {relativeTime(pr.createdAt)} ago</>}
+          </span>
         </span>
       </div>
-      <Branches head={pr.head} base={pr.base} />
+      <div className="pr-hero-branch-row">
+        <Branches head={pr.head} base={pr.base} />
+      </div>
     </header>
   );
 }

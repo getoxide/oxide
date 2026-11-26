@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary_Serialize as IssueSummary, type LinkedIssue } from "../bindings";
+import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary_Serialize as IssueSummary, type LinkedIssue_Serialize as LinkedIssue } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
 import { clearQueryCache, getQueryData, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
@@ -29,6 +29,8 @@ const linked = (over: Partial<LinkedIssue> = {}): LinkedIssue => ({
   url: "https://github.com/fake/repo/issues/1",
   repository: "fake/repo",
   crossRepository: false,
+  assignees: [],
+  blockedByCount: 0,
   ...over,
 });
 
@@ -85,7 +87,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const render = (active = true) => act(async () => root.render(<IssuesSurface projectId={1} active={active} />));
+const render = (active = true, resetKey = 0) =>
+  act(async () => root.render(<IssuesSurface projectId={1} active={active} resetKey={resetKey} />));
 const listCalls = () => vi.mocked(commands.listIssues).mock.calls.length;
 const button = (name: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === name) as HTMLButtonElement;
@@ -785,7 +788,7 @@ it("shows Blocked badge, sub-issue progress, and parent cue on issue list rows",
 
   expect(rows[1].textContent).toContain("Blocked");
   expect(rows[1].textContent).not.toContain("Blocked · 1");
-  expect(rows[1].textContent).toContain("#10");
+  expect(rows[1].textContent).toContain("Parent #10");
 
   expect(rows[2].textContent).toContain("Blocked · 3");
 });
@@ -888,5 +891,68 @@ it("renders Parent, Blocked hero badge, Sub-issues progress, and Blocked by / Bl
   const backToList = host.querySelector<HTMLButtonElement>(".pr-back")!;
   expect(backToList.textContent).toContain("Issues");
   await act(async () => backToList.click());
+  expect(host.querySelector('ul[aria-label="Open issues"]')).not.toBeNull();
+});
+
+it("places the issue title in .pr-nav, wraps timeline in .pr-timeline, makes linked sections collapsible, and shows sub-issue status and assignees", async () => {
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({
+      number: 10,
+      title: "Epic with rich sub-issues",
+      subIssuesTotal: 2,
+      subIssuesCompleted: 1,
+      subIssues: [
+        linked({ number: 11, title: "Done sub-issue", state: "CLOSED", stateReason: "COMPLETED", assignees: ["alice"] }),
+        linked({ number: 12, title: "Blocked sub-issue", state: "OPEN", blockedByCount: 2, assignees: ["bob", "carol"] }),
+      ],
+      blockedBy: [linked({ number: 5, title: "Blocker issue", state: "OPEN" })],
+      blocking: [linked({ number: 20, title: "Downstream issue", state: "OPEN" })],
+      timeline: [
+        { kind: "labeled", actor: "alice", createdAt: "2026-01-01T01:00:00Z", label: { name: "bug", color: "d73a4a" } },
+      ],
+    }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  expect(host.querySelector(".pr-nav .pr-title")?.textContent).toContain("Epic with rich sub-issues");
+  expect(host.querySelector(".pr-hero .pr-title")).toBeNull();
+  expect(host.querySelector('section[aria-label="Conversation"] .pr-timeline .pr-timeline-event')).not.toBeNull();
+
+  const subSection = host.querySelector('section[aria-label="Sub-issues"]')!;
+  expect(subSection.textContent).toContain("Closed");
+  expect(subSection.textContent).toContain("Blocked · 2");
+  expect(subSection.querySelectorAll(".issue-linked-assignees img.avatar")).toHaveLength(3);
+
+  vi.useFakeTimers();
+  try {
+    for (const label of ["Sub-issues", "Blocked by", "Blocking"]) {
+      const section = host.querySelector(`section[aria-label="${label}"]`)!;
+      const toggle = section.querySelector<HTMLButtonElement>(".issue-linked-toggle")!;
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      await act(async () => toggle.click());
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(section.querySelector(".issue-linked-list")).toBeNull();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("returns to the issue list when resetKey increments while viewing an issue or creating one", async () => {
+  await render(true, 0);
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+  expect(host.querySelector(".pr-nav .pr-title")?.textContent).toContain("Crash on startup");
+
+  await render(true, 1);
+  expect(host.querySelector('ul[aria-label="Open issues"]')).not.toBeNull();
+
+  await act(async () => button("New issue").click());
+  await vi.waitFor(() => expect(host.querySelector(".issue-create h3")?.textContent).toBe("New issue"));
+  await render(true, 2);
   expect(host.querySelector('ul[aria-label="Open issues"]')).not.toBeNull();
 });

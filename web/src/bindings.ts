@@ -259,13 +259,13 @@ export type IssueDetail_Deserialize = {
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
 	signedImages: SignedImage[],
-	parent?: LinkedIssue | null,
+	parent?: LinkedIssue_Deserialize | null,
 	subIssuesTotal: number,
 	subIssuesCompleted: number,
-	subIssues: LinkedIssue[],
+	subIssues: LinkedIssue_Deserialize[],
 	blockedByCount: number,
-	blockedBy: LinkedIssue[],
-	blocking: LinkedIssue[],
+	blockedBy: LinkedIssue_Deserialize[],
+	blocking: LinkedIssue_Deserialize[],
 };
 
 export type IssueDetail_Serialize = {
@@ -291,13 +291,13 @@ export type IssueDetail_Serialize = {
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
 	signedImages: SignedImage[],
-	parent: LinkedIssue | null,
+	parent: LinkedIssue_Serialize | null,
 	subIssuesTotal: number,
 	subIssuesCompleted: number,
-	subIssues: LinkedIssue[],
+	subIssues: LinkedIssue_Serialize[],
 	blockedByCount: number,
-	blockedBy: LinkedIssue[],
-	blocking: LinkedIssue[],
+	blockedBy: LinkedIssue_Serialize[],
+	blocking: LinkedIssue_Serialize[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -333,7 +333,7 @@ export type IssueSummary_Deserialize = {
 	createdAt: string,
 	labels: PullRequestLabel[],
 	assignees: string[],
-	parent?: LinkedIssue | null,
+	parent?: LinkedIssue_Deserialize | null,
 	subIssuesTotal: number,
 	subIssuesCompleted: number,
 	blockedByCount: number,
@@ -350,7 +350,7 @@ export type IssueSummary_Serialize = {
 	createdAt: string,
 	labels: PullRequestLabel[],
 	assignees: string[],
-	parent: LinkedIssue | null,
+	parent: LinkedIssue_Serialize | null,
 	subIssuesTotal: number,
 	subIssuesCompleted: number,
 	blockedByCount: number,
@@ -422,7 +422,9 @@ export type LastCheck = {
 	succeeded: boolean,
 };
 
-export type LinkedIssue = {
+export type LinkedIssue = LinkedIssue_Serialize | LinkedIssue_Deserialize;
+
+export type LinkedIssue_Deserialize = {
 	number: number,
 	title: string,
 	state: string,
@@ -430,6 +432,20 @@ export type LinkedIssue = {
 	url: string,
 	repository: string,
 	crossRepository: boolean,
+	assignees?: string[],
+	blockedByCount?: number,
+};
+
+export type LinkedIssue_Serialize = {
+	number: number,
+	title: string,
+	state: string,
+	stateReason: string,
+	url: string,
+	repository: string,
+	crossRepository: boolean,
+	assignees: string[],
+	blockedByCount: number,
 };
 
 export type MergeMethod = "merge" | "squash" | "rebase";

@@ -5,11 +5,12 @@ import {
   ChecklistIcon,
   ChevronDownIcon,
   CommentIcon,
+  IssueTrackedByIcon,
   IssueTracksIcon,
   MarkGithubIcon,
   PencilIcon,
 } from "@primer/octicons-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Collapsible } from "../shared/Collapsible";
 import { QUERY_STALE_MS, updateQuery, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
@@ -120,15 +121,87 @@ export function IssueDetailView({
     }
   }
 
+  /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
+   *  nothing else back: the control that asked for it shows its own progress. */
+  async function change(kind: Pending | null, run: () => Promise<Result>) {
+    if (kind) setPending(kind);
+    setError(null);
+    const result = await run();
+    if (kind) setPending(null);
+    if (result.status === "error") {
+      setError(result.error.message);
+      return false;
+    }
+    setReload((n) => n + 1);
+    onChanged();
+    return true;
+  }
+
+  const edit = (partial: Partial<IssueEdit>) =>
+    change("edit", () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
+  /** People and labels: their picker row or link shows the work. */
+  const quietEdit = (partial: Partial<IssueEdit>) =>
+    change(null, () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
+
   const issue = loaded.state === "ready" ? loaded.issue : null;
+
+  async function saveTitle() {
+    if (titleDraft === null) return;
+    if (!titleChanged(issue?.title ?? "", titleDraft) || (await edit({ title: titleDraft.trim() }))) setTitleDraft(null);
+  }
   const nav = (
     <div className="pr-nav">
       <button className="pr-back" onClick={onBack}>
         <ArrowLeftIcon size={14} /> {backLabel}
       </button>
-      <span className="grow" />
-      {issue && (
-        <>
+      <div className="pr-nav-title">
+        {issue === null ? (
+          <span className="pr-nav-number">#{number}</span>
+        ) : titleDraft === null ? (
+          <h3 className="pr-title" title={`${issue.title} #${issue.number}`}>
+            {issue.title} <span className="pr-number">#{issue.number}</span>
+          </h3>
+        ) : (
+          <form
+            className="issue-title-edit"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveTitle();
+            }}
+          >
+            <input
+              aria-label="Title"
+              value={titleDraft}
+              autoFocus
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setTitleDraft(null)}
+            />
+            <button
+              type="submit"
+              className={`btn sm primary${pending === "edit" ? " pending" : ""}`}
+              disabled={busy || titleDraft.trim() === ""}
+            >
+              <Working on={pending === "edit"} label="Saving…">
+                Save
+              </Working>
+            </button>
+            <button type="button" className="btn sm" onClick={() => setTitleDraft(null)} disabled={busy}>
+              Cancel
+            </button>
+          </form>
+        )}
+      </div>
+      {issue && titleDraft === null && (
+        <div className="pr-nav-actions">
+          <button
+            className="icon-btn sm issue-edit"
+            aria-label="Edit title"
+            title="Edit title"
+            disabled={busy}
+            onClick={() => setTitleDraft(issue.title)}
+          >
+            <PencilIcon size={14} />
+          </button>
           <CopyLinkButton url={issue.url} onError={setError} />
           <button
             className="icon-btn sm"
@@ -136,9 +209,9 @@ export function IssueDetailView({
             title="Open this issue on GitHub"
             aria-label="Open on GitHub"
           >
-            <MarkGithubIcon size={16} />
+            <MarkGithubIcon size={15} />
           </button>
-        </>
+        </div>
       )}
     </div>
   );
@@ -166,33 +239,6 @@ export function IssueDetailView({
   const conversationCount = detail.timeline.filter(isConversationItem).length;
   const mentions = mergeMentions(conversationPeople(detail), candidates.state === "ready" ? candidates.data.users : []);
   const open = phase === "open";
-
-  /** Runs a change on GitHub, then shows the issue's new state. A change with no kind holds
-   *  nothing else back: the control that asked for it shows its own progress. */
-  async function change(kind: Pending | null, run: () => Promise<Result>) {
-    if (kind) setPending(kind);
-    setError(null);
-    const result = await run();
-    if (kind) setPending(null);
-    if (result.status === "error") {
-      setError(result.error.message);
-      return false;
-    }
-    setReload((n) => n + 1);
-    onChanged();
-    return true;
-  }
-
-  const edit = (partial: Partial<IssueEdit>) =>
-    change("edit", () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
-  /** People and labels: their picker row or link shows the work. */
-  const quietEdit = (partial: Partial<IssueEdit>) =>
-    change(null, () => commands.editIssue(projectId, number, { ...NO_EDIT, ...partial }));
-
-  async function saveTitle() {
-    if (titleDraft === null) return;
-    if (!titleChanged(detail.title, titleDraft) || (await edit({ title: titleDraft.trim() }))) setTitleDraft(null);
-  }
 
   async function saveBody() {
     if (bodyDraft === null) return;
@@ -226,66 +272,33 @@ export function IssueDetailView({
               className="issue-parent-link"
               onClick={() => openLinkedIssue(detail.parent!)}
             >
-              <LinkedIssueContent item={detail.parent} iconSize={12} />
+              <IssueTrackedByIcon size={12} className="issue-parent-icon" />
+              <span className="issue-parent-tag">Parent</span>
+              <IssueStateIcon phase={issuePhase(detail.parent)} size={12} />
+              <span className="issue-linked-title">{detail.parent.title}</span>
+              <span className="issue-linked-number">#{detail.parent.number}</span>
+              {detail.parent.crossRepository && (
+                <span className="issue-linked-repo">{detail.parent.repository}</span>
+              )}
             </button>
-          )}
-          {titleDraft === null ? (
-            <h3 className="pr-title">
-              {detail.title} <span className="pr-number">#{detail.number}</span>
-              <button
-                className="icon-btn sm issue-edit"
-                aria-label="Edit title"
-                title="Edit title"
-                disabled={busy}
-                onClick={() => setTitleDraft(detail.title)}
-              >
-                <PencilIcon size={14} />
-              </button>
-            </h3>
-          ) : (
-            <form
-              className="issue-title-edit"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void saveTitle();
-              }}
-            >
-              <input
-                aria-label="Title"
-                value={titleDraft}
-                autoFocus
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onKeyDown={(e) => e.key === "Escape" && setTitleDraft(null)}
-              />
-              <button
-                type="submit"
-                className={`primary${pending === "edit" ? " pending" : ""}`}
-                disabled={busy || titleDraft.trim() === ""}
-              >
-                <Working on={pending === "edit"} label="Saving…">
-                  Save
-                </Working>
-              </button>
-              <button type="button" onClick={() => setTitleDraft(null)} disabled={busy}>
-                Cancel
-              </button>
-            </form>
           )}
           <div className="pr-hero-meta">
             <span className={`pr-status ${PILL[phase]}`}>
-              <IssueStateIcon phase={phase} size={14} />
+              <IssueStateIcon phase={phase} size={13} />
               {ISSUE_PHASE_LABEL[phase]}
             </span>
             {detail.blockedByCount > 0 && (
               <span className="pr-status blocked">
-                <BlockedIcon size={14} />
+                <BlockedIcon size={13} />
                 {detail.blockedByCount > 1 ? `Blocked · ${detail.blockedByCount}` : "Blocked"}
               </span>
             )}
-            <Avatar login={detail.author} size={20} />
-            <span className="pr-row-author">
-              <strong>{detail.author}</strong>
-              {detail.createdAt && <> opened {relativeTime(detail.createdAt)} ago</>}
+            <span className="pr-hero-author">
+              <Avatar login={detail.author} size={20} />
+              <span className="pr-row-author">
+                <strong>{detail.author}</strong>
+                {detail.createdAt && <> opened {relativeTime(detail.createdAt)} ago</>}
+              </span>
             </span>
           </div>
         </header>
@@ -367,57 +380,52 @@ export function IssueDetailView({
         </section>
 
         {(detail.subIssuesTotal > 0 || detail.subIssues.length > 0) && (
-          <section className="pr-section issue-linked-section" aria-label="Sub-issues">
-            <h4>
-              <ChecklistIcon size={14} />
-              Sub-issues
-              <span className="issue-linked-count">
-                {detail.subIssuesCompleted}/{detail.subIssuesTotal}
-              </span>
-            </h4>
-            {detail.subIssuesTotal > 0 && (
-              <div
-                className="issue-progress"
-                role="progressbar"
-                aria-label="Sub-issue progress"
-                aria-valuenow={detail.subIssuesCompleted}
-                aria-valuemin={0}
-                aria-valuemax={detail.subIssuesTotal}
-              >
-                <div
-                  className="issue-progress-fill"
-                  style={{
-                    width: `${Math.min(100, Math.round((detail.subIssuesCompleted / detail.subIssuesTotal) * 100))}%`,
-                  }}
-                />
-              </div>
-            )}
-            {detail.subIssues.length > 0 && (
-              <LinkedIssueList items={detail.subIssues} onOpen={openLinkedIssue} />
-            )}
-          </section>
+          <CollapsibleLinkedSection
+            title="Sub-issues"
+            icon={<ChecklistIcon size={14} />}
+            countLabel={`${detail.subIssuesCompleted}/${detail.subIssuesTotal}`}
+            items={detail.subIssues}
+            onOpen={openLinkedIssue}
+            headerExtra={
+              detail.subIssuesTotal > 0 ? (
+                <span
+                  className="issue-progress"
+                  role="progressbar"
+                  aria-label="Sub-issue progress"
+                  aria-valuenow={detail.subIssuesCompleted}
+                  aria-valuemin={0}
+                  aria-valuemax={detail.subIssuesTotal}
+                >
+                  <span
+                    className="issue-progress-fill"
+                    style={{
+                      width: `${Math.min(100, Math.round((detail.subIssuesCompleted / detail.subIssuesTotal) * 100))}%`,
+                    }}
+                  />
+                </span>
+              ) : null
+            }
+          />
         )}
 
         {detail.blockedBy.length > 0 && (
-          <section className="pr-section issue-linked-section" aria-label="Blocked by">
-            <h4>
-              <BlockedIcon size={14} />
-              Blocked by
-              <span className="issue-linked-count">{detail.blockedBy.length}</span>
-            </h4>
-            <LinkedIssueList items={detail.blockedBy} onOpen={openLinkedIssue} />
-          </section>
+          <CollapsibleLinkedSection
+            title="Blocked by"
+            icon={<BlockedIcon size={14} />}
+            countLabel={detail.blockedBy.length}
+            items={detail.blockedBy}
+            onOpen={openLinkedIssue}
+          />
         )}
 
         {detail.blocking.length > 0 && (
-          <section className="pr-section issue-linked-section" aria-label="Blocking">
-            <h4>
-              <IssueTracksIcon size={14} />
-              Blocking
-              <span className="issue-linked-count">{detail.blocking.length}</span>
-            </h4>
-            <LinkedIssueList items={detail.blocking} onOpen={openLinkedIssue} />
-          </section>
+          <CollapsibleLinkedSection
+            title="Blocking"
+            icon={<IssueTracksIcon size={14} />}
+            countLabel={detail.blocking.length}
+            items={detail.blocking}
+            onOpen={openLinkedIssue}
+          />
         )}
 
         <section className="pr-section pr-details" aria-label="Details">
@@ -491,42 +499,46 @@ export function IssueDetailView({
             <CommentIcon size={14} /> Conversation
             {conversationCount > 0 && <span className="pr-count">{conversationCount}</span>}
           </h4>
-          {detail.timeline.map((c, i) => !isConversationItem(c) ? (
-            <ActivityRow key={i} item={c} onOpen={(url) => void openLink(url)} />
-          ) : (
-            <article key={c.id || i} className="pr-entry">
-              <Avatar login={c.author} size={24} />
-              <div className="pr-entry-card">
-                <header>
-                  <strong>{c.author}</strong>
-                  {c.author === detail.author && <span className="pr-tag">Author</span>}
-                  <span className="pr-entry-action">commented</span>
-                  <time dateTime={c.createdAt}>{relativeTime(c.createdAt)}</time>
-                  {c.kind === "comment" && c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
-                    <CommentTools projectId={projectId} id={c.id} onEdit={() => setEditingComment(c.id)} onDeleted={() => setReload((n) => n + 1)} onError={setError} />
-                  )}
-                </header>
-                {editingComment === c.id ? (
-                  <CommentEditForm
-                    projectId={projectId}
-                    id={c.id}
-                    initial={c.body}
-                    onSaved={() => { setEditingComment(null); setReload((n) => n + 1); }}
-                    onCancel={() => setEditingComment(null)}
-                    onError={setError}
-                    mentions={mentions}
-                    onMentionOpen={load}
-                  />
-                ) : (
-                  <>
-                    {c.body.trim() && <Markdown source={c.body} />}
-                    {c.reactions && <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />}
-                  </>
-                )}
-              </div>
-            </article>
-          ))}
-          {detail.timelineTruncated && <MoreOnGithub url={detail.url} onOpen={(url) => void openLink(url)} />}
+          {(detail.timeline.length > 0 || detail.timelineTruncated) && (
+            <div className="pr-timeline">
+              {detail.timeline.map((c, i) => !isConversationItem(c) ? (
+                <ActivityRow key={i} item={c} onOpen={(url) => void openLink(url)} />
+              ) : (
+                <article key={c.id || i} className="pr-entry">
+                  <Avatar login={c.author} size={24} />
+                  <div className="pr-entry-card">
+                    <header>
+                      <strong>{c.author}</strong>
+                      {c.author === detail.author && <span className="pr-tag">Author</span>}
+                      <span className="pr-entry-action">commented</span>
+                      <time dateTime={c.createdAt}>{relativeTime(c.createdAt)}</time>
+                      {c.kind === "comment" && c.id && detail.viewer !== "" && c.author === detail.viewer && editingComment !== c.id && (
+                        <CommentTools projectId={projectId} id={c.id} onEdit={() => setEditingComment(c.id)} onDeleted={() => setReload((n) => n + 1)} onError={setError} />
+                      )}
+                    </header>
+                    {editingComment === c.id ? (
+                      <CommentEditForm
+                        projectId={projectId}
+                        id={c.id}
+                        initial={c.body}
+                        onSaved={() => { setEditingComment(null); setReload((n) => n + 1); }}
+                        onCancel={() => setEditingComment(null)}
+                        onError={setError}
+                        mentions={mentions}
+                        onMentionOpen={load}
+                      />
+                    ) : (
+                      <>
+                        {c.body.trim() && <Markdown source={c.body} />}
+                        {c.reactions && <Reactions projectId={projectId} subjectId={c.id} reactions={c.reactions} onError={setError} />}
+                      </>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {detail.timelineTruncated && <MoreOnGithub url={detail.url} onOpen={(url) => void openLink(url)} />}
+            </div>
+          )}
           <form
             className="pr-compose"
             onSubmit={(e) => {
@@ -628,22 +640,102 @@ export function IssueDetailView({
   );
 }
 
-function LinkedIssueContent({
+function CollapsibleLinkedSection({
+  title,
+  icon,
+  countLabel,
+  items,
+  onOpen,
+  headerExtra,
+}: {
+  title: string;
+  icon: ReactNode;
+  countLabel: string | number;
+  items: LinkedIssue[];
+  onOpen: (item: LinkedIssue) => void;
+  headerExtra?: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  const expandable = items.length > 0;
+  return (
+    <section className="pr-section issue-linked-section" aria-label={title}>
+      {expandable ? (
+        <button
+          type="button"
+          className="pr-toggle issue-linked-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {icon}
+          <h4>{title}</h4>
+          <span className="pr-count">{countLabel}</span>
+          {headerExtra}
+          <ChevronDownIcon size={14} className="pr-chev" />
+        </button>
+      ) : (
+        <div className="pr-toggle issue-linked-toggle is-static">
+          {icon}
+          <h4>{title}</h4>
+          <span className="pr-count">{countLabel}</span>
+          {headerExtra}
+        </div>
+      )}
+      {expandable && (
+        <Collapsible open={open}>
+          <LinkedIssueList items={items} onOpen={onOpen} />
+        </Collapsible>
+      )}
+    </section>
+  );
+}
+
+function LinkedIssueRow({
   item,
-  iconSize = 14,
+  onOpen,
 }: {
   item: LinkedIssue;
-  iconSize?: number;
+  onOpen: (item: LinkedIssue) => void;
 }) {
+  const phase = issuePhase(item);
+  const closed = phase !== "open";
+  const blockedByCount = item.blockedByCount ?? 0;
+  const assignees = item.assignees ?? [];
+  const blocked = !closed && blockedByCount > 0;
   return (
-    <>
-      <IssueStateIcon phase={issuePhase(item)} size={iconSize} />
+    <button
+      type="button"
+      className={`issue-linked-item${closed ? " is-closed" : ""}`}
+      title={`${item.title} (#${item.number})`}
+      onClick={() => onOpen(item)}
+    >
+      <IssueStateIcon phase={phase} size={14} />
       <span className="issue-linked-title">{item.title}</span>
-      <span className="issue-linked-number">#{item.number}</span>
-      {item.crossRepository && (
-        <span className="issue-linked-repo">{item.repository}</span>
-      )}
-    </>
+      <span className="issue-linked-meta">
+        {closed && (
+          <span className={`issue-linked-state ${phase}`}>{ISSUE_PHASE_LABEL[phase]}</span>
+        )}
+        {blocked && (
+          <span
+            className="issue-linked-blocked"
+            title={`Blocked by ${blockedByCount} open ${blockedByCount === 1 ? "issue" : "issues"}`}
+          >
+            <BlockedIcon size={11} />
+            {blockedByCount > 1 ? `Blocked · ${blockedByCount}` : "Blocked"}
+          </span>
+        )}
+        {assignees.length > 0 && (
+          <span className="issue-linked-assignees" title={`Assigned to ${assignees.join(", ")}`}>
+            {assignees.slice(0, 3).map((login) => (
+              <Avatar key={login} login={login} size={16} />
+            ))}
+          </span>
+        )}
+        {item.crossRepository && (
+          <span className="issue-linked-repo">{item.repository}</span>
+        )}
+        <span className="issue-linked-number">#{item.number}</span>
+      </span>
+    </button>
   );
 }
 
@@ -658,9 +750,7 @@ function LinkedIssueList({
     <ul className="issue-linked-list">
       {items.map((item) => (
         <li key={`${item.repository}#${item.number}`}>
-          <button type="button" className="issue-linked-item" onClick={() => onOpen(item)}>
-            <LinkedIssueContent item={item} />
-          </button>
+          <LinkedIssueRow item={item} onOpen={onOpen} />
         </li>
       ))}
     </ul>

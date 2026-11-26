@@ -84,6 +84,13 @@ const button = (name: string | RegExp) =>
   )!;
 const click = (el: HTMLElement) => act(async () => el.click());
 
+it("renders the cached pull request title in .pr-nav and timeline inside .pr-timeline", async () => {
+  await render();
+  expect(host.querySelector(".pr-nav .pr-title")?.textContent).toContain("chore(deps): bump react-virtual");
+  expect(host.querySelector(".pr-hero .pr-title")).toBeNull();
+  expect(host.querySelector('section[aria-label="Conversation"] .pr-timeline .pr-entry')).not.toBeNull();
+});
+
 it("renders a cached pull request at once on remount without asking GitHub again while fresh", async () => {
   await render();
   expect(host.textContent).toContain("chore(deps): bump react-virtual");

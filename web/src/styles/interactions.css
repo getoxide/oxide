@@ -83,7 +83,7 @@
      the row behind it, so the press reads as one surface. */
   :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option,
     .sidebar-footer, [role="menuitem"], [role="option"]:not(:has(> button)), [role="option"] > button,
-    .pr-picker li > button, .pr-toggle, .issue-template, .app-menu button,
+    .pr-picker li > button, .pr-toggle, .issue-linked-item, .issue-template, .app-menu button,
     .terminal-input-menu button):active:not(:disabled) {
     transform: none;
     background: color-mix(in srgb, var(--fg) 14%, var(--bg4));
