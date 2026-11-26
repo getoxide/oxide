@@ -16,6 +16,10 @@ tag=${1:?usage: sign-repositories.sh <tag> <packages-dir> <out-dir> [<rpm-base-u
 packages=${2:?missing <packages-dir>}
 out=${3:?missing <out-dir>}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# The callers pass relative paths, and the APT index is written from inside a temp folder: resolve them now.
+packages=$(cd "$packages" && pwd)
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
 cli="$root/tools/ci/cli.mjs"
 : "${OXIDE_REPOSITORY_SIGNING_KEY:?the repository signing key is not set}"
 : "${OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE:?the repository signing key passphrase is not set}"

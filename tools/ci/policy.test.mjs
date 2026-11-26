@@ -876,6 +876,17 @@ describe("the repository pipeline", () => {
     for (const secret of REPOSITORY_SECRETS) assert.ok(!read("verify-release.yml").includes(secret), `${secret} reaches verify-release.yml`);
   });
 
+  test("sign-repositories.sh makes its directories absolute before it changes directory", () => {
+    // release.yml passes relative paths (linux, repository); the APT index is written from inside a temp folder.
+    const script = readFileSync(fileURLToPath(new URL("./sign-repositories.sh", import.meta.url)), "utf8");
+    const firstCd = script.search(/^\(cd "/m);
+    assert.ok(firstCd > 0, "the script changes directory somewhere");
+    for (const dir of ["packages", "out"]) {
+      const resolved = script.indexOf(`\n${dir}=$(cd "$${dir}" && pwd)\n`);
+      assert.ok(resolved > 0 && resolved < firstCd, `${dir} is made absolute before the first cd`);
+    }
+  });
+
   test("the signed .rpm files replace the unsigned ones before the checksums and attestations", () => {
     const publish = read("release.yml");
     const assemble = publish.slice(publish.indexOf("Assemble the deliverables"), publish.indexOf("Upload release metadata"));
