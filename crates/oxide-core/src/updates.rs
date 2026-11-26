@@ -144,11 +144,23 @@ pub struct UpdateState {
     pub current_version: String,
     /// Unix seconds of the last check that reached the feed.
     pub last_checked_at: Option<i64>,
+    /// The last check that finished, successful or not, so the Updates section can say when a check failed.
+    pub last_check: Option<LastCheck>,
+    /// A check is running; it excludes installs and other checks.
+    pub checking: bool,
     pub available: Option<AvailableUpdate>,
     /// What the install of `available` is doing right now.
     pub operation: UpdateOperation,
     /// Why the last install failed; cleared when the next one starts. The installed Oxide keeps running.
     pub error: Option<String>,
+}
+
+/// A finished check: when, and whether it reached the feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LastCheck {
+    /// Unix seconds.
+    pub at: i64,
+    pub succeeded: bool,
 }
 
 /// The one update operation that may run at a time.
@@ -189,6 +201,8 @@ impl UpdateTracker {
                 channel: InstallChannel::Development,
                 current_version: String::new(),
                 last_checked_at: None,
+                last_check: None,
+                checking: false,
                 available: None,
                 operation: UpdateOperation::Idle,
                 error: None,
@@ -202,6 +216,8 @@ impl UpdateTracker {
         state.channel = channel;
         state.current_version = current_version.to_string();
         state.last_checked_at = None;
+        state.last_check = None;
+        state.checking = false;
         state.available = None;
         state.operation = UpdateOperation::Idle;
         state.error = None;
@@ -211,13 +227,43 @@ impl UpdateTracker {
         self.state.lock_recover().clone()
     }
 
+    /// Starts a check on demand (or the periodic one). It excludes installs and other checks.
+    pub(crate) fn begin_check(&self) -> Result<UpdateState, UpdateError> {
+        let mut state = self.state.lock_recover();
+        if !state.channel.checks() {
+            return Err(UpdateError::NothingToInstall);
+        }
+        if state.checking || state.operation != UpdateOperation::Idle {
+            return Err(UpdateError::Busy);
+        }
+        state.checking = true;
+        Ok(state.clone())
+    }
+
+    /// A check that could not reach the feed or read its answer. The window stays silent about it;
+    /// only the Updates section shows it. The last answer about what is available is kept.
+    pub(crate) fn record_check_failure(&self, now: i64) -> UpdateState {
+        let mut state = self.state.lock_recover();
+        state.checking = false;
+        state.last_check = Some(LastCheck {
+            at: now,
+            succeeded: false,
+        });
+        state.clone()
+    }
+
     /// Records a check that reached the feed. `found` is the version the feed offers, if any.
     /// Returns the new state when it changed, so the caller pushes it to the window.
     pub(crate) fn record_check(&self, found: Option<&str>, now: i64) -> Option<UpdateState> {
         let mut state = self.state.lock_recover();
+        let before = state.clone();
+        state.checking = false;
+        state.last_check = Some(LastCheck {
+            at: now,
+            succeeded: true,
+        });
         if state.operation != UpdateOperation::Idle {
             // The update being installed stays what it is; only the time moves.
-            let before = state.clone();
             state.last_checked_at = Some(now);
             return (*state != before).then(|| state.clone());
         }
@@ -227,7 +273,6 @@ impl UpdateTracker {
                 version: version.to_string(),
                 release_notes_url: format!("{RELEASE_PAGE}v{version}"),
             });
-        let before = state.clone();
         state.available = available;
         state.last_checked_at = Some(now);
         (*state != before).then(|| state.clone())
@@ -236,7 +281,7 @@ impl UpdateTracker {
     /// Starts downloading the available update: the version to fetch and the new state.
     pub(crate) fn begin_install(&self) -> Result<(String, UpdateState), UpdateError> {
         let mut state = self.state.lock_recover();
-        if state.operation != UpdateOperation::Idle {
+        if state.checking || state.operation != UpdateOperation::Idle {
             return Err(UpdateError::Busy);
         }
         if state.channel != InstallChannel::InApp {
@@ -628,6 +673,57 @@ mod tests {
         let tracker = tracker("0.1.0", InstallChannel::InApp);
         assert!(tracker.record_check(Some("0.2.0"), 100).is_some());
         assert!(tracker.record_check(Some("0.2.0"), 100).is_none());
+    }
+
+    #[test]
+    fn a_check_on_demand_marks_the_state_as_checking_until_it_is_recorded() {
+        let tracker = tracker("0.1.0", InstallChannel::InApp);
+        let state = tracker.begin_check().unwrap();
+        assert!(state.checking);
+        let state = tracker.record_check(Some("0.2.0"), 50).unwrap();
+        assert!(!state.checking);
+        assert_eq!(
+            state.last_check,
+            Some(LastCheck {
+                at: 50,
+                succeeded: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_failed_check_is_recorded_with_its_time_and_keeps_the_last_answer() {
+        let tracker = tracker("0.1.0", InstallChannel::InApp);
+        tracker.record_check(Some("0.2.0"), 10);
+        tracker.begin_check().unwrap();
+        let state = tracker.record_check_failure(20);
+        assert!(!state.checking);
+        assert_eq!(
+            state.last_check,
+            Some(LastCheck {
+                at: 20,
+                succeeded: false
+            })
+        );
+        assert_eq!(state.last_checked_at, Some(10), "the last success stays");
+        assert_eq!(state.available.unwrap().version, "0.2.0");
+    }
+
+    #[test]
+    fn a_check_and_an_install_never_run_together() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_check().unwrap();
+        assert_eq!(tracker.begin_check(), Err(UpdateError::Busy));
+        assert_eq!(tracker.begin_install(), Err(UpdateError::Busy));
+        tracker.record_check_failure(2);
+        tracker.begin_install().unwrap();
+        assert_eq!(tracker.begin_check(), Err(UpdateError::Busy));
+    }
+
+    #[test]
+    fn a_development_build_does_not_check_on_demand() {
+        let tracker = tracker("0.1.0", InstallChannel::Development);
+        assert_eq!(tracker.begin_check(), Err(UpdateError::NothingToInstall));
     }
 
     #[test]

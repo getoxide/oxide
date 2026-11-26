@@ -49,8 +49,9 @@ pub use oxide_platform::{AvailableShell, ShellKind};
 pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use updates::{
-    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, PRERELEASE_FEED,
-    STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState, feed_for, is_newer,
+    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, LastCheck,
+    PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState, feed_for,
+    is_newer,
 };
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
@@ -234,6 +235,16 @@ impl Core {
     /// Returns the new state when it changed, for the shell to push to the window.
     pub fn record_update_check(&self, found: Option<&str>, now_unix: i64) -> Option<UpdateState> {
         self.updates.record_check(found, now_unix)
+    }
+
+    /// Starts a check (one operation at a time with installs); the new state shows "checking".
+    pub fn begin_update_check(&self) -> std::result::Result<UpdateState, UpdateError> {
+        self.updates.begin_check()
+    }
+
+    /// A check failed (no network, bad answer): recorded with its time, never shown in the window.
+    pub fn record_update_check_failure(&self, now_unix: i64) -> UpdateState {
+        self.updates.record_check_failure(now_unix)
     }
 
     /// Starts downloading the available update (one operation at a time): its version and the new state.
