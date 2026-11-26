@@ -49,7 +49,7 @@ pub use oxide_platform::{AvailableShell, ShellKind};
 pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use updates::{
-    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, LastCheck,
+    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation, LastCheck,
     PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState, feed_for,
     is_newer,
 };
@@ -221,6 +221,12 @@ impl Core {
         *self.system.lock_recover() = system;
     }
 
+    /// Tells Core where the install sits; outside the Applications folders (macOS) no install may start.
+    pub fn set_update_install_location(&self, location: InstallLocation) {
+        self.updates.set_install_location(location);
+    }
+
+    /// Tells Core how this install updates (ADR-0021) and which version is running.
     /// Tells Core how this install updates (ADR-0021) and which version is running.
     pub fn configure_updates(&self, channel: InstallChannel, current_version: &str) {
         self.updates.configure(channel, current_version);

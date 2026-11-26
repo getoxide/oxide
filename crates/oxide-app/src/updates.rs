@@ -27,6 +27,24 @@ pub enum InstallChannel {
     Development,
 }
 
+/// Whether an install can update itself where it sits: a macOS app outside the Applications
+/// folders must be moved first.
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum InstallLocation {
+    Allowed,
+    MoveToApplications,
+}
+
+impl From<oxide_core::InstallLocation> for InstallLocation {
+    fn from(location: oxide_core::InstallLocation) -> Self {
+        match location {
+            oxide_core::InstallLocation::Allowed => Self::Allowed,
+            oxide_core::InstallLocation::MoveToApplications => Self::MoveToApplications,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailableUpdate {
@@ -46,6 +64,7 @@ pub struct LastCheck {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateState {
     pub channel: InstallChannel,
+    pub install_location: InstallLocation,
     pub current_version: String,
     /// Unix seconds (a float: the bindings forbid 64-bit integers).
     pub last_checked_at: Option<f64>,
@@ -105,6 +124,7 @@ impl From<oxide_core::UpdateState> for UpdateState {
     fn from(state: oxide_core::UpdateState) -> Self {
         Self {
             channel: state.channel.into(),
+            install_location: state.install_location.into(),
             current_version: state.current_version,
             last_checked_at: state.last_checked_at.map(|seconds| seconds as f64),
             last_check: state.last_check.map(|check| LastCheck {
@@ -165,6 +185,18 @@ fn bundle_kind() -> Option<BundleKind> {
     })
 }
 
+/// A debug build runs from the build folder and is never placed: only a release build is held to the rule.
+fn install_location() -> oxide_core::InstallLocation {
+    if cfg!(debug_assertions) {
+        return oxide_core::InstallLocation::Allowed;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return oxide_core::InstallLocation::Allowed;
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    oxide_core::InstallLocation::detect(bundle_kind(), &exe, home.as_deref())
+}
+
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -186,6 +218,7 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
         &debug_override(),
     );
     core.configure_updates(plan.channel, &current);
+    core.set_update_install_location(install_location());
     app.manage(Arc::new(Installer {
         feed: plan.feed.clone(),
         current: current.clone(),
@@ -356,6 +389,9 @@ pub fn install_update(
     let (_, state) = core.begin_update_install().map_err(|error| match error {
         oxide_core::UpdateError::Busy => "An update is already being installed.".to_string(),
         oxide_core::UpdateError::NothingToInstall => "There is no update to install.".to_string(),
+        oxide_core::UpdateError::WrongLocation => {
+            "Move Oxide to the Applications folder, then reopen it to update.".to_string()
+        }
     })?;
     push(&app, state);
     let core = Arc::clone(&core);
@@ -386,7 +422,7 @@ pub async fn check_for_updates(
             oxide_core::UpdateError::Busy => {
                 "An update check or install is already running.".to_string()
             }
-            oxide_core::UpdateError::NothingToInstall => {
+            oxide_core::UpdateError::NothingToInstall | oxide_core::UpdateError::WrongLocation => {
                 "This install does not check for updates.".to_string()
             }
         })?;

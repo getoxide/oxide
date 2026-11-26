@@ -4,6 +4,7 @@
 
 use oxide_platform::sync::LockExt as _;
 use semver::Version;
+use std::path::{Component, Path};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -70,6 +71,41 @@ impl InstallChannel {
             "dnf" => Some(Self::Dnf),
             "none" => Some(Self::Development),
             _ => None,
+        }
+    }
+}
+
+/// Whether the running install sits where an in-place update can replace it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallLocation {
+    Allowed,
+    /// A macOS app outside `/Applications` and `~/Applications` (the mounted disk image, Downloads,
+    /// a path Gatekeeper translocated): an update would fail or land in the wrong place.
+    MoveToApplications,
+}
+
+impl InstallLocation {
+    /// A pure rule over the path of the running executable; `home` is the user's home directory.
+    /// Only a macOS `.app` is placed: every other kind of install is allowed wherever it is.
+    pub fn detect(bundle: Option<BundleKind>, exe: &Path, home: Option<&Path>) -> Self {
+        if bundle != Some(BundleKind::App) {
+            return Self::Allowed;
+        }
+        let Some(app) = exe
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|ext| ext == "app"))
+        else {
+            return Self::MoveToApplications;
+        };
+        let clean = app
+            .components()
+            .all(|part| !matches!(part, Component::ParentDir | Component::CurDir));
+        let in_applications = app.starts_with("/Applications")
+            || home.is_some_and(|home| app.starts_with(home.join("Applications")));
+        if clean && in_applications {
+            Self::Allowed
+        } else {
+            Self::MoveToApplications
         }
     }
 }
@@ -141,6 +177,8 @@ pub struct AvailableUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateState {
     pub channel: InstallChannel,
+    /// Where the install sits; outside the Applications folders on macOS, no install may start.
+    pub install_location: InstallLocation,
     pub current_version: String,
     /// Unix seconds of the last check that reached the feed.
     pub last_checked_at: Option<i64>,
@@ -187,6 +225,8 @@ pub enum UpdateError {
     Busy,
     /// No update is available, or this install does not update itself.
     NothingToInstall,
+    /// The install is not in an Applications folder (macOS): it must be moved first.
+    WrongLocation,
 }
 
 pub(crate) struct UpdateTracker {
@@ -199,6 +239,7 @@ impl UpdateTracker {
         Self {
             state: Mutex::new(UpdateState {
                 channel: InstallChannel::Development,
+                install_location: InstallLocation::Allowed,
                 current_version: String::new(),
                 last_checked_at: None,
                 last_check: None,
@@ -221,6 +262,10 @@ impl UpdateTracker {
         state.available = None;
         state.operation = UpdateOperation::Idle;
         state.error = None;
+    }
+
+    pub(crate) fn set_install_location(&self, location: InstallLocation) {
+        self.state.lock_recover().install_location = location;
     }
 
     pub(crate) fn snapshot(&self) -> UpdateState {
@@ -286,6 +331,9 @@ impl UpdateTracker {
         }
         if state.channel != InstallChannel::InApp {
             return Err(UpdateError::NothingToInstall);
+        }
+        if state.install_location != InstallLocation::Allowed {
+            return Err(UpdateError::WrongLocation);
         }
         let version = state
             .available
@@ -369,6 +417,56 @@ impl UpdateTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn location(bundle: Option<BundleKind>, exe: &str) -> InstallLocation {
+        InstallLocation::detect(bundle, Path::new(exe), Some(Path::new("/Users/ada")))
+    }
+
+    #[test]
+    fn applications_and_user_applications_allow_updates() {
+        for exe in [
+            "/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Applications/Utilities/Oxide.app/Contents/MacOS/oxide",
+        ] {
+            assert_eq!(location(Some(BundleKind::App), exe), InstallLocation::Allowed, "{exe}");
+        }
+    }
+
+    #[test]
+    fn a_disk_image_downloads_or_translocated_path_asks_for_a_move() {
+        for exe in [
+            "/Volumes/Oxide/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Downloads/Oxide.app/Contents/MacOS/oxide",
+            "/private/var/folders/ab/T/AppTranslocation/1234-ABCD/d/Oxide.app/Contents/MacOS/oxide",
+            "/Users/ada/Desktop/Oxide.app/Contents/MacOS/oxide",
+            "/Users/bob/Applications/Oxide.app/Contents/MacOS/oxide",
+            "/Applications/../tmp/Oxide.app/Contents/MacOS/oxide",
+            "/ApplicationsX/Oxide.app/Contents/MacOS/oxide",
+        ] {
+            assert_eq!(
+                location(Some(BundleKind::App), exe),
+                InstallLocation::MoveToApplications,
+                "{exe}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_macos_app_is_placed() {
+        for bundle in [None, Some(BundleKind::Nsis), Some(BundleKind::AppImage), Some(BundleKind::Deb)] {
+            assert_eq!(location(bundle, "/Volumes/x/oxide"), InstallLocation::Allowed);
+        }
+    }
+
+    #[test]
+    fn without_a_home_only_the_system_applications_folder_counts() {
+        let exe = Path::new("/Users/ada/Applications/Oxide.app/Contents/MacOS/oxide");
+        assert_eq!(
+            InstallLocation::detect(Some(BundleKind::App), exe, None),
+            InstallLocation::MoveToApplications
+        );
+    }
 
     fn v(text: &str) -> Version {
         Version::parse(text).unwrap()
@@ -718,6 +816,19 @@ mod tests {
         tracker.record_check_failure(2);
         tracker.begin_install().unwrap();
         assert_eq!(tracker.begin_check(), Err(UpdateError::Busy));
+    }
+
+    #[test]
+    fn an_install_outside_applications_learns_of_the_version_but_cannot_install() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.set_install_location(InstallLocation::MoveToApplications);
+        assert_eq!(tracker.begin_install(), Err(UpdateError::WrongLocation));
+        assert_eq!(tracker.snapshot().operation, UpdateOperation::Idle);
+        assert!(tracker.begin_check().is_ok(), "checking still works");
+        tracker.record_check(Some("0.3.0"), 5);
+        assert_eq!(tracker.snapshot().available.unwrap().version, "0.3.0");
+        tracker.set_install_location(InstallLocation::Allowed);
+        assert!(tracker.begin_install().is_ok());
     }
 
     #[test]

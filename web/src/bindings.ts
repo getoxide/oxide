@@ -223,6 +223,12 @@ export type GithubRepository = {
 
 export type InstallChannel = "inApp" | "apt" | "dnf" | "development";
 
+/**
+ *  Whether an install can update itself where it sits: a macOS app outside the Applications
+ *  folders must be moved first.
+ */
+export type InstallLocation = "allowed" | "moveToApplications";
+
 export type IssueCloseReason = "completed" | "notPlanned";
 
 export type IssueDetail = IssueDetail_Serialize | IssueDetail_Deserialize;
@@ -904,6 +910,7 @@ export type UpdateState = UpdateState_Serialize | UpdateState_Deserialize;
 
 export type UpdateState_Deserialize = {
 	channel: InstallChannel,
+	installLocation: InstallLocation,
 	currentVersion: string,
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt?: number | null,
@@ -919,6 +926,7 @@ export type UpdateState_Deserialize = {
 
 export type UpdateState_Serialize = {
 	channel: InstallChannel,
+	installLocation: InstallLocation,
 	currentVersion: string,
 	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
 	lastCheckedAt: number | null,
