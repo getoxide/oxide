@@ -151,14 +151,17 @@ export const commands = {
 	updateState: () => __TAURI_INVOKE<UpdateState_Serialize>("update_state"),
 	/**
 	 *  Starts the install of the available update and returns at once: progress and the outcome
-	 *  arrive as `update-state-changed`. Only one operation runs at a time.
+	 *  arrive as `update-state-changed`. Only one operation runs at a time. Outside any checkout, it
+	 *  downloads the package from the compiled-in feed and, once the plugin has verified its signature
+	 *  against the compiled-in key, replaces the installed app (macOS, AppImage) or stages the installer
+	 *  it runs at quit (Windows). It takes no argument from the webview (ADR-0016).
 	 */
-	installUpdate: () => typedError<null, string>(__TAURI_INVOKE("install_update")),
+	installUpdate: () => typedError<null, AppError>(__TAURI_INVOKE("install_update")),
 	/**
 	 *  Checks the feed now, on demand from the Updates section, and returns the new state. A check that
 	 *  cannot reach the feed is not an error: it is recorded in the state and shown only in Settings.
 	 */
-	checkForUpdates: () => typedError<UpdateState_Serialize, string>(__TAURI_INVOKE("check_for_updates")),
+	checkForUpdates: () => typedError<UpdateState_Serialize, AppError>(__TAURI_INVOKE("check_for_updates")),
 };
 
 /* Types */

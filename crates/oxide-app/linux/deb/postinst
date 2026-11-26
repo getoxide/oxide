@@ -24,9 +24,10 @@ install_key() {
   mv -f "$tmp" "$KEYRING"
 }
 
-# The source is written once. A file that is already there (the documented setup, or the user's own
-# edit) stays as it is, and so does any other file that already names the repository: a second
-# source would make apt warn about a duplicate.
+# The source is checked at every configure (install and upgrade). A file that is already there (the
+# documented setup, or the user's own edit) stays as it is, and so does any other file that already
+# names the repository: a second source would make apt warn about a duplicate. A source the user
+# deleted comes back at the next upgrade; removing the package is how to stop using the repository.
 install_source() {
   if [ -e "$SOURCE" ] || [ -L "$SOURCE" ]; then
     return 0

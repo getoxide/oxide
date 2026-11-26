@@ -279,7 +279,9 @@ impl Core {
     /// A download, verification or install failed: the installed Oxide keeps running and the
     /// update is offered again.
     pub fn fail_update_install(&self, reason: &str) -> UpdateState {
-        self.updates.fail_install(reason)
+        // The plugin's errors can quote a URL; nothing leaves Core with its credentials (ADR-0016).
+        self.updates
+            .fail_install(&redact::redact_url_credentials(reason))
     }
 
     /// Whether quitting must now run the staged installer (Windows, after "Later" or "Restart now").

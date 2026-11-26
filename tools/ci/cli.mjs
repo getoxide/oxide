@@ -11,7 +11,8 @@
 //   node tools/ci/cli.mjs downloads <dir>               prints the Downloads table for the installers in <dir>
 //   node tools/ci/cli.mjs require-secrets [--present] <NAME>...   fails naming each secret the environment leaves unset or empty
 //                                                       (--present: reads HAS_<NAME>=true|false flags instead of values)
-//   node tools/ci/cli.mjs updater-feed <tag> <dir>      prints latest.json from the packages' .sig files in <dir>
+//   node tools/ci/cli.mjs updater-feed <tag> <dir>      prints latest.json from the packages' .sig files in <dir>; fails unless
+//                                                       each .sig verifies its package against the app's updater pubkey
 //   node tools/ci/cli.mjs release-checksums <file>      prints a sha256sum listing without the updater-only assets
 //   node tools/ci/cli.mjs feed-urls <feed.json>         prints every package URL of a feed
 //   node tools/ci/cli.mjs check-feeds <tag> <stable.json> <prerelease.json>
@@ -33,7 +34,7 @@ import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
-  aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, missingPresent, missingSecrets, releaseChecksums,
+  aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, missingPresent, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -118,9 +119,17 @@ const commands = {
   "updater-feed"([tag, dir]) {
     const version = String(tag ?? "").replace(/^v/, "");
     const signatures = {};
+    const pubkey = JSON.parse(read("crates/oxide-app/tauri.conf.json")).plugins.updater.pubkey;
     for (const { asset } of UPDATER_PLATFORMS) {
       const path = join(dir, `${asset(version)}.sig`);
-      if (existsSync(path)) signatures[asset(version)] = readFileSync(path, "utf8");
+      if (!existsSync(path)) continue;
+      signatures[asset(version)] = readFileSync(path, "utf8");
+      // A package signed by another key than the one compiled into the app would be refused by every install.
+      const packagePath = join(dir, asset(version));
+      const check = existsSync(packagePath)
+        ? checkUpdaterSignature({ pubkey, signature: signatures[asset(version)], data: readFileSync(packagePath), name: asset(version) })
+        : { ok: false, message: `${asset(version)} is missing next to its signature.` };
+      if (!check.ok) throw new Error(check.message);
     }
     const pubDate = new Date().toISOString().replace(/\.\d+Z$/, "Z");
     process.stdout.write(`${JSON.stringify(buildUpdateFeed({ tag, repository: repo(), signatures, pubDate }), null, 2)}\n`);

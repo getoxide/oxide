@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { commands, type UpdateState } from "../bindings";
+import { commands, type AppError, type UpdateState } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
 import { copyTextToClipboard } from "../shared/platform";
 import { packageManagerCommand } from "./packageManagerCommand";
@@ -30,10 +30,10 @@ export function UpdateInstallFlow({
   const [problem, setProblem] = useState<string | null>(null);
   const { operation } = state;
   // The typed commands resolve `{ status: "error" }` instead of rejecting; a rejection is an unexpected failure.
-  const run = (start: () => Promise<{ status: "ok" } | { status: "error"; error: string | { message: string } }>) => {
+  const run = (start: () => Promise<{ status: "ok" } | { status: "error"; error: AppError }>) => {
     setProblem(null);
     void start().then((result) => {
-      if (result.status === "error") setProblem(typeof result.error === "string" ? result.error : result.error.message);
+      if (result.status === "error") setProblem(result.error.message);
     }).catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
   };
   const copy = (text: string) => {

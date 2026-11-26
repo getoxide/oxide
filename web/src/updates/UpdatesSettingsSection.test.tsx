@@ -145,7 +145,7 @@ describe("Updates settings section", () => {
   });
 
   it("shows the error a failed install start resolves with, and offers the install again", async () => {
-    commandError = "The update server refused the download.";
+    commandError = { message: "The update server refused the download." };
     await render(behind);
     await act(async () => named("Install update")!.click());
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("The update server refused the download.");

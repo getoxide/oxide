@@ -30,7 +30,8 @@ umask 077
 work=$(mktemp -d)
 export GNUPGHOME="$work/gnupg"
 mkdir "$GNUPGHOME"
-trap 'rm -rf "$work"' EXIT
+# The agent gpg starts lives in $GNUPGHOME: stop it before the folder goes.
+trap 'gpgconf --kill gpg-agent 2> /dev/null || true; rm -rf "$work"' EXIT
 printf '%s' "$OXIDE_REPOSITORY_SIGNING_KEY" | gpg --batch --quiet --import
 fingerprint=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ { print $10; exit }')
 [ -n "$fingerprint" ] || { echo "The repository signing key has no secret key." >&2; exit 1; }
@@ -87,4 +88,4 @@ rpmkeys --dbpath "$work/rpmdb" --import "$out/assets/oxide-repository.asc"
 for name in $rpms; do
   rpmkeys --dbpath "$work/rpmdb" --checksig "$out/assets/$name" | grep -q "signatures OK" || { echo "$name is not signed." >&2; exit 1; }
 done
-echo "Signed $(echo $rpms | wc -w) rpm and $(echo $debs | wc -w) deb packages for $tag with key $fingerprint."
+echo "Signed $(wc -w <<< "$rpms" | tr -d ' ') rpm and $(wc -w <<< "$debs" | tr -d ' ') deb packages for $tag with key $fingerprint."

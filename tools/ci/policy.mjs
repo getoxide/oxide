@@ -1,6 +1,6 @@
 // Every decision the CI/CD pipeline makes, as pure functions. Workflows and
 // the local runner only gather inputs and act on the answers (see cli.mjs).
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 
 const LANES = ["web", "rust", "bundle", "supplyChain", "automation"];
 const allLanes = (on) => Object.fromEntries(LANES.map((lane) => [lane, on]));
@@ -21,6 +21,9 @@ const PATH_RULES = [
   // Packaging inputs: only `tauri build` can break these.
   [/^crates\/oxide-app\/(tauri(\.[\w-]+)?\.conf\.json|Info\.plist|capabilities\/.*|icons(-dev)?\/.*)$/, ["bundle"]],
   [/^docs\/licenses\//, ["bundle"]], // bundled as app resources
+  // The .deb and .rpm maintainer scripts and the key they install: bundled by `tauri build`, tested by
+  // tools/ci/maintainer-scripts.test.mjs (the automation lane).
+  [/^crates\/oxide-app\/linux\//, ["bundle", "automation"]],
   [/^(Cargo\.toml|Cargo\.lock|crates\/[^/]+\/Cargo\.toml|web\/package\.json|web\/pnpm-lock\.yaml)$/, ["bundle", "supplyChain"]],
   [/^(crates\/[^/]+\/build\.rs|tools\/build\.mjs|tools\/checks\/.*)$/, ["bundle"]],
   [new RegExp(`^${escapeRegExp(BUILD_WORKFLOW)}$`), ["bundle"]],
@@ -316,6 +319,37 @@ export function buildUpdateFeed({ tag, repository, signatures, pubDate }) {
     platforms[key] = { url: `${releaseAssetBase(repository, tag)}${name}`, signature };
   }
   return { version, notes: `https://github.com/${repository}/releases/tag/${tag}`, pub_date: pubDate, platforms };
+}
+
+/**
+ * Whether `signature` (a package's `.sig` file, as `tauri signer sign` writes it) is a valid minisign
+ * signature of `data` by `pubkey` (`plugins.updater.pubkey` in tauri.conf.json), checked the way the
+ * updater plugin checks it: the package signature and the signature over its trusted comment. A release
+ * signed with any other key would be refused by every install, so the feed is never written for it.
+ */
+export function checkUpdaterSignature({ pubkey, signature, data, name }) {
+  const refuse = (why) => ({ ok: false, message: `The updater signature of ${name} ${why}` });
+  // Each file is base64 of the minisign text; its second line is base64 of the binary key or signature.
+  const lines = (base64) => Buffer.from(String(base64 ?? "").trim(), "base64").toString("utf8").split("\n");
+  const key = Buffer.from(lines(pubkey)[1] ?? "", "base64");
+  const [, packed = "", trusted = "", global = ""] = lines(signature);
+  const sig = Buffer.from(packed, "base64");
+  const globalSig = Buffer.from(global, "base64");
+  if (key.length !== 42 || key.subarray(0, 2).toString("latin1") !== "Ed") return refuse("cannot be checked: the public key is malformed.");
+  const algorithm = sig.subarray(0, 2).toString("latin1");
+  if (sig.length !== 74 || !["Ed", "ED"].includes(algorithm) || !trusted.startsWith("trusted comment: ") || globalSig.length !== 64) {
+    return refuse("is malformed.");
+  }
+  const keyId = (bytes) => Buffer.from(bytes.subarray(2, 10)).reverse().toString("hex").toUpperCase();
+  if (!key.subarray(2, 10).equals(sig.subarray(2, 10))) {
+    return refuse(`was made by key ${keyId(sig)}, not by the app's updater key ${keyId(key)}.`);
+  }
+  const publicKey = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: key.subarray(10).toString("base64url") }, format: "jwk" });
+  const message = algorithm === "ED" ? createHash("blake2b512").update(data).digest() : data;
+  if (!verify(null, message, publicKey, sig.subarray(10))) return refuse("does not match the package.");
+  const comment = Buffer.from(trusted.slice("trusted comment: ".length), "utf8");
+  if (!verify(null, Buffer.concat([sig.subarray(10), comment]), publicKey, globalSig)) return refuse("has a changed trusted comment.");
+  return { ok: true, message: `The updater signature of ${name} matches the app's updater key ${keyId(key)}.` };
 }
 
 /** Whether a release asset exists only for the updater, so notes and the Downloads table leave it out. */

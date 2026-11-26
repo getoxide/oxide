@@ -392,7 +392,10 @@ pub fn run_staged_install(app: &AppHandle, core: &Core) {
 }
 
 /// Starts the install of the available update and returns at once: progress and the outcome
-/// arrive as `update-state-changed`. Only one operation runs at a time.
+/// arrive as `update-state-changed`. Only one operation runs at a time. Outside any checkout, it
+/// downloads the package from the compiled-in feed and, once the plugin has verified its signature
+/// against the compiled-in key, replaces the installed app (macOS, AppImage) or stages the installer
+/// it runs at quit (Windows). It takes no argument from the webview (ADR-0016).
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
@@ -400,10 +403,12 @@ pub fn install_update(
     app: AppHandle,
     core: tauri::State<'_, Arc<Core>>,
     installer: tauri::State<'_, Arc<Installer>>,
-) -> Result<(), String> {
+) -> Result<(), crate::AppError> {
     let (_, state) = core
         .begin_update_install()
-        .map_err(|error| error.message().to_string())?;
+        .map_err(|error| crate::AppError {
+            message: error.message().to_string(),
+        })?;
     push(&app, state);
     let core = Arc::clone(&core);
     let installer = Arc::clone(&installer);
@@ -426,10 +431,12 @@ pub async fn check_for_updates(
     app: AppHandle,
     core: tauri::State<'_, Arc<Core>>,
     installer: tauri::State<'_, Arc<Installer>>,
-) -> Result<UpdateState, String> {
+) -> Result<UpdateState, crate::AppError> {
     run_check(&app, &core, &installer.feed, &installer.current)
         .await
-        .map_err(|error| error.message().to_string())?;
+        .map_err(|error| crate::AppError {
+            message: error.message().to_string(),
+        })?;
     Ok(core.update_state().into())
 }
 

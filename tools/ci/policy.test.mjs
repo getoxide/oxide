@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
-  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
+  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
   APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, missingPresent, repositoryPlan,
 } from "./policy.mjs";
 
@@ -30,6 +30,12 @@ describe("lanesFor", () => {
     assert.deepEqual(lanesFor(["crates/oxide-app/tauri.conf.json"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
     assert.deepEqual(lanesFor(["crates/oxide-app/icons-dev/icon.png"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
     assert.deepEqual(lanesFor(["crates/oxide-app/tauri.dev.conf.json"], "pull_request"), { ...ALL_OFF, rust: true, bundle: true });
+  });
+
+  test("the Linux maintainer scripts and the shipped repository key run the bundle and their tests", () => {
+    for (const path of ["crates/oxide-app/linux/deb/postinst", "crates/oxide-app/linux/rpm/preun.sh", "crates/oxide-app/linux/repository/oxide-repository.gpg"]) {
+      assert.deepEqual(lanesFor([path], "pull_request"), { ...ALL_OFF, rust: true, bundle: true, automation: true }, path);
+    }
   });
 
   test("a bundled licence file under docs turns on bundle", () => {
@@ -535,6 +541,42 @@ describe("ADVISORY_SCANS", () => {
 
 const REPO = "getoxide/oxide";
 const signaturesFor = (version) => Object.fromEntries(UPDATER_PLATFORMS.map(({ asset }) => [asset(version), `SIG ${asset(version)}`]));
+
+describe("checkUpdaterSignature", () => {
+  // Made once with `tauri signer generate` and `tauri signer sign` on DATA, with a throwaway key.
+  const DATA = Buffer.from("oxide updater fixture\n");
+  const PUBKEY = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA1NTU0NkM0QTM5MTRBOUUKUldTZVNwR2p4RVpWQmFaanNhTmw3emNWcDJlVkZyalpuK1R3clUzZXVadDFMb3dmM0xEcHNqTXIK";
+  const SIGNATURE = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTZVNwR2p4RVpWQlNGcnVVZElxNDk5aitOakZ5TllmZGk3TTVIU1ZKZkRkclZtdmx1VE5JeEJGK3NheHJ6SVBqVlBEV3VYSkQybE9yTUx3SloxaGhXb0N3YTIreDVVYmc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1Njk0MzUxCWZpbGU6ZGF0YS5iaW4KeTF1T282aXFVZWZyeWlpb2JDZ3hUSm9JMU42bnA1bEoydzJhSUdyb2NhZ3prRjRQS0VPUkoweXRpMm5lVjlZZ1c3SHh4akU3b3hGeFc2ZTY5bDJjQVE9PQo=";
+  const decoded = (base64) => Buffer.from(base64, "base64").toString("utf8");
+  const encoded = (text) => Buffer.from(text, "utf8").toString("base64");
+
+  test("a signature made by the key accepts the package", () => {
+    assert.equal(checkUpdaterSignature({ pubkey: PUBKEY, signature: SIGNATURE, data: DATA, name: "pkg" }).ok, true);
+  });
+
+  test("a changed package is refused", () => {
+    const result = checkUpdaterSignature({ pubkey: PUBKEY, signature: SIGNATURE, data: Buffer.from("oxide updater fixturE\n"), name: "pkg" });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /pkg/);
+  });
+
+  test("a signature by another key is refused, naming both key ids", () => {
+    const conf = JSON.parse(readFileSync(fileURLToPath(new URL("../../crates/oxide-app/tauri.conf.json", import.meta.url)), "utf8"));
+    const result = checkUpdaterSignature({ pubkey: conf.plugins.updater.pubkey, signature: SIGNATURE, data: DATA, name: "pkg" });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /key/);
+  });
+
+  test("a changed trusted comment is refused", () => {
+    const tampered = encoded(decoded(SIGNATURE).replace("file:data.bin", "file:other.bin"));
+    assert.equal(checkUpdaterSignature({ pubkey: PUBKEY, signature: tampered, data: DATA, name: "pkg" }).ok, false);
+  });
+
+  test("a malformed signature or key is refused, not thrown", () => {
+    assert.equal(checkUpdaterSignature({ pubkey: PUBKEY, signature: "not base64 at all", data: DATA, name: "pkg" }).ok, false);
+    assert.equal(checkUpdaterSignature({ pubkey: "", signature: SIGNATURE, data: DATA, name: "pkg" }).ok, false);
+  });
+});
 
 describe("buildUpdateFeed", () => {
   const input = (overrides = {}) => ({ tag: "v0.1.0", repository: REPO, signatures: signaturesFor("0.1.0"), pubDate: "2026-12-01T10:00:00Z", ...overrides });

@@ -20,7 +20,7 @@ export function UpdatesSettingsSection() {
     setProblem(null);
     void commands.checkForUpdates().then((result) => {
       if (result.status === "ok") replace(result.data);
-      else setProblem(result.error);
+      else setProblem(result.error.message);
     }).catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
   };
   const lastCheck = state.lastCheck ?? null;
