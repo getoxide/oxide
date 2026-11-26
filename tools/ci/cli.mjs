@@ -118,18 +118,17 @@ const commands = {
       : { ok: true, message: `The release environment has ${names.join(", ")}.` });
   },
   "updater-feed"([tag, dir]) {
-    const version = String(tag ?? "").replace(/^v/, "");
     const signatures = {};
     const pubkey = JSON.parse(read("crates/oxide-app/tauri.conf.json")).plugins.updater.pubkey;
-    for (const { asset } of UPDATER_PLATFORMS) {
-      const path = join(dir, `${asset(version)}.sig`);
+    for (const { asset: name } of UPDATER_PLATFORMS) {
+      const path = join(dir, `${name}.sig`);
       if (!existsSync(path)) continue;
-      signatures[asset(version)] = readFileSync(path, "utf8");
+      signatures[name] = readFileSync(path, "utf8");
       // A package signed by another key than the one compiled into the app would be refused by every install.
-      const packagePath = join(dir, asset(version));
+      const packagePath = join(dir, name);
       const check = existsSync(packagePath)
-        ? checkUpdaterSignature({ pubkey, signature: signatures[asset(version)], data: readFileSync(packagePath), name: asset(version) })
-        : { ok: false, message: `${asset(version)} is missing next to its signature.` };
+        ? checkUpdaterSignature({ pubkey, signature: signatures[name], data: readFileSync(packagePath), name })
+        : { ok: false, message: `${name} is missing next to its signature.` };
       if (!check.ok) throw new Error(check.message);
     }
     const pubDate = new Date().toISOString().replace(/\.\d+Z$/, "Z");

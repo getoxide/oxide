@@ -263,25 +263,28 @@ export function releaseNotes(commits, { repository, previousTag, tag }) {
   return `${filled.map((name) => `### ${name}\n\n${sections[name].join("\n")}\n`).join("\n")}\n${changelog}\n`;
 }
 
-// What each installer is for, in plain words, next to its file name (`Oxide_<version>_<os>_<arch>.<ext>`).
-const DOWNLOADS = [
-  [/_macos_arm64\.dmg$/, "macOS (Apple Silicon)", "Disk image"],
-  [/_windows_x64\.exe$/, "Windows (Intel/AMD, 64-bit)", "Installer"],
-  [/_windows_arm64\.exe$/, "Windows (Arm)", "Installer"],
-  [/_linux_x64\.AppImage$/, "Linux (Intel/AMD, 64-bit)", "AppImage, runs on any distribution"],
-  [/_linux_arm64\.AppImage$/, "Linux (Arm)", "AppImage, runs on any distribution"],
-  [/_linux_x64\.deb$/, "Linux (Intel/AMD, 64-bit): Debian, Ubuntu", ".deb package"],
-  [/_linux_arm64\.deb$/, "Linux (Arm): Debian, Ubuntu", ".deb package"],
-  [/_linux_x64\.rpm$/, "Linux (Intel/AMD, 64-bit): Fedora, RHEL, openSUSE", ".rpm package"],
-  [/_linux_arm64\.rpm$/, "Linux (Arm): Fedora, RHEL, openSUSE", ".rpm package"],
+/**
+ * Every installer a release ships, under the name users download, and what it is for in plain words.
+ * The names carry no version, so `releases/latest/download/<name>` always serves the newest stable
+ * release (the website links there); the version is in the release, the app and the packages' metadata.
+ * `build.yml` stages Tauri's bundles under exactly these names.
+ */
+export const INSTALLERS = [
+  { name: "Oxide.dmg", platform: "macOS (Apple Silicon)", kind: "Disk image" },
+  { name: "Oxide-x64.exe", platform: "Windows (Intel/AMD, 64-bit)", kind: "Installer" },
+  { name: "Oxide-arm64.exe", platform: "Windows (Arm)", kind: "Installer" },
+  { name: "Oxide-x64.AppImage", platform: "Linux (Intel/AMD, 64-bit)", kind: "AppImage, runs on any distribution" },
+  { name: "Oxide-arm64.AppImage", platform: "Linux (Arm)", kind: "AppImage, runs on any distribution" },
+  { name: "Oxide-x64.deb", platform: "Linux (Intel/AMD, 64-bit): Debian, Ubuntu", kind: ".deb package" },
+  { name: "Oxide-arm64.deb", platform: "Linux (Arm): Debian, Ubuntu", kind: ".deb package" },
+  { name: "Oxide-x64.rpm", platform: "Linux (Intel/AMD, 64-bit): Fedora, RHEL, openSUSE", kind: ".rpm package" },
+  { name: "Oxide-arm64.rpm", platform: "Linux (Arm): Fedora, RHEL, openSUSE", kind: ".rpm package" },
 ];
 
 /** A "Downloads" section that tells which file is for which platform. Unknown files are left out. */
 export function downloadsSection(artifactNames) {
-  const rows = [];
-  for (const [pattern, platform, kind] of DOWNLOADS) {
-    for (const name of artifactNames.filter((candidate) => pattern.test(candidate)).sort()) rows.push(`| ${platform} | ${kind} | \`${name}\` |`);
-  }
+  const rows = INSTALLERS.filter(({ name }) => artifactNames.includes(name))
+    .map(({ name, platform, kind }) => `| ${platform} | ${kind} | \`${name}\` |`);
   if (rows.length === 0) return "";
   return `### Downloads\n\n| Platform | Format | File |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
 }
@@ -289,14 +292,14 @@ export function downloadsSection(artifactNames) {
 /**
  * The in-app update packages (ADR-0021). Windows and Linux update from the installer
  * they already ship (the NSIS installer, the AppImage); macOS needs the `.app` archive.
- * `key` is the platform name of Tauri's updater feed; `asset` names the package of a version.
+ * `key` is the platform name of Tauri's updater feed; `asset` names the package in every release.
  */
 export const UPDATER_PLATFORMS = [
-  { key: "darwin-aarch64", asset: (version) => `Oxide_${version}_macos_arm64.app.tar.gz` },
-  { key: "windows-x86_64", asset: (version) => `Oxide_${version}_windows_x64.exe` },
-  { key: "windows-aarch64", asset: (version) => `Oxide_${version}_windows_arm64.exe` },
-  { key: "linux-x86_64", asset: (version) => `Oxide_${version}_linux_x64.AppImage` },
-  { key: "linux-aarch64", asset: (version) => `Oxide_${version}_linux_arm64.AppImage` },
+  { key: "darwin-aarch64", asset: "Oxide.app.tar.gz" },
+  { key: "windows-x86_64", asset: "Oxide-x64.exe" },
+  { key: "windows-aarch64", asset: "Oxide-arm64.exe" },
+  { key: "linux-x86_64", asset: "Oxide-x64.AppImage" },
+  { key: "linux-aarch64", asset: "Oxide-arm64.AppImage" },
 ];
 
 /** Where a release's assets are served; the update feed points here and the check accepts nothing else. */
@@ -312,8 +315,7 @@ export function buildUpdateFeed({ tag, repository, signatures, pubDate }) {
   const version = String(tag ?? "").match(TAG)?.[1];
   if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
   const platforms = {};
-  for (const { key, asset } of UPDATER_PLATFORMS) {
-    const name = asset(version);
+  for (const { key, asset: name } of UPDATER_PLATFORMS) {
     const signature = String(signatures?.[name] ?? "").trim();
     if (!signature) throw new Error(`The signature of ${name} is missing or empty.`);
     platforms[key] = { url: `${releaseAssetBase(repository, tag)}${name}`, signature };
@@ -478,7 +480,7 @@ export function repositoryPlan({ tag, repository, assetNames }) {
   const version = String(tag ?? "").match(TAG)?.[1];
   if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
   const pick = (extension, field) => REPOSITORY_ARCHES.map((arch) => {
-    const name = `Oxide_${version}_linux_${arch.asset}.${extension}`;
+    const name = `Oxide-${arch.asset}.${extension}`;
     if (!assetNames.includes(name)) throw new Error(`The release has no ${name}; the repositories need one .${extension} per architecture.`);
     return { name, arch: arch[field] };
   });

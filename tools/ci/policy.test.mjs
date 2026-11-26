@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
-  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, isUpdaterOnlyAsset, missingSecrets, prereleaseFeedUrl, releaseChecksums,
+  INSTALLERS, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, isUpdaterOnlyAsset, missingSecrets, prereleaseFeedUrl, releaseChecksums,
   APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, missingPresent, repositoryPlan,
 } from "./policy.mjs";
 
@@ -486,11 +486,11 @@ describe("localPlan", () => {
 describe("downloadsSection", () => {
   test("names the platform of every installer, not just its architecture", () => {
     const section = downloadsSection([
-      "Oxide_0.1.0_macos_arm64.dmg", "Oxide_0.1.0_windows_x64.exe", "Oxide_0.1.0_windows_arm64.exe",
-      "Oxide_0.1.0_linux_x64.AppImage", "Oxide_0.1.0_linux_x64.deb", "Oxide_0.1.0_linux_x64.rpm", "notes.txt",
+      "Oxide.dmg", "Oxide-x64.exe", "Oxide-arm64.exe",
+      "Oxide-x64.AppImage", "Oxide-x64.deb", "Oxide-x64.rpm", "notes.txt",
     ]);
-    assert.match(section, /\| macOS \(Apple Silicon\) \| Disk image \| `Oxide_0\.1\.0_macos_arm64\.dmg` \|/);
-    assert.match(section, /\| Windows \(Intel\/AMD, 64-bit\) \| Installer \| `Oxide_0\.1\.0_windows_x64\.exe` \|/);
+    assert.match(section, /\| macOS \(Apple Silicon\) \| Disk image \| `Oxide\.dmg` \|/);
+    assert.match(section, /\| Windows \(Intel\/AMD, 64-bit\) \| Installer \| `Oxide-x64\.exe` \|/);
     assert.match(section, /\| Windows \(Arm\) \|/);
     assert.match(section, /\| Linux \(Intel\/AMD, 64-bit\): Debian, Ubuntu \|/);
     assert.match(section, /Fedora, RHEL, openSUSE/);
@@ -499,6 +499,20 @@ describe("downloadsSection", () => {
 
   test("is empty when there is no installer", () => {
     assert.equal(downloadsSection(["notes.txt"]), "");
+  });
+
+  test("every installer has a short name with no version, so releases/latest/download/<name> always serves the newest", () => {
+    assert.deepEqual(INSTALLERS.map(({ name }) => name), [
+      "Oxide.dmg", "Oxide-x64.exe", "Oxide-arm64.exe",
+      "Oxide-x64.AppImage", "Oxide-arm64.AppImage", "Oxide-x64.deb", "Oxide-arm64.deb", "Oxide-x64.rpm", "Oxide-arm64.rpm",
+    ]);
+    const section = downloadsSection(INSTALLERS.map(({ name }) => name).reverse());
+    assert.equal(section.split("\n").filter((line) => line.startsWith("| ") && !line.startsWith("| Platform") && !line.startsWith("| ---")).length, INSTALLERS.length);
+    assert.ok(section.indexOf("Oxide.dmg") < section.indexOf("Oxide-x64.exe"), "rows follow the platform order, not the input order");
+  });
+
+  test("an old versioned name is not an installer", () => {
+    assert.equal(downloadsSection(["Oxide_0.0.4_aarch64.dmg", "Oxide_1.0.0_windows_x64.exe"]), "");
   });
 });
 
@@ -540,7 +554,7 @@ describe("ADVISORY_SCANS", () => {
 });
 
 const REPO = "getoxide/oxide";
-const signaturesFor = (version) => Object.fromEntries(UPDATER_PLATFORMS.map(({ asset }) => [asset(version), `SIG ${asset(version)}`]));
+const signaturesFor = () => Object.fromEntries(UPDATER_PLATFORMS.map(({ asset }) => [asset, `SIG ${asset}`]));
 
 describe("checkUpdaterSignature", () => {
   // Made once with `tauri signer generate` and `tauri signer sign` on DATA, with a throwaway key.
@@ -587,11 +601,11 @@ describe("buildUpdateFeed", () => {
     assert.equal(feed.pub_date, "2026-12-01T10:00:00Z");
     assert.deepEqual(Object.keys(feed.platforms).sort(), ["darwin-aarch64", "linux-aarch64", "linux-x86_64", "windows-aarch64", "windows-x86_64"]);
     assert.deepEqual(feed.platforms["darwin-aarch64"], {
-      url: "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_macos_arm64.app.tar.gz",
-      signature: "SIG Oxide_0.1.0_macos_arm64.app.tar.gz",
+      url: "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide.app.tar.gz",
+      signature: "SIG Oxide.app.tar.gz",
     });
-    assert.equal(feed.platforms["windows-x86_64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_windows_x64.exe");
-    assert.equal(feed.platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide_0.1.0_linux_arm64.AppImage");
+    assert.equal(feed.platforms["windows-x86_64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide-x64.exe");
+    assert.equal(feed.platforms["linux-aarch64"].url, "https://github.com/getoxide/oxide/releases/download/v0.1.0/Oxide-arm64.AppImage");
   });
 
   test("points the notes at the release page", () => {
@@ -600,14 +614,14 @@ describe("buildUpdateFeed", () => {
 
   test("rejects a missing signature, naming the package", () => {
     const signatures = signaturesFor("0.1.0");
-    delete signatures["Oxide_0.1.0_windows_arm64.exe"];
-    assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide_0\.1\.0_windows_arm64\.exe/);
+    delete signatures["Oxide-arm64.exe"];
+    assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide-arm64\.exe/);
   });
 
   test("rejects an empty or blank signature", () => {
     for (const blank of ["", "  \n"]) {
-      const signatures = { ...signaturesFor("0.1.0"), "Oxide_0.1.0_linux_x64.AppImage": blank };
-      assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide_0\.1\.0_linux_x64\.AppImage/);
+      const signatures = { ...signaturesFor("0.1.0"), "Oxide-x64.AppImage": blank };
+      assert.throws(() => buildUpdateFeed(input({ signatures })), /Oxide-x64\.AppImage/);
     }
   });
 
@@ -622,17 +636,17 @@ describe("buildUpdateFeed", () => {
 
 describe("updater-only assets", () => {
   test("are the macOS archive, every signature and the feed", () => {
-    for (const name of ["Oxide_0.1.0_macos_arm64.app.tar.gz", "Oxide_0.1.0_windows_x64.exe.sig", "latest.json"]) assert.ok(isUpdaterOnlyAsset(name), name);
-    for (const name of ["Oxide_0.1.0_macos_arm64.dmg", "Oxide_0.1.0_windows_x64.exe", "Oxide_0.1.0_linux_x64.AppImage"]) assert.ok(!isUpdaterOnlyAsset(name), name);
+    for (const name of ["Oxide.app.tar.gz", "Oxide-x64.exe.sig", "latest.json"]) assert.ok(isUpdaterOnlyAsset(name), name);
+    for (const name of ["Oxide.dmg", "Oxide-x64.exe", "Oxide-x64.AppImage"]) assert.ok(!isUpdaterOnlyAsset(name), name);
   });
 
   test("the Downloads table ignores them", () => {
-    assert.equal(downloadsSection(["Oxide_0.1.0_macos_arm64.app.tar.gz", "Oxide_0.1.0_windows_x64.exe.sig", "latest.json"]), "");
+    assert.equal(downloadsSection(["Oxide.app.tar.gz", "Oxide-x64.exe.sig", "latest.json"]), "");
   });
 
   test("the notes' checksum list drops them and keeps the installers", () => {
-    const sums = ["aaa  Oxide_0.1.0_macos_arm64.dmg", "bbb  Oxide_0.1.0_macos_arm64.app.tar.gz", "ccc  Oxide_0.1.0_windows_x64.exe.sig", "ddd  Oxide_0.1.0_windows_x64.exe", "eee  latest.json"].join("\n") + "\n";
-    assert.equal(releaseChecksums(sums), "aaa  Oxide_0.1.0_macos_arm64.dmg\nddd  Oxide_0.1.0_windows_x64.exe\n");
+    const sums = ["aaa  Oxide.dmg", "bbb  Oxide.app.tar.gz", "ccc  Oxide-x64.exe.sig", "ddd  Oxide-x64.exe", "eee  latest.json"].join("\n") + "\n";
+    assert.equal(releaseChecksums(sums), "aaa  Oxide.dmg\nddd  Oxide-x64.exe\n");
   });
 });
 
@@ -673,38 +687,37 @@ describe("checkPublishedFeeds", () => {
 });
 
 describe("repositoryPlan", () => {
-  const REPO_ASSETS = (version) => [
-    `Oxide_${version}_linux_x64.deb`, `Oxide_${version}_linux_arm64.deb`, `Oxide_${version}_linux_x64.rpm`, `Oxide_${version}_linux_arm64.rpm`,
-    `Oxide_${version}_linux_x64.AppImage`, `Oxide_${version}_macos_arm64.dmg`, `Oxide_${version}_windows_x64.exe`, "latest.json",
+  const REPO_ASSETS = [
+    `Oxide-x64.deb`, `Oxide-arm64.deb`, `Oxide-x64.rpm`, `Oxide-arm64.rpm`,
+    `Oxide-x64.AppImage`, `Oxide.dmg`, `Oxide-x64.exe`, "latest.json",
   ];
 
   test("the packages of a repository are the one .deb and one .rpm of each architecture, and nothing else", () => {
-    const plan = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    const plan = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS });
     assert.deepEqual(plan.debs, [
-      { name: "Oxide_1.2.3_linux_x64.deb", arch: "amd64" },
-      { name: "Oxide_1.2.3_linux_arm64.deb", arch: "arm64" },
+      { name: "Oxide-x64.deb", arch: "amd64" },
+      { name: "Oxide-arm64.deb", arch: "arm64" },
     ]);
     assert.deepEqual(plan.rpms, [
-      { name: "Oxide_1.2.3_linux_x64.rpm", arch: "x86_64" },
-      { name: "Oxide_1.2.3_linux_arm64.rpm", arch: "aarch64" },
+      { name: "Oxide-x64.rpm", arch: "x86_64" },
+      { name: "Oxide-arm64.rpm", arch: "aarch64" },
     ]);
   });
 
-  test("a missing package, or one of another version, is an error", () => {
-    const without = REPO_ASSETS("1.2.3").filter((name) => name !== "Oxide_1.2.3_linux_arm64.rpm");
-    assert.throws(() => repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: without }), /Oxide_1\.2\.3_linux_arm64\.rpm/);
-    assert.throws(() => repositoryPlan({ tag: "v1.2.4", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }), /Oxide_1\.2\.4_linux_x64\.deb/);
+  test("a missing package is an error", () => {
+    const without = REPO_ASSETS.filter((name) => name !== "Oxide-arm64.rpm");
+    assert.throws(() => repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: without }), /Oxide-arm64\.rpm/);
     assert.throws(() => repositoryPlan({ tag: "main", repository: "getoxide/oxide", assetNames: [] }), /not a release tag/);
   });
 
   test("a stable release writes the DNF metadata, whose packages are the release's own assets", () => {
-    const { dnf, stable } = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    const { dnf, stable } = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS });
     assert.equal(stable, true);
     assert.deepEqual(dnf, { publish: true, baseUrl: "https://github.com/getoxide/oxide/releases/download/v1.2.3/", sitePath: "rpm" });
   });
 
   test("a pre-release is signed for rehearsal but never enters the DNF repository", () => {
-    const { dnf, stable } = repositoryPlan({ tag: "v1.3.0-rc.1", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.3.0-rc.1") });
+    const { dnf, stable } = repositoryPlan({ tag: "v1.3.0-rc.1", repository: "getoxide/oxide", assetNames: REPO_ASSETS });
     assert.equal(stable, false);
     assert.equal(dnf.publish, false);
     assert.equal(dnf.baseUrl, "https://github.com/getoxide/oxide/releases/download/v1.3.0-rc.1/");
@@ -713,7 +726,7 @@ describe("repositoryPlan", () => {
   test("the APT repository is these release assets, next to the public key", () => {
     assert.deepEqual(APT_REPOSITORY_FILES, ["InRelease", "Release", "Packages"]);
     assert.deepEqual(REPOSITORY_KEY_FILES, ["oxide-repository.gpg", "oxide-repository.asc"]);
-    assert.deepEqual(repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }).aptFiles, [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES]);
+    assert.deepEqual(repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS }).aptFiles, [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES]);
   });
 
   test("the release needs both repository secrets", () => {
@@ -766,19 +779,19 @@ describe("repository index files", () => {
 
   test("repository files and the key are release assets, kept out of the notes' checksums", () => {
     for (const name of ["InRelease", "Release", "Packages", "oxide-repository.gpg", "oxide-repository.asc", "dnf-site.tar.gz"]) assert.ok(isRepositoryAsset(name), name);
-    for (const name of ["Oxide_1.0.0_linux_x64.deb", "Oxide_1.0.0_linux_x64.rpm", "latest.json"]) assert.ok(!isRepositoryAsset(name), name);
-    assert.equal(releaseChecksums("a  InRelease\nb  Oxide_1.0.0_linux_x64.deb\nc  oxide-repository.asc\nd  dnf-site.tar.gz\n"), "b  Oxide_1.0.0_linux_x64.deb\n");
+    for (const name of ["Oxide-x64.deb", "Oxide-x64.rpm", "latest.json"]) assert.ok(!isRepositoryAsset(name), name);
+    assert.equal(releaseChecksums("a  InRelease\nb  Oxide-x64.deb\nc  oxide-repository.asc\nd  dnf-site.tar.gz\n"), "b  Oxide-x64.deb\n");
   });
 });
 
 describe("published repositories", () => {
-  const assetNames = ["x64", "arm64"].flatMap((arch) => ["deb", "rpm"].map((ext) => `Oxide_1.2.3_linux_${arch}.${ext}`));
+  const assetNames = ["x64", "arm64"].flatMap((arch) => ["deb", "rpm"].map((ext) => `Oxide-${arch}.${ext}`));
   const plan = repositoryPlan({ tag: "v1.2.3", repository: REPO, assetNames });
   const hashes = {
-    "Oxide_1.2.3_linux_x64.deb": "a1", "Oxide_1.2.3_linux_arm64.deb": "a2", "Oxide_1.2.3_linux_x64.rpm": "b1", "Oxide_1.2.3_linux_arm64.rpm": "b2",
+    "Oxide-x64.deb": "a1", "Oxide-arm64.deb": "a2", "Oxide-x64.rpm": "b1", "Oxide-arm64.rpm": "b2",
   };
   const stanza = (name, arch, sha) => `Package: oxide\nVersion: 1.2.3\nArchitecture: ${arch}\nFilename: ./${name}\nSize: 10\nSHA256: ${sha}\n`;
-  const packagesText = [stanza("Oxide_1.2.3_linux_x64.deb", "amd64", "a1"), stanza("Oxide_1.2.3_linux_arm64.deb", "arm64", "a2")].join("\n");
+  const packagesText = [stanza("Oxide-x64.deb", "amd64", "a1"), stanza("Oxide-arm64.deb", "arm64", "a2")].join("\n");
   const releaseText = aptReleaseFile({ packagesText, date: "d" });
 
   test("APT: an index that pins Packages and lists both architectures with the published hashes passes", () => {
@@ -792,17 +805,17 @@ describe("published repositories", () => {
   });
 
   test("APT: a missing architecture, a wrong hash or a foreign package name fails", () => {
-    const one = stanza("Oxide_1.2.3_linux_x64.deb", "amd64", "a1");
+    const one = stanza("Oxide-x64.deb", "amd64", "a1");
     assert.match(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: one, date: "d" }), packagesText: one, hashes }).message, /arm64/);
     const wrong = packagesText.replace("a2", "ff");
-    assert.match(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: wrong, date: "d" }), packagesText: wrong, hashes }).message, /Oxide_1\.2\.3_linux_arm64\.deb/);
+    assert.match(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: wrong, date: "d" }), packagesText: wrong, hashes }).message, /Oxide-arm64\.deb/);
     const foreign = packagesText.replace("Package: oxide", "Package: other");
     assert.equal(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: foreign, date: "d" }), packagesText: foreign, hashes }).ok, false);
   });
 
   const BASE = "https://github.com/getoxide/oxide/releases/download/v1.2.3/";
   const rpmEntry = (name, arch, sha, base = BASE) => `<package type="rpm"><name>oxide</name><arch>${arch}</arch><checksum type="sha256" pkgid="YES">${sha}</checksum><location xml:base="${base}" href="${name}"/></package>`;
-  const primaryXml = `<metadata packages="2">${rpmEntry("Oxide_1.2.3_linux_x64.rpm", "x86_64", "b1")}${rpmEntry("Oxide_1.2.3_linux_arm64.rpm", "aarch64", "b2")}</metadata>`;
+  const primaryXml = `<metadata packages="2">${rpmEntry("Oxide-x64.rpm", "x86_64", "b1")}${rpmEntry("Oxide-arm64.rpm", "aarch64", "b2")}</metadata>`;
   const repomd = `<repomd><data type="filelists"><checksum type="sha256">zz</checksum><location href="repodata/f.xml.gz"/></data><data type="primary"><checksum type="sha256">p1</checksum><open-checksum type="sha256">p0</open-checksum><location href="repodata/p1-primary.xml.gz"/></data></repomd>`;
 
   test("DNF: metadata whose primary hash matches and whose packages are the release's assets passes", () => {
@@ -817,7 +830,7 @@ describe("published repositories", () => {
 
   test("DNF: a wrong package hash, a missing arch or a foreign location fails", () => {
     assert.match(checkDnfRepository({ plan, repomd, primaryXml: primaryXml.replace("b2", "ff"), primarySha256: "p1", hashes }).message, /arm64\.rpm/);
-    assert.equal(checkDnfRepository({ plan, repomd, primaryXml: `<metadata>${rpmEntry("Oxide_1.2.3_linux_x64.rpm", "x86_64", "b1")}</metadata>`, primarySha256: "p1", hashes }).ok, false);
+    assert.equal(checkDnfRepository({ plan, repomd, primaryXml: `<metadata>${rpmEntry("Oxide-x64.rpm", "x86_64", "b1")}</metadata>`, primarySha256: "p1", hashes }).ok, false);
     assert.equal(checkDnfRepository({ plan, repomd, primaryXml: primaryXml.replaceAll(BASE, "https://example.com/"), primarySha256: "p1", hashes }).ok, false);
   });
 });
@@ -926,7 +939,7 @@ describe("the update pipeline", () => {
 
   test("the build stages a signature next to every updater package", () => {
     const build = read("build.yml");
-    for (const marker of [".app.tar.gz", "windows_${arch}", ".sig"]) assert.ok(build.includes(marker), marker);
+    for (const marker of [".app.tar.gz", "Oxide-${arch}", ".sig"]) assert.ok(build.includes(marker), marker);
   });
 
   test("the release publishes latest.json made from the signatures and keeps updater assets out of the notes", () => {

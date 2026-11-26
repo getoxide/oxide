@@ -148,6 +148,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
+          # Tauri skips the Finder step that lays out the disk image window (background, icon size and
+          # positions from bundle.macOS.dmg) when CI=true; the macOS runner can run it, so ask for it.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
         run: web/node_modules/.bin/tauri build --ci --bundles app,dmg ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Build the Windows installer
@@ -182,27 +185,26 @@ jobs:
           PLATFORM: ${{ inputs.platform }}
           SIGNED: ${{ steps.apple.outputs.signed }}
           NOTARIZED: ${{ steps.apple.outputs.notarized }}
-        # Each deliverable gets the name users see: Oxide_<version>_<os>_<arch>.<ext>.
+        # Each deliverable gets the short name users see, with no version (INSTALLERS in tools/ci/policy.mjs):
+        # Oxide.dmg, Oxide-<arch>.exe, Oxide-<arch>.AppImage/.deb/.rpm, so releases/latest/download/<name> works.
         run: |
           version=$(node -p "require('./crates/oxide-app/tauri.conf.json').version")
           bundle=target/release/bundle
           mkdir -p staged
-          # stage <source> <os_arch>: copy one installer under its release name.
+          # stage <source> <name>: copy one installer under its release name.
           stage() {
-            local ext="${1##*.}"
-            cp "$1" "staged/Oxide_${version}_$2.${ext}"
+            cp "$1" "staged/$2"
           }
-          # stage_signed <installer> <os_arch>: the same, plus the updater signature next to it.
+          # stage_signed <installer> <name>: the same, plus the updater signature next to it.
           stage_signed() {
             stage "$1" "$2"
-            cp "$1.sig" "staged/Oxide_${version}_$2.${1##*.}.sig"
+            cp "$1.sig" "staged/$2.sig"
           }
           case "$PLATFORM" in
             macos-aarch64)
-              stage "$bundle/dmg/Oxide_${version}_aarch64.dmg" macos_arm64
+              stage "$bundle/dmg/Oxide_${version}_aarch64.dmg" Oxide.dmg
               # The updater package is the .app archive; its name keeps both extensions.
-              cp "$bundle/macos/Oxide.app.tar.gz" "staged/Oxide_${version}_macos_arm64.app.tar.gz"
-              cp "$bundle/macos/Oxide.app.tar.gz.sig" "staged/Oxide_${version}_macos_arm64.app.tar.gz.sig"
+              stage_signed "$bundle/macos/Oxide.app.tar.gz" Oxide.app.tar.gz
               if [ "$NOTARIZED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
               elif [ "$SIGNED" = "true" ]; then
@@ -214,7 +216,7 @@ jobs:
             windows-x64|windows-aarch64)
               # Tauri names the installer after the architecture: x64-setup.exe or arm64-setup.exe.
               arch=x64; if [ "$PLATFORM" = "windows-aarch64" ]; then arch=arm64; fi
-              stage_signed "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "windows_${arch}"
+              stage_signed "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "Oxide-${arch}.exe"
               notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation. Once installed, Oxide updates itself: the Update button downloads, verifies and installs a release, then runs the installer without wizard pages on Restart now, or when you quit."
               ;;
             linux-x64|linux-aarch64)
@@ -226,9 +228,11 @@ jobs:
                   echo "::error::Expected exactly one $pattern in $bundle, found: ${matches[*]}"
                   exit 1
                 fi
-                stage "${matches[0]}" "linux_${arch}"
                 # The AppImage is also the updater package: its signature goes next to it.
-                case "${matches[0]}" in *.AppImage) cp "${matches[0]}.sig" "staged/Oxide_${version}_linux_${arch}.AppImage.sig" ;; esac
+                case "${matches[0]}" in
+                  *.AppImage) stage_signed "${matches[0]}" "Oxide-${arch}.AppImage" ;;
+                  *) stage "${matches[0]}" "Oxide-${arch}.${matches[0]##*.}" ;;
+                esac
               done
               notice="The Linux .deb and .rpm packages and the APT and DNF repositories are signed with the Oxide repository key: add the repository once (see the README), then \`sudo apt install oxide\` or \`sudo dnf install oxide\` installs and updates Oxide. The AppImage updates itself from the Update button (the file you launched is replaced). Verify any download against the release checksums or attestation."
               ;;
