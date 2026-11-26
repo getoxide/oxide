@@ -226,12 +226,7 @@ export function IssueDetailView({
               className="issue-parent-link"
               onClick={() => openLinkedIssue(detail.parent!)}
             >
-              <IssueStateIcon phase={issuePhase(detail.parent)} size={12} />
-              <span className="issue-linked-title">{detail.parent.title}</span>
-              <span className="issue-linked-number">#{detail.parent.number}</span>
-              {detail.parent.crossRepository && (
-                <span className="issue-linked-repo">{detail.parent.repository}</span>
-              )}
+              <LinkedIssueContent item={detail.parent} iconSize={12} />
             </button>
           )}
           {titleDraft === null ? (
@@ -633,6 +628,25 @@ export function IssueDetailView({
   );
 }
 
+function LinkedIssueContent({
+  item,
+  iconSize = 14,
+}: {
+  item: LinkedIssue;
+  iconSize?: number;
+}) {
+  return (
+    <>
+      <IssueStateIcon phase={issuePhase(item)} size={iconSize} />
+      <span className="issue-linked-title">{item.title}</span>
+      <span className="issue-linked-number">#{item.number}</span>
+      {item.crossRepository && (
+        <span className="issue-linked-repo">{item.repository}</span>
+      )}
+    </>
+  );
+}
+
 function LinkedIssueList({
   items,
   onOpen,
@@ -645,12 +659,7 @@ function LinkedIssueList({
       {items.map((item) => (
         <li key={`${item.repository}#${item.number}`}>
           <button type="button" className="issue-linked-item" onClick={() => onOpen(item)}>
-            <IssueStateIcon phase={issuePhase(item)} size={14} />
-            <span className="issue-linked-title">{item.title}</span>
-            <span className="issue-linked-number">#{item.number}</span>
-            {item.crossRepository && (
-              <span className="issue-linked-repo">{item.repository}</span>
-            )}
+            <LinkedIssueContent item={item} />
           </button>
         </li>
       ))}

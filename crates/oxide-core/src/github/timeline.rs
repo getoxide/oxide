@@ -302,11 +302,19 @@ fn item_fields(subject: Subject) -> String {
     fields
 }
 
-const LINKED_ISSUE_FIELDS: &str = "number title state stateReason url repository{nameWithOwner}";
+macro_rules! linked_issue_fields {
+    () => {
+        "number title state stateReason url repository{nameWithOwner}"
+    };
+}
 
-pub(super) const ISSUE_LIST_RELATIONSHIP_FIELDS: &str = "parent{number title state stateReason url repository{nameWithOwner}} \
-    subIssuesSummary{total completed} \
-    issueDependenciesSummary{blockedBy}";
+const LINKED_ISSUE_FIELDS: &str = linked_issue_fields!();
+
+pub(super) const ISSUE_LIST_RELATIONSHIP_FIELDS: &str = concat!(
+    "parent{",
+    linked_issue_fields!(),
+    "} subIssuesSummary{total completed} issueDependenciesSummary{blockedBy}"
+);
 
 /// One page of the timeline query: the first also reads the node's own fields, the next ones
 /// only the entries after `cursor`.
@@ -555,12 +563,13 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
         .nth(2)
         .filter(|_| !url.is_empty())
         .unwrap_or_default();
-    let current_repo = repo_nwo_from_url(&url);
+    let current_repo = repo_name_from_url(&url);
     let items = list(&node["timelineItems"]["nodes"]);
     let mut images = Vec::new();
     for html in std::iter::once(node).chain(items).map(|n| &n["bodyHTML"]) {
         signed_images(html.as_str().unwrap_or_default(), &mut images);
     }
+    let (sub_issues_total, sub_issues_completed, blocked_by_count) = relationship_counts(node);
     Timeline {
         node_id: text(&node["id"]),
         participants: list(&node["participants"]["nodes"])
@@ -576,19 +585,28 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
         signed_images: images,
         truncated: false,
         parent: linked_issue_from(&node["parent"], &current_repo),
-        sub_issues_total: node["subIssuesSummary"]["total"].as_u64().unwrap_or(0) as u32,
-        sub_issues_completed: node["subIssuesSummary"]["completed"].as_u64().unwrap_or(0) as u32,
+        sub_issues_total,
+        sub_issues_completed,
         sub_issues: linked_issues_from(&node["subIssues"]["nodes"], &current_repo),
-        blocked_by_count: node["issueDependenciesSummary"]["blockedBy"]
-            .as_u64()
-            .unwrap_or(0) as u32,
+        blocked_by_count,
         blocked_by: linked_issues_from(&node["blockedBy"]["nodes"], &current_repo),
         blocking: linked_issues_from(&node["blocking"]["nodes"], &current_repo),
     }
 }
 
+/// Extracts `(sub_issues_total, sub_issues_completed, blocked_by_count)` from a GraphQL issue node.
+pub(super) fn relationship_counts(node: &serde_json::Value) -> (u32, u32, u32) {
+    (
+        node["subIssuesSummary"]["total"].as_u64().unwrap_or(0) as u32,
+        node["subIssuesSummary"]["completed"].as_u64().unwrap_or(0) as u32,
+        node["issueDependenciesSummary"]["blockedBy"]
+            .as_u64()
+            .unwrap_or(0) as u32,
+    )
+}
+
 /// Extracts `owner/name` from an HTTPS issue URL like `https://github.com/owner/repo/issues/7`.
-pub(super) fn repo_nwo_from_url(url: &str) -> String {
+pub(super) fn repo_name_from_url(url: &str) -> String {
     let mut parts = url.rsplit('/');
     let _number = parts.next();
     let _kind = parts.next();

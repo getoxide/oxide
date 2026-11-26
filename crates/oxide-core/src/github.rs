@@ -1988,39 +1988,43 @@ fn enrich_issue_list_relationships(gh: &Gh, cwd: &Path, summaries: &mut [IssueSu
     let query = format!(
         "query=query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{fields}}}}}"
     );
-    let Ok(out) = gh.run(
-        cwd,
-        &[
-            "api",
-            "graphql",
-            "-F",
-            "owner={owner}",
-            "-F",
-            "name={repo}",
-            "-f",
-            &query,
-            "--jq",
-            ".data.repository",
-        ],
-    ) else {
-        return;
-    };
-    let Ok(repo) = parse(&out) else {
-        return;
+    let result = gh
+        .run(
+            cwd,
+            &[
+                "api",
+                "graphql",
+                "-F",
+                "owner={owner}",
+                "-F",
+                "name={repo}",
+                "-f",
+                &query,
+                "--jq",
+                ".data.repository",
+            ],
+        )
+        .map_err(Error::from)
+        .and_then(|out| parse(&out));
+    let repo = match result {
+        Ok(repo) => repo,
+        Err(err) => {
+            oxide_platform::diag::best_effort("enrich_issue_list_relationships", Err::<(), _>(err));
+            return;
+        }
     };
     for (i, summary) in summaries.iter_mut().enumerate() {
         let node = &repo[format!("i{i}")];
         if node.is_null() {
             continue;
         }
-        let current_repo = timeline::repo_nwo_from_url(&summary.url);
+        let current_repo = timeline::repo_name_from_url(&summary.url);
         summary.parent = timeline::linked_issue_from(&node["parent"], &current_repo);
-        summary.sub_issues_total = node["subIssuesSummary"]["total"].as_u64().unwrap_or(0) as u32;
-        summary.sub_issues_completed =
-            node["subIssuesSummary"]["completed"].as_u64().unwrap_or(0) as u32;
-        summary.blocked_by_count = node["issueDependenciesSummary"]["blockedBy"]
-            .as_u64()
-            .unwrap_or(0) as u32;
+        let (sub_issues_total, sub_issues_completed, blocked_by_count) =
+            timeline::relationship_counts(node);
+        summary.sub_issues_total = sub_issues_total;
+        summary.sub_issues_completed = sub_issues_completed;
+        summary.blocked_by_count = blocked_by_count;
     }
 }
 
