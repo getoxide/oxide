@@ -7,7 +7,7 @@ import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
-  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, repositoryPlan,
+  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, dnfRepoFile, isRepositoryAsset, repositoryPlan,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -655,6 +655,47 @@ describe("repositoryPlan", () => {
   test("the release needs both repository secrets", () => {
     assert.deepEqual(REPOSITORY_SECRETS, ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
     assert.deepEqual(missingSecrets({ OXIDE_REPOSITORY_SIGNING_KEY: "-----BEGIN" }, REPOSITORY_SECRETS), ["OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
+  });
+});
+
+describe("repository index files", () => {
+  test("the APT Release file pins the Packages index by SHA-256 and size and names both architectures", () => {
+    // sha256("abc") is the NIST test vector.
+    assert.equal(aptReleaseFile({ packagesText: "abc", date: "Thu, 26 Nov 2026 10:00:00 UTC" }), [
+      "Origin: Oxide",
+      "Label: Oxide",
+      "Suite: stable",
+      "Date: Thu, 26 Nov 2026 10:00:00 UTC",
+      "Architectures: amd64 arm64",
+      "Description: Oxide Linux packages",
+      "SHA256:",
+      " ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 3 Packages",
+      "",
+    ].join("\n"));
+  });
+
+  test("the size is in bytes, not characters", () => {
+    assert.match(aptReleaseFile({ packagesText: "é", date: "d" }), / 2 Packages\n$/);
+  });
+
+  test("the DNF repo file checks package and metadata signatures against the update site's key", () => {
+    assert.equal(dnfRepoFile(), [
+      "[oxide]",
+      "name=Oxide",
+      "baseurl=https://getoxide.github.io/oxide/rpm/",
+      "enabled=1",
+      "gpgcheck=1",
+      "repo_gpgcheck=1",
+      "gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc",
+      "metadata_expire=6h",
+      "",
+    ].join("\n"));
+  });
+
+  test("repository files and the key are release assets, kept out of the notes' checksums", () => {
+    for (const name of ["InRelease", "Release", "Packages", "oxide-repository.gpg", "oxide-repository.asc"]) assert.ok(isRepositoryAsset(name), name);
+    for (const name of ["Oxide_1.0.0_linux_x64.deb", "Oxide_1.0.0_linux_x64.rpm", "latest.json"]) assert.ok(!isRepositoryAsset(name), name);
+    assert.equal(releaseChecksums("a  InRelease\nb  Oxide_1.0.0_linux_x64.deb\nc  oxide-repository.asc\n"), "b  Oxide_1.0.0_linux_x64.deb\n");
   });
 });
 

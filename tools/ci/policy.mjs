@@ -1,5 +1,6 @@
 // Every decision the CI/CD pipeline makes, as pure functions. Workflows and
 // the local runner only gather inputs and act on the answers (see cli.mjs).
+import { createHash } from "node:crypto";
 
 const LANES = ["web", "rust", "bundle", "supplyChain", "automation"];
 const allLanes = (on) => Object.fromEntries(LANES.map((lane) => [lane, on]));
@@ -305,7 +306,7 @@ export function isUpdaterOnlyAsset(name) {
 
 /** The `sha256sum` listing of a release without the updater-only assets, for the notes. */
 export function releaseChecksums(listing) {
-  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
+  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop()) && !isRepositoryAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
 }
 
 /** Every package URL in a feed, for the reachability check. */
@@ -384,6 +385,48 @@ export function repositoryPlan({ tag, repository, assetNames }) {
     aptFiles: [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES],
     dnf: { publish: stable, baseUrl: releaseAssetBase(repository, tag), sitePath: "rpm" },
   };
+}
+
+/** Whether a release asset exists only for the repositories, so the notes' checksum list leaves it out. */
+export function isRepositoryAsset(name) {
+  return APT_REPOSITORY_FILES.includes(name) || REPOSITORY_KEY_FILES.includes(name);
+}
+
+/**
+ * The APT `Release` file of the flat repository. It pins `Packages` by hash and size, and the
+ * signed `InRelease` carries it, so a tampered index or package is refused. `date` is RFC 2822 in UTC.
+ */
+export function aptReleaseFile({ packagesText, date }) {
+  const bytes = Buffer.from(packagesText, "utf8");
+  return [
+    "Origin: Oxide",
+    "Label: Oxide",
+    "Suite: stable",
+    `Date: ${date}`,
+    `Architectures: ${REPOSITORY_ARCHES.map(({ deb }) => deb).join(" ")}`,
+    "Description: Oxide Linux packages",
+    "SHA256:",
+    ` ${createHash("sha256").update(bytes).digest("hex")} ${bytes.length} Packages`,
+    "",
+  ].join("\n");
+}
+
+/** The update site, which serves the DNF metadata and the key (GitHub Pages from the `updates` branch). */
+export const UPDATE_SITE = "https://getoxide.github.io/oxide/";
+
+/** The `.repo` file users add to `/etc/yum.repos.d/`: both package and metadata signatures are checked. */
+export function dnfRepoFile() {
+  return [
+    "[oxide]",
+    "name=Oxide",
+    `baseurl=${UPDATE_SITE}rpm/`,
+    "enabled=1",
+    "gpgcheck=1",
+    "repo_gpgcheck=1",
+    `gpgkey=${UPDATE_SITE}rpm/${REPOSITORY_KEY_FILES[1]}`,
+    "metadata_expire=6h",
+    "",
+  ].join("\n");
 }
 
 /** The names among `names` that `env` does not set to a non-blank value. */
