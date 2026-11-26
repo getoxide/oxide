@@ -1,6 +1,6 @@
 import { Skeleton } from "../shared/Skeleton";
 import { SurfaceSearch } from "../shared/SurfaceSearch";
-import { CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
+import { BlockedIcon, ChecklistIcon, CommentIcon, IssueOpenedIcon, PlusIcon } from "@primer/octicons-react";
 import { useEffect, useState } from "react";
 import { invalidateQueries, QUERY_STALE_MS, useQuery } from "../shared/queryCache";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -43,10 +43,16 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
     staleMs: QUERY_STALE_MS,
     poll,
   });
-  const [opened, setOpened] = useState<number | null>(null);
+  const [stack, setStack] = useState<number[]>([]);
+  const opened = stack[stack.length - 1] ?? null;
+  const previous = stack.length > 1 ? stack[stack.length - 2] : null;
   const [creating, setCreating] = useState(false);
   // Bumped after the list changed under it (a new issue, a closed one), beyond the timer.
   const [listRevision, setListRevision] = useState(0);
+
+  const openIssue = (number: number) => {
+    setStack((s) => (s[s.length - 1] === number ? s : [...s, number]));
+  };
 
   const changed = () => {
     invalidateQueries(githubKeys.issueLists(projectId));
@@ -69,7 +75,7 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
         onBack={() => setCreating(false)}
         onCreated={(created) => {
           setCreating(false);
-          setOpened(created.number);
+          openIssue(created.number);
           changed();
         }}
       />
@@ -77,14 +83,20 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
   } else if (opened !== null) {
     content = (
       <IssueDetailView
+        key={opened}
         projectId={projectId}
         number={opened}
+        backLabel={previous !== null ? `#${previous}` : "Issues"}
         refreshKey={refreshKey}
         pollKey={poll}
         onBack={() => {
-          setOpened(null);
-          setListRevision((n) => n + 1);
+          setStack((s) => {
+            const next = s.slice(0, -1);
+            if (next.length === 0) setListRevision((n) => n + 1);
+            return next;
+          });
         }}
+        onOpenIssue={openIssue}
         onChanged={changed}
       />
     );
@@ -94,7 +106,7 @@ function IssuesViews({ projectId, refreshKey = 0, active = true, onChanged }: Is
         projectId={projectId}
         refreshKey={refreshKey + listRevision}
         pollKey={poll}
-        onOpen={setOpened}
+        onOpen={openIssue}
         onCreate={() => setCreating(true)}
       />
     );
@@ -179,8 +191,28 @@ function IssueList({ projectId, refreshKey, pollKey, onOpen, onCreate }: IssueLi
                   <IssueStateIcon phase={issuePhase(issue)} />
                   <span className="pr-row-body">
                     <span className="pr-row-title">{issue.title}</span>
-                    {issue.labels.length > 0 && (
+                    {(issue.labels.length > 0 || issue.blockedByCount > 0 || issue.subIssuesTotal > 0 || issue.parent) && (
                       <span className="pr-labels">
+                        {issue.blockedByCount > 0 && (
+                          <span className="issue-badge blocked">
+                            <BlockedIcon size={12} />
+                            {issue.blockedByCount > 1 ? `Blocked · ${issue.blockedByCount}` : "Blocked"}
+                          </span>
+                        )}
+                        {issue.subIssuesTotal > 0 && (
+                          <span
+                            className="issue-badge subissues"
+                            title={`${issue.subIssuesCompleted} of ${issue.subIssuesTotal} sub-issues completed`}
+                          >
+                            <ChecklistIcon size={12} />
+                            {issue.subIssuesCompleted}/{issue.subIssuesTotal}
+                          </span>
+                        )}
+                        {issue.parent && (
+                          <span className="issue-parent-cue" title={`Parent: #${issue.parent.number} ${issue.parent.title}`}>
+                            #{issue.parent.number}
+                          </span>
+                        )}
                         {issue.labels.map((l) => (
                           <LabelChip key={l.name} label={l} />
                         ))}

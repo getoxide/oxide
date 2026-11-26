@@ -125,10 +125,10 @@ export const commands = {
 	issuesState: (projectId: number) => typedError<IssuesState_Serialize, AppError>(__TAURI_INVOKE("issues_state", { projectId })),
 	/**  The repository's issue templates (`.github/ISSUE_TEMPLATE`) as raw files; empty when it has none. */
 	issueTemplates: (projectId: number) => typedError<IssueTemplateFile[], AppError>(__TAURI_INVOKE("issue_templates", { projectId })),
-	listIssues: (projectId: number, closed: boolean, mine: boolean, search: string) => typedError<IssueSummary[], AppError>(__TAURI_INVOKE("list_issues", { projectId, closed, mine, search })),
+	listIssues: (projectId: number, closed: boolean, mine: boolean, search: string) => typedError<IssueSummary_Serialize[], AppError>(__TAURI_INVOKE("list_issues", { projectId, closed, mine, search })),
 	/**  `poll`: a background refresh, which reads only the first page of the Activity Timeline. */
 	issueDetail: (projectId: number, number: number, poll: boolean) => typedError<IssueDetail_Serialize, AppError>(__TAURI_INVOKE("issue_detail", { projectId, number, poll })),
-	createIssue: (projectId: number, title: string, body: string, assignees: string[], labels: string[]) => typedError<IssueSummary, AppError>(__TAURI_INVOKE("create_issue", { projectId, title, body, assignees, labels })),
+	createIssue: (projectId: number, title: string, body: string, assignees: string[], labels: string[]) => typedError<IssueSummary_Serialize, AppError>(__TAURI_INVOKE("create_issue", { projectId, title, body, assignees, labels })),
 	commentIssue: (projectId: number, number: number, body: string) => typedError<null, AppError>(__TAURI_INVOKE("comment_issue", { projectId, number, body })),
 	/**  Closes an issue with a reason, leaving `comment` first when it is not empty. */
 	closeIssue: (projectId: number, number: number, reason: IssueCloseReason, comment: string) => typedError<null, AppError>(__TAURI_INVOKE("close_issue", { projectId, number, reason, comment })),
@@ -224,6 +224,13 @@ export type IssueDetail_Deserialize = {
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
 	signedImages: SignedImage[],
+	parent?: LinkedIssue | null,
+	subIssuesTotal: number,
+	subIssuesCompleted: number,
+	subIssues: LinkedIssue[],
+	blockedByCount: number,
+	blockedBy: LinkedIssue[],
+	blocking: LinkedIssue[],
 };
 
 export type IssueDetail_Serialize = {
@@ -249,6 +256,13 @@ export type IssueDetail_Serialize = {
 	reactions: ReactionGroup[],
 	/**  Signed URLs for the private user attachments in the description and comments. */
 	signedImages: SignedImage[],
+	parent: LinkedIssue | null,
+	subIssuesTotal: number,
+	subIssuesCompleted: number,
+	subIssues: LinkedIssue[],
+	blockedByCount: number,
+	blockedBy: LinkedIssue[],
+	blocking: LinkedIssue[],
 };
 
 export type IssueEdit = IssueEdit_Serialize | IssueEdit_Deserialize;
@@ -271,7 +285,9 @@ export type IssueEdit_Serialize = {
 	removeLabels: string[],
 };
 
-export type IssueSummary = {
+export type IssueSummary = IssueSummary_Serialize | IssueSummary_Deserialize;
+
+export type IssueSummary_Deserialize = {
 	number: number,
 	title: string,
 	state: string,
@@ -282,6 +298,27 @@ export type IssueSummary = {
 	createdAt: string,
 	labels: PullRequestLabel[],
 	assignees: string[],
+	parent?: LinkedIssue | null,
+	subIssuesTotal: number,
+	subIssuesCompleted: number,
+	blockedByCount: number,
+};
+
+export type IssueSummary_Serialize = {
+	number: number,
+	title: string,
+	state: string,
+	stateReason: string,
+	author: string,
+	url: string,
+	commentsCount: number,
+	createdAt: string,
+	labels: PullRequestLabel[],
+	assignees: string[],
+	parent: LinkedIssue | null,
+	subIssuesTotal: number,
+	subIssuesCompleted: number,
+	blockedByCount: number,
 };
 
 export type IssueTemplateFile = {
@@ -342,6 +379,16 @@ export type LanguageTool_Serialize = {
 	resolvedPath: string | null,
 	installCommand: string,
 	documentation: string,
+};
+
+export type LinkedIssue = {
+	number: number,
+	title: string,
+	state: string,
+	stateReason: string,
+	url: string,
+	repository: string,
+	crossRepository: boolean,
 };
 
 export type MergeMethod = "merge" | "squash" | "rebase";

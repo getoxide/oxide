@@ -1163,6 +1163,7 @@ pub fn pull_request_detail(
         mut items,
         signed_images,
         truncated,
+        ..
     } = timeline.unwrap_or_default();
     timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(PullRequestDetail {
@@ -1731,6 +1732,23 @@ const ISSUE_FIELDS: &str =
 const ISSUE_DETAIL_FIELDS: &str =
     "number,title,body,state,stateReason,author,url,createdAt,comments,labels,assignees";
 
+/// An issue linked as a parent, sub-issue, or dependency (`blockedBy` / `blocking`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedIssue {
+    pub number: u32,
+    pub title: String,
+    /// `OPEN` or `CLOSED`.
+    pub state: String,
+    /// `COMPLETED`, `NOT_PLANNED`, or `REOPENED`; empty while open.
+    pub state_reason: String,
+    pub url: String,
+    /// `owner/name` of the repository the linked issue is in.
+    pub repository: String,
+    /// Whether this linked issue lives in a different repository than the current one.
+    pub cross_repository: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueSummary {
@@ -1746,6 +1764,10 @@ pub struct IssueSummary {
     pub created_at: String,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
+    pub parent: Option<LinkedIssue>,
+    pub sub_issues_total: u32,
+    pub sub_issues_completed: u32,
+    pub blocked_by_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1779,6 +1801,20 @@ pub struct IssueDetail {
     /// Signed URLs for the private user attachments shown in the description and comments;
     /// empty when the timeline could not be read.
     pub signed_images: Vec<SignedImage>,
+    /// Parent issue when this issue is a sub-issue.
+    pub parent: Option<LinkedIssue>,
+    /// Total number of sub-issues reported by `subIssuesSummary`.
+    pub sub_issues_total: u32,
+    /// Completed sub-issues reported by `subIssuesSummary`.
+    pub sub_issues_completed: u32,
+    /// First page of sub-issues (up to 50).
+    pub sub_issues: Vec<LinkedIssue>,
+    /// Count of open blockers from `issueDependenciesSummary.blockedBy`.
+    pub blocked_by_count: u32,
+    /// Issues blocking this issue (up to 50).
+    pub blocked_by: Vec<LinkedIssue>,
+    /// Issues blocked by this issue (up to 50).
+    pub blocking: Vec<LinkedIssue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1828,6 +1864,10 @@ fn issue_summary_from(v: &serde_json::Value) -> IssueSummary {
         created_at: text(&v["createdAt"]),
         labels: labels_from(&v["labels"]),
         assignees: logins_from(&v["assignees"]),
+        parent: None,
+        sub_issues_total: 0,
+        sub_issues_completed: 0,
+        blocked_by_count: 0,
     }
 }
 
@@ -1919,10 +1959,69 @@ pub fn list_issues(
         args.extend(["--search", search]);
     }
     let list = parse(&gh.run(cwd, &args)?)?;
-    Ok(list
+    let mut summaries: Vec<IssueSummary> = list
         .as_array()
         .map(|issues| issues.iter().map(issue_summary_from).collect())
-        .unwrap_or_default())
+        .unwrap_or_default();
+    enrich_issue_list_relationships(gh, cwd, &mut summaries);
+    Ok(summaries)
+}
+
+/// Best-effort GraphQL enrichment of `parent`, `subIssuesSummary`, and open `blockedBy` count
+/// for the listed issues in a single round trip; leaves fields empty/zero if unavailable.
+fn enrich_issue_list_relationships(gh: &Gh, cwd: &Path, summaries: &mut [IssueSummary]) {
+    if summaries.is_empty() {
+        return;
+    }
+    let fields = summaries
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            format!(
+                "i{i}:issue(number:{}){{{}}}",
+                s.number,
+                timeline::ISSUE_LIST_RELATIONSHIP_FIELDS
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let query = format!(
+        "query=query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{fields}}}}}"
+    );
+    let Ok(out) = gh.run(
+        cwd,
+        &[
+            "api",
+            "graphql",
+            "-F",
+            "owner={owner}",
+            "-F",
+            "name={repo}",
+            "-f",
+            &query,
+            "--jq",
+            ".data.repository",
+        ],
+    ) else {
+        return;
+    };
+    let Ok(repo) = parse(&out) else {
+        return;
+    };
+    for (i, summary) in summaries.iter_mut().enumerate() {
+        let node = &repo[format!("i{i}")];
+        if node.is_null() {
+            continue;
+        }
+        let current_repo = timeline::repo_nwo_from_url(&summary.url);
+        summary.parent = timeline::linked_issue_from(&node["parent"], &current_repo);
+        summary.sub_issues_total = node["subIssuesSummary"]["total"].as_u64().unwrap_or(0) as u32;
+        summary.sub_issues_completed =
+            node["subIssuesSummary"]["completed"].as_u64().unwrap_or(0) as u32;
+        summary.blocked_by_count = node["issueDependenciesSummary"]["blockedBy"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+    }
 }
 
 /// The issue templates the repository offers on GitHub, as the files they are written in.
@@ -2012,6 +2111,13 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32, poll: bool) -> Result<Issu
         mut items,
         signed_images,
         truncated,
+        parent,
+        sub_issues_total,
+        sub_issues_completed,
+        sub_issues,
+        blocked_by_count,
+        blocked_by,
+        blocking,
     } = timeline.unwrap_or_default();
     timeline::merge_conversation(&mut items, fallback_timeline(&v));
     Ok(IssueDetail {
@@ -2032,6 +2138,13 @@ pub fn issue_detail(gh: &Gh, cwd: &Path, number: u32, poll: bool) -> Result<Issu
         timeline_truncated: truncated,
         reactions,
         signed_images,
+        parent,
+        sub_issues_total,
+        sub_issues_completed,
+        sub_issues,
+        blocked_by_count,
+        blocked_by,
+        blocking,
     })
 }
 
@@ -2076,6 +2189,10 @@ pub fn create_issue(
         created_at: detail.created_at,
         labels: detail.labels,
         assignees: detail.assignees,
+        parent: detail.parent,
+        sub_issues_total: detail.sub_issues_total,
+        sub_issues_completed: detail.sub_issues_completed,
+        blocked_by_count: detail.blocked_by_count,
     })
 }
 

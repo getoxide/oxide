@@ -1,8 +1,11 @@
 import { Skeleton } from "../shared/Skeleton";
 import {
   ArrowLeftIcon,
+  BlockedIcon,
+  ChecklistIcon,
   ChevronDownIcon,
   CommentIcon,
+  IssueTracksIcon,
   MarkGithubIcon,
   PencilIcon,
 } from "@primer/octicons-react";
@@ -17,6 +20,7 @@ import {
   type IssueCloseReason,
   type IssueDetail,
   type IssueEdit,
+  type LinkedIssue,
 } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
 import { CopyLinkButton } from "../shared/CopyLinkButton";
@@ -37,11 +41,13 @@ import { shortcutLabel } from "../shared/platform";
 interface IssueDetailViewProps {
   projectId: number;
   number: number;
+  backLabel?: string;
   /** Changes when the user's own change should fetch the issue again. */
   refreshKey: number;
   /** Changes on the auto-refresh timer or focus: a soft ask that never overlaps a fetch in flight. */
   pollKey?: number;
   onBack: () => void;
+  onOpenIssue?: (number: number) => void;
   /** Called after the issue changed on GitHub, so the list reloads. */
   onChanged: () => void;
 }
@@ -74,7 +80,16 @@ const PILL = { open: "open", completed: "merged", notPlanned: "draft" } as const
 
 /** One issue, with what the web page lets you do: read and edit it, assign and label it,
  *  discuss it, close it with a reason or reopen it. */
-export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, onBack, onChanged }: IssueDetailViewProps) {
+export function IssueDetailView({
+  projectId,
+  number,
+  backLabel = "Issues",
+  refreshKey,
+  pollKey = 0,
+  onBack,
+  onOpenIssue,
+  onChanged,
+}: IssueDetailViewProps) {
   const [reload, setReload] = useState(0);
   const [editingComment, setEditingComment] = useState<string | null>(null);
   const query = useQuery(githubKeys.issueDetail(projectId, number), ({ poll }) => commands.issueDetail(projectId, number, poll), refreshKey + reload, {
@@ -97,11 +112,19 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
     if (message) setError(message);
   }
 
+  function openLinkedIssue(linked: LinkedIssue) {
+    if (!linked.crossRepository && linked.number > 0 && onOpenIssue) {
+      onOpenIssue(linked.number);
+    } else if (linked.url) {
+      void openLink(linked.url);
+    }
+  }
+
   const issue = loaded.state === "ready" ? loaded.issue : null;
   const nav = (
     <div className="pr-nav">
       <button className="pr-back" onClick={onBack}>
-        <ArrowLeftIcon size={14} /> Issues
+        <ArrowLeftIcon size={14} /> {backLabel}
       </button>
       <span className="grow" />
       {issue && (
@@ -197,6 +220,20 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
       {nav}
       <div className="pr-scroll">
         <header className="pr-hero">
+          {detail.parent && (
+            <button
+              type="button"
+              className="issue-parent-link"
+              onClick={() => openLinkedIssue(detail.parent!)}
+            >
+              <IssueStateIcon phase={issuePhase(detail.parent)} size={12} />
+              <span className="issue-linked-title">{detail.parent.title}</span>
+              <span className="issue-linked-number">#{detail.parent.number}</span>
+              {detail.parent.crossRepository && (
+                <span className="issue-linked-repo">{detail.parent.repository}</span>
+              )}
+            </button>
+          )}
           {titleDraft === null ? (
             <h3 className="pr-title">
               {detail.title} <span className="pr-number">#{detail.number}</span>
@@ -244,6 +281,12 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
               <IssueStateIcon phase={phase} size={14} />
               {ISSUE_PHASE_LABEL[phase]}
             </span>
+            {detail.blockedByCount > 0 && (
+              <span className="pr-status blocked">
+                <BlockedIcon size={14} />
+                {detail.blockedByCount > 1 ? `Blocked · ${detail.blockedByCount}` : "Blocked"}
+              </span>
+            )}
             <Avatar login={detail.author} size={20} />
             <span className="pr-row-author">
               <strong>{detail.author}</strong>
@@ -327,6 +370,60 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
             </div>
           </article>
         </section>
+
+        {(detail.subIssuesTotal > 0 || detail.subIssues.length > 0) && (
+          <section className="pr-section issue-linked-section" aria-label="Sub-issues">
+            <h4>
+              <ChecklistIcon size={14} />
+              Sub-issues
+              <span className="issue-linked-count">
+                {detail.subIssuesCompleted}/{detail.subIssuesTotal}
+              </span>
+            </h4>
+            {detail.subIssuesTotal > 0 && (
+              <div
+                className="issue-progress"
+                role="progressbar"
+                aria-label="Sub-issue progress"
+                aria-valuenow={detail.subIssuesCompleted}
+                aria-valuemin={0}
+                aria-valuemax={detail.subIssuesTotal}
+              >
+                <div
+                  className="issue-progress-fill"
+                  style={{
+                    width: `${Math.min(100, Math.round((detail.subIssuesCompleted / detail.subIssuesTotal) * 100))}%`,
+                  }}
+                />
+              </div>
+            )}
+            {detail.subIssues.length > 0 && (
+              <LinkedIssueList items={detail.subIssues} onOpen={openLinkedIssue} />
+            )}
+          </section>
+        )}
+
+        {detail.blockedBy.length > 0 && (
+          <section className="pr-section issue-linked-section" aria-label="Blocked by">
+            <h4>
+              <BlockedIcon size={14} />
+              Blocked by
+              <span className="issue-linked-count">{detail.blockedBy.length}</span>
+            </h4>
+            <LinkedIssueList items={detail.blockedBy} onOpen={openLinkedIssue} />
+          </section>
+        )}
+
+        {detail.blocking.length > 0 && (
+          <section className="pr-section issue-linked-section" aria-label="Blocking">
+            <h4>
+              <IssueTracksIcon size={14} />
+              Blocking
+              <span className="issue-linked-count">{detail.blocking.length}</span>
+            </h4>
+            <LinkedIssueList items={detail.blocking} onOpen={openLinkedIssue} />
+          </section>
+        )}
 
         <section className="pr-section pr-details" aria-label="Details">
           <Field
@@ -533,5 +630,30 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
     </div>
     </ReactionsSaved.Provider>
     </MarkdownImages>
+  );
+}
+
+function LinkedIssueList({
+  items,
+  onOpen,
+}: {
+  items: LinkedIssue[];
+  onOpen: (item: LinkedIssue) => void;
+}) {
+  return (
+    <ul className="issue-linked-list">
+      {items.map((item) => (
+        <li key={`${item.repository}#${item.number}`}>
+          <button type="button" className="issue-linked-item" onClick={() => onOpen(item)}>
+            <IssueStateIcon phase={issuePhase(item)} size={14} />
+            <span className="issue-linked-title">{item.title}</span>
+            <span className="issue-linked-number">#{item.number}</span>
+            {item.crossRepository && (
+              <span className="issue-linked-repo">{item.repository}</span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

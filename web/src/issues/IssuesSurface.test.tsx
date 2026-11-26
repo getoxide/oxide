@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary } from "../bindings";
+import { commands, type IssueDetail_Serialize as IssueDetail, type IssueSummary_Serialize as IssueSummary, type LinkedIssue } from "../bindings";
 import { IssuesSurface } from "./IssuesSurface";
 import { clearQueryCache, getQueryData, QUERY_STALE_MS } from "../shared/queryCache";
 import { REFRESH_INTERVAL_MS, REVALIDATE_AFTER_MS } from "../shared/useAutoRefresh";
@@ -21,6 +21,17 @@ async function focusLater() {
 let host: HTMLDivElement;
 let root: Root;
 
+const linked = (over: Partial<LinkedIssue> = {}): LinkedIssue => ({
+  number: 1,
+  title: "Parent epic",
+  state: "OPEN",
+  stateReason: "",
+  url: "https://github.com/fake/repo/issues/1",
+  repository: "fake/repo",
+  crossRepository: false,
+  ...over,
+});
+
 const summary = (over: Partial<IssueSummary> = {}): IssueSummary => ({
   number: 7,
   title: "Crash on startup",
@@ -32,6 +43,10 @@ const summary = (over: Partial<IssueSummary> = {}): IssueSummary => ({
   createdAt: "2026-01-01T00:00:00Z",
   labels: [{ name: "bug", color: "d73a4a" }],
   assignees: ["bob"],
+  parent: null,
+  subIssuesTotal: 0,
+  subIssuesCompleted: 0,
+  blockedByCount: 0,
   ...over,
 });
 
@@ -45,6 +60,9 @@ const detail = (over: Partial<IssueDetail> = {}): IssueDetail => ({
   timeline: [],
   timelineTruncated: false,
   signedImages: [],
+  subIssues: [],
+  blockedBy: [],
+  blocking: [],
   ...over,
 });
 
@@ -731,4 +749,144 @@ it("expands a collapsed issue description immediately when clicking Edit descrip
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("shows Blocked badge, sub-issue progress, and parent cue on issue list rows", async () => {
+  vi.mocked(commands.listIssues).mockResolvedValue({
+    status: "ok",
+    data: [
+      summary({
+        number: 10,
+        title: "Epic spec",
+        subIssuesTotal: 5,
+        subIssuesCompleted: 2,
+        blockedByCount: 0,
+      }),
+      summary({
+        number: 11,
+        title: "Single blocker",
+        parent: linked({ number: 10, title: "Epic spec" }),
+        blockedByCount: 1,
+      }),
+      summary({
+        number: 12,
+        title: "Multiple blockers",
+        blockedByCount: 3,
+      }),
+    ],
+  });
+
+  await render();
+  const rows = [...host.querySelectorAll(".pr-row")];
+  expect(rows).toHaveLength(3);
+
+  expect(rows[0].textContent).toContain("2/5");
+  expect(rows[0].textContent).not.toContain("Blocked");
+
+  expect(rows[1].textContent).toContain("Blocked");
+  expect(rows[1].textContent).not.toContain("Blocked · 1");
+  expect(rows[1].textContent).toContain("#10");
+
+  expect(rows[2].textContent).toContain("Blocked · 3");
+});
+
+it("renders Parent, Blocked hero badge, Sub-issues progress, and Blocked by / Blocking with in-app and external navigation", async () => {
+  const openExternal = vi.spyOn(commands, "openLink").mockResolvedValue({ status: "ok", data: null });
+  const childDetail = detail({
+    number: 10,
+    title: "Implement sub-issues",
+    parent: linked({ number: 1, title: "Epic spec" }),
+    subIssuesTotal: 2,
+    subIssuesCompleted: 1,
+    subIssues: [
+      linked({ number: 11, title: "Core GraphQL", state: "CLOSED", stateReason: "COMPLETED" }),
+      linked({ number: 12, title: "UI list", state: "OPEN" }),
+    ],
+    blockedByCount: 1,
+    blockedBy: [
+      linked({ number: 5, title: "Resolved blocker", state: "CLOSED", stateReason: "COMPLETED" }),
+      linked({
+        number: 99,
+        title: "Upstream API",
+        state: "OPEN",
+        url: "https://github.com/other/repo/issues/99",
+        repository: "other/repo",
+        crossRepository: true,
+      }),
+    ],
+    blocking: [linked({ number: 20, title: "Follow-up polish", state: "OPEN" })],
+  });
+  const parentDetail = detail({
+    number: 1,
+    title: "Epic spec",
+    parent: null,
+    subIssuesTotal: 0,
+    subIssuesCompleted: 0,
+    subIssues: [],
+    blockedByCount: 0,
+    blockedBy: [linked({ number: 4, title: "Old closed blocker", state: "CLOSED", stateReason: "COMPLETED" })],
+    blocking: [],
+  });
+
+  vi.mocked(commands.listIssues).mockResolvedValue({
+    status: "ok",
+    data: [summary({ number: 10, title: "Implement sub-issues" })],
+  });
+  vi.mocked(commands.issueDetail).mockImplementation(async (_projectId, num) => ({
+    status: "ok",
+    data: num === 1 ? parentDetail : childDetail,
+  }));
+
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  // Blocked hero badge shown because blockedByCount === 1.
+  const hero = host.querySelector(".pr-hero")!;
+  expect(hero.textContent).toContain("Blocked");
+
+  // Sub-issues section with progress bar and clickable items.
+  const subSection = host.querySelector('section[aria-label="Sub-issues"]')!;
+  expect(subSection.textContent).toContain("1/2");
+  const progress = subSection.querySelector('[role="progressbar"]')!;
+  expect(progress.getAttribute("aria-valuenow")).toBe("1");
+  expect(progress.getAttribute("aria-valuemax")).toBe("2");
+  expect(subSection.textContent).toContain("Core GraphQL");
+  expect(subSection.textContent).toContain("UI list");
+
+  // Blocked by and Blocking sections.
+  const blockedBySection = host.querySelector('section[aria-label="Blocked by"]')!;
+  expect(blockedBySection.textContent).toContain("Resolved blocker");
+  expect(blockedBySection.textContent).toContain("Upstream API");
+  expect(blockedBySection.textContent).toContain("other/repo");
+
+  const blockingSection = host.querySelector('section[aria-label="Blocking"]')!;
+  expect(blockingSection.textContent).toContain("Follow-up polish");
+
+  // Cross-repo blocker opens via Oxide's validated external-link flow.
+  const upstreamBtn = [...blockedBySection.querySelectorAll("button")].find((b) =>
+    b.textContent?.includes("Upstream API"),
+  )!;
+  await act(async () => upstreamBtn.click());
+  expect(openExternal).toHaveBeenCalledWith("https://github.com/other/repo/issues/99");
+
+  // Clicking same-repo Parent navigates in-app.
+  const parentBtn = host.querySelector<HTMLButtonElement>(".issue-parent-link")!;
+  expect(parentBtn.textContent).toContain("Epic spec");
+  await act(async () => parentBtn.click());
+
+  expect(commands.issueDetail).toHaveBeenLastCalledWith(1, 1, false);
+  expect(host.querySelector(".pr-title")?.textContent).toContain("Epic spec");
+  // Epic spec has blockedByCount: 0 (only a closed blocker), so Blocked hero badge is hidden.
+  expect(host.querySelector(".pr-hero")?.textContent).not.toContain("Blocked");
+
+  // Back pops to previous issue (#10), then second Back returns to the list.
+  const backToPrevious = host.querySelector<HTMLButtonElement>(".pr-back")!;
+  expect(backToPrevious.textContent).toContain("#10");
+  await act(async () => backToPrevious.click());
+  expect(host.querySelector(".pr-title")?.textContent).toContain("Implement sub-issues");
+
+  const backToList = host.querySelector<HTMLButtonElement>(".pr-back")!;
+  expect(backToList.textContent).toContain("Issues");
+  await act(async () => backToList.click());
+  expect(host.querySelector('ul[aria-label="Open issues"]')).not.toBeNull();
 });

@@ -941,6 +941,18 @@ pub struct PullRequestDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct LinkedIssue {
+    pub number: u32,
+    pub title: String,
+    pub state: String,
+    pub state_reason: String,
+    pub url: String,
+    pub repository: String,
+    pub cross_repository: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct IssueSummary {
     pub number: u32,
     pub title: String,
@@ -952,6 +964,10 @@ pub struct IssueSummary {
     pub created_at: String,
     pub labels: Vec<PullRequestLabel>,
     pub assignees: Vec<String>,
+    pub parent: Option<LinkedIssue>,
+    pub sub_issues_total: u32,
+    pub sub_issues_completed: u32,
+    pub blocked_by_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -979,6 +995,13 @@ pub struct IssueDetail {
     pub reactions: Vec<ReactionGroup>,
     /// Signed URLs for the private user attachments in the description and comments.
     pub signed_images: Vec<SignedImage>,
+    pub parent: Option<LinkedIssue>,
+    pub sub_issues_total: u32,
+    pub sub_issues_completed: u32,
+    pub sub_issues: Vec<LinkedIssue>,
+    pub blocked_by_count: u32,
+    pub blocked_by: Vec<LinkedIssue>,
+    pub blocking: Vec<LinkedIssue>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
