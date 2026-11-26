@@ -750,6 +750,56 @@ describe("published repositories", () => {
   });
 });
 
+describe("the repository pipeline", () => {
+  const read = (name) => readFileSync(fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)), "utf8");
+  const stepsOf = (text) => text.split(/\n {6}- /);
+
+  test("every release build checks the repository signing secrets before it builds anything", () => {
+    const build = read("build.yml");
+    const step = stepsOf(build).find((candidate) => candidate.includes("require-secrets"));
+    for (const secret of REPOSITORY_SECRETS) {
+      assert.ok(step.includes(`secrets.${secret}`), `${secret} is not read by the check`);
+      assert.match(step, new RegExp(`require-secrets .*${secret}`));
+    }
+    for (const marker of ["./.github/actions/setup-rust", "tauri build"]) assert.ok(build.indexOf(marker) > build.indexOf("require-secrets"), marker);
+  });
+
+  test("signing happens in its own approved job, before the draft, and only that job holds the key", () => {
+    const release = read("release.yml");
+    const job = release.slice(release.indexOf("\n  repositories:"), release.indexOf("\n  publish:"));
+    assert.match(job, /needs: build/);
+    assert.match(job, /environment: release/);
+    assert.ok(job.indexOf("require-secrets") > 0 && job.indexOf("require-secrets") < job.indexOf("sign-repositories.sh"), "the secrets are checked before anything is signed");
+    for (const secret of REPOSITORY_SECRETS) assert.ok(job.includes(`secrets.${secret}`), secret);
+    const publish = release.slice(release.indexOf("\n  publish:"));
+    assert.match(publish, /needs: \[build, repositories\]/);
+    for (const secret of REPOSITORY_SECRETS) assert.ok(!publish.includes(secret), `${secret} reaches the publish job`);
+    assert.ok(publish.indexOf("gh release create") > publish.indexOf("repository-release"), "the signed files are in the draft");
+    for (const secret of REPOSITORY_SECRETS) assert.ok(!read("verify-release.yml").includes(secret), `${secret} reaches verify-release.yml`);
+  });
+
+  test("the signed .rpm files replace the unsigned ones before the checksums and attestations", () => {
+    const publish = read("release.yml");
+    const assemble = publish.slice(publish.indexOf("Assemble the deliverables"), publish.indexOf("Upload release metadata"));
+    assert.ok(assemble.indexOf("staged-repository") > assemble.indexOf("-name '*.rpm'"), "the signed files are copied after the build's");
+    assert.ok(assemble.indexOf("staged-repository") < assemble.indexOf("sha256sum"));
+  });
+
+  test("publishing writes the DNF metadata for a stable release only, then checks both repositories", () => {
+    const verify = read("verify-release.yml");
+    assert.match(verify, /repository-plan/);
+    assert.match(verify, /steps\.plan\.outputs\.publish == 'true'/);
+    for (const marker of ["cli.mjs check-apt", "cli.mjs check-dnf", "gpgv", "repomd.xml.asc", "releases/latest/download/", "getoxide.github.io/oxide/rpm/"]) assert.ok(verify.includes(marker), marker);
+  });
+
+  test("the repository addresses are the ones the setup instructions and docs name", () => {
+    const readme = readFileSync(fileURLToPath(new URL("../../README.md", import.meta.url)), "utf8");
+    for (const text of ["signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./", "https://getoxide.github.io/oxide/rpm/oxide.repo"]) {
+      assert.ok(readme.includes(text), text);
+    }
+  });
+});
+
 describe("missingSecrets", () => {
   test("lists the secrets that are unset or empty", () => {
     assert.deepEqual(missingSecrets({ A: "x", B: "", C: "  " }, ["A", "B", "C", "D"]), ["B", "C", "D"]);

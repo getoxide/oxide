@@ -84,7 +84,30 @@ Until the first stable release is published, [build from source](#build-from-sou
 
 ### Updates
 
-Oxide has no in-app updater: the Settings page is empty for now. To update, download the newer installer from [GitHub Releases](https://github.com/getoxide/oxide/releases) and install it over the old one.
+How Oxide updates depends on how you installed it:
+
+- **macOS, Windows and the Linux AppImage** update from inside the app.
+- **Linux `.deb` and `.rpm`** update through your package manager, from Oxide's signed APT and DNF repositories (below). Both serve x64 and arm64.
+
+#### Linux: add the APT repository (Debian, Ubuntu)
+
+```sh
+sudo install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://github.com/getoxide/oxide/releases/latest/download/oxide-repository.gpg | sudo tee /usr/share/keyrings/oxide.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./" | sudo tee /etc/apt/sources.list.d/oxide.list
+sudo apt update && sudo apt install oxide
+```
+
+#### Linux: add the DNF repository (Fedora, RHEL, openSUSE)
+
+```sh
+sudo curl -fsSL -o /etc/yum.repos.d/oxide.repo https://getoxide.github.io/oxide/rpm/oxide.repo
+sudo dnf install oxide
+```
+
+`dnf` asks once to import the Oxide repository key; it checks both the packages and the repository metadata against it.
+
+After that, `sudo apt update && sudo apt upgrade` or `sudo dnf upgrade` brings each new release. Both repositories only ever serve stable releases: a pre-release (`-rc`) never reaches them.
 
 ### Verifying a download
 
