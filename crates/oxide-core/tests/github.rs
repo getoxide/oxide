@@ -2741,3 +2741,225 @@ fn fetch_github_image_refuses_unknown_projects_and_non_github_urls_without_a_req
     }
     assert!(f.gh_calls().is_empty(), "no gh call for a refused URL");
 }
+
+#[test]
+fn issue_detail_reads_parent_subissues_and_dependencies() {
+    let f = fixture();
+    install_gh(
+        &f,
+        &serde_json::json!({
+            "auth": "ok",
+            "default_branch": "main",
+            "issues": [
+                {
+                    "number": 10,
+                    "title": "Implement feature X",
+                    "body": "Details",
+                    "state": "OPEN",
+                    "author": {"login": "alice"},
+                    "url": "https://github.com/fake/repo/issues/10",
+                    "createdAt": "2026-01-03T10:00:00Z",
+                    "comments": []
+                }
+            ],
+            "timelines": {
+                "10": {
+                    "id": "I_10",
+                    "url": "https://github.com/fake/repo/issues/10",
+                    "participants": {"nodes": []},
+                    "reactionGroups": [],
+                    "timelineItems": {"nodes": []},
+                    "parent": {
+                        "number": 1,
+                        "title": "Epic spec",
+                        "state": "OPEN",
+                        "stateReason": "",
+                        "url": "https://github.com/fake/repo/issues/1",
+                        "repository": {"nameWithOwner": "fake/repo"}
+                    },
+                    "subIssuesSummary": {"total": 3, "completed": 1},
+                    "subIssues": {
+                        "nodes": [
+                            {
+                                "number": 11,
+                                "title": "Child one",
+                                "state": "CLOSED",
+                                "stateReason": "COMPLETED",
+                                "url": "https://github.com/fake/repo/issues/11",
+                                "repository": {"nameWithOwner": "fake/repo"}
+                            },
+                            {
+                                "number": 12,
+                                "title": "Child two",
+                                "state": "OPEN",
+                                "stateReason": "",
+                                "url": "https://github.com/fake/repo/issues/12",
+                                "repository": {"nameWithOwner": "fake/repo"}
+                            }
+                        ]
+                    },
+                    "issueDependenciesSummary": {"blockedBy": 1, "totalBlockedBy": 2},
+                    "blockedBy": {
+                        "nodes": [
+                            {
+                                "number": 5,
+                                "title": "Resolved blocker",
+                                "state": "CLOSED",
+                                "stateReason": "COMPLETED",
+                                "url": "https://github.com/fake/repo/issues/5",
+                                "repository": {"nameWithOwner": "fake/repo"}
+                            },
+                            {
+                                "number": 99,
+                                "title": "Upstream blocker",
+                                "state": "OPEN",
+                                "stateReason": "",
+                                "url": "https://github.com/other/repo/issues/99",
+                                "repository": {"nameWithOwner": "other/repo"}
+                            }
+                        ]
+                    },
+                    "blocking": {
+                        "nodes": [
+                            {
+                                "number": 20,
+                                "title": "Downstream task",
+                                "state": "OPEN",
+                                "stateReason": "",
+                                "url": "https://github.com/fake/repo/issues/20",
+                                "repository": {"nameWithOwner": "fake/repo"}
+                            }
+                        ]
+                    }
+                }
+            }
+        }),
+    );
+
+    let detail = f.core.issue_detail(f.project.id, 10).unwrap();
+    assert_eq!(detail.parent.as_ref().map(|p| p.number), Some(1));
+    assert_eq!(
+        detail.parent.as_ref().map(|p| p.cross_repository),
+        Some(false)
+    );
+    assert_eq!(detail.sub_issues_total, 3);
+    assert_eq!(detail.sub_issues_completed, 1);
+    assert_eq!(detail.sub_issues.len(), 2);
+    assert_eq!(detail.sub_issues[0].number, 11);
+    assert_eq!(detail.sub_issues[0].state_reason, "COMPLETED");
+    // Open blocker count comes from issueDependenciesSummary.blockedBy (1), not totalBlockedBy (2).
+    assert_eq!(detail.blocked_by_count, 1);
+    assert_eq!(detail.blocked_by.len(), 2);
+    assert!(!detail.blocked_by[0].cross_repository);
+    assert!(detail.blocked_by[1].cross_repository);
+    assert_eq!(detail.blocked_by[1].repository, "other/repo");
+    assert_eq!(detail.blocking.len(), 1);
+    assert_eq!(detail.blocking[0].number, 20);
+
+    // Only one GraphQL round trip was made for issue_detail.
+    let graphql_calls = f
+        .gh_calls()
+        .into_iter()
+        .filter(|args| args.starts_with(&["api".into(), "graphql".into()]))
+        .count();
+    assert_eq!(graphql_calls, 1);
+}
+
+#[test]
+fn list_issues_enriches_parent_subissues_and_open_blockers() {
+    let f = fixture();
+    install_gh(
+        &f,
+        &serde_json::json!({
+            "auth": "ok",
+            "default_branch": "main",
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Epic spec",
+                    "body": "",
+                    "state": "OPEN",
+                    "author": {"login": "alice"},
+                    "url": "https://github.com/fake/repo/issues/1",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "comments": [],
+                    "subIssuesSummary": {"total": 4, "completed": 2}
+                },
+                {
+                    "number": 2,
+                    "title": "Blocked child",
+                    "body": "",
+                    "state": "OPEN",
+                    "author": {"login": "bob"},
+                    "url": "https://github.com/fake/repo/issues/2",
+                    "createdAt": "2026-01-02T00:00:00Z",
+                    "comments": [],
+                    "parent": {
+                        "number": 1,
+                        "title": "Epic spec",
+                        "state": "OPEN",
+                        "stateReason": "",
+                        "url": "https://github.com/fake/repo/issues/1",
+                        "repository": {"nameWithOwner": "fake/repo"}
+                    },
+                    "issueDependenciesSummary": {"blockedBy": 2, "totalBlockedBy": 3}
+                },
+                {
+                    "number": 3,
+                    "title": "Unblocked after closing",
+                    "body": "",
+                    "state": "OPEN",
+                    "author": {"login": "charlie"},
+                    "url": "https://github.com/fake/repo/issues/3",
+                    "createdAt": "2026-01-03T00:00:00Z",
+                    "comments": [],
+                    "issueDependenciesSummary": {"blockedBy": 0, "totalBlockedBy": 2}
+                }
+            ]
+        }),
+    );
+
+    let list = f.core.list_issues(f.project.id, false, false, "").unwrap();
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].parent, None);
+    assert_eq!(list[0].sub_issues_total, 4);
+    assert_eq!(list[0].sub_issues_completed, 2);
+    assert_eq!(list[0].blocked_by_count, 0);
+
+    assert_eq!(list[1].parent.as_ref().map(|p| p.number), Some(1));
+    assert_eq!(list[1].blocked_by_count, 2);
+
+    assert_eq!(list[2].blocked_by_count, 0);
+}
+
+#[test]
+fn list_issues_degrades_cleanly_when_relationships_query_fails() {
+    let f = fixture();
+    install_gh(
+        &f,
+        &serde_json::json!({
+            "auth": "ok",
+            "default_branch": "main",
+            "relationships_error": "GraphQL: Field 'subIssuesSummary' doesn't exist",
+            "issues": [
+                {
+                    "number": 1,
+                    "title": "Plain issue",
+                    "body": "",
+                    "state": "OPEN",
+                    "author": {"login": "alice"},
+                    "url": "https://github.com/fake/repo/issues/1",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "comments": []
+                }
+            ]
+        }),
+    );
+
+    let list = f.core.list_issues(f.project.id, false, false, "").unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].parent, None);
+    assert_eq!(list[0].sub_issues_total, 0);
+    assert_eq!(list[0].sub_issues_completed, 0);
+    assert_eq!(list[0].blocked_by_count, 0);
+}

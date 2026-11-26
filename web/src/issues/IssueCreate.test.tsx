@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { commands, type IssueSummary } from "../bindings";
+import { commands, type IssueSummary_Serialize as IssueSummary } from "../bindings";
 import { IssueCreate } from "./IssueCreate";
 import { clearQueryCache } from "../shared/queryCache";
 

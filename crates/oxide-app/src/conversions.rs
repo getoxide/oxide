@@ -512,6 +512,20 @@ impl From<oxide_core::SignedImage> for SignedImage {
     }
 }
 
+impl From<oxide_core::LinkedIssue> for LinkedIssue {
+    fn from(i: oxide_core::LinkedIssue) -> Self {
+        Self {
+            number: i.number,
+            title: i.title,
+            state: i.state,
+            state_reason: i.state_reason,
+            url: i.url,
+            repository: i.repository,
+            cross_repository: i.cross_repository,
+        }
+    }
+}
+
 impl From<oxide_core::IssueSummary> for IssueSummary {
     fn from(s: oxide_core::IssueSummary) -> Self {
         Self {
@@ -525,6 +539,10 @@ impl From<oxide_core::IssueSummary> for IssueSummary {
             created_at: s.created_at,
             labels: s.labels.into_iter().map(Into::into).collect(),
             assignees: s.assignees,
+            parent: s.parent.map(Into::into),
+            sub_issues_total: s.sub_issues_total,
+            sub_issues_completed: s.sub_issues_completed,
+            blocked_by_count: s.blocked_by_count,
         }
     }
 }
@@ -549,6 +567,13 @@ impl From<oxide_core::IssueDetail> for IssueDetail {
             timeline_truncated: d.timeline_truncated,
             reactions: d.reactions.into_iter().map(Into::into).collect(),
             signed_images: d.signed_images.into_iter().map(Into::into).collect(),
+            parent: d.parent.map(Into::into),
+            sub_issues_total: d.sub_issues_total,
+            sub_issues_completed: d.sub_issues_completed,
+            sub_issues: d.sub_issues.into_iter().map(Into::into).collect(),
+            blocked_by_count: d.blocked_by_count,
+            blocked_by: d.blocked_by.into_iter().map(Into::into).collect(),
+            blocking: d.blocking.into_iter().map(Into::into).collect(),
         }
     }
 }

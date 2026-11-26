@@ -3,7 +3,7 @@
 
 use super::image::{SignedImage, signed_images};
 use super::reactions::{REACTION_FIELDS, ReactionGroup, reactions_from};
-use super::{CheckState, Gh, PullRequestLabel, ReviewState, review_state_from, text};
+use super::{CheckState, Gh, LinkedIssue, PullRequestLabel, ReviewState, review_state_from, text};
 use oxide_platform::sync::LockExt;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -187,6 +187,13 @@ pub(super) struct Timeline {
     pub signed_images: Vec<SignedImage>,
     /// Whether GitHub holds more entries than the pages read.
     pub truncated: bool,
+    pub parent: Option<LinkedIssue>,
+    pub sub_issues_total: u32,
+    pub sub_issues_completed: u32,
+    pub sub_issues: Vec<LinkedIssue>,
+    pub blocked_by_count: u32,
+    pub blocked_by: Vec<LinkedIssue>,
+    pub blocking: Vec<LinkedIssue>,
 }
 
 /// Which kind of number the query asks for.
@@ -295,6 +302,20 @@ fn item_fields(subject: Subject) -> String {
     fields
 }
 
+macro_rules! linked_issue_fields {
+    () => {
+        "number title state stateReason url repository{nameWithOwner}"
+    };
+}
+
+const LINKED_ISSUE_FIELDS: &str = linked_issue_fields!();
+
+pub(super) const ISSUE_LIST_RELATIONSHIP_FIELDS: &str = concat!(
+    "parent{",
+    linked_issue_fields!(),
+    "} subIssuesSummary{total completed} issueDependenciesSummary{blockedBy}"
+);
+
 /// One page of the timeline query: the first also reads the node's own fields, the next ones
 /// only the entries after `cursor`.
 fn timeline_page(
@@ -304,12 +325,50 @@ fn timeline_page(
     number: u32,
     cursor: Option<&str>,
 ) -> Option<serde_json::Value> {
+    let relationships = matches!(subject, Subject::Issue) && cursor.is_none();
+    let parsed = run_timeline_page(gh, cwd, subject, number, cursor, relationships);
+    // Older GitHub Enterprise servers may lack sub-issue or dependency GraphQL fields: fall back
+    // to the timeline-only query so comments, reactions, and attachments still load.
+    let parsed = if parsed.is_err() && relationships {
+        run_timeline_page(gh, cwd, subject, number, cursor, false)
+    } else {
+        parsed
+    };
+    // Polled every few seconds: a GitHub that keeps refusing the query is reported once, when
+    // it starts to.
+    let failing = parsed.is_err();
+    if gh.timeline_refused.swap(failing, Ordering::Relaxed) != failing {
+        oxide_platform::diag::best_effort("timeline query", parsed.as_ref().map(|_| ()));
+    }
+    parsed.ok()
+}
+
+fn run_timeline_page(
+    gh: &Gh,
+    cwd: &Path,
+    subject: Subject,
+    number: u32,
+    cursor: Option<&str>,
+    include_relationships: bool,
+) -> crate::Result<serde_json::Value> {
     let field = match subject {
         Subject::Issue => "issue",
         Subject::PullRequest => "pullRequest",
     };
     let head = if cursor.is_none() {
-        format!("id url bodyHTML {REACTION_FIELDS} participants(first:50){{nodes{{login}}}} ")
+        let rel = if include_relationships {
+            format!(
+                "parent{{{LINKED_ISSUE_FIELDS}}} \
+                 subIssuesSummary{{total completed}} \
+                 subIssues(first:50){{nodes{{{LINKED_ISSUE_FIELDS}}}}} \
+                 blockedBy(first:50){{nodes{{{LINKED_ISSUE_FIELDS}}}}} \
+                 blocking(first:50){{nodes{{{LINKED_ISSUE_FIELDS}}}}} \
+                 issueDependenciesSummary{{blockedBy}} "
+            )
+        } else {
+            String::new()
+        };
+        format!("id url bodyHTML {REACTION_FIELDS} participants(first:50){{nodes{{login}}}} {rel}")
     } else {
         String::new()
     };
@@ -340,17 +399,9 @@ fn timeline_page(
         args.extend(["-f", cursor.as_str()]);
     }
     args.extend(["--jq", &jq]);
-    let parsed = gh
-        .run(cwd, &args)
+    gh.run(cwd, &args)
         .map_err(crate::Error::from)
-        .and_then(|out| super::parse(&out));
-    // Polled every few seconds: a GitHub that keeps refusing the query is reported once, when
-    // it starts to.
-    let failing = parsed.is_err();
-    if gh.timeline_refused.swap(failing, Ordering::Relaxed) != failing {
-        oxide_platform::diag::best_effort("timeline query", parsed.as_ref().map(|_| ()));
-    }
-    parsed.ok()
+        .and_then(|out| super::parse(&out))
 }
 
 /// The cursor of the page after the one `info` describes, if GitHub holds one.
@@ -512,11 +563,13 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
         .nth(2)
         .filter(|_| !url.is_empty())
         .unwrap_or_default();
+    let current_repo = repo_name_from_url(&url);
     let items = list(&node["timelineItems"]["nodes"]);
     let mut images = Vec::new();
     for html in std::iter::once(node).chain(items).map(|n| &n["bodyHTML"]) {
         signed_images(html.as_str().unwrap_or_default(), &mut images);
     }
+    let (sub_issues_total, sub_issues_completed, blocked_by_count) = relationship_counts(node);
     Timeline {
         node_id: text(&node["id"]),
         participants: list(&node["participants"]["nodes"])
@@ -531,7 +584,61 @@ fn timeline_from(node: &serde_json::Value) -> Timeline {
             .collect(),
         signed_images: images,
         truncated: false,
+        parent: linked_issue_from(&node["parent"], &current_repo),
+        sub_issues_total,
+        sub_issues_completed,
+        sub_issues: linked_issues_from(&node["subIssues"]["nodes"], &current_repo),
+        blocked_by_count,
+        blocked_by: linked_issues_from(&node["blockedBy"]["nodes"], &current_repo),
+        blocking: linked_issues_from(&node["blocking"]["nodes"], &current_repo),
     }
+}
+
+/// Extracts `(sub_issues_total, sub_issues_completed, blocked_by_count)` from a GraphQL issue node.
+pub(super) fn relationship_counts(node: &serde_json::Value) -> (u32, u32, u32) {
+    (
+        node["subIssuesSummary"]["total"].as_u64().unwrap_or(0) as u32,
+        node["subIssuesSummary"]["completed"].as_u64().unwrap_or(0) as u32,
+        node["issueDependenciesSummary"]["blockedBy"]
+            .as_u64()
+            .unwrap_or(0) as u32,
+    )
+}
+
+/// Extracts `owner/name` from an HTTPS issue URL like `https://github.com/owner/repo/issues/7`.
+pub(super) fn repo_name_from_url(url: &str) -> String {
+    let mut parts = url.rsplit('/');
+    let _number = parts.next();
+    let _kind = parts.next();
+    match (parts.next(), parts.next()) {
+        (Some(repo), Some(owner)) if !owner.is_empty() && !repo.is_empty() => {
+            format!("{owner}/{repo}")
+        }
+        _ => String::new(),
+    }
+}
+
+pub(super) fn linked_issue_from(v: &serde_json::Value, current_repo: &str) -> Option<LinkedIssue> {
+    let number = v["number"].as_u64().filter(|&n| n > 0)? as u32;
+    let repository = text(&v["repository"]["nameWithOwner"]);
+    let cross_repository =
+        !repository.is_empty() && !current_repo.is_empty() && repository != current_repo;
+    Some(LinkedIssue {
+        number,
+        title: text(&v["title"]),
+        state: text(&v["state"]),
+        state_reason: text(&v["stateReason"]),
+        url: https(&v["url"]),
+        repository,
+        cross_repository,
+    })
+}
+
+fn linked_issues_from(v: &serde_json::Value, current_repo: &str) -> Vec<LinkedIssue> {
+    list(v)
+        .iter()
+        .filter_map(|item| linked_issue_from(item, current_repo))
+        .collect()
 }
 
 /// A login that may be a user, a bot or a team (which has a `name`). Deleted accounts are

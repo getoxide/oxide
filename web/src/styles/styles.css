@@ -650,7 +650,8 @@ button.md-image-open:hover:not(:disabled) { background: none; text-decoration: u
 .pr-views .pr-entry-card > header strong { color: var(--fg-bright); }
 .pr-views .pr-entry-card > header time { margin-left: auto; color: var(--faint); }
 .pr-views .pr-entry-action { display: inline-flex; align-items: center; gap: 4px; }
-.pr-views .pr-entry-card > .md { padding: 8px 10px; }
+.pr-views .pr-entry-card > .md,
+.pr-views .pr-entry-card > .collapsible > .collapsible-inner > .md { padding: 8px 10px; }
 .pr-views .pr-entry-card > header:last-child { border-bottom: 0; }
 /* Activity Timeline rows: compact, between the comment cards, the icon on the avatars' axis. */
 .pr-views .pr-timeline-event { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 0 0 4px; font-size: 12px; color: var(--dim); }
@@ -721,6 +722,25 @@ button.md-image-open:hover:not(:disabled) { background: none; text-decoration: u
 .pr-person { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-views .pr-labels { display: flex; flex-wrap: wrap; gap: 6px; }
 .pr-label { --label: var(--faint); padding: 0 8px; border-radius: 99px; font-size: 12px; font-weight: 600; line-height: 20px; border: 1px solid color-mix(in srgb, var(--label) 50%, transparent); background: color-mix(in srgb, var(--label) 20%, transparent); color: color-mix(in srgb, var(--label) 45%, white); }
+
+/* Issue sub-issues and blocked/blocking relationships */
+.pr-views .pr-status.blocked, .issue-badge.blocked { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 99px; font-size: 12px; font-weight: 600; line-height: 20px; background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red-on-tint); }
+.pr-views .pr-status.blocked { padding: 2px 9px 2px 7px; line-height: normal; }
+.issue-badge.subissues { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 99px; font-size: 12px; font-weight: 600; line-height: 20px; background: var(--bg4); color: var(--dim); }
+.issue-parent-cue { font-size: 12px; color: var(--dim); line-height: 20px; }
+.pr-views .issue-parent-link { display: inline-flex; align-items: center; gap: 6px; justify-self: start; min-width: 0; max-width: 100%; min-height: 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; background: var(--bg2); color: var(--dim); font-size: 12px; overflow: hidden; }
+.pr-views .issue-parent-link > svg { flex: none; }
+.pr-views .issue-parent-link:hover { background: var(--bg3); color: var(--fg); }
+.pr-views .issue-linked-section { grid-template-columns: minmax(0, 1fr); min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); padding: 10px 12px; overflow: hidden; }
+.pr-views .issue-linked-count { font-size: 12px; font-weight: 600; color: var(--dim); }
+.pr-views .issue-progress { width: 100%; min-width: 0; height: 6px; border-radius: 99px; background: var(--bg4); overflow: hidden; }
+.pr-views .issue-progress-fill { height: 100%; border-radius: 99px; background: var(--green); transition: width var(--motion-fast) ease-out; }
+.pr-views .issue-linked-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
+.pr-views .issue-linked-item { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; max-width: 100%; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--fg); text-align: left; overflow: hidden; }
+.pr-views .issue-linked-item > svg { flex: none; }
+.pr-views .issue-linked-item:hover { background: var(--bg3); }
+.pr-views .issue-linked-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-views .issue-linked-number, .pr-views .issue-linked-repo { font-size: 12px; color: var(--dim); flex: none; }
 
 /* Popovers: reviewers/assignees/labels pickers and merge options. Portalled to <body>. */
 .pr-popover { position: fixed; z-index: 60; display: flex; flex-direction: column; overflow: auto; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg2); box-shadow: 0 12px 32px #0008; color: var(--fg); }
@@ -966,6 +986,8 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .pr-views .pr-row .pr-labels { margin: 1px 0; }
 .pr-views .issue-edit { margin-left: var(--space-1); vertical-align: middle; }
 .pr-views .pr-entry-card > header .issue-edit { margin-left: auto; }
+.pr-views .issue-body-toggle .pr-chev { transition: transform var(--motion-fast) ease-out; color: var(--faint); }
+.pr-views .issue-body-toggle[aria-expanded="true"] .pr-chev { transform: rotate(180deg); }
 .pr-views .issue-title-edit { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .pr-views .issue-title-edit input { flex: 1 1 160px; min-width: 0; }
 .pr-views .issue-body-edit { display: grid; gap: var(--space-2); padding: var(--space-2); }

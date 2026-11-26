@@ -35,12 +35,13 @@ pub use files::{FileContent, FileEntry};
 pub use git::FETCH_INTERVAL;
 pub use github::{
     CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueDetail, IssueEdit,
-    IssueSummary, IssueTemplateFile, IssuesState, MergeMethod, MergeState, PullRequest,
-    PullRequestCandidates, PullRequestCheck, PullRequestDetail, PullRequestDraft, PullRequestEdit,
-    PullRequestInput, PullRequestLabel, PullRequestPhase, PullRequestReviewer, ReactionContent,
-    ReactionGroup, ReviewDecision, ReviewState, SignedImage, TimelineAction, TimelineClosed,
-    TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem, TimelineLabel, TimelineMerge,
-    TimelinePerson, TimelineReference, TimelineRename, TimelineReview,
+    IssueSummary, IssueTemplateFile, IssuesState, LinkedIssue, MergeMethod, MergeState,
+    PullRequest, PullRequestCandidates, PullRequestCheck, PullRequestDetail, PullRequestDraft,
+    PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase, PullRequestReviewer,
+    ReactionContent, ReactionGroup, ReviewDecision, ReviewState, SignedImage, TimelineAction,
+    TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem,
+    TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
+    TimelineReview,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
 pub use oxide_platform::{AvailableShell, ShellKind};
