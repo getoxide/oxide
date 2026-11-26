@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/oxide-platform", "crates/oxide-core", "crates/oxide-app"]
 
 [workspace.package]
-version = "0.0.4"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 publish = false
