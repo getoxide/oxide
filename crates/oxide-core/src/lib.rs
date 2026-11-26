@@ -50,7 +50,7 @@ pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use updates::{
     AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, PRERELEASE_FEED,
-    STABLE_FEED, UpdatePlan, UpdateState, feed_for, is_newer,
+    STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState, feed_for, is_newer,
 };
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
@@ -234,6 +234,56 @@ impl Core {
     /// Returns the new state when it changed, for the shell to push to the window.
     pub fn record_update_check(&self, found: Option<&str>, now_unix: i64) -> Option<UpdateState> {
         self.updates.record_check(found, now_unix)
+    }
+
+    /// Starts downloading the available update (one operation at a time): its version and the new state.
+    pub fn begin_update_install(&self) -> std::result::Result<(String, UpdateState), UpdateError> {
+        self.updates.begin_install()
+    }
+
+    /// Download progress, for the shell to push; `None` when no download is running.
+    pub fn record_update_progress(
+        &self,
+        downloaded: u64,
+        total: Option<u64>,
+    ) -> Option<UpdateState> {
+        self.updates.record_progress(downloaded, total)
+    }
+
+    /// The download passed its signature check; the package is being installed or staged.
+    pub fn begin_update_installing(&self) -> Option<UpdateState> {
+        self.updates.begin_installing()
+    }
+
+    /// The update is installed (`staged`: kept for the quit, Windows) and waits for a restart.
+    pub fn finish_update_install(&self, staged: bool) -> UpdateState {
+        self.updates.finish_install(staged)
+    }
+
+    /// A download, verification or install failed: the installed Oxide keeps running and the
+    /// update is offered again.
+    pub fn fail_update_install(&self, reason: &str) -> UpdateState {
+        self.updates.fail_install(reason)
+    }
+
+    /// Whether quitting must now run the staged installer (Windows, after "Later" or "Restart now").
+    pub fn staged_update_due_at_quit(&self) -> bool {
+        self.updates.staged_install_due_at_quit()
+    }
+
+    /// "Restart now": remembers that the quit about to be confirmed restarts Oxide. False before an install.
+    pub fn request_update_restart(&self) -> bool {
+        self.updates.request_restart()
+    }
+
+    /// Whether the quit being confirmed is an update restart; clears the request.
+    pub fn take_update_restart_request(&self) -> bool {
+        self.updates.take_restart_request()
+    }
+
+    /// The user cancelled the quit prompt: a later quit is a plain quit.
+    pub fn cancel_update_restart_request(&self) {
+        self.updates.cancel_restart_request();
     }
 
     fn system(&self) -> Arc<dyn System> {

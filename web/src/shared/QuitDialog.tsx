@@ -19,7 +19,7 @@ export function QuitDialog() {
         <p>{unsaved} editor {unsaved === 1 ? "has" : "have"} unsaved changes. Quitting also ends running terminals.</p>
         {saveError && <p role="alert" className="error">{saveError}</p>}
         <div className="modal-actions">
-          <button autoFocus disabled={saving} onClick={() => setUnsaved(null)}>Cancel</button>
+          <button autoFocus disabled={saving} onClick={() => { void commands.cancelQuit(); setUnsaved(null); }}>Cancel</button>
           <button disabled={saving} onClick={() => void commands.confirmQuit()}>Discard &amp; quit</button>
           <button className="primary" disabled={saving} onClick={() => {
             setSaving(true);

@@ -84,10 +84,18 @@ Until the first stable release is published, [build from source](#build-from-sou
 
 ### Updates
 
-How Oxide updates depends on how you installed it:
+Oxide checks for a newer release at launch and every few hours. When one exists, an **Update** button appears in the top-right of the window, left of the Tools panel button. Its popover shows the new version and its release notes. **Install update** downloads the package with visible progress, verifies its signature against Oxide's release key (a mismatch is refused and nothing is installed) and installs it. Oxide then asks to restart: running Terminal programs will end, and unsaved files are asked about as on a normal quit. With Session restore on, Projects, Terminals and open files come back. **Later** keeps the session running. A failed download, signature or install leaves the installed Oxide untouched, shows what went wrong and offers the install again.
 
-- **macOS, Windows and the Linux AppImage** update from inside the app.
-- **Linux `.deb` and `.rpm`** update through your package manager, from Oxide's signed APT and DNF repositories (below). Both serve x64 and arm64.
+How the update is applied depends on the platform:
+
+- **macOS:** Oxide replaces `Oxide.app` in place and asks for an administrator password when its folder is not writable. Later: the new version starts at the next launch.
+- **Windows:** the verified installer runs in passive mode (no wizard pages) when you choose **Restart now**, or when you quit Oxide after choosing **Later**. The installer ends Oxide and starts the new version.
+- **Linux AppImage:** the AppImage file you launched is replaced. Later: the new version starts at the next launch.
+- **Linux `.deb` and `.rpm`:** Oxide does not update these itself; use your package manager.
+
+A version several releases behind goes straight to the latest release.
+
+Linux `.deb` and `.rpm` installs update through the signed APT and DNF repositories, which serve x64 and arm64. Add the one for your distribution once:
 
 #### Linux: add the APT repository (Debian, Ubuntu)
 
