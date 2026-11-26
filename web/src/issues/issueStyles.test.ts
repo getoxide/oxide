@@ -43,3 +43,12 @@ it("preserves .md padding inside a collapsible issue description card", () => {
   expect(padded.length).toBeGreaterThan(0);
   expect(padded.some((d) => d.padding === "8px 10px")).toBe(true);
 });
+
+it("constrains linked issue sections and items so long titles truncate without overflowing", () => {
+  const section = rules(stylesCss, (s) => s === ".pr-views .issue-linked-section");
+  const list = rules(stylesCss, (s) => s === ".pr-views .issue-linked-list");
+  const item = rules(stylesCss, (s) => s === ".pr-views .issue-linked-item");
+  expect(section.some((d) => d["grid-template-columns"] === "minmax(0, 1fr)" && d["min-width"] === "0")).toBe(true);
+  expect(list.some((d) => d["grid-template-columns"] === "minmax(0, 1fr)" && d["min-width"] === "0")).toBe(true);
+  expect(item.some((d) => d["min-width"] === "0" && d.overflow === "hidden")).toBe(true);
+});
