@@ -1,0 +1,45 @@
+#!/bin/sh
+# Adds Oxide's APT source and key, so a later `apt upgrade` keeps Oxide current (ADR-0021).
+# Runs as root. It writes only /usr/share/keyrings/oxide.gpg and /etc/apt/sources.list.d/oxide.list,
+# the two files the documented setup writes, and never fails the install over them.
+set -e
+umask 022
+
+[ "$1" = configure ] || exit 0
+
+SHARE=/usr/share/oxide/repository
+KEYRING=/usr/share/keyrings/oxide.gpg
+SOURCE=/etc/apt/sources.list.d/oxide.list
+LINE='deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./'
+
+tmp=
+trap 'rm -f "$tmp"' EXIT
+
+# The key is Oxide's own file: every install and upgrade brings the current one.
+install_key() {
+  install -d -m 0755 /usr/share/keyrings
+  tmp="$KEYRING.new.$$"
+  cp "$SHARE/oxide-repository.gpg" "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$KEYRING"
+}
+
+# The source is written once. A file that is already there (the documented setup, or the user's own
+# edit) stays as it is, and so does any other file that already names the repository: a second
+# source would make apt warn about a duplicate.
+install_source() {
+  if [ -e "$SOURCE" ] || [ -L "$SOURCE" ]; then
+    return 0
+  fi
+  if grep -qsF 'getoxide/oxide/releases/latest/download' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; then
+    return 0
+  fi
+  tmp="$SOURCE.new.$$"
+  printf '%s\n' "$LINE" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$SOURCE"
+}
+
+install_key || echo "oxide: could not add the signing key $KEYRING." >&2
+install_source || echo "oxide: could not add the APT source $SOURCE." >&2
+exit 0
