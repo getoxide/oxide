@@ -49,8 +49,6 @@ export function UpdatesSettingsSection() {
         )}
       </div>
       {problem && <p role="alert" className="error update-message">{problem}</p>}
-      {/* The macOS location and package-manager notices render inside the shared install flow below. */}
-      <div className="update-section-notices" />
       {!development && available && <UpdateInstallFlow state={state} available={available} />}
     </div>
   );

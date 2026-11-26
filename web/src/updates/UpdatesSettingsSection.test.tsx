@@ -43,6 +43,7 @@ let root: Root;
 let current: State;
 let calls: string[];
 let checkResult: State | Error;
+let commandError: unknown;
 let pushed: ((payload: State) => void) | undefined;
 
 vi.mock("../shared/ipc", async (original) => ({
@@ -71,6 +72,7 @@ beforeEach(() => {
   calls = [];
   pushed = undefined;
   checkResult = upToDate;
+  commandError = undefined;
   mockIPC((command) => {
     if (command === "update_state") return current;
     if (command === "check_for_updates") {
@@ -80,6 +82,7 @@ beforeEach(() => {
     }
     if (command === "install_update" || command === "restart_for_update") {
       calls.push(command);
+      if (commandError !== undefined) throw commandError;
       return null;
     }
     return null;
@@ -139,6 +142,28 @@ describe("Updates settings section", () => {
     await render(behind);
     await act(async () => named("Install update")!.click());
     expect(calls).toEqual(["install_update"]);
+  });
+
+  it("shows the error a failed install start resolves with, and offers the install again", async () => {
+    commandError = "The update server refused the download.";
+    await render(behind);
+    await act(async () => named("Install update")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("The update server refused the download.");
+    expect(named("Try again")).toBeDefined();
+  });
+
+  it("shows the error a failed restart resolves with", async () => {
+    commandError = { message: "Oxide could not restart." };
+    await render({ ...behind, operation: { kind: "installed", staged: false } });
+    await act(async () => named("Restart now")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Oxide could not restart.");
+  });
+
+  it("shows a failure to copy the command", async () => {
+    Object.assign(navigator, { clipboard: { writeText: () => Promise.reject(new Error("denied")) } });
+    await render({ ...behind, channel: "apt" });
+    await act(async () => named("Copy")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not copy");
   });
 
   it("shows download progress pushed by Core and blocks a check meanwhile", async () => {

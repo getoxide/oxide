@@ -29,9 +29,18 @@ export function UpdateInstallFlow({
 }) {
   const [problem, setProblem] = useState<string | null>(null);
   const { operation } = state;
-  const run = (start: () => Promise<unknown>) => {
+  // The typed commands resolve `{ status: "error" }` instead of rejecting; a rejection is an unexpected failure.
+  const run = (start: () => Promise<{ status: "ok" } | { status: "error"; error: string | { message: string } }>) => {
     setProblem(null);
-    void start().catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
+    void start().then((result) => {
+      if (result.status === "error") setProblem(typeof result.error === "string" ? result.error : result.error.message);
+    }).catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
+  };
+  const copy = (text: string) => {
+    setProblem(null);
+    void copyTextToClipboard(text).then((copied) => {
+      if (!copied) setProblem("Could not copy the command. Select it and copy it by hand.");
+    });
   };
   const command = packageManagerCommand(state.channel);
   const shownError = problem ?? state.error;
@@ -62,7 +71,7 @@ export function UpdateInstallFlow({
           <p role="note">Oxide was installed with your package manager, which also updates it. Run:</p>
           <code>{command}</code>
           <div className="update-actions">
-            <button className="btn sm" onClick={() => copyTextToClipboard(command)}>Copy</button>
+            <button className="btn sm" onClick={() => copy(command)}>Copy</button>
           </div>
         </div>
       )}

@@ -26,9 +26,14 @@ export function joinProjectPath(rootPath: string, relativePath: string): string 
 }
 
 /** Copies plain text to the system clipboard, ignoring permission/environment rejections. */
-export function copyTextToClipboard(text: string): void {
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return;
-  void navigator.clipboard.writeText(text).catch(() => {});
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The modifier shown in hints for form keys such as ⌘↵: ⌘ on macOS, Ctrl+ elsewhere. */
