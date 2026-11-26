@@ -406,7 +406,7 @@ export function aptReleaseFile({ packagesText, date }) {
     `Architectures: ${REPOSITORY_ARCHES.map(({ deb }) => deb).join(" ")}`,
     "Description: Oxide Linux packages",
     "SHA256:",
-    ` ${createHash("sha256").update(bytes).digest("hex")} ${bytes.length} Packages`,
+    ` ${sha256(bytes)} ${bytes.length} Packages`,
     "",
   ].join("\n");
 }
@@ -427,6 +427,66 @@ export function dnfRepoFile() {
     "metadata_expire=6h",
     "",
   ].join("\n");
+}
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+/** Index entries of an APT `Packages` file: one stanza per package. */
+function aptStanzas(text) {
+  return lf(text).split(/\n\s*\n/).filter((block) => block.trim()).map((block) => Object.fromEntries(
+    block.split("\n").map((line) => line.match(/^([\w-]+):\s*(.*)$/)).filter(Boolean).map(([, key, value]) => [key, value.trim()]),
+  ));
+}
+
+/**
+ * The post-publish check of the APT index: `Release` pins `Packages`, and `Packages` names the
+ * package of each architecture with the hash of the file users download. (The `InRelease`
+ * signature is checked with gpgv in the workflow.) `hashes` maps asset names to their SHA-256.
+ */
+export function checkAptRepository({ plan, releaseText, packagesText, hashes }) {
+  const problems = [];
+  const pinned = lf(releaseText).match(/^ ([0-9a-f]{64}) (\d+) Packages$/m);
+  if (!pinned || pinned[1] !== sha256(Buffer.from(packagesText, "utf8")) || Number(pinned[2]) !== Buffer.byteLength(packagesText, "utf8")) {
+    problems.push("the Release file does not pin this Packages file");
+  }
+  const stanzas = aptStanzas(packagesText);
+  for (const { name, arch } of plan.debs) {
+    const entry = stanzas.find((stanza) => stanza.Architecture === arch);
+    if (!entry) problems.push(`Packages has no ${arch} package`);
+    else if (entry.Package !== "oxide") problems.push(`the ${arch} package is named ${entry.Package}, not oxide`);
+    else if (entry.Filename?.replace(/^\.\//, "") !== name) problems.push(`the ${arch} package points at ${entry.Filename}, not ${name}`);
+    else if (entry.SHA256 !== hashes?.[name]) problems.push(`the hash of ${name} in Packages is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The APT repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The APT repository of v${plan.version} pins its index and lists amd64 and arm64.` };
+}
+
+/**
+ * The post-publish check of the DNF metadata: `repomd.xml` pins `primary.xml.gz` (`primarySha256` is
+ * the hash of the file fetched), and `primary` points each package at the release's own asset with its hash.
+ * (The `repomd.xml` signature is checked with gpg in the workflow.)
+ */
+export function checkDnfRepository({ plan, repomd, primaryXml, primarySha256, hashes }) {
+  const problems = [];
+  const primaryData = String(repomd).match(/<data type="primary">[\s\S]*?<\/data>/)?.[0];
+  const pinnedHash = primaryData?.match(/<checksum type="sha256">([^<]+)<\/checksum>/)?.[1];
+  if (!pinnedHash || pinnedHash !== primarySha256) problems.push("repomd.xml does not pin this primary file");
+  const entries = [...String(primaryXml).matchAll(/<package type="rpm">[\s\S]*?<\/package>/g)].map(([block]) => ({
+    arch: block.match(/<arch>([^<]*)<\/arch>/)?.[1],
+    sha: block.match(/<checksum type="sha256"[^>]*>([^<]*)<\/checksum>/)?.[1],
+    base: block.match(/<location[^>]*xml:base="([^"]*)"/)?.[1],
+    href: block.match(/<location[^>]*href="([^"]*)"/)?.[1],
+    name: block.match(/<name>([^<]*)<\/name>/)?.[1],
+  }));
+  for (const { name, arch } of plan.rpms) {
+    const entry = entries.find((candidate) => candidate.href === name && candidate.arch === arch);
+    if (!entry) problems.push(`primary has no ${arch} package at ${name}`);
+    else if (entry.name !== "oxide") problems.push(`${name} is named ${entry.name}, not oxide`);
+    else if (entry.base !== plan.dnf.baseUrl) problems.push(`${name} is located at ${entry.base ?? "no base"}, not the release's assets`);
+    else if (entry.sha !== hashes?.[name]) problems.push(`the hash of ${name} in primary is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The DNF repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The DNF repository of v${plan.version} pins its primary file and points both architectures at the release's assets.` };
 }
 
 /** The names among `names` that `env` does not set to a non-blank value. */
