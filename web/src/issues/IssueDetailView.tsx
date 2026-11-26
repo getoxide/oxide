@@ -1,11 +1,13 @@
 import { Skeleton } from "../shared/Skeleton";
 import {
   ArrowLeftIcon,
+  ChevronDownIcon,
   CommentIcon,
   MarkGithubIcon,
   PencilIcon,
 } from "@primer/octicons-react";
 import { useState } from "react";
+import { Collapsible } from "../shared/Collapsible";
 import { QUERY_STALE_MS, updateQuery, useQuery } from "../shared/queryCache";
 import { githubKeys } from "../shared/githubQueries";
 import { RefreshNotice } from "../shared/RefreshNotice";
@@ -86,6 +88,7 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
   const [reason, setReason] = useState<IssueCloseReason>("completed");
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [bodyDraft, setBodyDraft] = useState<string | null>(null);
+  const [descriptionOpen, setDescriptionOpen] = useState(true);
   const { candidates, load } = useCandidates(projectId);
   const busy = pending !== null;
 
@@ -263,48 +266,62 @@ export function IssueDetailView({ projectId, number, refreshKey, pollKey = 0, on
                     aria-label="Edit description"
                     title="Edit description"
                     disabled={busy}
-                    onClick={() => setBodyDraft(detail.body)}
+                    onClick={() => {
+                      setDescriptionOpen(true);
+                      setBodyDraft(detail.body);
+                    }}
                   >
                     <PencilIcon size={14} />
                   </button>
                 )}
+                <button
+                  className="icon-btn sm issue-description-toggle"
+                  aria-expanded={descriptionOpen}
+                  aria-label={descriptionOpen ? "Collapse description" : "Expand description"}
+                  title={descriptionOpen ? "Collapse description" : "Expand description"}
+                  onClick={() => setDescriptionOpen((open) => !open)}
+                >
+                  <ChevronDownIcon size={14} className="pr-chev" />
+                </button>
               </header>
-              {bodyDraft === null ? (
-                <>
-                  {detail.body.trim() ? (
-                    <Markdown source={detail.body} />
-                  ) : (
-                    <p className="pr-field-empty issue-no-body">No description provided.</p>
-                  )}
-                  <Reactions projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
-                </>
-              ) : (
-                <div className="issue-body-edit">
-                  <MarkdownEditor
-                    label="Description"
-                    rows={8}
-                    value={bodyDraft}
-                    autoFocus
-                    onChange={setBodyDraft}
-                    mentions={mentions}
-                    onMentionOpen={load}
-                  />
-                  <div className="pr-merge-row">
-                    <button
-                      className={`primary${pending === "edit" ? " pending" : ""}`}
-                      disabled={busy}
-                      onClick={() => void saveBody()}
-                    >
-                      <Working on={pending === "edit"} label="Saving…">
-                        Save
-                      </Working>
-                    </button>
-                    <button onClick={() => setBodyDraft(null)} disabled={busy}>
-                      Cancel
-                    </button>
+              <Collapsible open={descriptionOpen}>
+                {bodyDraft === null ? (
+                  <>
+                    {detail.body.trim() ? (
+                      <Markdown source={detail.body} />
+                    ) : (
+                      <p className="pr-field-empty issue-no-body">No description provided.</p>
+                    )}
+                    <Reactions projectId={projectId} subjectId={detail.nodeId} reactions={detail.reactions} onError={setError} />
+                  </>
+                ) : (
+                  <div className="issue-body-edit">
+                    <MarkdownEditor
+                      label="Description"
+                      rows={8}
+                      value={bodyDraft}
+                      autoFocus
+                      onChange={setBodyDraft}
+                      mentions={mentions}
+                      onMentionOpen={load}
+                    />
+                    <div className="pr-merge-row">
+                      <button
+                        className={`primary${pending === "edit" ? " pending" : ""}`}
+                        disabled={busy}
+                        onClick={() => void saveBody()}
+                      >
+                        <Working on={pending === "edit"} label="Saving…">
+                          Save
+                        </Working>
+                      </button>
+                      <button onClick={() => setBodyDraft(null)} disabled={busy}>
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </Collapsible>
             </div>
           </article>
         </section>
