@@ -637,7 +637,7 @@ describe("the update pipeline", () => {
     assert.ok(!shared.includes("createUpdaterArtifacts"), "CI builds have no key, so the shared config must not ask for updater packages");
     const updater = readFileSync(fileURLToPath(new URL("../../crates/oxide-app/tauri.updater.conf.json", import.meta.url)), "utf8");
     assert.equal(JSON.parse(updater).bundle.createUpdaterArtifacts, true);
-    assert.match(build, /RELEASE" = "true" \] && echo "--config crates\/oxide-app\/tauri\.updater\.conf\.json"/);
+    assert.match(build, /RELEASE" = "true" \] && echo "crates\/oxide-app\/tauri\.updater\.conf\.json"/);
     for (const step of build.split(/\n {6}- /)) {
       for (const secret of SECRETS) {
         if (step.includes(`secrets.${secret}`)) assert.match(step, /tauri\S* build|require-secrets/, `${secret} is exposed to a step that neither builds nor checks it`);

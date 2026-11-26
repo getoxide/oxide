@@ -137,7 +137,7 @@ jobs:
         id: config
         env:
           RELEASE: ${{ inputs.release }}
-        run: echo "updater=$([ "$RELEASE" = "true" ] && echo "--config crates/oxide-app/tauri.updater.conf.json")" >> "$GITHUB_OUTPUT"
+        run: echo "updater=$([ "$RELEASE" = "true" ] && echo "crates/oxide-app/tauri.updater.conf.json")" >> "$GITHUB_OUTPUT"
 
       - name: Build the macOS bundles
         if: inputs.platform == 'macos-aarch64'
@@ -145,7 +145,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
-        run: web/node_modules/.bin/tauri build --ci --bundles app,dmg $UPDATER_CONFIG -- --locked
+        run: web/node_modules/.bin/tauri build --ci --bundles app,dmg ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Build the Windows installer
         if: startsWith(inputs.platform, 'windows-')
@@ -153,7 +153,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
-        run: web/node_modules/.bin/tauri.cmd build --ci --bundles nsis $UPDATER_CONFIG -- --locked
+        run: web/node_modules/.bin/tauri.cmd build --ci --bundles nsis ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Build the Linux bundles
         if: startsWith(inputs.platform, 'linux-')
@@ -164,7 +164,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
-        run: web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm $UPDATER_CONFIG -- --locked
+        run: web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Name the artifact
         id: name
