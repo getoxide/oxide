@@ -37,8 +37,10 @@ push main / release/** ──► CI, every lane forced on (incl. every bundle) �
 
 tag vX.Y.Z  (immutable once pushed)
    └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64) ─► publish DRAFT
-                                                                                    (dmg, exe, AppImage, deb, rpm, notes, checksums; metadata/SBOM as run artifact)
+                              (refuses a missing update key)     (dmg, exe, AppImage, deb, rpm, signed updater packages, latest.json, notes, checksums;
+                                                                  metadata/SBOM as run artifact)
 Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (checksums and attestations)
+                                                                  └─► update feeds: prerelease.json on the `updates` branch (GitHub Pages), both feeds checked
 
 daily  ──► Advisories (RustSec + pnpm audit) ──► one tracking issue per ecosystem on failure
 weekly ──► Dependabot ──► auto-merge low-risk / `manual-review`
@@ -179,7 +181,7 @@ nextest runs each test in its own process with the settings in [`.config/nextest
   - `release: false` (CI): unsigned, caches allowed.
   - `release: true`: no caches at all, frozen installs. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
 - **Why:** PR bundles and release bundles come from one definition, so what `main` proves is what ships. It declares the `release` environment itself, because a job that calls a reusable workflow can't name one, and the approval must guard the job that reads the secrets.
-- **Bundles:** macOS `app,dmg`; Windows `nsis` only; Linux `appimage,deb,rpm`. Oxide has no in-app updater, so no build produces updater packages or signatures.
+- **Bundles:** macOS `app,dmg`; Windows `nsis` only; Linux `appimage,deb,rpm`. A release build also makes the updater packages and signs them with the update key ([ADR-0021](adr/0021-update-channels-per-platform.md)): it merges `crates/oxide-app/tauri.updater.conf.json` (`createUpdaterArtifacts`) over the app config, so CI builds, which have no key, stay unsigned. The updater packages are the macOS `.app` archive (`Oxide_<v>_macos_arm64.app.tar.gz`) and, for Windows and Linux, the installer and AppImage that are already downloads. Each has a `.sig` next to it. The first release step after the checkout and tool set-up runs `require-secrets`: a release without `TAURI_SIGNING_PRIVATE_KEY` or `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the `release` environment fails there, naming the missing secret, before anything is built. Only the Tauri build steps see the key.
 - **Runners:** Windows on Arm builds natively on `windows-11-arm`, and Linux on `ubuntu-22.04` and `ubuntu-22.04-arm`: an AppImage or `.deb` links the glibc it was built against, so the oldest supported image keeps it running on older distributions. Move to `ubuntu-24.04*` only when 22.04 is retired.
 - **Local:** `node tools/check.mjs` builds an unsigned bundle for your OS. Signed builds are never made locally.
 
@@ -189,7 +191,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 1. **`verify`**, **`audit-rust`** and **`audit-js`** (parallel, read-only). `audit-rust` runs `cargo deny --locked check advisories` and `audit-js` runs `pnpm --dir web audit --prod --audit-level high`; `build` needs all three. *Why:* a daily scan only finds an advisory within a day, and nothing else stopped a tag from shipping one; failing here means no signing secret is unlocked and nothing is built. A high advisory with no fix blocks the release until it is resolved. `verify`: the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
 2. **`build`** (all five platforms in parallel, `release: true`) waits for approval of the `release` environment.
-3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names) for the release, attests build provenance for them, writes `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
+3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages the installers, the updater packages and their `.sig` files, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names) for the release, writes `latest.json` from the signatures (the pure `buildUpdateFeed`, which fails on a missing or empty signature; its entries point at this release's own assets), attests build provenance for all of them, writes `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums of the installers in the notes (the updater-only assets, the `.app.tar.gz`, the `.sig` files and `latest.json`, are left out of the notes and the Downloads table), and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
 **Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push any signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
 
@@ -205,6 +207,21 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 - **Why:** it checks what users will actually download, and keeping the checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
 - **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
+
+The same workflow has a second job, **`update feeds`** (it needs the first; it holds no signing key, only the `contents: write` token). It copies the published release's `latest.json` to `updates/prerelease.json` on the `updates` branch and pushes it (the first run creates the orphan branch), then fetches both feeds, retrying for up to 10 minutes while GitHub Pages catches up, and checks them with `checkPublishedFeeds`: the pre-release feed names the published version; the stable feed names it too for a stable release and must not for a pre-release; every entry has a signature and points at the release's own assets; every package URL resolves. A failure opens a `needs-triage` issue.
+
+### The update feeds
+
+Every install reads one feed ([ADR-0021](adr/0021-update-channels-per-platform.md)); the addresses are compiled into the app (`crates/oxide-core/src/updates.rs`) and cannot change without every install updating by hand once.
+
+| Feed | Read by | Address | Served from |
+| --- | --- | --- | --- |
+| Stable | installs whose version has no pre-release suffix | `https://github.com/getoxide/oxide/releases/latest/download/latest.json` | the `latest.json` asset of the latest release; GitHub never resolves "latest" to a draft or a pre-release, so it goes live when a Release Manager publishes |
+| Pre-release | installs whose version is `-rc.N` | `https://getoxide.github.io/oxide/updates/prerelease.json` | the `updates` branch, served by GitHub Pages; the newest published release of any kind, written by `verify-release.yml` |
+
+The `updates` branch holds only generated files (`updates/prerelease.json` and `.nojekyll`) and no history anyone needs. Nothing but `verify-release.yml` writes it. Debug builds may point the app at another feed for local trials (see CONTRIBUTING); a release build ignores that ([ADR-0016](adr/0016-security-boundaries.md)).
+
+The update key is a minisign key pair made with `tauri signer generate`. The public key is in `crates/oxide-app/tauri.conf.json` (`plugins.updater.pubkey`); the private key and its password are the `release` environment secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing the key means every install updates by hand once. Rotating it means shipping one release signed with the old key that carries the new public key.
 
 ## Scheduled and automatic workflows
 
@@ -251,11 +268,11 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 
 ## Secrets and the fork/PR threat model
 
-- **Signing secrets, if any are ever added, exist only in the `release` environment** (today none are set). They are readable only by a job for a `v*` tag after a Release Manager approves.
+- **Signing secrets exist only in the `release` environment:** `TAURI_SIGNING_PRIVATE_KEY` (the content of the minisign update key, not a path) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. A release fails at its first build step when either is missing. They are readable only by a job for a `v*` tag after a Release Manager approves.
 - **The Apple secrets are intentionally absent.** Oxide does not join the Apple Developer Program ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY` and `APPLE_API_PRIVATE_KEY` must not be set. If they ever exist, the Apple step in `build.yml` signs and notarizes with no other change; rehearse on an `-rc` tag before relying on it.
 - **Fork PRs** run on `pull_request` with a read-only token and no secrets. Actions settings require approval for first-time contributors.
 - **No `pull_request_target` workflow checks out PR code.** Untrusted code never gets a write token.
-- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes failure issues, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
+- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes failure issues and the `updates` branch, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
 - **Checkouts don't persist credentials,** so later steps can't push with the token.
 - **Third-party actions are pinned to a full commit SHA** with a version comment, so a moved tag can't inject code. Dependabot keeps the pins current.
 - **Release builds are clean:** no cache is restored or saved, so a poisoned cache can't reach a shipped binary.
@@ -300,6 +317,7 @@ These live in the GitHub UI, not in the repository, so they are recorded here. A
 - **Ruleset `main protection`** (and the same for `release/**`): PR required with 0 approvals; required status check `gate` (up-to-date branch not required); squash only; no force-push; no deletion.
 - **Ruleset `release tags`** on `refs/tags/v*`: block update and deletion; bypass for the repository admin only.
 - **Environment `release`:** required reviewers `cavallinilorenzo` and `itsmrma`; deployment refs `v*` tags only; the secrets above.
+- **GitHub Pages:** enabled, source *Deploy from a branch*, branch `updates`, folder `/ (root)`. It serves the pre-release feed at `https://getoxide.github.io/oxide/`. The branch is created by the first published release; enable Pages after that (or create the branch first). The `main protection` rulesets must not cover `updates`, because the workflow pushes to it.
 - **Labels:** `dependencies`, `manual-review`, plus the triage labels.
 - **Dependabot secrets** `AUTOMERGE_APP_ID` and `AUTOMERGE_APP_PRIVATE_KEY` (optional, for auto-merge).
 - **Security:** secret scanning, push protection, Dependabot alerts and security updates, private vulnerability reporting, and CodeQL default setup.

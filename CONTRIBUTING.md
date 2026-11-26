@@ -37,6 +37,21 @@ Before every commit, `node tools/check.mjs fast` is enough. To run it automatica
 
 The pipeline's decisions (which lanes a change needs, the merge gate, PR titles, release versions, release notes, Dependabot auto-merge) live as pure functions in `tools/ci/policy.mjs`, with a command-line wrapper in `tools/ci/cli.mjs`. `node --test "tools/**/*.test.mjs"` runs all the tooling tests.
 
+### Trying updates locally
+
+A development build never checks for updates. A debug build (`tauri dev`) can be pointed at a local feed, so the Update button can be tried without a release: set `OXIDE_UPDATE_FEED` to the feed address and `OXIDE_UPDATE_CHANNEL` to `in-app` (or `apt`, `dnf`, `none`). A release build ignores both, and a test keeps their code out of it ([ADR-0016](docs/adr/0016-security-boundaries.md)).
+
+```sh
+# a feed that offers 99.0.0 to this platform (the signature is only checked when installing)
+mkdir /tmp/oxide-feed && cat > /tmp/oxide-feed/latest.json <<'JSON'
+{"version":"99.0.0","pub_date":"2030-01-01T00:00:00Z","platforms":{"darwin-aarch64":{"url":"http://127.0.0.1:8099/x.tar.gz","signature":"test"},"linux-x86_64":{"url":"http://127.0.0.1:8099/x.AppImage","signature":"test"},"windows-x86_64":{"url":"http://127.0.0.1:8099/x.exe","signature":"test"}}}
+JSON
+(cd /tmp/oxide-feed && python3 -m http.server 8099 &)
+OXIDE_UPDATE_CHANNEL=in-app OXIDE_UPDATE_FEED=http://127.0.0.1:8099/latest.json web/node_modules/.bin/tauri dev
+```
+
+Use a version equal to the running one to see no button, and stop the server to see that a failed check shows nothing in the window. To install from a local feed, sign the package with a throwaway key (`tauri signer generate`, `tauri signer sign`) and run `tauri dev` with that key's public key in a `--config` override of `plugins.updater.pubkey`. The real update key is a `release` environment secret and never leaves it.
+
 ### Local build disk usage
 
 Development builds and tests omit debug information and enable incremental
