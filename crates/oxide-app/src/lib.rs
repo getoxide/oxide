@@ -1553,7 +1553,8 @@ fn restart_for_update(app: tauri::AppHandle, core: State<'_, Arc<Core>>) -> Resu
     if let Some(prompt) = quit_prompt_for_core(&core) {
         emit_quit_prompt(&app, prompt);
     } else {
-        core.cancel_update_restart_request();
+        // No prompt to confirm: this exit is the update restart (the Windows installer relaunches Oxide).
+        core.take_update_restart_request();
         app.request_restart();
     }
     Ok(())

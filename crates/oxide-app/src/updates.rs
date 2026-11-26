@@ -208,22 +208,28 @@ fn unix_now() -> i64 {
 /// Configures Core with this install's channel and starts the periodic check.
 pub fn start(app: &AppHandle, core: &Arc<Core>) {
     let current = app.package_info().version.to_string();
-    let Ok(version) = Version::parse(&current) else {
-        return;
-    };
-    let plan = UpdatePlan::resolve(
-        &version,
-        bundle_kind(),
-        cfg!(debug_assertions),
-        &debug_override(),
-    );
-    core.configure_updates(plan.channel, &current);
-    core.set_update_install_location(install_location());
+    let plan = Version::parse(&current).ok().map(|version| {
+        UpdatePlan::resolve(
+            &version,
+            bundle_kind(),
+            cfg!(debug_assertions),
+            &debug_override(),
+        )
+    });
+    // Managed first, whatever the version says: the commands take this state and must never meet it missing.
     app.manage(Arc::new(Installer {
-        feed: plan.feed.clone(),
+        feed: plan
+            .as_ref()
+            .map_or_else(|| oxide_core::STABLE_FEED.to_string(), |plan| plan.feed.clone()),
         current: current.clone(),
         staged: Mutex::new(None),
     }));
+    // An unreadable version leaves Core on the development channel: it never checks or installs.
+    let Some(plan) = plan else {
+        return;
+    };
+    core.configure_updates(plan.channel, &current);
+    core.set_update_install_location(install_location());
     if !plan.channel.checks() {
         return;
     }
@@ -235,11 +241,14 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
             .name("updates".into())
             .spawn(move || {
                 loop {
-                    // Skipped while an install or another check runs. A failure is recorded for
-                    // the Updates section; the window shows nothing, the next check is in 4 hours.
-                    let _skipped = tauri::async_runtime::block_on(run_check(
+                    // Skipped (Busy) while an install or another check runs. A failed check is recorded
+                    // for the Updates section; the window shows nothing, the next one is in 4 hours.
+                    let outcome = tauri::async_runtime::block_on(run_check(
                         &app, &core, &plan.feed, &current,
                     ));
+                    if outcome != Err(oxide_core::UpdateError::Busy) {
+                        diag::best_effort("update check", outcome);
+                    }
                     std::thread::sleep(oxide_core::CHECK_INTERVAL);
                 }
             }),
@@ -369,9 +378,11 @@ pub fn run_staged_install(app: &AppHandle, core: &Core) {
     };
     let staged = installer.staged.lock_recover().take();
     if let Some(staged) = staged {
+        // Only a confirmed "Restart now" relaunches Oxide; a plain quit installs and stays closed.
+        let relaunch = core.update_exit_restarts();
         diag::best_effort(
             "staged update install",
-            staged.update.install(&staged.bytes),
+            staged.update.restart_after_install(relaunch).install(&staged.bytes),
         );
     }
 }
@@ -386,13 +397,9 @@ pub fn install_update(
     core: tauri::State<'_, Arc<Core>>,
     installer: tauri::State<'_, Arc<Installer>>,
 ) -> Result<(), String> {
-    let (_, state) = core.begin_update_install().map_err(|error| match error {
-        oxide_core::UpdateError::Busy => "An update is already being installed.".to_string(),
-        oxide_core::UpdateError::NothingToInstall => "There is no update to install.".to_string(),
-        oxide_core::UpdateError::WrongLocation => {
-            "Move Oxide to the Applications folder, then reopen it to update.".to_string()
-        }
-    })?;
+    let (_, state) = core
+        .begin_update_install()
+        .map_err(|error| error.message().to_string())?;
     push(&app, state);
     let core = Arc::clone(&core);
     let installer = Arc::clone(&installer);
@@ -418,14 +425,7 @@ pub async fn check_for_updates(
 ) -> Result<UpdateState, String> {
     run_check(&app, &core, &installer.feed, &installer.current)
         .await
-        .map_err(|error| match error {
-            oxide_core::UpdateError::Busy => {
-                "An update check or install is already running.".to_string()
-            }
-            oxide_core::UpdateError::NothingToInstall | oxide_core::UpdateError::WrongLocation => {
-                "This install does not check for updates.".to_string()
-            }
-        })?;
+        .map_err(|error| error.message().to_string())?;
     Ok(core.update_state().into())
 }
 

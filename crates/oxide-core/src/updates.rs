@@ -152,7 +152,13 @@ impl UpdatePlan {
         overrides: &DebugOverride,
     ) -> Self {
         let mut channel = InstallChannel::detect(bundle, debug_build);
-        let mut feed = feed_for(version).to_string();
+        // Package installs (.deb, .rpm) read the stable feed whatever their own version: the
+        // repositories only ever serve stable releases (ADR-0021).
+        let mut feed = if matches!(channel, InstallChannel::Apt | InstallChannel::Dnf) {
+            STABLE_FEED.to_string()
+        } else {
+            feed_for(version).to_string()
+        };
         if debug_build {
             if let Some(forced) = overrides.channel {
                 channel = forced;
@@ -229,9 +235,30 @@ pub enum UpdateError {
     WrongLocation,
 }
 
+impl UpdateError {
+    /// What the window says about it, once for every command that can fail this way.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Busy => "An update check or install is already running.",
+            Self::NothingToInstall => {
+                "There is nothing to update: this install does not update itself, or no update is available."
+            }
+            Self::WrongLocation => "Move Oxide to the Applications folder, then reopen it to update.",
+        }
+    }
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
 pub(crate) struct UpdateTracker {
     state: Mutex<UpdateState>,
     restart_requested: AtomicBool,
+    /// A confirmed update restart is under way: the exit that follows must relaunch Oxide.
+    exit_restarts: AtomicBool,
 }
 
 impl UpdateTracker {
@@ -249,6 +276,7 @@ impl UpdateTracker {
                 error: None,
             }),
             restart_requested: AtomicBool::new(false),
+            exit_restarts: AtomicBool::new(false),
         }
     }
 
@@ -405,7 +433,18 @@ impl UpdateTracker {
 
     /// Whether the quit being confirmed is an update restart; clears the request.
     pub(crate) fn take_restart_request(&self) -> bool {
-        self.restart_requested.swap(false, Ordering::SeqCst)
+        let restart = self.restart_requested.swap(false, Ordering::SeqCst);
+        if restart {
+            self.exit_restarts.store(true, Ordering::SeqCst);
+        }
+        restart
+    }
+
+    /// Whether the exit now under way is an update restart (the quit was confirmed after "Restart
+    /// now"). On Windows the staged installer relaunches Oxide only then; a plain quit installs
+    /// without relaunching.
+    pub(crate) fn exit_restarts(&self) -> bool {
+        self.exit_restarts.load(Ordering::SeqCst)
     }
 
     /// The user cancelled the quit that was meant to restart.
@@ -522,6 +561,20 @@ mod tests {
         for version in ["0.1.0-rc.1", "1.0.0-beta", "0.2.0-rc.10"] {
             assert_eq!(feed_for(&v(version)), PRERELEASE_FEED, "{version}");
         }
+    }
+
+    #[test]
+    fn package_installs_read_the_stable_feed_even_on_a_prerelease_version() {
+        for version in ["0.1.0", "0.1.0-rc.1"] {
+            for bundle in [BundleKind::Deb, BundleKind::Rpm] {
+                let plan = UpdatePlan::resolve(&v(version), Some(bundle), false, &DebugOverride::default());
+                assert!(matches!(plan.channel, InstallChannel::Apt | InstallChannel::Dnf));
+                assert_eq!(plan.feed, STABLE_FEED, "{version} {bundle:?}");
+            }
+        }
+        // Everything else still follows its own version.
+        let plan = UpdatePlan::resolve(&v("0.1.0-rc.1"), Some(BundleKind::AppImage), false, &DebugOverride::default());
+        assert_eq!(plan.feed, PRERELEASE_FEED);
     }
 
     #[test]
@@ -731,6 +784,34 @@ mod tests {
         tracker.request_restart();
         assert!(tracker.take_restart_request());
         assert!(!tracker.take_restart_request());
+    }
+
+    #[test]
+    fn only_a_confirmed_update_restart_makes_the_exit_relaunch() {
+        let tracker = ready("0.1.0", "0.2.0");
+        tracker.begin_install().unwrap();
+        tracker.begin_installing();
+        tracker.finish_install(true);
+        // A plain quit (or "Later"): nothing asked for a restart.
+        assert!(!tracker.exit_restarts());
+        // "Restart now" but the quit prompt was cancelled, then a plain quit.
+        tracker.request_restart();
+        tracker.cancel_restart_request();
+        assert!(!tracker.exit_restarts());
+        // "Restart now" and the quit confirmed: the exit that follows relaunches Oxide.
+        tracker.request_restart();
+        assert!(tracker.take_restart_request());
+        assert!(tracker.exit_restarts());
+    }
+
+    #[test]
+    fn every_update_error_has_its_own_message() {
+        let messages = [UpdateError::Busy, UpdateError::NothingToInstall, UpdateError::WrongLocation].map(UpdateError::message);
+        assert!(messages[2].contains("Applications folder"));
+        assert!(!messages[2].contains("does not"), "a wrong location is not a missing check");
+        assert_eq!(messages[0], "An update check or install is already running.");
+        assert_ne!(messages[0], messages[1]);
+        assert_eq!(UpdateError::Busy.to_string(), messages[0]);
     }
 
     #[test]

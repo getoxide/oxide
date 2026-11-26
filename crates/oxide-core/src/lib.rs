@@ -227,7 +227,6 @@ impl Core {
     }
 
     /// Tells Core how this install updates (ADR-0021) and which version is running.
-    /// Tells Core how this install updates (ADR-0021) and which version is running.
     pub fn configure_updates(&self, channel: InstallChannel, current_version: &str) {
         self.updates.configure(channel, current_version);
     }
@@ -296,6 +295,11 @@ impl Core {
     /// Whether the quit being confirmed is an update restart; clears the request.
     pub fn take_update_restart_request(&self) -> bool {
         self.updates.take_restart_request()
+    }
+
+    /// Whether the exit now under way is a confirmed update restart, so the Windows installer relaunches Oxide.
+    pub fn update_exit_restarts(&self) -> bool {
+        self.updates.exit_restarts()
     }
 
     /// The user cancelled the quit prompt: a later quit is a plain quit.
