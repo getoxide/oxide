@@ -10,7 +10,7 @@ umask 022
 SHARE=/usr/share/oxide/repository
 KEYRING=/usr/share/keyrings/oxide.gpg
 SOURCE=/etc/apt/sources.list.d/oxide.list
-LINE='deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./'
+LINE='deb [signed-by=/usr/share/keyrings/oxide.gpg] https://updates.getoxide.dev/apt/ ./'
 
 tmp=
 trap 'rm -f "$tmp"' EXIT
@@ -32,7 +32,7 @@ install_source() {
   if [ -e "$SOURCE" ] || [ -L "$SOURCE" ]; then
     return 0
   fi
-  if grep -qsF 'getoxide/oxide/releases/latest/download' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; then
+  if grep -qsF 'updates.getoxide.dev/apt' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; then
     return 0
   fi
   tmp="$SOURCE.new.$$"

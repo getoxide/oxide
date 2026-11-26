@@ -101,15 +101,15 @@ Linux `.deb` and `.rpm` installs update through the signed APT and DNF repositor
 
 ```sh
 sudo install -d -m 0755 /usr/share/keyrings
-curl -fsSL https://github.com/getoxide/oxide/releases/latest/download/oxide-repository.gpg | sudo tee /usr/share/keyrings/oxide.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./" | sudo tee /etc/apt/sources.list.d/oxide.list
+curl -fsSL https://updates.getoxide.dev/apt/oxide-repository.gpg | sudo tee /usr/share/keyrings/oxide.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://updates.getoxide.dev/apt/ ./" | sudo tee /etc/apt/sources.list.d/oxide.list
 sudo apt update && sudo apt install oxide
 ```
 
 #### Linux: add the DNF repository (Fedora, RHEL, openSUSE)
 
 ```sh
-sudo curl -fsSL -o /etc/yum.repos.d/oxide.repo https://getoxide.github.io/oxide/rpm/oxide.repo
+sudo curl -fsSL -o /etc/yum.repos.d/oxide.repo https://updates.getoxide.dev/rpm/oxide.repo
 sudo dnf install oxide
 ```
 

@@ -51,7 +51,7 @@ pub use terminal::TerminalSummary;
 pub use updates::{
     AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation,
     LastCheck, PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState,
-    feed_for, is_newer,
+    feed_for, is_newer, resolve_prerelease_feed_url,
 };
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).

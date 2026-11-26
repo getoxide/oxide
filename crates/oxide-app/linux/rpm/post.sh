@@ -22,11 +22,11 @@ write_repo() {
   cat > "$tmp" << 'EOF'
 [oxide]
 name=Oxide
-baseurl=https://getoxide.github.io/oxide/rpm/
+baseurl=https://updates.getoxide.dev/rpm/
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc
+gpgkey=https://updates.getoxide.dev/rpm/oxide-repository.asc
 metadata_expire=6h
 skip_if_unavailable=1
 EOF
@@ -35,7 +35,7 @@ EOF
 
 # Written once: a file that is already there (the documented setup, or the user's own edit) stays,
 # and so does any other repo file that already names the repository.
-if [ ! -e "$REPO" ] && [ ! -L "$REPO" ] && ! grep -qsF 'getoxide.github.io/oxide/rpm' /etc/yum.repos.d/*.repo; then
+if [ ! -e "$REPO" ] && [ ! -L "$REPO" ] && ! grep -qsF 'updates.getoxide.dev/rpm' /etc/yum.repos.d/*.repo; then
   write_repo || { rm -f "$REPO.new.$$"; echo "oxide: could not add the DNF repository $REPO." >&2; }
 fi
 

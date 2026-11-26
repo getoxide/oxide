@@ -274,10 +274,20 @@ fn build_updater(
         .map_err(|error| error.to_string())
 }
 
+async fn resolve_feed_url(feed: &str) -> Result<String, String> {
+    if feed == oxide_core::PRERELEASE_FEED {
+        return tauri::async_runtime::spawn_blocking(oxide_core::resolve_prerelease_feed_url)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(feed.to_string())
+}
+
 /// The version the feed offers when it is newer than the running one. The plugin verifies nothing
 /// until a package is downloaded; the signature is checked against the compiled-in public key then.
 async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<String>, String> {
-    let update = build_updater(app, feed, current)?
+    let resolved = resolve_feed_url(feed).await?;
+    let update = build_updater(app, &resolved, current)?
         .check()
         .await
         .map_err(|error| error.to_string())?;
@@ -328,7 +338,8 @@ async fn run_install(
     core: &Arc<Core>,
     installer: &Installer,
 ) -> Result<bool, String> {
-    let update = build_updater(app, &installer.feed, &installer.current)?
+    let resolved = resolve_feed_url(&installer.feed).await?;
+    let update = build_updater(app, &resolved, &installer.current)?
         .check()
         .await
         .map_err(|error| error.to_string())?

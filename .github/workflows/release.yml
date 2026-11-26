@@ -166,9 +166,11 @@ jobs:
         env:
           OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY }}
           OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE }}
-        run: tools/ci/sign-repositories.sh "$TAG" linux repository
+        run: |
+          tools/ci/sign-repositories.sh "$TAG" linux repository
+          tar -czf repository/assets/dnf-site.tar.gz -C repository/dnf rpm
 
-      # The signed .rpm files and the APT flat repository become release assets.
+      # The signed .rpm files, APT flat repository, and DNF metadata archive become release assets.
       - name: Upload the signed repository assets
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -176,15 +178,6 @@ jobs:
           path: repository/assets/*
           if-no-files-found: error
           retention-days: 7
-
-      # Only the DNF metadata lives on the update site; verify-release.yml writes it for a stable release.
-      - name: Upload the DNF metadata
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dnf-site
-          path: repository/dnf/rpm
-          if-no-files-found: error
-          retention-days: 90
 
   publish:
     name: publish

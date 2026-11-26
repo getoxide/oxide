@@ -1,6 +1,7 @@
 //! In-app updates (ADR-0021): which feed an install reads, how it was installed, and the update
-//! state Core keeps for the window. Core does no network I/O here: the App shell asks the Tauri
-//! updater plugin (the only code that downloads or verifies a package) and reports what it found.
+//! state Core keeps for the window. The App shell asks the Tauri updater plugin (the only code
+//! that downloads or verifies a package) and reports what it found; for pre-release builds, Core
+//! resolves the newest published release's feed URL from GitHub's releases API.
 
 use oxide_platform::sync::LockExt as _;
 use semver::Version;
@@ -8,12 +9,14 @@ use std::path::{Component, Path};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Stable installs read the `latest.json` of the latest GitHub release. GitHub's "latest" never
-/// resolves to a draft or a pre-release. Compiled into every install: changing it strands them.
-pub const STABLE_FEED: &str =
-    "https://github.com/getoxide/oxide/releases/latest/download/latest.json";
-/// Installs whose own version is a pre-release read the newest published release of any kind.
-pub const PRERELEASE_FEED: &str = "https://getoxide.github.io/oxide/updates/prerelease.json";
+/// Stable installs read `latest.json` from Oxide's update subdomain, which redirects to the latest
+/// GitHub release's `latest.json`. GitHub's "latest" never resolves to a draft or a pre-release.
+/// Compiled into every install: changing it strands them.
+pub const STABLE_FEED: &str = "https://updates.getoxide.dev/latest.json";
+/// Installs whose own version is a pre-release ask GitHub's releases API for the newest published
+/// release of any kind (pre-releases included) and read its `latest.json` asset.
+pub const PRERELEASE_FEED: &str =
+    "https://api.github.com/repos/getoxide/oxide/releases?per_page=10";
 /// How often Oxide asks the feed, after the check at launch.
 pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 const RELEASE_PAGE: &str = "https://github.com/getoxide/oxide/releases/tag/";
@@ -124,6 +127,63 @@ pub fn feed_for(version: &Version) -> &'static str {
     } else {
         PRERELEASE_FEED
     }
+}
+
+#[derive(serde::Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// Picks the `latest.json` asset URL of the newest non-draft release from a GitHub releases API response.
+pub fn prerelease_feed_from_releases_json(json: &str) -> Result<String, String> {
+    let releases: Vec<GithubRelease> =
+        serde_json::from_str(json).map_err(|error| format!("Invalid releases JSON: {error}"))?;
+    releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter_map(|release| {
+            let tag = release
+                .tag_name
+                .strip_prefix('v')
+                .unwrap_or(&release.tag_name);
+            let version = Version::parse(tag).ok()?;
+            let url = release
+                .assets
+                .into_iter()
+                .find(|asset| asset.name == "latest.json" && !asset.browser_download_url.is_empty())
+                .map(|asset| asset.browser_download_url)?;
+            Some((version, url))
+        })
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .map(|(_, url)| url)
+        .ok_or_else(|| "No published release with a latest.json asset was found.".to_string())
+}
+
+/// Fetches GitHub's releases API and returns the `latest.json` asset URL of the newest published release.
+pub fn resolve_prerelease_feed_url() -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get(PRERELEASE_FEED)
+        .header(reqwest::header::USER_AGENT, "oxide-updater")
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| error.to_string())?;
+    let body = response.text().map_err(|error| error.to_string())?;
+    prerelease_feed_from_releases_json(&body)
 }
 
 /// Whether `candidate` is a newer version than `current`; `0.1.0` is newer than `0.1.0-rc.2`.
@@ -594,14 +654,48 @@ mod tests {
 
     #[test]
     fn the_feed_addresses_are_the_published_ones() {
-        assert_eq!(
-            STABLE_FEED,
-            "https://github.com/getoxide/oxide/releases/latest/download/latest.json"
-        );
+        assert_eq!(STABLE_FEED, "https://updates.getoxide.dev/latest.json");
         assert_eq!(
             PRERELEASE_FEED,
-            "https://getoxide.github.io/oxide/updates/prerelease.json"
+            "https://api.github.com/repos/getoxide/oxide/releases?per_page=10"
         );
+    }
+
+    #[test]
+    fn prerelease_feed_picks_newest_published_release_with_feed_asset() {
+        let json = r#"[
+            {
+                "tag_name": "v1.0.0-rc.3",
+                "draft": true,
+                "prerelease": true,
+                "assets": [
+                    { "name": "latest.json", "browser_download_url": "https://example.com/rc3/latest.json" }
+                ]
+            },
+            {
+                "tag_name": "v1.0.0-rc.1",
+                "draft": false,
+                "prerelease": true,
+                "assets": [
+                    { "name": "latest.json", "browser_download_url": "https://example.com/rc1/latest.json" }
+                ]
+            },
+            {
+                "tag_name": "v1.0.0-rc.2",
+                "draft": false,
+                "prerelease": true,
+                "assets": [
+                    { "name": "Oxide.dmg", "browser_download_url": "https://example.com/rc2/Oxide.dmg" },
+                    { "name": "latest.json", "browser_download_url": "https://example.com/rc2/latest.json" }
+                ]
+            }
+        ]"#;
+        assert_eq!(
+            prerelease_feed_from_releases_json(json).unwrap(),
+            "https://example.com/rc2/latest.json"
+        );
+        assert!(prerelease_feed_from_releases_json("[]").is_err());
+        assert!(prerelease_feed_from_releases_json("not json").is_err());
     }
 
     #[test]
