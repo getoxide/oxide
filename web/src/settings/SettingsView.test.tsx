@@ -87,7 +87,7 @@ function panels() {
   return Array.from(host.querySelectorAll<HTMLElement>('[role="tabpanel"]'));
 }
 
-it("renders a section navigation menu with Appearance, Terminal, Code, Session, Shortcuts, and GitHub, showing Appearance by default", async () => {
+it("renders a section navigation menu with Appearance, Terminal, Code, Session, Shortcuts, GitHub and Updates, showing Appearance by default", async () => {
   await renderSettings();
 
   const nav = host.querySelector('[role="tablist"]');
@@ -95,13 +95,13 @@ it("renders a section navigation menu with Appearance, Terminal, Code, Session, 
   expect(nav?.getAttribute("aria-orientation")).toBe("vertical");
 
   const navTabs = tabs();
-  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Terminal", "Code", "Session", "Shortcuts", "GitHub"]);
-  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false", "false"]);
-  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1, -1]);
+  expect(navTabs.map((tab) => tab.textContent?.trim())).toEqual(["Appearance", "Terminal", "Code", "Session", "Shortcuts", "GitHub", "Updates"]);
+  expect(navTabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false", "false", "false"]);
+  expect(navTabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1, -1, -1]);
 
   const sectionPanels = panels();
-  expect(sectionPanels).toHaveLength(6);
-  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true, true, true, true]);
+  expect(sectionPanels).toHaveLength(7);
+  expect(sectionPanels.map((panel) => panel.hidden)).toEqual([false, true, true, true, true, true, true]);
   expect(sectionPanels[0].getAttribute("aria-labelledby")).toBe(navTabs[0].id);
   expect(navTabs[0].getAttribute("aria-controls")).toBe(sectionPanels[0].id);
   expect(developerToolsCalls).toBe(1);
@@ -158,7 +158,7 @@ it("switches visible section content on click while preserving live state across
 
 it("supports keyboard navigation across section tabs with wrapping and Home/End", async () => {
   await renderSettings();
-  const [appearanceTab, terminalTab, codeTab, sessionTab, shortcutsTab, githubTab] = tabs();
+  const [appearanceTab, terminalTab, codeTab, sessionTab, shortcutsTab, githubTab, updatesTab] = tabs();
 
   await act(async () => {
     appearanceTab.focus();
@@ -192,7 +192,13 @@ it("supports keyboard navigation across section tabs with wrapping and Home/End"
   expect(document.activeElement).toBe(githubTab);
 
   await act(async () => {
-    githubTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    githubTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  expect(updatesTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(updatesTab);
+
+  await act(async () => {
+    updatesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   });
   expect(appearanceTab.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(appearanceTab);
@@ -200,11 +206,11 @@ it("supports keyboard navigation across section tabs with wrapping and Home/End"
   await act(async () => {
     appearanceTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
   });
-  expect(githubTab.getAttribute("aria-selected")).toBe("true");
-  expect(document.activeElement).toBe(githubTab);
+  expect(updatesTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(updatesTab);
 
   await act(async () => {
-    githubTab.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    updatesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
   });
   expect(appearanceTab.getAttribute("aria-selected")).toBe("true");
   expect(document.activeElement).toBe(appearanceTab);
@@ -212,14 +218,14 @@ it("supports keyboard navigation across section tabs with wrapping and Home/End"
   await act(async () => {
     appearanceTab.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
   });
-  expect(githubTab.getAttribute("aria-selected")).toBe("true");
-  expect(document.activeElement).toBe(githubTab);
+  expect(updatesTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(updatesTab);
 
   await act(async () => {
-    githubTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    updatesTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
   });
-  expect(shortcutsTab.getAttribute("aria-selected")).toBe("true");
-  expect(document.activeElement).toBe(shortcutsTab);
+  expect(githubTab.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(githubTab);
 });
 
 it("calls onClose when the close button is clicked", async () => {

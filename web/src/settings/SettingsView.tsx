@@ -6,9 +6,10 @@ import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
 import { GithubSetup } from "./GithubSetup";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
+import { UpdatesSettingsSection } from "../updates/UpdatesSettingsSection";
 import { restoreSessionEnabled, setRestoreSession } from "../shared/session";
 
-export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "shortcuts" | "github";
+export type SettingsSectionId = "appearance" | "terminal" | "code" | "session" | "shortcuts" | "github" | "updates";
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -94,6 +95,12 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
           <GithubSetup />
         </div>
       ),
+    },
+    {
+      id: "updates",
+      label: "Updates",
+      description: "Oxide checks at launch and every few hours. A check that fails stays silent outside this page.",
+      render: () => <UpdatesSettingsSection />,
     },
   ];
 
