@@ -9,6 +9,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 type State = {
   channel: "inApp" | "apt" | "dnf" | "development";
+  installLocation?: "allowed" | "moveToApplications";
   currentVersion: string;
   lastCheckedAt: number | null;
   lastCheck: { at: number; succeeded: boolean } | null;
@@ -102,6 +103,14 @@ describe("Updates settings section", () => {
     await render(upToDate);
     expect(text()).toContain("Up to date");
     expect(text()).toContain(when(1_700_000_000));
+  });
+
+  it("asks to move Oxide to Applications, still names the new version and offers no install", async () => {
+    await render({ ...behind, installLocation: "moveToApplications" });
+    expect(text()).toContain("Move Oxide to your Applications folder");
+    expect(text()).toContain("0.2.0");
+    expect(named("Install update")).toBeUndefined();
+    expect(named("Check for updates")).toBeDefined();
   });
 
   it("checks now and shows the new version it finds", async () => {

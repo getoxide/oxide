@@ -9,6 +9,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 type State = {
   channel: "inApp" | "apt" | "dnf" | "development";
+  installLocation?: "allowed" | "moveToApplications";
   currentVersion: string;
   lastCheckedAt: number | null;
   available: { version: string; releaseNotesUrl: string } | null;
@@ -126,6 +127,16 @@ describe("UpdateButton", () => {
     const target = [...popover()!.querySelectorAll("button")].find((candidate) => candidate.textContent === label);
     await act(async () => target!.click());
   };
+
+  it("asks to move Oxide to Applications and offers no install from elsewhere", async () => {
+    current = () => ({ ...behind, installLocation: "moveToApplications" });
+    await render();
+    expect(button()).not.toBeNull();
+    await act(async () => button()!.click());
+    expect(popover()!.textContent).toContain("Move Oxide to your Applications folder");
+    expect(popover()!.textContent).toContain("0.2.0");
+    expect([...popover()!.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Install update");
+  });
 
   it("installs from the popover", async () => {
     await render();

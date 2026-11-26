@@ -429,7 +429,11 @@ mod tests {
             "/Users/ada/Applications/Oxide.app/Contents/MacOS/oxide",
             "/Applications/Utilities/Oxide.app/Contents/MacOS/oxide",
         ] {
-            assert_eq!(location(Some(BundleKind::App), exe), InstallLocation::Allowed, "{exe}");
+            assert_eq!(
+                location(Some(BundleKind::App), exe),
+                InstallLocation::Allowed,
+                "{exe}"
+            );
         }
     }
 
@@ -454,8 +458,16 @@ mod tests {
 
     #[test]
     fn only_a_macos_app_is_placed() {
-        for bundle in [None, Some(BundleKind::Nsis), Some(BundleKind::AppImage), Some(BundleKind::Deb)] {
-            assert_eq!(location(bundle, "/Volumes/x/oxide"), InstallLocation::Allowed);
+        for bundle in [
+            None,
+            Some(BundleKind::Nsis),
+            Some(BundleKind::AppImage),
+            Some(BundleKind::Deb),
+        ] {
+            assert_eq!(
+                location(bundle, "/Volumes/x/oxide"),
+                InstallLocation::Allowed
+            );
         }
     }
 

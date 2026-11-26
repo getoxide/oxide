@@ -48,7 +48,13 @@ export function UpdateInstallFlow({
         Release notes
       </a>
       {shownError && <p role="alert" className="error update-message">{shownError}</p>}
-      {operation.kind === "idle" && state.channel === "inApp" && (
+      {state.installLocation === "moveToApplications" && (
+        <p role="note" className="update-message update-location-notice">
+          Move Oxide to your Applications folder, then open it from there to update. Oxide is running from a disk
+          image, Downloads or another place where an update would fail or land in the wrong spot.
+        </p>
+      )}
+      {operation.kind === "idle" && state.channel === "inApp" && state.installLocation !== "moveToApplications" && (
         <div className="update-actions">
           <button className="btn sm primary" onClick={() => run(() => commands.installUpdate())}>
             {shownError ? "Try again" : "Install update"}

@@ -49,9 +49,9 @@ pub use oxide_platform::{AvailableShell, ShellKind};
 pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use updates::{
-    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation, LastCheck,
-    PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState, feed_for,
-    is_newer,
+    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation,
+    LastCheck, PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState,
+    feed_for, is_newer,
 };
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
