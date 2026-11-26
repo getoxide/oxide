@@ -346,6 +346,46 @@ export function checkPublishedFeeds({ tag, stable, prerelease, repository = "get
   return { ok: true, message: `Both feeds are right for ${tag}.` };
 }
 
+/**
+ * The Linux package repositories (ADR-0021). APT is a flat repository made of release assets; DNF
+ * keeps only its metadata on the update site, and its packages are the release's own assets.
+ * One OpenPGP key signs the APT `InRelease`, every `.rpm` and the DNF `repomd.xml`.
+ */
+export const REPOSITORY_SECRETS = ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"];
+/** The signed APT index, as release assets. One index lists the amd64 and arm64 packages. */
+export const APT_REPOSITORY_FILES = ["InRelease", "Release", "Packages"];
+/** The public half of the repository key (binary for apt's `signed-by`, armored for rpm and dnf). */
+export const REPOSITORY_KEY_FILES = ["oxide-repository.gpg", "oxide-repository.asc"];
+const REPOSITORY_ARCHES = [
+  { asset: "x64", deb: "amd64", rpm: "x86_64" },
+  { asset: "arm64", deb: "arm64", rpm: "aarch64" },
+];
+
+/**
+ * What a release contributes to the repositories. Throws when a package is missing: a repository
+ * that lacks an architecture would make that architecture's `apt upgrade` silently stop.
+ * Pre-releases are signed too (a draft's assets rehearse the repositories) but never reach DNF:
+ * GitHub's "latest" link already keeps them out of APT, and `dnf.publish` keeps them off the update site.
+ */
+export function repositoryPlan({ tag, repository, assetNames }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
+  const pick = (extension, field) => REPOSITORY_ARCHES.map((arch) => {
+    const name = `Oxide_${version}_linux_${arch.asset}.${extension}`;
+    if (!assetNames.includes(name)) throw new Error(`The release has no ${name}; the repositories need one .${extension} per architecture.`);
+    return { name, arch: arch[field] };
+  });
+  const stable = !version.includes("-");
+  return {
+    version,
+    stable,
+    debs: pick("deb", "deb"),
+    rpms: pick("rpm", "rpm"),
+    aptFiles: [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES],
+    dnf: { publish: stable, baseUrl: releaseAssetBase(repository, tag), sitePath: "rpm" },
+  };
+}
+
 /** The names among `names` that `env` does not set to a non-blank value. */
 export function missingSecrets(env, names) {
   return names.filter((name) => !String(env?.[name] ?? "").trim());

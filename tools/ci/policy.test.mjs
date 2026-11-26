@@ -7,6 +7,7 @@ import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
+  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, repositoryPlan,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -604,6 +605,56 @@ describe("checkPublishedFeeds", () => {
 
   test("feedUrls lists every package URL for the reachability check", () => {
     assert.equal(feedUrls(feed("0.1.0")).length, 5);
+  });
+});
+
+describe("repositoryPlan", () => {
+  const REPO_ASSETS = (version) => [
+    `Oxide_${version}_linux_x64.deb`, `Oxide_${version}_linux_arm64.deb`, `Oxide_${version}_linux_x64.rpm`, `Oxide_${version}_linux_arm64.rpm`,
+    `Oxide_${version}_linux_x64.AppImage`, `Oxide_${version}_macos_arm64.dmg`, `Oxide_${version}_windows_x64.exe`, "latest.json",
+  ];
+
+  test("the packages of a repository are the one .deb and one .rpm of each architecture, and nothing else", () => {
+    const plan = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    assert.deepEqual(plan.debs, [
+      { name: "Oxide_1.2.3_linux_x64.deb", arch: "amd64" },
+      { name: "Oxide_1.2.3_linux_arm64.deb", arch: "arm64" },
+    ]);
+    assert.deepEqual(plan.rpms, [
+      { name: "Oxide_1.2.3_linux_x64.rpm", arch: "x86_64" },
+      { name: "Oxide_1.2.3_linux_arm64.rpm", arch: "aarch64" },
+    ]);
+  });
+
+  test("a missing package, or one of another version, is an error", () => {
+    const without = REPO_ASSETS("1.2.3").filter((name) => name !== "Oxide_1.2.3_linux_arm64.rpm");
+    assert.throws(() => repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: without }), /Oxide_1\.2\.3_linux_arm64\.rpm/);
+    assert.throws(() => repositoryPlan({ tag: "v1.2.4", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }), /Oxide_1\.2\.4_linux_x64\.deb/);
+    assert.throws(() => repositoryPlan({ tag: "main", repository: "getoxide/oxide", assetNames: [] }), /not a release tag/);
+  });
+
+  test("a stable release writes the DNF metadata, whose packages are the release's own assets", () => {
+    const { dnf, stable } = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    assert.equal(stable, true);
+    assert.deepEqual(dnf, { publish: true, baseUrl: "https://github.com/getoxide/oxide/releases/download/v1.2.3/", sitePath: "rpm" });
+  });
+
+  test("a pre-release is signed for rehearsal but never enters the DNF repository", () => {
+    const { dnf, stable } = repositoryPlan({ tag: "v1.3.0-rc.1", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.3.0-rc.1") });
+    assert.equal(stable, false);
+    assert.equal(dnf.publish, false);
+    assert.equal(dnf.baseUrl, "https://github.com/getoxide/oxide/releases/download/v1.3.0-rc.1/");
+  });
+
+  test("the APT repository is these release assets, next to the public key", () => {
+    assert.deepEqual(APT_REPOSITORY_FILES, ["InRelease", "Release", "Packages"]);
+    assert.deepEqual(REPOSITORY_KEY_FILES, ["oxide-repository.gpg", "oxide-repository.asc"]);
+    assert.deepEqual(repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }).aptFiles, [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES]);
+  });
+
+  test("the release needs both repository secrets", () => {
+    assert.deepEqual(REPOSITORY_SECRETS, ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
+    assert.deepEqual(missingSecrets({ OXIDE_REPOSITORY_SIGNING_KEY: "-----BEGIN" }, REPOSITORY_SECRETS), ["OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
   });
 });
 
