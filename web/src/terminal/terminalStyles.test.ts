@@ -143,3 +143,14 @@ it.each([
   expect(ratio(tint, background), `${tint} on ${background}`).toBeGreaterThanOrEqual(4.5);
   expect(declarations(".terminal-command-composer:focus-within .terminal-prompt-symbol").color).toBe("var(--acc2)");
 });
+
+it("keeps xterm's #000 viewport from showing as a black strip under the rows", () => {
+  expect(paints(declarations(".terminal-block-output .xterm .xterm-viewport")["background-color"])).toBe(false);
+});
+
+it("gives a running command's bar the command line's row, gutter and hairline: no empty band", () => {
+  const bar = declarations(".terminal-running-bar");
+  expect(bar.display).toBe("flex");
+  expect(bar["border-top"]).toBe("1px solid var(--line)");
+  expect(bar.padding).toBe(declarations(".terminal-command-composer").padding);
+});

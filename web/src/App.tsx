@@ -39,7 +39,7 @@ import { runEditCommand, type EditCommand } from "./terminal/editCommand";
 import { TerminalWorkbench } from "./terminal/TerminalWorkbench";
 import { TerminalRow } from "./terminal/TerminalRow";
 import {
-  closeProjectTerminals, closeTerminal, openTerminal, renameTerminal, selectTerminal, setRunning,
+  closeProjectTerminals, closeTerminal, openTerminal, renameTerminal, selectTerminal, setRunning, terminalTitle,
   emptyTerminals, type TerminalsByProject,
 } from "./terminal/terminalTabs";
 import type { CodeOpenRequest } from "./editor/codeOpen";
@@ -722,7 +722,7 @@ function Sidebar({
                   <Collapsible open={expanded}>
                     <ul className="terminal-list" id={`project-${project.id}-terminals`} aria-label={`Terminals of ${project.name}`}>
                       {state.tabs.map((tab) => (
-                        <TerminalRow key={tab.id} name={tab.name} running={tab.running}
+                        <TerminalRow key={tab.id} name={terminalTitle(tab)} running={tab.running}
                           current={!settingsOpen && isSelected && tab.id === state.selectedId}
                           onSelect={() => onSelectTerminal(project, tab.id)}
                           onRename={(name) => onRenameTerminal(project, tab.id, name)}

@@ -52,7 +52,8 @@ export function TerminalRow({ name, current, running, onSelect, onRename, onNewT
   const finish = (commit: boolean) => {
     const value = field.current?.value ?? name;
     setEditing(false);
-    if (commit) onRename(value);
+    // Leaving the field unchanged names nothing: the shown name may be a running program's.
+    if (commit && value.trim() !== name) onRename(value);
     requestAnimationFrame(() => item.current?.focus());
   };
 

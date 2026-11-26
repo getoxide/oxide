@@ -671,6 +671,58 @@ it.each([
   expect(seen).toEqual(expected);
 });
 
+it.each([
+  ["taller than the Terminal (seq 120)", 120, "1920px"],
+  ["past the row cap (seq 300)", 300, "3200px"],
+])("keeps every row of an ended block %s, never cut to the Terminal's height", async (_, lines, height) => {
+  fitToHost = true;
+  const output = Array.from({ length: lines }, (_, i) => `${i + 1}\r\n`).join("");
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output, ended: true, exitCode: 0 }),
+        active: false,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: () => {},
+      }),
+    ),
+  );
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  const clip = mount.querySelector<HTMLElement>(".terminal-output-clip")!;
+  const host = mount.querySelector<HTMLElement>(".terminal-block-output")!;
+  expect(clip.style.height).toBe(height);
+  // Past the cap, xterm scrolls inside a host exactly as tall as the clip: no row hides below it.
+  if (lines > 200) expect(host.style.height).toBe(height);
+});
+
+it("stays inline when a prompt redraws itself in the normal buffer", async () => {
+  const screens: boolean[] = [];
+  await act(async () =>
+    root.render(
+      createElement(TerminalCommandBlock, {
+        block: baseBlock({ output: "? Pick skills\r\n" }),
+        active: true,
+        visible: true,
+        onInput: () => {},
+        onReady: () => {},
+        onResize: () => {},
+        onScreen: (screen: boolean) => screens.push(screen),
+      }),
+    ),
+  );
+  await act(async () => {
+    instances[0].write("\x1b[2A\x1b[5;1H [x] one\r\n");
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screens).not.toContain(true);
+  expect(mount.querySelector("section")!.classList.contains("fullscreen")).toBe(false);
+});
+
 
 describe("running indicator", () => {
   // The running treatment (status rail, accent $, spinner) is time based: a command that ends

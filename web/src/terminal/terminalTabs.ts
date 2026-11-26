@@ -2,8 +2,54 @@
 export interface TerminalTab {
   id: number;
   name: string;
+  /** The user named it: a running program never takes the name's place. */
+  customName: boolean;
   /** The command a Command block is running now, if any. */
   running: string | null;
+}
+
+/** Commands that run another one: the name shown is the program they run. */
+const WRAPPERS = new Set(["sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "nice"]);
+/** The wrappers' flags that take the next word as their value (`sudo -u root`, `nice -n 5`). */
+const VALUE_FLAGS: Record<string, string[]> = {
+  sudo: ["-u", "-g", "-C", "-D", "-h", "-p", "-U", "-r", "-t"],
+  doas: ["-u", "-C"],
+  env: ["-u", "-C", "-S"],
+  nice: ["-n"],
+};
+
+/**
+ * The program a command line runs, for a Terminal's name: the first command before any shell
+ * operator, past variable assignments and wrappers (`sudo`, `env`, …) and their flags, as a
+ * basename. `null` when the line names none. Plain shell parsing: no program is special.
+ */
+export function programName(command: string | null): string | null {
+  if (!command) return null;
+  const line = command.split(/\r?\n/).find((part) => part.trim()) ?? "";
+  const segment = line.split(/\|\||&&|[|;&]/)[0] ?? "";
+  const words = segment.trim().split(/\s+/).filter(Boolean);
+  let index = 0;
+  while (index < words.length) {
+    const word = words[index];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { index++; continue; }
+    if (WRAPPERS.has(word)) {
+      index++;
+      while (index < words.length && words[index].startsWith("-")) {
+        index += VALUE_FLAGS[word]?.includes(words[index]) ? 2 : 1;
+      }
+      continue;
+    }
+    break;
+  }
+  const word = words[index]?.replace(/^["']|["']$/g, "");
+  if (!word) return null;
+  const base = word.split(/[\\/]/).filter(Boolean).pop();
+  return base || null;
+}
+
+/** What the sidebar calls a Terminal: its own name, or while it runs a program, that program. */
+export function terminalTitle(tab: TerminalTab): string {
+  return tab.customName ? tab.name : programName(tab.running) ?? tab.name;
 }
 
 export interface ProjectTerminals {
@@ -21,7 +67,7 @@ const of = (state: TerminalsByProject, projectId: number) => state[projectId] ??
 /** Opens a terminal in the Project and selects it. Only an explicit user action calls this. */
 export function openTerminal(state: TerminalsByProject, projectId: number): TerminalsByProject {
   const project = of(state, projectId);
-  const tab: TerminalTab = { id: project.nextId, name: `Terminal ${project.nextId}`, running: null };
+  const tab: TerminalTab = { id: project.nextId, name: `Terminal ${project.nextId}`, customName: false, running: null };
   return { ...state, [projectId]: { tabs: [...project.tabs, tab], selectedId: tab.id, nextId: project.nextId + 1 } };
 }
 
@@ -41,13 +87,13 @@ export function closeTerminal(state: TerminalsByProject, projectId: number, tabI
   return { ...state, [projectId]: { ...project, tabs, selectedId } };
 }
 
-/** A blank name keeps the old one. */
+/** A blank name keeps the old one. A name the user gives (even the shown one) stays from then on. */
 export function renameTerminal(state: TerminalsByProject, projectId: number, tabId: number, name: string): TerminalsByProject {
   const project = of(state, projectId);
   const trimmed = name.trim();
   const tab = project.tabs.find((candidate) => candidate.id === tabId);
-  if (!tab || !trimmed || tab.name === trimmed) return state;
-  return { ...state, [projectId]: { ...project, tabs: project.tabs.map((candidate) => candidate.id === tabId ? { ...candidate, name: trimmed } : candidate) } };
+  if (!tab || !trimmed || (tab.customName && tab.name === trimmed)) return state;
+  return { ...state, [projectId]: { ...project, tabs: project.tabs.map((candidate) => candidate.id === tabId ? { ...candidate, name: trimmed, customName: true } : candidate) } };
 }
 
 export function setRunning(state: TerminalsByProject, projectId: number, tabId: number, running: string | null): TerminalsByProject {
