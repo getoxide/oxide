@@ -205,14 +205,14 @@ jobs:
               elif [ "$SIGNED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate but not notarized; Gatekeeper may ask for confirmation on first launch."
               else
-                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`)."
+                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`). Once installed in Applications, Oxide updates itself: the Update button downloads, verifies and installs a release, then asks to restart."
               fi
               ;;
             windows-x64|windows-aarch64)
               # Tauri names the installer after the architecture: x64-setup.exe or arm64-setup.exe.
               arch=x64; if [ "$PLATFORM" = "windows-aarch64" ]; then arch=arm64; fi
               stage_signed "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "windows_${arch}"
-              notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
+              notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation. Once installed, Oxide updates itself: the Update button downloads, verifies and installs a release, then runs the installer without wizard pages on Restart now, or when you quit."
               ;;
             linux-x64|linux-aarch64)
               arch=x64; if [ "$PLATFORM" = "linux-aarch64" ]; then arch=arm64; fi
@@ -227,7 +227,7 @@ jobs:
                 # The AppImage is also the updater package: its signature goes next to it.
                 case "${matches[0]}" in *.AppImage) cp "${matches[0]}.sig" "staged/Oxide_${version}_linux_${arch}.AppImage.sig" ;; esac
               done
-              notice="The Linux builds are not signed with a distribution key. Install a newer package to update. Verify the download against the release checksums or attestation."
+              notice="The Linux builds are not signed with a distribution key. The AppImage updates itself from the Update button (the file you launched is replaced); install a newer .deb or .rpm package to update those. Verify the download against the release checksums or attestation."
               ;;
           esac
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"
