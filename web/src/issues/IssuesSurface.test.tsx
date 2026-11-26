@@ -673,3 +673,56 @@ it("shows the description's private attachment through its signed URL and other 
   expect(conversation.textContent).toContain("tracker");
   expect(conversation.textContent).toContain("Open image");
 });
+
+it("starts the Issue description expanded and collapses and expands it with the header chevron", async () => {
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ body: "Detailed issue body" }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  expect(description.querySelector(".md")?.textContent).toContain("Detailed issue body");
+
+  const toggle = description.querySelector<HTMLButtonElement>('button[aria-label="Collapse description"]')!;
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.querySelector(".pr-chev")).not.toBeNull();
+
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(toggle.getAttribute("aria-label")).toBe("Expand description");
+  expect(description.querySelector(".collapsible")?.getAttribute("aria-hidden")).toBe("true");
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 180));
+  });
+  expect(description.querySelector(".md")).toBeNull();
+
+  await act(async () => toggle.click());
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.getAttribute("aria-label")).toBe("Collapse description");
+  expect(description.querySelector(".md")?.textContent).toContain("Detailed issue body");
+});
+
+it("expands a collapsed Issue description automatically when clicking Edit description", async () => {
+  vi.mocked(commands.issueDetail).mockResolvedValue({
+    status: "ok",
+    data: detail({ body: "Original body" }),
+  });
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  const toggle = description.querySelector<HTMLButtonElement>('button[aria-label="Collapse description"]')!;
+  await act(async () => toggle.click());
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 180));
+  });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(description.querySelector(".md")).toBeNull();
+
+  await act(async () => description.querySelector<HTMLButtonElement>('button[aria-label="Edit description"]')!.click());
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(description.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')?.value).toBe("Original body");
+});
