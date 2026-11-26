@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
-  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
+  UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, isUpdaterOnlyAsset, missingSecrets, prereleaseFeedUrl, releaseChecksums,
   APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, missingPresent, repositoryPlan,
 } from "./policy.mjs";
 
@@ -746,11 +746,11 @@ describe("repository index files", () => {
     assert.equal(dnfRepoFile(), [
       "[oxide]",
       "name=Oxide",
-      "baseurl=https://getoxide.github.io/oxide/rpm/",
+      "baseurl=https://updates.getoxide.dev/rpm/",
       "enabled=1",
       "gpgcheck=1",
       "repo_gpgcheck=1",
-      "gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc",
+      "gpgkey=https://updates.getoxide.dev/rpm/oxide-repository.asc",
       "metadata_expire=6h",
       "skip_if_unavailable=1",
       "",
@@ -758,16 +758,16 @@ describe("repository index files", () => {
   });
 
   test("the APT source file is the documented one-line source, signed by the Oxide keyring", () => {
-    assert.equal(aptSourceFile(), "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./\n");
+    assert.equal(aptSourceFile(), "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://updates.getoxide.dev/apt/ ./\n");
     assert.equal(APT_SOURCE_PATH, "/etc/apt/sources.list.d/oxide.list");
     assert.equal(APT_KEYRING_PATH, "/usr/share/keyrings/oxide.gpg");
     assert.equal(DNF_REPO_PATH, "/etc/yum.repos.d/oxide.repo");
   });
 
   test("repository files and the key are release assets, kept out of the notes' checksums", () => {
-    for (const name of ["InRelease", "Release", "Packages", "oxide-repository.gpg", "oxide-repository.asc"]) assert.ok(isRepositoryAsset(name), name);
+    for (const name of ["InRelease", "Release", "Packages", "oxide-repository.gpg", "oxide-repository.asc", "dnf-site.tar.gz"]) assert.ok(isRepositoryAsset(name), name);
     for (const name of ["Oxide_1.0.0_linux_x64.deb", "Oxide_1.0.0_linux_x64.rpm", "latest.json"]) assert.ok(!isRepositoryAsset(name), name);
-    assert.equal(releaseChecksums("a  InRelease\nb  Oxide_1.0.0_linux_x64.deb\nc  oxide-repository.asc\n"), "b  Oxide_1.0.0_linux_x64.deb\n");
+    assert.equal(releaseChecksums("a  InRelease\nb  Oxide_1.0.0_linux_x64.deb\nc  oxide-repository.asc\nd  dnf-site.tar.gz\n"), "b  Oxide_1.0.0_linux_x64.deb\n");
   });
 });
 
@@ -870,16 +870,17 @@ describe("the repository pipeline", () => {
     assert.ok(assemble.indexOf("staged-repository") < assemble.indexOf("sha256sum"));
   });
 
-  test("publishing writes the DNF metadata for a stable release only, then checks both repositories", () => {
+  test("publishing deploys the update site from the release's DNF archive for a stable release only, then checks both repositories", () => {
     const verify = read("verify-release.yml");
     assert.match(verify, /repository-plan/);
     assert.match(verify, /steps\.plan\.outputs\.publish == 'true'/);
-    for (const marker of ["cli.mjs check-apt", "cli.mjs check-dnf", "gpgv", "repomd.xml.asc", "releases/latest/download/", "getoxide.github.io/oxide/rpm/"]) assert.ok(verify.includes(marker), marker);
+    assert.ok(!verify.includes("remote push origin"), "verify-release.yml must not push to an updates branch");
+    for (const marker of ["cli.mjs check-apt", "cli.mjs check-dnf", "gpgv", "repomd.xml.asc", "updates.getoxide.dev/apt/", "updates.getoxide.dev/rpm/", "dnf-site.tar.gz"]) assert.ok(verify.includes(marker), marker);
   });
 
   test("the repository addresses are the ones the setup instructions and docs name", () => {
     const readme = readFileSync(fileURLToPath(new URL("../../README.md", import.meta.url)), "utf8");
-    for (const text of ["signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./", "https://getoxide.github.io/oxide/rpm/oxide.repo"]) {
+    for (const text of ["signed-by=/usr/share/keyrings/oxide.gpg] https://updates.getoxide.dev/apt/ ./", "https://updates.getoxide.dev/rpm/oxide.repo"]) {
       assert.ok(readme.includes(text), text);
     }
   });
@@ -935,16 +936,27 @@ describe("the update pipeline", () => {
     assert.ok(release.indexOf("updater-feed") < release.indexOf("sha256sum"), "the feed is written before the checksums and attestations cover it");
   });
 
-  test("publishing writes prerelease.json to the updates branch and then checks both feeds", () => {
+  test("publishing deploys the update site without a branch and checks both feeds", () => {
     const verify = read("verify-release.yml");
-    assert.match(verify, /updates/);
-    assert.match(verify, /prerelease\.json/);
+    assert.match(verify, /wrangler@4\.168\.0/);
+    assert.match(verify, /_redirects/);
+    assert.match(verify, /cli\.mjs prerelease-feed-url/);
     assert.match(verify, /cli\.mjs check-feeds/);
     assert.match(verify, /cli\.mjs feed-urls/);
-    assert.match(verify, /releases\/latest\/download\/latest\.json/);
-    assert.match(verify, /getoxide\.github\.io\/oxide\/updates\/prerelease\.json/);
-    // The workflow that writes the site holds no signing key.
+    assert.match(verify, /https:\/\/updates\.getoxide\.dev\/latest\.json/);
+    assert.match(verify, /https:\/\/api\.github\.com\/repos\/getoxide\/oxide\/releases\?per_page=10/);
+    // The workflow that verifies and deploys the site holds no signing key.
     for (const secret of SECRETS) assert.ok(!verify.includes(secret), `${secret} reaches verify-release.yml`);
+  });
+
+  test("prereleaseFeedUrl picks the newest non-draft release by semver with a latest.json asset", () => {
+    const releases = [
+      { tag_name: "v1.0.0-rc.3", draft: true, assets: [{ name: "latest.json", browser_download_url: "https://example.com/rc3.json" }] },
+      { tag_name: "v1.0.0-rc.1", draft: false, assets: [{ name: "latest.json", browser_download_url: "https://example.com/rc1.json" }] },
+      { tag_name: "v1.0.0-rc.2", draft: false, assets: [{ name: "latest.json", browser_download_url: "https://example.com/rc2.json" }] },
+    ];
+    assert.equal(prereleaseFeedUrl(releases), "https://example.com/rc2.json");
+    assert.equal(prereleaseFeedUrl([]), undefined);
   });
 
   test("publishing first refuses a pre-release flag that disagrees with the tag, before anything is written", () => {
@@ -952,7 +964,7 @@ describe("the update pipeline", () => {
     assert.match(verify, /PRERELEASE: \$\{\{ github\.event\.release\.prerelease \}\}/);
     assert.match(verify, /cli\.mjs check-prerelease "\$TAG" "\$PRERELEASE"/);
     const first = verify.indexOf("check-prerelease");
-    for (const later of ["gh release download", "remote push origin"]) {
+    for (const later of ["gh release download", "wrangler"]) {
       assert.ok(first < verify.indexOf(later), `the flag is checked before ${later}`);
     }
   });
@@ -960,7 +972,7 @@ describe("the update pipeline", () => {
   test("the pipeline's feed addresses are the ones compiled into the app", () => {
     const core = readFileSync(fileURLToPath(new URL("../../crates/oxide-core/src/updates.rs", import.meta.url)), "utf8");
     const verify = read("verify-release.yml");
-    for (const url of ["https://github.com/getoxide/oxide/releases/latest/download/latest.json", "https://getoxide.github.io/oxide/updates/prerelease.json"]) {
+    for (const url of ["https://updates.getoxide.dev/latest.json", "https://api.github.com/repos/getoxide/oxide/releases?per_page=10"]) {
       assert.ok(core.includes(url), url);
       assert.ok(verify.includes(url), url);
     }

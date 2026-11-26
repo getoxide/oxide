@@ -1,9 +1,10 @@
 name: Verify release
 
 # Runs when a Release Manager publishes the draft: check what users will actually
-# download (checksums and attestations), then point the pre-release update feed at it and check
-# that both update feeds name it (ADR-0021). A failure opens a needs-triage issue.
-# This workflow holds no signing key: it only copies the release's own latest.json.
+# download (checksums and attestations), deploy the update site (Cloudflare Workers Static Assets)
+# from the latest stable release's DNF archive plus redirects, and check both update feeds and
+# Linux repositories on updates.getoxide.dev (ADR-0021). A failure opens a needs-triage issue.
+# This workflow holds no signing key.
 on:
   release:
     types: [published]
@@ -68,26 +69,26 @@ jobs:
             --title "Release $TAG failed post-publish verification" \
             --body "Verification of the published release **$TAG** failed: the pre-release flag, checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
 
-  # The pre-release feed is the newest published release of any kind. It is a file on the `updates`
-  # branch, which GitHub Pages serves at https://getoxide.github.io/oxide/ (enabled once by an admin).
-  # The stable feed needs no job: GitHub's "latest" link starts resolving the moment the release is published.
-  update-feeds:
-    name: update feeds
+  # Deploys the update site to Cloudflare Workers Static Assets (oxide-updates at updates.getoxide.dev)
+  # with no git branch: _redirects routes the stable feed and APT paths to the latest GitHub release
+  # assets, and /rpm/ serves the DNF metadata rebuilt from the latest published stable release.
+  deploy-site:
+    name: deploy update site
     needs: verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
+    environment: release
     permissions:
-      contents: write
+      contents: read
       issues: write
-    # Two publishes in a row must not interleave their pushes to the branch.
     concurrency:
       group: update-site
       cancel-in-progress: false
     env:
       TAG: ${{ github.event.release.tag_name }}
       GH_TOKEN: ${{ github.token }}
-      STABLE_FEED: https://github.com/getoxide/oxide/releases/latest/download/latest.json
-      PRERELEASE_FEED: https://getoxide.github.io/oxide/updates/prerelease.json
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,43 +98,75 @@ jobs:
           node-version-file: .node-version
           package-manager-cache: false
 
-      - name: Write prerelease.json to the updates branch
+      - name: Assemble the update site from the latest stable release
         run: |
-          mkdir feeds
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir feeds
-          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          remote() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
-          mkdir site
-          cd site
-          git init -q
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          if remote fetch -q --depth 1 origin updates; then
-            git checkout -q -B updates FETCH_HEAD
+          mkdir -p site dnf-archive
+          cat > site/_redirects << 'EOF'
+          /latest.json https://github.com/getoxide/oxide/releases/latest/download/latest.json 302
+          /apt/* https://github.com/getoxide/oxide/releases/latest/download/:splat 302
+          EOF
+          stable_tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select((.isDraft | not) and (.isPrerelease | not))][0].tagName')
+          if [ -n "$stable_tag" ] && [ "$stable_tag" != "null" ]; then
+            echo "Building DNF repository from latest stable release: $stable_tag"
+            gh release download "$stable_tag" --repo "$GITHUB_REPOSITORY" --pattern dnf-site.tar.gz --dir dnf-archive
+            tar -xzf dnf-archive/dnf-site.tar.gz -C site
           else
-            git checkout -q --orphan updates
+            echo "No published stable release yet; deploying redirects only."
           fi
-          mkdir -p updates
-          cp ../feeds/latest.json updates/prerelease.json
-          touch .nojekyll
-          git add -A
-          if git diff --cached --quiet; then
-            echo "prerelease.json already names $TAG."
-            exit 0
-          fi
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Point the pre-release feed at $TAG"
-          remote push origin HEAD:updates
+
+      - name: Deploy to Cloudflare Workers Static Assets
+        run: npx --yes wrangler@4.168.0 deploy --name oxide-updates --assets site --compatibility-date 2026-11-26
+
+      - name: Open an issue
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
+            --title "Release $TAG failed to deploy the update site" \
+            --body "Deploying the update site for **$TAG** to Cloudflare failed (the previous deployment remains online). See $RUN_URL."
+
+  # Checks that the stable feed on updates.getoxide.dev and the GitHub releases API pre-release feed
+  # both resolve to the expected release and every package URL resolves.
+  update-feeds:
+    name: update feeds
+    needs: deploy-site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+      STABLE_FEED: https://updates.getoxide.dev/latest.json
+      PRERELEASE_API: https://api.github.com/repos/getoxide/oxide/releases?per_page=10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
 
       - name: Check that both feeds name the release and every URL resolves
         run: |
-          # GitHub Pages takes a minute or two to publish a push.
+          mkdir feeds
           ok=false
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 12); do
             curl -fsSL "$STABLE_FEED" -o feeds/stable.json || echo '{}' > feeds/stable.json
-            curl -fsSL "$PRERELEASE_FEED" -o feeds/prerelease.json || echo '{}' > feeds/prerelease.json
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$PRERELEASE_API" -o feeds/releases.json || echo '[]' > feeds/releases.json
+            prerelease_url=$(node tools/ci/cli.mjs prerelease-feed-url feeds/releases.json)
+            if [ -n "$prerelease_url" ]; then
+              curl -fsSL "$prerelease_url" -o feeds/prerelease.json || echo '{}' > feeds/prerelease.json
+            else
+              echo '{}' > feeds/prerelease.json
+            fi
             if node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json; then ok=true; break; fi
             echo "Attempt $attempt: not yet. Waiting."
-            sleep 20
+            sleep 15
           done
           if [ "$ok" != "true" ]; then
             node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json
@@ -153,29 +186,23 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
             --title "Release $TAG failed the update feed check" \
-            --body "The update feeds do not both name the published release **$TAG**, or a package URL does not resolve. See $RUN_URL. Installs would not be offered the update. Check that GitHub Pages is enabled from the \`updates\` branch."
+            --body "The update feeds do not both name the published release **$TAG**, or a package URL does not resolve. See $RUN_URL. Installs would not be offered the update."
 
-  # The Linux repositories (ADR-0021). APT is the release's own assets, so publishing already made it
-  # available; DNF's metadata, signed during the release run, goes to the update site for a stable
-  # release only. Then both repositories are fetched the way a user's system fetches them and their
-  # signatures and package hashes are checked. This workflow holds no signing key.
+  # The Linux repositories (ADR-0021). Both APT and DNF are checked through updates.getoxide.dev
+  # the way a user's system fetches them, verifying signatures and package hashes.
   linux-repositories:
     name: linux repositories
     needs: update-feeds
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
-      contents: write
-      actions: read
+      contents: read
       issues: write
-    concurrency:
-      group: update-site
-      cancel-in-progress: false
     env:
       TAG: ${{ github.event.release.tag_name }}
       GH_TOKEN: ${{ github.token }}
-      LATEST_ASSETS: https://github.com/getoxide/oxide/releases/latest/download/
-      DNF_SITE: https://getoxide.github.io/oxide/rpm/
+      APT_SITE: https://updates.getoxide.dev/apt/
+      DNF_SITE: https://updates.getoxide.dev/rpm/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,46 +221,12 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
           node tools/ci/cli.mjs repository-plan "$TAG" assets | tee plan.json
 
-      - name: Write the DNF metadata to the updates branch
-        if: steps.plan.outputs.publish == 'true'
-        run: |
-          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "::error::Could not find a completed Release workflow run for $TAG."
-            exit 1
-          fi
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name dnf-site --dir dnf-rpm
-          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          remote() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
-          mkdir site
-          cd site
-          git init -q
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          if remote fetch -q --depth 1 origin updates; then
-            git checkout -q -B updates FETCH_HEAD
-          else
-            git checkout -q --orphan updates
-          fi
-          # The metadata names exactly this release's packages: replace the folder, never merge into it.
-          rm -rf rpm
-          mkdir rpm
-          cp -R ../dnf-rpm/. rpm/
-          touch .nojekyll
-          git add -A
-          if git diff --cached --quiet; then
-            echo "The DNF metadata already names $TAG."
-            exit 0
-          fi
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Point the DNF repository at $TAG"
-          remote push origin HEAD:updates
-
       - name: Check the APT repository
         env:
           STABLE: ${{ steps.plan.outputs.stable }}
         run: |
-          # GitHub's "latest" link serves a stable release; a pre-release is only reachable by its tag.
-          if [ "$STABLE" = "true" ]; then base="$LATEST_ASSETS"; else base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/"; fi
+          # Stable releases are served through updates.getoxide.dev/apt/; a pre-release is only reachable by its tag.
+          if [ "$STABLE" = "true" ]; then base="$APT_SITE"; else base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/"; fi
           mkdir apt
           for file in InRelease Release Packages oxide-repository.gpg; do
             ok=false
@@ -268,12 +261,11 @@ jobs:
               curl -fsSL "${DNF_SITE}${primary}" -o "dnf/$(basename "$primary")" &&
               node tools/ci/cli.mjs check-dnf "$TAG" dnf
           }
-          # GitHub Pages takes a minute or two to publish a push.
           ok=false
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 12); do
             if fetch; then ok=true; break; fi
             echo "Attempt $attempt: the site does not serve this release's metadata yet. Waiting."
-            sleep 20
+            sleep 15
           done
           if [ "$ok" != "true" ]; then fetch; exit 1; fi
           # The signatures: the site's key is the release's key, repomd.xml and every .rpm carry it.
@@ -294,4 +286,4 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
             --title "Release $TAG failed the Linux repository check" \
-            --body "The APT or DNF repository of the published release **$TAG** failed its signature or package hash check. See $RUN_URL. Linux package installs may not receive the update. Check that GitHub Pages is enabled from the \`updates\` branch."
+            --body "The APT or DNF repository of the published release **$TAG** failed its signature or package hash check. See $RUN_URL. Linux package installs may not receive the update."

@@ -13,11 +13,11 @@ REPO=/etc/yum.repos.d/oxide.repo
 expected=$(cat << 'EOF'
 [oxide]
 name=Oxide
-baseurl=https://getoxide.github.io/oxide/rpm/
+baseurl=https://updates.getoxide.dev/rpm/
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc
+gpgkey=https://updates.getoxide.dev/rpm/oxide-repository.asc
 metadata_expire=6h
 skip_if_unavailable=1
 EOF

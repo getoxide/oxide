@@ -371,6 +371,55 @@ export function feedUrls(feed) {
   return Object.values(feed?.platforms ?? {}).map((entry) => entry.url);
 }
 
+/** Compares two `vX.Y.Z[-pre.N]` tags by semver order (negative if a < b). */
+function compareReleaseTags(a, b) {
+  const parse = (tag) => {
+    const match = String(tag ?? "").match(/^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
+    if (!match) return undefined;
+    return { core: [Number(match[1]), Number(match[2]), Number(match[3])], pre: match[4] };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  if (!left || !right) return 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (left.core[i] !== right.core[i]) return left.core[i] - right.core[i];
+  }
+  if (!left.pre && !right.pre) return 0;
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+  const lp = left.pre.split(".");
+  const rp = right.pre.split(".");
+  for (let i = 0; i < Math.max(lp.length, rp.length); i += 1) {
+    if (lp[i] === undefined) return -1;
+    if (rp[i] === undefined) return 1;
+    const ln = /^\d+$/.test(lp[i]);
+    const rn = /^\d+$/.test(rp[i]);
+    if (ln && rn && Number(lp[i]) !== Number(rp[i])) return Number(lp[i]) - Number(rp[i]);
+    if (ln !== rn) return ln ? -1 : 1;
+    if (lp[i] !== rp[i]) return lp[i] < rp[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Picks the `latest.json` asset URL of the newest non-draft release by semver `tag_name`
+ * from a GitHub releases API response.
+ */
+export function prereleaseFeedUrl(releases) {
+  if (!Array.isArray(releases)) return undefined;
+  let best;
+  for (const release of releases) {
+    if (release?.draft) continue;
+    if (!TAG.test(String(release?.tag_name ?? ""))) continue;
+    const asset = (release.assets ?? []).find((candidate) => candidate?.name === "latest.json" && candidate?.browser_download_url);
+    if (!asset) continue;
+    if (!best || compareReleaseTags(release.tag_name, best.tag) > 0) {
+      best = { tag: release.tag_name, url: asset.browser_download_url };
+    }
+  }
+  return best?.url;
+}
+
 function feedProblems(feed, label, { repository, tag }) {
   if (!feed || typeof feed !== "object") return [`the ${label} is missing or not JSON`];
   const problems = [];
@@ -444,9 +493,12 @@ export function repositoryPlan({ tag, repository, assetNames }) {
   };
 }
 
+/** The DNF metadata archive attached to every release so the update site can be rebuilt at any time. */
+export const DNF_SITE_ASSET = "dnf-site.tar.gz";
+
 /** Whether a release asset exists only for the repositories, so the notes' checksum list leaves it out. */
 export function isRepositoryAsset(name) {
-  return APT_REPOSITORY_FILES.includes(name) || REPOSITORY_KEY_FILES.includes(name);
+  return APT_REPOSITORY_FILES.includes(name) || REPOSITORY_KEY_FILES.includes(name) || name === DNF_SITE_ASSET;
 }
 
 /**
@@ -468,20 +520,20 @@ export function aptReleaseFile({ packagesText, date }) {
   ].join("\n");
 }
 
-/** The update site, which serves the DNF metadata and the key (GitHub Pages from the `updates` branch). */
-export const UPDATE_SITE = "https://getoxide.github.io/oxide/";
+/** The update site on Oxide's domain (Cloudflare Workers Static Assets), serving DNF metadata and redirects. */
+export const UPDATE_SITE = "https://updates.getoxide.dev/";
 
 /** Where the documented setup, and the packages' maintainer scripts, put Oxide's APT source, its key and the DNF repo file. */
 export const APT_SOURCE_PATH = "/etc/apt/sources.list.d/oxide.list";
 export const APT_KEYRING_PATH = "/usr/share/keyrings/oxide.gpg";
 export const DNF_REPO_PATH = "/etc/yum.repos.d/oxide.repo";
 
-/** The flat APT repository: the assets of the latest release, which GitHub never resolves to a draft or a pre-release. */
-const LATEST_ASSET_BASE = "https://github.com/getoxide/oxide/releases/latest/download/";
+/** The flat APT repository on Oxide's update domain (redirects to the latest release's assets). */
+const APT_SITE = `${UPDATE_SITE}apt/`;
 
 /** The one line of the APT source: the flat repository of the latest release, signed by the Oxide keyring only. */
 export function aptSourceFile() {
-  return `deb [signed-by=${APT_KEYRING_PATH}] ${LATEST_ASSET_BASE} ./\n`;
+  return `deb [signed-by=${APT_KEYRING_PATH}] ${APT_SITE} ./\n`;
 }
 
 /** The `.repo` file users add to `/etc/yum.repos.d/`: both package and metadata signatures are checked. */

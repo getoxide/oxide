@@ -15,6 +15,7 @@
 //                                                       each .sig verifies its package against the app's updater pubkey
 //   node tools/ci/cli.mjs release-checksums <file>      prints a sha256sum listing without the updater-only assets
 //   node tools/ci/cli.mjs feed-urls <feed.json>         prints every package URL of a feed
+//   node tools/ci/cli.mjs prerelease-feed-url <releases.json>   prints latest.json URL of the newest non-draft release
 //   node tools/ci/cli.mjs check-feeds <tag> <stable.json> <prerelease.json>
 //   node tools/ci/cli.mjs repository-plan <tag> <dir>   fails unless <dir> has every package; writes publish=<DNF metadata goes to the site>
 //   node tools/ci/cli.mjs apt-release <Packages>        prints the APT Release file for a Packages index
@@ -34,7 +35,7 @@ import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
-  aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, missingPresent, missingSecrets, releaseChecksums,
+  aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, prereleaseFeedUrl, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, checkUpdaterSignature, feedUrls, missingPresent, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -139,6 +140,10 @@ const commands = {
   },
   "feed-urls"([file]) {
     console.log(feedUrls(JSON.parse(readFileSync(file, "utf8"))).join("\n"));
+  },
+  "prerelease-feed-url"([file]) {
+    const url = prereleaseFeedUrl(JSON.parse(readFileSync(file, "utf8")));
+    if (url) process.stdout.write(url);
   },
   "check-feeds"([tag, stableFile, prereleaseFile]) {
     const parse = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; } };

@@ -9,7 +9,7 @@ set -e
 
 KEYRING=/usr/share/keyrings/oxide.gpg
 SOURCE=/etc/apt/sources.list.d/oxide.list
-LINE='deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./'
+LINE='deb [signed-by=/usr/share/keyrings/oxide.gpg] https://updates.getoxide.dev/apt/ ./'
 
 if [ -f "$SOURCE" ] && [ ! -L "$SOURCE" ] && printf '%s\n' "$LINE" | cmp -s - "$SOURCE"; then
   rm -f "$SOURCE"
