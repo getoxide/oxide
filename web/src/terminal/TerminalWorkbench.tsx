@@ -96,6 +96,7 @@ export function TerminalWorkbench({
   const showRunning = useRunningIndicator(running);
   const activeBlock = useRef<string | null>(null);
   const runningCommand = useRef("");
+  const [runningText, setRunningText] = useState("");
   const reportRunning = useRef(onRunningChange);
   useEffect(() => { reportRunning.current = onRunningChange; });
   useEffect(() => { reportRunning.current?.(showRunning ? runningCommand.current : null); }, [showRunning]);
@@ -107,6 +108,7 @@ export function TerminalWorkbench({
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const lastScrollTop = useRef(0);
   const runRef = useRef<(command: string) => void>(() => {});
   const alive = useRef(true);
   useEffect(() => {
@@ -274,10 +276,26 @@ export function TerminalWorkbench({
       window.removeEventListener("pagehide", save);
     };
   }, [blocks, cwd, contextKey]);
+  // Following output means staying pinned to the bottom whatever grows or shrinks: a block's
+  // height changes only after xterm has parsed its bytes, and the Interrupt bar takes room from
+  // the scroll area when it appears. Only the reader scrolling up stops it (see onScroll).
+  // Re-observe when blocks are replaced, not only added: a clear and a new command keep the count.
+  const blockKeys = blocks.map((block) => block.token).join(" ");
+  const pin = useCallback(() => {
+    const el = scroll.current;
+    if (el && following.current) el.scrollTop = el.scrollHeight;
+  }, []);
   useEffect(() => {
-    if (visible && following.current)
-      bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [blocks, visible]);
+    if (visible) pin();
+  }, [blocks, visible, pin]);
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (visibleRef.current) pin(); });
+    observer.observe(el);
+    for (const child of Array.from(el.children)) observer.observe(child);
+    return () => observer.disconnect();
+  }, [blockKeys, pin]);
 
   const write = useCallback(
     async (text: string) => {
@@ -341,6 +359,7 @@ export function TerminalWorkbench({
     };
     activeBlock.current = token;
     runningCommand.current = command;
+    setRunningText(command);
     setRunning(true);
     composer.current?.clear();
     setError(null);
@@ -435,8 +454,12 @@ export function TerminalWorkbench({
         ref={scroll}
         onScroll={() => {
           const el = scroll.current;
-          following.current =
-            !!el && el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          if (!el) return;
+          const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+          // Moving away from the bottom is the reader's doing; growth never moves scrollTop.
+          if (el.scrollTop < lastScrollTop.current && distance > 4) following.current = false;
+          else if (distance < 24) following.current = true;
+          lastScrollTop.current = el.scrollTop;
         }}
       >
         {blocks.map((block, index) => (
@@ -502,13 +525,18 @@ export function TerminalWorkbench({
         </div>
       )}
       {interrupting && !fullscreen && (
-        <button
-          className="terminal-interrupt"
-          onClick={() => void write("\x03")}
-          aria-label="Interrupt command"
-        >
-          <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
-        </button>
+        <div className="terminal-running-bar">
+          <span className="terminal-block-spinner" aria-hidden="true" />
+          <span className="terminal-running-label">Running</span>
+          <code className="terminal-running-command" title={runningText}>{runningText}</code>
+          <button
+            className="terminal-interrupt"
+            onClick={() => void write("\x03")}
+            aria-label="Interrupt command"
+          >
+            <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
+          </button>
+        </div>
       )}
       {/* Hidden, not unmounted, while a command runs: what was typed meanwhile is still there after. */}
       <TerminalInput

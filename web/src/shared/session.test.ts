@@ -11,13 +11,18 @@ const block = (command: string, output = "out") => ({ command, output, exitCode:
 it("is on by default and restores the Terminals, open Code workspaces and halves", () => {
   expect(restoreSessionEnabled()).toBe(true);
   writeSession({
-    terminals: { 1: { tabs: [{ id: 2, name: "server", running: "npm run dev" }], selectedId: 2, nextId: 3 } },
+    terminals: { 1: { tabs: [{ id: 2, name: "server", customName: true, running: "npm run dev" }, { id: 1, name: "Terminal 1", customName: false, running: "vim" }], selectedId: 2, nextId: 3 } },
     code: [1], lastHalf: { 1: "code" },
   });
   expect(readSession()).toEqual({
-    terminals: { 1: { tabs: [{ id: 2, name: "server", running: null }], selectedId: 2, nextId: 3 } },
+    terminals: { 1: { tabs: [{ id: 2, name: "server", customName: true, running: null }, { id: 1, name: "Terminal 1", customName: false, running: null }], selectedId: 2, nextId: 3 } },
     code: [1], lastHalf: { 1: "code" },
   });
+});
+
+it("tells a name given by hand from the default one in a snapshot saved before the flag", () => {
+  localStorage.setItem("oxide:session:v1", JSON.stringify({ terminals: { 1: { tabs: [{ id: 1, name: "Terminal 1" }, { id: 2, name: "backend" }], nextId: 3, selectedId: 1 } }, code: [], lastHalf: {} }));
+  expect(readSession()!.terminals[1].tabs.map((tab) => tab.customName)).toEqual([false, true]);
 });
 
 it("keeps a Terminal's folder and only its recent blocks, each with the tail of its output", () => {
@@ -45,7 +50,7 @@ it("forgets everything when turned off, and saves nothing while off", () => {
 
 it("ignores a hand-edited or corrupt snapshot", () => {
   localStorage.setItem("oxide:session:v1", JSON.stringify({ terminals: { x: 1, 2: { tabs: [{ id: 9, name: "" }, { id: 1, name: "ok" }], nextId: 2, selectedId: 7 } }, code: ["a", 2], lastHalf: { 2: "nope" } }));
-  expect(readSession()).toEqual({ terminals: { 2: { tabs: [{ id: 1, name: "ok", running: null }], selectedId: 1, nextId: 2 } }, code: [2], lastHalf: {} });
+  expect(readSession()).toEqual({ terminals: { 2: { tabs: [{ id: 1, name: "ok", customName: true, running: null }], selectedId: 1, nextId: 2 } }, code: [2], lastHalf: {} });
 });
 
 it("quotes the folder for the shell", () => {

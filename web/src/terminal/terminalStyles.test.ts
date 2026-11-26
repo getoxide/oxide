@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import workbenchCss from "../styles/workbench.css?raw";
 import appearanceCss from "../styles/appearance.css?raw";
+import stylesCss from "../styles/styles.css?raw";
 
 // jsdom does not lay out or cascade stylesheets, so these read the declarations every rule for a
 // selector contributes across both stylesheets, in source order (the later one wins).
@@ -142,4 +143,24 @@ it.each([
   const tint = mix(accent, faint, Number(match![1]) / 100);
   expect(ratio(tint, background), `${tint} on ${background}`).toBeGreaterThanOrEqual(4.5);
   expect(declarations(".terminal-command-composer:focus-within .terminal-prompt-symbol").color).toBe("var(--acc2)");
+});
+
+it("keeps xterm's #000 viewport from showing as a black strip under the rows", () => {
+  expect(paints(declarations(".terminal-block-output .xterm .xterm-viewport")["background-color"])).toBe(false);
+});
+
+it("gives a running command's bar the command line's row, gutter and hairline: no empty band", () => {
+  const bar = declarations(".terminal-running-bar");
+  expect(bar.display).toBe("flex");
+  expect(bar["border-top"]).toBe("1px solid var(--line)");
+  expect(bar.padding).toBe(declarations(".terminal-command-composer").padding);
+});
+
+it("makes room for the close button on a hovered or focused Terminal row, so the running dot never sits under it", () => {
+  const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  const close = css.match(/\.terminal-row \.row-action \{([^}]*)\}/)![1];
+  expect(close).toMatch(/position: absolute;\s*right: 4px/);
+  const room = css.match(/\.terminal-row:is\(:hover, :focus-within\) \.terminal-item \{([^}]*)\}/)![1];
+  // The close button (control size) plus its 4px inset and a 4px gap, so the dot ends before it.
+  expect(room).toContain("padding-right: calc(var(--control-sm) + 8px)");
 });

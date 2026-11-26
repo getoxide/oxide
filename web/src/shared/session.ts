@@ -59,9 +59,15 @@ export function readSession(): SessionSnapshot | null {
     const projectId = Number(key);
     if (!isId(projectId) || !isRecord(project) || !Array.isArray(project.tabs) || !isId(project.nextId)) continue;
     const tabs = project.tabs
-      .filter((tab): tab is { id: number; name: string } => isRecord(tab) && isId(tab.id) && typeof tab.name === "string" && tab.name.trim() !== "")
+      .filter((tab): tab is { id: number; name: string; customName?: unknown } => isRecord(tab) && isId(tab.id) && typeof tab.name === "string" && tab.name.trim() !== "")
       .filter((tab) => tab.id < (project.nextId as number))
-      .map((tab) => ({ id: tab.id, name: tab.name.slice(0, 200), running: null }));
+      .map((tab) => ({
+        id: tab.id,
+        name: tab.name.slice(0, 200),
+        // Snapshots from before the flag: a name other than the tab's own default was given by hand.
+        customName: typeof tab.customName === "boolean" ? tab.customName : tab.name !== `Terminal ${tab.id}`,
+        running: null,
+      }));
     const selectedId = tabs.some((tab) => tab.id === project.selectedId) ? (project.selectedId as number) : tabs[0]?.id ?? null;
     terminals[projectId] = { tabs, selectedId, nextId: project.nextId };
   }
@@ -76,7 +82,7 @@ export function readSession(): SessionSnapshot | null {
 export function writeSession(snapshot: SessionSnapshot): void {
   if (!restoreSessionEnabled()) return;
   const terminals = Object.fromEntries(Object.entries(snapshot.terminals).map(([id, project]) => [id, {
-    tabs: project.tabs.map(({ id: tabId, name }) => ({ id: tabId, name })),
+    tabs: project.tabs.map(({ id: tabId, name, customName }) => ({ id: tabId, name, customName })),
     selectedId: project.selectedId,
     nextId: project.nextId,
   }]));

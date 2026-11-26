@@ -47,3 +47,19 @@ it("keeps the old name when Escape leaves the field", async () => {
   expect(onRename).not.toHaveBeenCalled();
   expect(host.textContent).toContain("Terminal 1");
 });
+
+it("keeps the Terminal's own name in the tooltip while it shows a running program's", async () => {
+  await act(async () => root.render(
+    <TerminalRow name="dnf" baseName="Terminal 1" current running="sudo dnf update" onSelect={() => {}} onRename={() => {}} onClose={() => {}} />,
+  ));
+  const title = host.querySelector(".terminal-item")!.getAttribute("title")!;
+  expect(title).toContain("dnf (Terminal 1)");
+  expect(title).toContain("running sudo dnf update");
+});
+
+it("names nothing when the field is left unchanged: the shown name may be a program's", async () => {
+  const onRename = await render();
+  await act(async () => { host.querySelector(".terminal-item")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
+  await key("Enter");
+  expect(onRename).not.toHaveBeenCalled();
+});

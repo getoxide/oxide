@@ -81,7 +81,7 @@
   :is(.btn, .tab, .sidebar-actions button):active:not(:disabled) { transform: scale(.97); }
   /* A row whose control is a full-width button inside it (picker options) tints the button, not
      the row behind it, so the press reads as one surface. */
-  :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option, .pr-entry-card,
+  :is(.project-row .project, .terminal-item, .files-row, .pr-row, .pr-option, .issue-option,
     .sidebar-footer, [role="menuitem"], [role="option"]:not(:has(> button)), [role="option"] > button,
     .pr-picker li > button, .pr-toggle, .issue-template, .app-menu button,
     .terminal-input-menu button):active:not(:disabled) {

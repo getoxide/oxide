@@ -388,6 +388,9 @@ html.macos .header,
 :is(.btn, .tab, .icon-btn, .sidebar-footer, .terminal-item, .project-row .project) { position: relative; }
 .header-actions .icon-btn { position: relative; }
 .terminal-row .row-action { position: absolute; right: 4px; }
+/* The close button takes its own room on hover and focus: the running dot moves aside, beside it,
+   and the title ellipsizes before both. */
+.terminal-row:is(:hover, :focus-within) .terminal-item { padding-right: calc(var(--control-sm) + 8px); }
 .terminal-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
 /* Renaming happens in place, like a file in the Finder: the title becomes a field of the same size
    at the same spot, ringed in the accent, with the name selected. */

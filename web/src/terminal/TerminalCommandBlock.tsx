@@ -97,11 +97,26 @@ export function TerminalCommandBlock(props: Props) {
       if (!cursorRow && !current.output && current.outputOffset === 0) return 0;
       const buffer = term.buffer.active;
       let rows = buffer.baseY + buffer.cursorY + 1;
+      // A program may draw below its cursor (a hint under a prompt, the rest of a list): every
+      // row with text counts, wherever the cursor stands.
+      let below = buffer.length;
+      while (below > rows && !buffer.getLine(below - 1)?.translateToString(true).trim()) below--;
+      if (below > rows) rows = below;
       if (!cursorRow && trim) {
         while (rows > 0 && !buffer.getLine(rows - 1)?.translateToString(true).trim()) rows--;
         if (!rows) return 0;
       }
       return Math.max(1, Math.min(200, rows)) * cell;
+    };
+    // The clip shows whole rows only. A running block shows at most the rows xterm has (its
+    // screen, cell-aligned); an ended block is a record that grows inside the Terminal's own
+    // scroll, up to the row cap, past which its xterm scrolls on its own.
+    const clipHeight = () => {
+      if (interactive && callbacks.current.active) return viewport;
+      const content = contentHeight();
+      if (!callbacks.current.active) return content;
+      const screen = term.rows ? term.rows * cell : viewport || 800;
+      return Math.min(screen, content);
     };
     const fit = () => {
       if (
@@ -116,11 +131,7 @@ export function TerminalCommandBlock(props: Props) {
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
       if (screenElement && term.rows)
         cell = screenElement.offsetHeight / term.rows || 16;
-      setHeight(
-        interactive && callbacks.current.active
-          ? viewport
-          : Math.min(viewport, contentHeight()),
-      );
+      setHeight(clipHeight());
       const dimensions = `${term.rows}:${term.cols}`;
       if (callbacks.current.active && dimensions !== last) {
         last = dimensions;
@@ -159,8 +170,10 @@ export function TerminalCommandBlock(props: Props) {
         setScreen(true);
         scheduleFit();
       }
-      return false;
     };
+    // Only the alternate screen is full screen. A prompt that redraws itself in the normal buffer
+    // (cursor up, cursor position: readline, Ink, multiselect pickers) stays inline, at the
+    // block's own width, so it never jumps to the edge or rewraps when it ends.
     const alternate = term.buffer.onBufferChange((buffer) => {
       if (buffer.type === "alternate") markScreen();
       else if (interactive) {
@@ -169,24 +182,13 @@ export function TerminalCommandBlock(props: Props) {
         scheduleFit();
       }
     });
-    // Cursor-addressed applications also use the normal buffer (readline, Ink, curses variants).
-    const cursor = term.parser.registerCsiHandler({ final: "H" }, (params) => {
-      if (Number(params[0] ?? 1) > 1) markScreen();
-      return false;
-    });
-    const cursorUp = term.parser.registerCsiHandler({ final: "A" }, markScreen);
     // Until the shell marks the start, it is still reading the block's own command line: a key
     // (or a terminal reply) sent then would land in that line instead of reaching the program.
     const input = term.onData((data) => {
       const { active, block } = callbacks.current;
       if (active && block.started) callbacks.current.onInput(data);
     });
-    measure.current = () =>
-      setHeight(
-        interactive && callbacks.current.active
-          ? viewport
-          : Math.min(viewport || 800, contentHeight()),
-      );
+    measure.current = () => setHeight(clipHeight());
     const parsed = term.onWriteParsed(() => measure.current());
     scheduleFit();
     return () => {
@@ -197,8 +199,6 @@ export function TerminalCommandBlock(props: Props) {
       input.dispose();
       parsed.dispose();
       alternate.dispose();
-      cursor.dispose();
-      cursorUp.dispose();
       releaseGpu();
       term.dispose();
       terminal.current = null;
