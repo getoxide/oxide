@@ -13,6 +13,11 @@
 //   node tools/ci/cli.mjs release-checksums <file>      prints a sha256sum listing without the updater-only assets
 //   node tools/ci/cli.mjs feed-urls <feed.json>         prints every package URL of a feed
 //   node tools/ci/cli.mjs check-feeds <tag> <stable.json> <prerelease.json>
+//   node tools/ci/cli.mjs repository-plan <tag> <dir>   fails unless <dir> has every package; writes publish=<DNF metadata goes to the site>
+//   node tools/ci/cli.mjs apt-release <Packages>        prints the APT Release file for a Packages index
+//   node tools/ci/cli.mjs dnf-repo-file                 prints the .repo file users add for DNF
+//   node tools/ci/cli.mjs check-apt <tag> <dir>         <dir> has Release, Packages and the published .deb files
+//   node tools/ci/cli.mjs check-dnf <tag> <dir>         <dir> has repomd.xml, the primary file and the published .rpm files
 //   node tools/ci/cli.mjs dependabot                    env DEPENDENCIES_JSON
 //   node tools/ci/cli.mjs bump <version>                writes the three manifests and Cargo.lock
 //
@@ -20,11 +25,13 @@
 // variables, never through workflow expressions in a shell script.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { basename, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
-  downloadsSection, previousReleaseTag, releaseNotes, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, missingSecrets, releaseChecksums,
+  aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -32,6 +39,9 @@ const read = (path) => readFileSync(join(repoRoot, path), "utf8");
 const MANIFESTS = {
   cargoToml: "Cargo.toml", tauriConf: "crates/oxide-app/tauri.conf.json", webPackage: "web/package.json", cargoLock: "Cargo.lock",
 };
+
+const read2 = (dir, name) => readFileSync(join(dir, name), "utf8");
+const sha256File = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 function output(values) {
   if (!process.env.GITHUB_OUTPUT) return;
@@ -116,6 +126,32 @@ const commands = {
   "check-feeds"([tag, stableFile, prereleaseFile]) {
     const parse = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return undefined; } };
     report(checkPublishedFeeds({ tag, stable: parse(stableFile), prerelease: parse(prereleaseFile), repository: process.env.GITHUB_REPOSITORY ?? "getoxide/oxide" }));
+  },
+  "repository-plan"([tag, dir]) {
+    const plan = repositoryPlan({ tag, repository: process.env.GITHUB_REPOSITORY ?? "getoxide/oxide", assetNames: readdirSync(dir) });
+    console.log(JSON.stringify(plan, null, 2));
+    output({ publish: plan.dnf.publish, stable: plan.stable, baseUrl: plan.dnf.baseUrl });
+  },
+  "apt-release"([packagesFile]) {
+    process.stdout.write(aptReleaseFile({ packagesText: readFileSync(packagesFile, "utf8"), date: new Date().toUTCString().replace("GMT", "UTC") }));
+  },
+  "dnf-repo-file"() {
+    process.stdout.write(dnfRepoFile());
+  },
+  "check-apt"([tag, dir]) {
+    const plan = repositoryPlan({ tag, repository: process.env.GITHUB_REPOSITORY ?? "getoxide/oxide", assetNames: readdirSync(dir) });
+    const hashes = Object.fromEntries(plan.debs.map(({ name }) => [name, sha256File(join(dir, name))]));
+    report(checkAptRepository({ plan, releaseText: read2(dir, "Release"), packagesText: read2(dir, "Packages"), hashes }));
+  },
+  "check-dnf"([tag, dir]) {
+    const plan = repositoryPlan({ tag, repository: process.env.GITHUB_REPOSITORY ?? "getoxide/oxide", assetNames: readdirSync(dir) });
+    const hashes = Object.fromEntries(plan.rpms.map(({ name }) => [name, sha256File(join(dir, name))]));
+    const repomd = read2(dir, "repomd.xml");
+    const primary = basename(repomd.match(/<data type="primary">[\s\S]*?<location href="([^"]+)"/)?.[1] ?? "");
+    if (!primary) { report({ ok: false, message: "repomd.xml names no primary file." }); return; }
+    const primaryBytes = readFileSync(join(dir, primary));
+    const primaryXml = gunzipSync(primaryBytes).toString("utf8");
+    report(checkDnfRepository({ plan, repomd, primaryXml, primarySha256: createHash("sha256").update(primaryBytes).digest("hex"), hashes }));
   },
   dependabot() {
     let dependencies;
