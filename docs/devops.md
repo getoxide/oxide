@@ -224,11 +224,11 @@ The same workflow has a third job, **`linux repositories`** (it needs `update fe
 The addresses are written into users' systems: changing them means every Linux install has to be set up again by hand. One OpenPGP key (RSA 4096: older RPM cannot verify EdDSA) signs the APT `InRelease`, every `.rpm` (so `gpgcheck` and `repo_gpgcheck` both pass) and `repomd.xml`. Make it once and keep the private half only in the `release` environment:
 
 ```sh
-gpg --quick-generate-key "Oxide Repository <releases@getoxide.dev>" rsa4096 sign never   # choose a passphrase
+gpg --quick-generate-key "Oxide Repository" rsa4096 sign never   # choose a passphrase; the user ID needs no email
 gpg --armor --export-secret-keys <fingerprint>   # the value of OXIDE_REPOSITORY_SIGNING_KEY
 ```
 
-Then export its public half into the repository, where the `.deb` picks it up: `tools/ci/export-repository-key.sh <armored public key>` writes `crates/oxide-app/linux/repository/oxide-repository.gpg`, and `sign-repositories.sh` refuses to sign a release whose key differs from that file. **The committed file must be the real key before the first release**; until then it is a rehearsal key.
+Then export its public half into the repository, where the `.deb` picks it up: `tools/ci/export-repository-key.sh <armored public key>` writes `crates/oxide-app/linux/repository/oxide-repository.gpg`, and `sign-repositories.sh` refuses to sign a release whose key differs from that file. The committed file is the release key, fingerprint `A8EC EB47 63D8 6F2E AB14  6450 FFDA 5E71 B9FC AA6B` (made 2026-11-26).
 
 Record the fingerprint where Release Managers can find it. Rotating the key means every user imports the new key by hand (the setup instructions in the README fetch it from the latest release, so an APT user who re-runs them gets it; DNF users re-run `dnf`'s key import).
 
@@ -251,7 +251,7 @@ Every install reads one feed ([ADR-0021](adr/0021-update-channels-per-platform.m
 
 The `updates` branch holds only generated files (`updates/prerelease.json` and `.nojekyll`) and no history anyone needs. Nothing but `verify-release.yml` writes it. Debug builds may point the app at another feed for local trials (see CONTRIBUTING); a release build ignores that ([ADR-0016](adr/0016-security-boundaries.md)).
 
-The update key is a minisign key pair made with `tauri signer generate`. The public key is in `crates/oxide-app/tauri.conf.json` (`plugins.updater.pubkey`); the private key and its password are the `release` environment secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing the key means every install updates by hand once. Rotating it means shipping one release signed with the old key that carries the new public key.
+The update key is a minisign key pair made with `tauri signer generate`. The public key is in `crates/oxide-app/tauri.conf.json` (`plugins.updater.pubkey`, minisign key ID `692A8984428B953D`); the private key and its password are the `release` environment secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing the key means every install updates by hand once. Rotating it means shipping one release signed with the old key that carries the new public key.
 
 ## Scheduled and automatic workflows
 
