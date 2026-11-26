@@ -115,6 +115,8 @@ sudo dnf install oxide
 
 `dnf` asks once to import the Oxide repository key; it checks both the packages and the repository metadata against it.
 
+Installing the downloaded `.deb` or `.rpm` does this step for you (the `.deb` also adds the key), and doing it first and installing afterwards leaves one source. Purging the `.deb` (`sudo apt purge oxide`) or erasing the `.rpm` removes the repository again; `sudo apt remove oxide` keeps it.
+
 After that, `sudo apt update && sudo apt upgrade` or `sudo dnf upgrade` brings each new release. Both repositories only ever serve stable releases: a pre-release (`-rc`) never reaches them.
 
 ### Verifying a download

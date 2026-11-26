@@ -228,7 +228,15 @@ gpg --quick-generate-key "Oxide Repository <releases@getoxide.dev>" rsa4096 sign
 gpg --armor --export-secret-keys <fingerprint>   # the value of OXIDE_REPOSITORY_SIGNING_KEY
 ```
 
+Then export its public half into the repository, where the `.deb` picks it up: `tools/ci/export-repository-key.sh <armored public key>` writes `crates/oxide-app/linux/repository/oxide-repository.gpg`, and `sign-repositories.sh` refuses to sign a release whose key differs from that file. **The committed file must be the real key before the first release**; until then it is a rehearsal key.
+
 Record the fingerprint where Release Managers can find it. Rotating the key means every user imports the new key by hand (the setup instructions in the README fetch it from the latest release, so an APT user who re-runs them gets it; DNF users re-run `dnf`'s key import).
+
+**Package maintainer scripts** (they run as root on users' systems; ADR-0016). The `.deb` and `.rpm` downloaded from a release add the repository themselves, wired through `bundle.linux.{deb,rpm}` in `tauri.conf.json` and written in POSIX sh under `crates/oxide-app/linux/`:
+
+- `.deb` `postinst` (on `configure`, so on install and upgrade): copies the shipped public key to `/usr/share/keyrings/oxide.gpg` and writes the one-line source to `/etc/apt/sources.list.d/oxide.list`, unless that file or any other APT source already names the repository. `postrm` runs only on `purge`: it deletes `oxide.list` while it is still exactly the line above and the keyring while no source uses it. `apt remove` keeps both.
+- `.rpm` `%post` writes `/etc/yum.repos.d/oxide.repo` (the same content as the documented `oxide.repo`) unless it, or another repo file that names the repository, exists; `%preun` removes it on erase only (`$1` is 0, never on upgrade) while it is unchanged. rpm holds the keyring lock for the whole transaction, so a scriptlet can neither import nor delete a key: `dnf` imports the key from the repo file's `gpgkey` on first use (the prompt the documented setup has), and it stays in the rpm keyring after an erase.
+- The scripts touch nothing else: `tools/ci/maintainer-scripts.test.mjs` pins the paths, the lines against `tools/ci/policy.mjs` (`aptSourceFile`, `dnfRepoFile`) and the README commands, and runs shellcheck. A file the user edited is never overwritten or deleted.
 
 **Rehearsal before 1.0.0.** Publish two `-rc` drafts, download their assets into a directory laid out like the published repositories (APT files at the root, `rpm/` with the DNF metadata, each tag's assets under `download/<tag>/`), serve it over HTTP and point Debian, Ubuntu and Fedora containers (x64 and arm64, `--platform`) at it: follow the README steps with the local addresses, install from the first draft and upgrade to the second with signature checking on. `tools/ci/sign-repositories.sh` takes a fourth argument, the base URL of the packages, so the DNF metadata of a rehearsal can name the local server.
 
