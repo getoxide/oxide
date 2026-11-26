@@ -95,6 +95,7 @@
   .window-controls button:active:not(:disabled) { transform: none; }
   /* The halves of a split button are one control: neither shrinks away from the other. */
   .split-btn > button:active:not(:disabled) { transform: none; }
+  .issue-body-toggle:active:not(:disabled) { transform: none; }
   .terminal-item:active:not(:disabled) { color: var(--fg-bright); }
   .tools-tab-strip { scroll-behavior: smooth; }
   /* A newly selected row settles in with its highlight instead of snapping. */

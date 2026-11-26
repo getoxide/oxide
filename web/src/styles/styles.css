@@ -650,7 +650,8 @@ button.md-image-open:hover:not(:disabled) { background: none; text-decoration: u
 .pr-views .pr-entry-card > header strong { color: var(--fg-bright); }
 .pr-views .pr-entry-card > header time { margin-left: auto; color: var(--faint); }
 .pr-views .pr-entry-action { display: inline-flex; align-items: center; gap: 4px; }
-.pr-views .pr-entry-card > .md { padding: 8px 10px; }
+.pr-views .pr-entry-card > .md,
+.pr-views .pr-entry-card > .collapsible > .collapsible-inner > .md { padding: 8px 10px; }
 .pr-views .pr-entry-card > header:last-child { border-bottom: 0; }
 /* Activity Timeline rows: compact, between the comment cards, the icon on the avatars' axis. */
 .pr-views .pr-timeline-event { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 0 0 4px; font-size: 12px; color: var(--dim); }
@@ -966,6 +967,8 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .pr-views .pr-row .pr-labels { margin: 1px 0; }
 .pr-views .issue-edit { margin-left: var(--space-1); vertical-align: middle; }
 .pr-views .pr-entry-card > header .issue-edit { margin-left: auto; }
+.pr-views .issue-body-toggle .pr-chev { transition: transform var(--motion-fast) ease-out; color: var(--faint); }
+.pr-views .issue-body-toggle[aria-expanded="true"] .pr-chev { transform: rotate(180deg); }
 .pr-views .issue-title-edit { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .pr-views .issue-title-edit input { flex: 1 1 160px; min-width: 0; }
 .pr-views .issue-body-edit { display: grid; gap: var(--space-2); padding: var(--space-2); }
