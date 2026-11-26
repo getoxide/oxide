@@ -128,6 +128,24 @@ describe("UpdateButton", () => {
     await act(async () => target!.click());
   };
 
+  it.each([
+    ["apt", "sudo apt update && sudo apt upgrade"],
+    ["dnf", "sudo dnf upgrade"],
+  ] as const)("shows the %s command with a Copy button and no install", async (channel, command) => {
+    const written: string[] = [];
+    Object.assign(navigator, { clipboard: { writeText: (text: string) => { written.push(text); return Promise.resolve(); } } });
+    current = () => ({ ...behind, channel });
+    await render();
+    await act(async () => button()!.click());
+    expect(popover()!.textContent).toContain("0.2.0");
+    expect(popover()!.textContent).toContain(command);
+    expect(popover()!.querySelector("a")?.textContent).toContain("Release notes");
+    expect([...popover()!.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Install update");
+    await press("Copy");
+    expect(written).toEqual([command]);
+    expect(calls).toEqual([]);
+  });
+
   it("asks to move Oxide to Applications and offers no install from elsewhere", async () => {
     current = () => ({ ...behind, installLocation: "moveToApplications" });
     await render();

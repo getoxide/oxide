@@ -157,6 +157,8 @@ describe("Updates settings section", () => {
   it("has no install button on a package-manager install", async () => {
     await render({ ...behind, channel: "apt" });
     expect(text()).toContain("0.2.0");
+    expect(text()).toContain("sudo apt update && sudo apt upgrade");
+    expect(named("Copy")).toBeDefined();
     expect(named("Install update")).toBeUndefined();
   });
 

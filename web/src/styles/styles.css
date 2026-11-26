@@ -246,6 +246,7 @@ html.macos .header,
 .update-popover { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3) 0; }
 .update-popover dt { color: var(--fg-dim, var(--fg)); }
 .update-popover dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.update-package-command code { font-family: var(--font-mono, monospace); user-select: all; }
 .update-message { margin: 0; padding: var(--space-2) var(--space-3); display: grid; gap: var(--space-1); }
 .update-actions { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
 .update-notes { display: block; padding: 0 var(--space-3) var(--space-2); }

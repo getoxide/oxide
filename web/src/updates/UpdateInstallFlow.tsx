@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { commands, type UpdateState } from "../bindings";
 import { openExternalLink } from "../shared/externalLink";
+import { copyTextToClipboard } from "../shared/platform";
+import { packageManagerCommand } from "./packageManagerCommand";
 
 type Available = NonNullable<UpdateState["available"]>;
 
@@ -31,6 +33,7 @@ export function UpdateInstallFlow({
     setProblem(null);
     void start().catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)));
   };
+  const command = packageManagerCommand(state.channel);
   const shownError = problem ?? state.error;
   return (
     <>
@@ -53,6 +56,15 @@ export function UpdateInstallFlow({
           Move Oxide to your Applications folder, then open it from there to update. Oxide is running from a disk
           image, Downloads or another place where an update would fail or land in the wrong spot.
         </p>
+      )}
+      {command && (
+        <div className="update-message update-package-command">
+          <p role="note">Oxide was installed with your package manager, which also updates it. Run:</p>
+          <code>{command}</code>
+          <div className="update-actions">
+            <button className="btn sm" onClick={() => copyTextToClipboard(command)}>Copy</button>
+          </div>
+        </div>
       )}
       {operation.kind === "idle" && state.channel === "inApp" && state.installLocation !== "moveToApplications" && (
         <div className="update-actions">
