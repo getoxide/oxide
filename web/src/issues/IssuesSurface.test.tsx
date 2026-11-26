@@ -673,3 +673,62 @@ it("shows the description's private attachment through its signed URL and other 
   expect(conversation.textContent).toContain("tracker");
   expect(conversation.textContent).toContain("Open image");
 });
+
+it("starts the issue description expanded and collapses/expands it via the header chevron", async () => {
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  const toggle = description.querySelector<HTMLButtonElement>('button[aria-label="Collapse description"]')!;
+  expect(toggle).not.toBeNull();
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.querySelector(".pr-chev")).not.toBeNull();
+  expect(description.textContent).toContain("It crashes.");
+
+  vi.useFakeTimers();
+  try {
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-label")).toBe("Expand description");
+    expect(description.querySelector(".collapsible")?.getAttribute("aria-hidden")).toBe("true");
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(description.textContent).not.toContain("It crashes.");
+
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("Collapse description");
+    expect(description.textContent).toContain("It crashes.");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("expands a collapsed issue description immediately when clicking Edit description", async () => {
+  await render();
+  await act(async () => (host.querySelector(".pr-row") as HTMLButtonElement).click());
+
+  const description = host.querySelector('section[aria-label="Description"]')!;
+  const toggle = description.querySelector<HTMLButtonElement>('button[aria-label="Collapse description"]')!;
+
+  vi.useFakeTimers();
+  try {
+    await act(async () => toggle.click());
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(description.querySelector("textarea")).toBeNull();
+
+    const edit = description.querySelector<HTMLButtonElement>('button[aria-label="Edit description"]')!;
+    await act(async () => edit.click());
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const editor = description.querySelector<HTMLTextAreaElement>('textarea[aria-label="Description"]')!;
+    expect(editor).not.toBeNull();
+    expect(editor.value).toBe("It **crashes**.");
+  } finally {
+    vi.useRealTimers();
+  }
+});
