@@ -7,6 +7,7 @@ import {
   bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
+  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, isRepositoryAsset, repositoryPlan,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -604,6 +605,198 @@ describe("checkPublishedFeeds", () => {
 
   test("feedUrls lists every package URL for the reachability check", () => {
     assert.equal(feedUrls(feed("0.1.0")).length, 5);
+  });
+});
+
+describe("repositoryPlan", () => {
+  const REPO_ASSETS = (version) => [
+    `Oxide_${version}_linux_x64.deb`, `Oxide_${version}_linux_arm64.deb`, `Oxide_${version}_linux_x64.rpm`, `Oxide_${version}_linux_arm64.rpm`,
+    `Oxide_${version}_linux_x64.AppImage`, `Oxide_${version}_macos_arm64.dmg`, `Oxide_${version}_windows_x64.exe`, "latest.json",
+  ];
+
+  test("the packages of a repository are the one .deb and one .rpm of each architecture, and nothing else", () => {
+    const plan = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    assert.deepEqual(plan.debs, [
+      { name: "Oxide_1.2.3_linux_x64.deb", arch: "amd64" },
+      { name: "Oxide_1.2.3_linux_arm64.deb", arch: "arm64" },
+    ]);
+    assert.deepEqual(plan.rpms, [
+      { name: "Oxide_1.2.3_linux_x64.rpm", arch: "x86_64" },
+      { name: "Oxide_1.2.3_linux_arm64.rpm", arch: "aarch64" },
+    ]);
+  });
+
+  test("a missing package, or one of another version, is an error", () => {
+    const without = REPO_ASSETS("1.2.3").filter((name) => name !== "Oxide_1.2.3_linux_arm64.rpm");
+    assert.throws(() => repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: without }), /Oxide_1\.2\.3_linux_arm64\.rpm/);
+    assert.throws(() => repositoryPlan({ tag: "v1.2.4", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }), /Oxide_1\.2\.4_linux_x64\.deb/);
+    assert.throws(() => repositoryPlan({ tag: "main", repository: "getoxide/oxide", assetNames: [] }), /not a release tag/);
+  });
+
+  test("a stable release writes the DNF metadata, whose packages are the release's own assets", () => {
+    const { dnf, stable } = repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") });
+    assert.equal(stable, true);
+    assert.deepEqual(dnf, { publish: true, baseUrl: "https://github.com/getoxide/oxide/releases/download/v1.2.3/", sitePath: "rpm" });
+  });
+
+  test("a pre-release is signed for rehearsal but never enters the DNF repository", () => {
+    const { dnf, stable } = repositoryPlan({ tag: "v1.3.0-rc.1", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.3.0-rc.1") });
+    assert.equal(stable, false);
+    assert.equal(dnf.publish, false);
+    assert.equal(dnf.baseUrl, "https://github.com/getoxide/oxide/releases/download/v1.3.0-rc.1/");
+  });
+
+  test("the APT repository is these release assets, next to the public key", () => {
+    assert.deepEqual(APT_REPOSITORY_FILES, ["InRelease", "Release", "Packages"]);
+    assert.deepEqual(REPOSITORY_KEY_FILES, ["oxide-repository.gpg", "oxide-repository.asc"]);
+    assert.deepEqual(repositoryPlan({ tag: "v1.2.3", repository: "getoxide/oxide", assetNames: REPO_ASSETS("1.2.3") }).aptFiles, [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES]);
+  });
+
+  test("the release needs both repository secrets", () => {
+    assert.deepEqual(REPOSITORY_SECRETS, ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
+    assert.deepEqual(missingSecrets({ OXIDE_REPOSITORY_SIGNING_KEY: "-----BEGIN" }, REPOSITORY_SECRETS), ["OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"]);
+  });
+});
+
+describe("repository index files", () => {
+  test("the APT Release file pins the Packages index by SHA-256 and size and names both architectures", () => {
+    // sha256("abc") is the NIST test vector.
+    assert.equal(aptReleaseFile({ packagesText: "abc", date: "Thu, 26 Nov 2026 10:00:00 UTC" }), [
+      "Origin: Oxide",
+      "Label: Oxide",
+      "Suite: stable",
+      "Date: Thu, 26 Nov 2026 10:00:00 UTC",
+      "Architectures: amd64 arm64",
+      "Description: Oxide Linux packages",
+      "SHA256:",
+      " ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 3 Packages",
+      "",
+    ].join("\n"));
+  });
+
+  test("the size is in bytes, not characters", () => {
+    assert.match(aptReleaseFile({ packagesText: "é", date: "d" }), / 2 Packages\n$/);
+  });
+
+  test("the DNF repo file checks package and metadata signatures against the update site's key", () => {
+    assert.equal(dnfRepoFile(), [
+      "[oxide]",
+      "name=Oxide",
+      "baseurl=https://getoxide.github.io/oxide/rpm/",
+      "enabled=1",
+      "gpgcheck=1",
+      "repo_gpgcheck=1",
+      "gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc",
+      "metadata_expire=6h",
+      "",
+    ].join("\n"));
+  });
+
+  test("repository files and the key are release assets, kept out of the notes' checksums", () => {
+    for (const name of ["InRelease", "Release", "Packages", "oxide-repository.gpg", "oxide-repository.asc"]) assert.ok(isRepositoryAsset(name), name);
+    for (const name of ["Oxide_1.0.0_linux_x64.deb", "Oxide_1.0.0_linux_x64.rpm", "latest.json"]) assert.ok(!isRepositoryAsset(name), name);
+    assert.equal(releaseChecksums("a  InRelease\nb  Oxide_1.0.0_linux_x64.deb\nc  oxide-repository.asc\n"), "b  Oxide_1.0.0_linux_x64.deb\n");
+  });
+});
+
+describe("published repositories", () => {
+  const assetNames = ["x64", "arm64"].flatMap((arch) => ["deb", "rpm"].map((ext) => `Oxide_1.2.3_linux_${arch}.${ext}`));
+  const plan = repositoryPlan({ tag: "v1.2.3", repository: REPO, assetNames });
+  const hashes = {
+    "Oxide_1.2.3_linux_x64.deb": "a1", "Oxide_1.2.3_linux_arm64.deb": "a2", "Oxide_1.2.3_linux_x64.rpm": "b1", "Oxide_1.2.3_linux_arm64.rpm": "b2",
+  };
+  const stanza = (name, arch, sha) => `Package: oxide\nVersion: 1.2.3\nArchitecture: ${arch}\nFilename: ./${name}\nSize: 10\nSHA256: ${sha}\n`;
+  const packagesText = [stanza("Oxide_1.2.3_linux_x64.deb", "amd64", "a1"), stanza("Oxide_1.2.3_linux_arm64.deb", "arm64", "a2")].join("\n");
+  const releaseText = aptReleaseFile({ packagesText, date: "d" });
+
+  test("APT: an index that pins Packages and lists both architectures with the published hashes passes", () => {
+    assert.equal(checkAptRepository({ plan, releaseText, packagesText, hashes }).ok, true);
+  });
+
+  test("APT: a Packages file the Release does not pin fails", () => {
+    const result = checkAptRepository({ plan, releaseText, packagesText: packagesText + "\n", hashes });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /Release/);
+  });
+
+  test("APT: a missing architecture, a wrong hash or a foreign package name fails", () => {
+    const one = stanza("Oxide_1.2.3_linux_x64.deb", "amd64", "a1");
+    assert.match(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: one, date: "d" }), packagesText: one, hashes }).message, /arm64/);
+    const wrong = packagesText.replace("a2", "ff");
+    assert.match(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: wrong, date: "d" }), packagesText: wrong, hashes }).message, /Oxide_1\.2\.3_linux_arm64\.deb/);
+    const foreign = packagesText.replace("Package: oxide", "Package: other");
+    assert.equal(checkAptRepository({ plan, releaseText: aptReleaseFile({ packagesText: foreign, date: "d" }), packagesText: foreign, hashes }).ok, false);
+  });
+
+  const BASE = "https://github.com/getoxide/oxide/releases/download/v1.2.3/";
+  const rpmEntry = (name, arch, sha, base = BASE) => `<package type="rpm"><name>oxide</name><arch>${arch}</arch><checksum type="sha256" pkgid="YES">${sha}</checksum><location xml:base="${base}" href="${name}"/></package>`;
+  const primaryXml = `<metadata packages="2">${rpmEntry("Oxide_1.2.3_linux_x64.rpm", "x86_64", "b1")}${rpmEntry("Oxide_1.2.3_linux_arm64.rpm", "aarch64", "b2")}</metadata>`;
+  const repomd = `<repomd><data type="filelists"><checksum type="sha256">zz</checksum><location href="repodata/f.xml.gz"/></data><data type="primary"><checksum type="sha256">p1</checksum><open-checksum type="sha256">p0</open-checksum><location href="repodata/p1-primary.xml.gz"/></data></repomd>`;
+
+  test("DNF: metadata whose primary hash matches and whose packages are the release's assets passes", () => {
+    assert.equal(checkDnfRepository({ plan, repomd, primaryXml, primarySha256: "p1", hashes }).ok, true);
+  });
+
+  test("DNF: a primary file that does not match repomd fails", () => {
+    const result = checkDnfRepository({ plan, repomd, primaryXml, primarySha256: "other", hashes });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /repomd/);
+  });
+
+  test("DNF: a wrong package hash, a missing arch or a foreign location fails", () => {
+    assert.match(checkDnfRepository({ plan, repomd, primaryXml: primaryXml.replace("b2", "ff"), primarySha256: "p1", hashes }).message, /arm64\.rpm/);
+    assert.equal(checkDnfRepository({ plan, repomd, primaryXml: `<metadata>${rpmEntry("Oxide_1.2.3_linux_x64.rpm", "x86_64", "b1")}</metadata>`, primarySha256: "p1", hashes }).ok, false);
+    assert.equal(checkDnfRepository({ plan, repomd, primaryXml: primaryXml.replaceAll(BASE, "https://example.com/"), primarySha256: "p1", hashes }).ok, false);
+  });
+});
+
+describe("the repository pipeline", () => {
+  const read = (name) => readFileSync(fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)), "utf8");
+  const stepsOf = (text) => text.split(/\n {6}- /);
+
+  test("every release build checks the repository signing secrets before it builds anything", () => {
+    const build = read("build.yml");
+    const step = stepsOf(build).find((candidate) => candidate.includes("require-secrets"));
+    for (const secret of REPOSITORY_SECRETS) {
+      assert.ok(step.includes(`secrets.${secret}`), `${secret} is not read by the check`);
+      assert.match(step, new RegExp(`require-secrets .*${secret}`));
+    }
+    for (const marker of ["./.github/actions/setup-rust", "tauri build"]) assert.ok(build.indexOf(marker) > build.indexOf("require-secrets"), marker);
+  });
+
+  test("signing happens in its own approved job, before the draft, and only that job holds the key", () => {
+    const release = read("release.yml");
+    const job = release.slice(release.indexOf("\n  repositories:"), release.indexOf("\n  publish:"));
+    assert.match(job, /needs: build/);
+    assert.match(job, /environment: release/);
+    assert.ok(job.indexOf("require-secrets") > 0 && job.indexOf("require-secrets") < job.indexOf("sign-repositories.sh"), "the secrets are checked before anything is signed");
+    for (const secret of REPOSITORY_SECRETS) assert.ok(job.includes(`secrets.${secret}`), secret);
+    const publish = release.slice(release.indexOf("\n  publish:"));
+    assert.match(publish, /needs: \[build, repositories\]/);
+    for (const secret of REPOSITORY_SECRETS) assert.ok(!publish.includes(secret), `${secret} reaches the publish job`);
+    assert.ok(publish.indexOf("gh release create") > publish.indexOf("repository-release"), "the signed files are in the draft");
+    for (const secret of REPOSITORY_SECRETS) assert.ok(!read("verify-release.yml").includes(secret), `${secret} reaches verify-release.yml`);
+  });
+
+  test("the signed .rpm files replace the unsigned ones before the checksums and attestations", () => {
+    const publish = read("release.yml");
+    const assemble = publish.slice(publish.indexOf("Assemble the deliverables"), publish.indexOf("Upload release metadata"));
+    assert.ok(assemble.indexOf("staged-repository") > assemble.indexOf("-name '*.rpm'"), "the signed files are copied after the build's");
+    assert.ok(assemble.indexOf("staged-repository") < assemble.indexOf("sha256sum"));
+  });
+
+  test("publishing writes the DNF metadata for a stable release only, then checks both repositories", () => {
+    const verify = read("verify-release.yml");
+    assert.match(verify, /repository-plan/);
+    assert.match(verify, /steps\.plan\.outputs\.publish == 'true'/);
+    for (const marker of ["cli.mjs check-apt", "cli.mjs check-dnf", "gpgv", "repomd.xml.asc", "releases/latest/download/", "getoxide.github.io/oxide/rpm/"]) assert.ok(verify.includes(marker), marker);
+  });
+
+  test("the repository addresses are the ones the setup instructions and docs name", () => {
+    const readme = readFileSync(fileURLToPath(new URL("../../README.md", import.meta.url)), "utf8");
+    for (const text of ["signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./", "https://getoxide.github.io/oxide/rpm/oxide.repo"]) {
+      assert.ok(readme.includes(text), text);
+    }
   });
 });
 

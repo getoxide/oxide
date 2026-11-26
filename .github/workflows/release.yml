@@ -122,9 +122,72 @@ jobs:
       release: true
     secrets: inherit
 
+  # Signs the packages and builds both Linux repositories with the repository key (ADR-0021). Only this
+  # job reads the key, and it runs before the draft exists, so the checksums and attestations cover the
+  # signed .rpm files and publishing needs no second approval. It names the `release` environment, so a
+  # Release Manager approves it, as for the builds.
+  repositories:
+    name: repositories
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Check the repository signing secrets
+        env:
+          OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY }}
+          OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE }}
+        run: node tools/ci/cli.mjs require-secrets OXIDE_REPOSITORY_SIGNING_KEY OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE
+
+      - name: Download the Linux builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: oxide-linux-*-release
+          merge-multiple: true
+          path: linux
+
+      - name: Install the signing tools
+        run: sudo apt-get install -y --no-install-recommends rpm dpkg-dev createrepo-c
+
+      - name: Sign the packages and build the repositories
+        env:
+          OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY }}
+          OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE }}
+        run: tools/ci/sign-repositories.sh "$TAG" linux repository
+
+      # The signed .rpm files and the APT flat repository become release assets.
+      - name: Upload the signed repository assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repository-release
+          path: repository/assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+      # Only the DNF metadata lives on the update site; verify-release.yml writes it for a stable release.
+      - name: Upload the DNF metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dnf-site
+          path: repository/dnf/rpm
+          if-no-files-found: error
+          retention-days: 90
+
   publish:
     name: publish
-    needs: build
+    needs: [build, repositories]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The job holds no signing secrets, only the token that writes the draft.
@@ -152,10 +215,18 @@ jobs:
           merge-multiple: true
           path: staged
 
+      - name: Download the signed repository files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repository-release
+          path: staged-repository
+
       - name: Assemble the deliverables
         run: |
           mkdir release metadata
           find staged -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} release/ \;
+          # The signed .rpm files overwrite the unsigned ones the build made; the APT index and the key come with them.
+          cp staged-repository/* release/
           # latest.json names this release's signed updater packages (ADR-0021). It fails the run when a
           # signature is missing or empty, before anything is checksummed, attested or drafted.
           node tools/ci/cli.mjs updater-feed "$TAG" release > release/latest.json

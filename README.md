@@ -95,6 +95,28 @@ How the update is applied depends on the platform:
 
 A version several releases behind goes straight to the latest release.
 
+Linux `.deb` and `.rpm` installs update through the signed APT and DNF repositories, which serve x64 and arm64. Add the one for your distribution once:
+
+#### Linux: add the APT repository (Debian, Ubuntu)
+
+```sh
+sudo install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://github.com/getoxide/oxide/releases/latest/download/oxide-repository.gpg | sudo tee /usr/share/keyrings/oxide.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./" | sudo tee /etc/apt/sources.list.d/oxide.list
+sudo apt update && sudo apt install oxide
+```
+
+#### Linux: add the DNF repository (Fedora, RHEL, openSUSE)
+
+```sh
+sudo curl -fsSL -o /etc/yum.repos.d/oxide.repo https://getoxide.github.io/oxide/rpm/oxide.repo
+sudo dnf install oxide
+```
+
+`dnf` asks once to import the Oxide repository key; it checks both the packages and the repository metadata against it.
+
+After that, `sudo apt update && sudo apt upgrade` or `sudo dnf upgrade` brings each new release. Both repositories only ever serve stable releases: a pre-release (`-rc`) never reaches them.
+
 ### Verifying a download
 
 Every release lists the SHA-256 checksums in its release notes and attaches a [build-provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for each installer, which ties it to the exact workflow run and commit that built it:

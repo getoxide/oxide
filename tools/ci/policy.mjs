@@ -1,5 +1,6 @@
 // Every decision the CI/CD pipeline makes, as pure functions. Workflows and
 // the local runner only gather inputs and act on the answers (see cli.mjs).
+import { createHash } from "node:crypto";
 
 const LANES = ["web", "rust", "bundle", "supplyChain", "automation"];
 const allLanes = (on) => Object.fromEntries(LANES.map((lane) => [lane, on]));
@@ -305,7 +306,7 @@ export function isUpdaterOnlyAsset(name) {
 
 /** The `sha256sum` listing of a release without the updater-only assets, for the notes. */
 export function releaseChecksums(listing) {
-  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
+  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop()) && !isRepositoryAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
 }
 
 /** Every package URL in a feed, for the reachability check. */
@@ -344,6 +345,148 @@ export function checkPublishedFeeds({ tag, stable, prerelease, repository = "get
   }
   if (problems.length > 0) return { ok: false, message: `Feeds are wrong for ${tag}: ${problems.join("; ")}.` };
   return { ok: true, message: `Both feeds are right for ${tag}.` };
+}
+
+/**
+ * The Linux package repositories (ADR-0021). APT is a flat repository made of release assets; DNF
+ * keeps only its metadata on the update site, and its packages are the release's own assets.
+ * One OpenPGP key signs the APT `InRelease`, every `.rpm` and the DNF `repomd.xml`.
+ */
+export const REPOSITORY_SECRETS = ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"];
+/** The signed APT index, as release assets. One index lists the amd64 and arm64 packages. */
+export const APT_REPOSITORY_FILES = ["InRelease", "Release", "Packages"];
+/** The public half of the repository key (binary for apt's `signed-by`, armored for rpm and dnf). */
+export const REPOSITORY_KEY_FILES = ["oxide-repository.gpg", "oxide-repository.asc"];
+const REPOSITORY_ARCHES = [
+  { asset: "x64", deb: "amd64", rpm: "x86_64" },
+  { asset: "arm64", deb: "arm64", rpm: "aarch64" },
+];
+
+/**
+ * What a release contributes to the repositories. Throws when a package is missing: a repository
+ * that lacks an architecture would make that architecture's `apt upgrade` silently stop.
+ * Pre-releases are signed too (a draft's assets rehearse the repositories) but never reach DNF:
+ * GitHub's "latest" link already keeps them out of APT, and `dnf.publish` keeps them off the update site.
+ */
+export function repositoryPlan({ tag, repository, assetNames }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
+  const pick = (extension, field) => REPOSITORY_ARCHES.map((arch) => {
+    const name = `Oxide_${version}_linux_${arch.asset}.${extension}`;
+    if (!assetNames.includes(name)) throw new Error(`The release has no ${name}; the repositories need one .${extension} per architecture.`);
+    return { name, arch: arch[field] };
+  });
+  const stable = !version.includes("-");
+  return {
+    version,
+    stable,
+    debs: pick("deb", "deb"),
+    rpms: pick("rpm", "rpm"),
+    aptFiles: [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES],
+    dnf: { publish: stable, baseUrl: releaseAssetBase(repository, tag), sitePath: "rpm" },
+  };
+}
+
+/** Whether a release asset exists only for the repositories, so the notes' checksum list leaves it out. */
+export function isRepositoryAsset(name) {
+  return APT_REPOSITORY_FILES.includes(name) || REPOSITORY_KEY_FILES.includes(name);
+}
+
+/**
+ * The APT `Release` file of the flat repository. It pins `Packages` by hash and size, and the
+ * signed `InRelease` carries it, so a tampered index or package is refused. `date` is RFC 2822 in UTC.
+ */
+export function aptReleaseFile({ packagesText, date }) {
+  const bytes = Buffer.from(packagesText, "utf8");
+  return [
+    "Origin: Oxide",
+    "Label: Oxide",
+    "Suite: stable",
+    `Date: ${date}`,
+    `Architectures: ${REPOSITORY_ARCHES.map(({ deb }) => deb).join(" ")}`,
+    "Description: Oxide Linux packages",
+    "SHA256:",
+    ` ${sha256(bytes)} ${bytes.length} Packages`,
+    "",
+  ].join("\n");
+}
+
+/** The update site, which serves the DNF metadata and the key (GitHub Pages from the `updates` branch). */
+export const UPDATE_SITE = "https://getoxide.github.io/oxide/";
+
+/** The `.repo` file users add to `/etc/yum.repos.d/`: both package and metadata signatures are checked. */
+export function dnfRepoFile() {
+  return [
+    "[oxide]",
+    "name=Oxide",
+    `baseurl=${UPDATE_SITE}rpm/`,
+    "enabled=1",
+    "gpgcheck=1",
+    "repo_gpgcheck=1",
+    `gpgkey=${UPDATE_SITE}rpm/${REPOSITORY_KEY_FILES[1]}`,
+    "metadata_expire=6h",
+    "",
+  ].join("\n");
+}
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+/** Index entries of an APT `Packages` file: one stanza per package. */
+function aptStanzas(text) {
+  return lf(text).split(/\n\s*\n/).filter((block) => block.trim()).map((block) => Object.fromEntries(
+    block.split("\n").map((line) => line.match(/^([\w-]+):\s*(.*)$/)).filter(Boolean).map(([, key, value]) => [key, value.trim()]),
+  ));
+}
+
+/**
+ * The post-publish check of the APT index: `Release` pins `Packages`, and `Packages` names the
+ * package of each architecture with the hash of the file users download. (The `InRelease`
+ * signature is checked with gpgv in the workflow.) `hashes` maps asset names to their SHA-256.
+ */
+export function checkAptRepository({ plan, releaseText, packagesText, hashes }) {
+  const problems = [];
+  const pinned = lf(releaseText).match(/^ ([0-9a-f]{64}) (\d+) Packages$/m);
+  if (!pinned || pinned[1] !== sha256(Buffer.from(packagesText, "utf8")) || Number(pinned[2]) !== Buffer.byteLength(packagesText, "utf8")) {
+    problems.push("the Release file does not pin this Packages file");
+  }
+  const stanzas = aptStanzas(packagesText);
+  for (const { name, arch } of plan.debs) {
+    const entry = stanzas.find((stanza) => stanza.Architecture === arch);
+    if (!entry) problems.push(`Packages has no ${arch} package`);
+    else if (entry.Package !== "oxide") problems.push(`the ${arch} package is named ${entry.Package}, not oxide`);
+    else if (entry.Filename?.replace(/^\.\//, "") !== name) problems.push(`the ${arch} package points at ${entry.Filename}, not ${name}`);
+    else if (entry.SHA256 !== hashes?.[name]) problems.push(`the hash of ${name} in Packages is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The APT repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The APT repository of v${plan.version} pins its index and lists amd64 and arm64.` };
+}
+
+/**
+ * The post-publish check of the DNF metadata: `repomd.xml` pins `primary.xml.gz` (`primarySha256` is
+ * the hash of the file fetched), and `primary` points each package at the release's own asset with its hash.
+ * (The `repomd.xml` signature is checked with gpg in the workflow.)
+ */
+export function checkDnfRepository({ plan, repomd, primaryXml, primarySha256, hashes }) {
+  const problems = [];
+  const primaryData = String(repomd).match(/<data type="primary">[\s\S]*?<\/data>/)?.[0];
+  const pinnedHash = primaryData?.match(/<checksum type="sha256">([^<]+)<\/checksum>/)?.[1];
+  if (!pinnedHash || pinnedHash !== primarySha256) problems.push("repomd.xml does not pin this primary file");
+  const entries = [...String(primaryXml).matchAll(/<package type="rpm">[\s\S]*?<\/package>/g)].map(([block]) => ({
+    arch: block.match(/<arch>([^<]*)<\/arch>/)?.[1],
+    sha: block.match(/<checksum type="sha256"[^>]*>([^<]*)<\/checksum>/)?.[1],
+    base: block.match(/<location[^>]*xml:base="([^"]*)"/)?.[1],
+    href: block.match(/<location[^>]*href="([^"]*)"/)?.[1],
+    name: block.match(/<name>([^<]*)<\/name>/)?.[1],
+  }));
+  for (const { name, arch } of plan.rpms) {
+    const entry = entries.find((candidate) => candidate.href === name && candidate.arch === arch);
+    if (!entry) problems.push(`primary has no ${arch} package at ${name}`);
+    else if (entry.name !== "oxide") problems.push(`${name} is named ${entry.name}, not oxide`);
+    else if (entry.base !== plan.dnf.baseUrl) problems.push(`${name} is located at ${entry.base ?? "no base"}, not the release's assets`);
+    else if (entry.sha !== hashes?.[name]) problems.push(`the hash of ${name} in primary is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The DNF repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The DNF repository of v${plan.version} pins its primary file and points both architectures at the release's assets.` };
 }
 
 /** The names among `names` that `env` does not set to a non-blank value. */
