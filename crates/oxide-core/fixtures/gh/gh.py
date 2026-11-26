@@ -167,6 +167,23 @@ if args[:2] == ["api", "graphql"]:
         })
         print(json.dumps(node))
         sys.exit(0)
+    if any("subIssuesSummary" in a for a in args):
+        if state.get("relationships_error"):
+            sys.stderr.write(state["relationships_error"] + "\n")
+            sys.exit(1)
+        query_arg = next((a for a in args if "subIssuesSummary" in a), "")
+        by_num = {str(i.get("number")): i for i in state.get("issues", [])}
+        result = {}
+        import re
+        for alias, num in re.findall(r"(i\d+):issue\(number:(\d+)\)", query_arg):
+            issue = by_num.get(num, {})
+            result[alias] = {
+                "parent": issue.get("parent"),
+                "subIssuesSummary": issue.get("subIssuesSummary"),
+                "issueDependenciesSummary": issue.get("issueDependenciesSummary"),
+            }
+        print(json.dumps(result))
+        sys.exit(0)
     if any("reviewThreads" in a for a in args):
         # The inline review threads, printed through --jq as the nodes array.
         if state.get("review_threads_error"):
