@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F7F6F3"/>
+      <stop offset="100%" stop-color="#E8E6E1"/>
+    </linearGradient>
+  </defs>
+  <!-- Light on purpose: Finder draws the icon labels in black over a background picture, in Dark Mode too. -->
+  <rect width="660" height="400" fill="url(#plate)"/>
+  <!-- The app icon sits at (180, 165) and Applications at (480, 165), 128 pt each (bundle.macOS.dmg). -->
+  <g fill="none" stroke="#9A9892" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M286 165 H368"/>
+    <path d="M356 153 L370 165 L356 177"/>
+  </g>
+  <!-- Kept above y = 340: Finder's path bar, when the user shows it, covers the bottom of the window. -->
+  <text x="330" y="296" text-anchor="middle" fill="#7A7974"
+        font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Helvetica Neue', sans-serif" font-size="13" font-weight="500">Drag Oxide into Applications to install it</text>
+</svg>

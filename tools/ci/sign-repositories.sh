@@ -5,7 +5,7 @@
 #   OXIDE_REPOSITORY_SIGNING_KEY=<armored private key> OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE=<passphrase> \
 #     tools/ci/sign-repositories.sh <tag> <packages-dir> <out-dir> [<rpm-base-url>]
 #
-# <packages-dir> holds the built Oxide_<version>_linux_<arch>.{deb,rpm}. <out-dir> gets:
+# <packages-dir> holds the built Oxide-<arch>.{deb,rpm} (x64 and arm64). <out-dir> gets:
 #   assets/  the signed .rpm files and the APT flat repository (Packages, Release, InRelease, the public key)
 #   dnf/     the DNF site folder: repodata/ (with a signed repomd.xml), the armored key and oxide.repo
 # <rpm-base-url> is only for rehearsals against a local server; a release uses the release's own assets.

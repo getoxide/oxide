@@ -68,15 +68,15 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 
 | Platform | File | Notes |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `Oxide_<version>_macos_arm64.dmg` | Drag `Oxide.app` into `/Applications`. |
-| Windows 10/11 (x64) | `Oxide_<version>_windows_x64.exe` | NSIS installer. |
-| Windows 11 (arm64) | `Oxide_<version>_windows_arm64.exe` | NSIS installer. |
-| Linux (x64) | `Oxide_<version>_linux_x64.AppImage`, `.deb` or `.rpm` | |
-| Linux (arm64) | `Oxide_<version>_linux_arm64.AppImage`, `.deb` or `.rpm` | |
+| macOS (Apple Silicon) | [`Oxide.dmg`](https://github.com/getoxide/oxide/releases/latest/download/Oxide.dmg) | Drag Oxide onto Applications. |
+| Windows 10/11 (x64) | [`Oxide-x64.exe`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-x64.exe) | NSIS installer. |
+| Windows 11 (arm64) | [`Oxide-arm64.exe`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-arm64.exe) | NSIS installer. |
+| Linux (x64) | [`Oxide-x64.AppImage`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-x64.AppImage), [`.deb`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-x64.deb) or [`.rpm`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-x64.rpm) | |
+| Linux (arm64) | [`Oxide-arm64.AppImage`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-arm64.AppImage), [`.deb`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-arm64.deb) or [`.rpm`](https://github.com/getoxide/oxide/releases/latest/download/Oxide-arm64.rpm) | |
 
 <!-- /site:install -->
 
-Until the first stable release is published, [build from source](#build-from-source).
+The file names carry no version: each link always downloads the latest stable release. Older releases are on [GitHub Releases](https://github.com/getoxide/oxide/releases).
 
 ### Requirements
 
@@ -124,11 +124,11 @@ After that, `sudo apt update && sudo apt upgrade` or `sudo dnf upgrade` brings e
 Every release lists the SHA-256 checksums in its release notes and attaches a [build-provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for each installer, which ties it to the exact workflow run and commit that built it:
 
 ```sh
-shasum -a 256 Oxide_<version>_macos_arm64.dmg   # macOS; compare with the release notes
-gh attestation verify Oxide_<version>_macos_arm64.dmg --repo getoxide/oxide
+shasum -a 256 Oxide.dmg   # macOS; compare with the release notes
+gh attestation verify Oxide.dmg --repo getoxide/oxide
 ```
 
-On Windows, compare `(Get-FileHash .\Oxide_<version>_windows_x64.exe).Hash` with the release notes (`windows_arm64.exe` on Windows on Arm). On Linux, use `sha256sum Oxide_<version>_linux_x64.AppImage`.
+On Windows, compare `(Get-FileHash .\Oxide-x64.exe).Hash` with the release notes (`Oxide-arm64.exe` on Windows on Arm). On Linux, use `sha256sum Oxide-x64.AppImage`.
 
 ### Opening an unsigned build
 
@@ -143,7 +143,7 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 
 **Windows.** The installer is **not Authenticode-signed**, so SmartScreen may warn on first run. Choose **More info → Run anyway** after verifying the download as above.
 
-**Linux.** The `.rpm` is signed with the Oxide repository key and the `.deb` is covered by the signed APT `InRelease`; the AppImage is not signed, so verify every download with the checksums and attestations above. Make an AppImage executable (`chmod +x Oxide_<version>_linux_x64.AppImage`) and run it, or install the package with `sudo apt install ./Oxide_<version>_linux_x64.deb` or `sudo dnf install ./Oxide_<version>_linux_x64.rpm`. Oxide needs WebKitGTK 4.1 (`libwebkit2gtk-4.1`), which any distribution from the last few years ships; the packages are built on Ubuntu 22.04.
+**Linux.** The `.rpm` is signed with the Oxide repository key and the `.deb` is covered by the signed APT `InRelease`; the AppImage is not signed, so verify every download with the checksums and attestations above. Make an AppImage executable (`chmod +x Oxide-x64.AppImage`) and run it, or install the package with `sudo apt install ./Oxide-x64.deb` or `sudo dnf install ./Oxide-x64.rpm`. Oxide needs WebKitGTK 4.1 (`libwebkit2gtk-4.1`), which any distribution from the last few years ships; the packages are built on Ubuntu 22.04.
 
 ## Quick start
 
