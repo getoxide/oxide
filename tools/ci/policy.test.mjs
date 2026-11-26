@@ -613,3 +613,68 @@ describe("missingSecrets", () => {
     assert.deepEqual(missingSecrets({ A: "x" }, ["A"]), []);
   });
 });
+
+describe("the update pipeline", () => {
+  const read = (name) => readFileSync(fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)), "utf8");
+  const SECRETS = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"];
+
+  test("a release build checks the update signing secrets before it builds anything", () => {
+    const build = read("build.yml");
+    const check = build.indexOf("require-secrets");
+    assert.ok(check > 0, "build.yml never checks the secrets");
+    assert.match(build.slice(check, check + 200), /TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD/);
+    for (const marker of ["./.github/actions/setup-rust", "pnpm --dir web install", "tauri build", "tauri.cmd build"]) {
+      assert.ok(build.indexOf(marker) > check, `${marker} runs before the secrets are checked`);
+    }
+    // Only a release has secrets to check; CI builds stay unsigned.
+    assert.match(build.split(/\n {6}- /).find((step) => step.includes("require-secrets")), /if: inputs\.release/);
+  });
+
+  test("only release builds make updater packages, and only build steps see the key", () => {
+    const build = read("build.yml");
+    // Only the release config asks for updater packages; the shared config does not.
+    const shared = readFileSync(fileURLToPath(new URL("../../crates/oxide-app/tauri.conf.json", import.meta.url)), "utf8");
+    assert.ok(!shared.includes("createUpdaterArtifacts"), "CI builds have no key, so the shared config must not ask for updater packages");
+    const updater = readFileSync(fileURLToPath(new URL("../../crates/oxide-app/tauri.updater.conf.json", import.meta.url)), "utf8");
+    assert.equal(JSON.parse(updater).bundle.createUpdaterArtifacts, true);
+    assert.match(build, /RELEASE" = "true" \] && echo "--config crates\/oxide-app\/tauri\.updater\.conf\.json"/);
+    for (const step of build.split(/\n {6}- /)) {
+      for (const secret of SECRETS) {
+        if (step.includes(`secrets.${secret}`)) assert.match(step, /tauri\S* build|require-secrets/, `${secret} is exposed to a step that neither builds nor checks it`);
+      }
+    }
+  });
+
+  test("the build stages a signature next to every updater package", () => {
+    const build = read("build.yml");
+    for (const marker of [".app.tar.gz", "windows_${arch}", ".sig"]) assert.ok(build.includes(marker), marker);
+  });
+
+  test("the release publishes latest.json made from the signatures and keeps updater assets out of the notes", () => {
+    const release = read("release.yml");
+    assert.match(release, /cli\.mjs updater-feed "\$TAG"/);
+    assert.match(release, /cli\.mjs release-checksums/);
+    assert.ok(release.indexOf("updater-feed") < release.indexOf("sha256sum"), "the feed is written before the checksums and attestations cover it");
+  });
+
+  test("publishing writes prerelease.json to the updates branch and then checks both feeds", () => {
+    const verify = read("verify-release.yml");
+    assert.match(verify, /updates/);
+    assert.match(verify, /prerelease\.json/);
+    assert.match(verify, /cli\.mjs check-feeds/);
+    assert.match(verify, /cli\.mjs feed-urls/);
+    assert.match(verify, /releases\/latest\/download\/latest\.json/);
+    assert.match(verify, /getoxide\.github\.io\/oxide\/updates\/prerelease\.json/);
+    // The workflow that writes the site holds no signing key.
+    for (const secret of SECRETS) assert.ok(!verify.includes(secret), `${secret} reaches verify-release.yml`);
+  });
+
+  test("the pipeline's feed addresses are the ones compiled into the app", () => {
+    const core = readFileSync(fileURLToPath(new URL("../../crates/oxide-core/src/updates.rs", import.meta.url)), "utf8");
+    const verify = read("verify-release.yml");
+    for (const url of ["https://github.com/getoxide/oxide/releases/latest/download/latest.json", "https://getoxide.github.io/oxide/updates/prerelease.json"]) {
+      assert.ok(core.includes(url), url);
+      assert.ok(verify.includes(url), url);
+    }
+  });
+});

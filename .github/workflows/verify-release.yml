@@ -1,7 +1,9 @@
 name: Verify release
 
 # Runs when a Release Manager publishes the draft: check what users will actually
-# download (checksums and attestations). A failure opens a needs-triage issue.
+# download (checksums and attestations), then point the pre-release update feed at it and check
+# that both update feeds name it (ADR-0021). A failure opens a needs-triage issue.
+# This workflow holds no signing key: it only copies the release's own latest.json.
 on:
   release:
     types: [published]
@@ -58,3 +60,90 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
             --title "Release $TAG failed post-publish verification" \
             --body "Verification of the published release **$TAG** failed: checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
+
+  # The pre-release feed is the newest published release of any kind. It is a file on the `updates`
+  # branch, which GitHub Pages serves at https://getoxide.github.io/oxide/ (enabled once by an admin).
+  # The stable feed needs no job: GitHub's "latest" link starts resolving the moment the release is published.
+  update-feeds:
+    name: update feeds
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      issues: write
+    # Two publishes in a row must not interleave their pushes to the branch.
+    concurrency:
+      group: update-site
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+      STABLE_FEED: https://github.com/getoxide/oxide/releases/latest/download/latest.json
+      PRERELEASE_FEED: https://getoxide.github.io/oxide/updates/prerelease.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Write prerelease.json to the updates branch
+        run: |
+          mkdir feeds
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir feeds
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
+          mkdir site
+          cd site
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if remote fetch -q --depth 1 origin updates; then
+            git checkout -q -B updates FETCH_HEAD
+          else
+            git checkout -q --orphan updates
+          fi
+          mkdir -p updates
+          cp ../feeds/latest.json updates/prerelease.json
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then
+            echo "prerelease.json already names $TAG."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Point the pre-release feed at $TAG"
+          remote push origin HEAD:updates
+
+      - name: Check that both feeds name the release and every URL resolves
+        run: |
+          # GitHub Pages takes a minute or two to publish a push.
+          ok=false
+          for attempt in $(seq 1 30); do
+            curl -fsSL "$STABLE_FEED" -o feeds/stable.json || echo '{}' > feeds/stable.json
+            curl -fsSL "$PRERELEASE_FEED" -o feeds/prerelease.json || echo '{}' > feeds/prerelease.json
+            if node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json; then ok=true; break; fi
+            echo "Attempt $attempt: not yet. Waiting."
+            sleep 20
+          done
+          if [ "$ok" != "true" ]; then
+            node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json
+            exit 1
+          fi
+          urls=$(node tools/ci/cli.mjs feed-urls feeds/prerelease.json)
+          case "$TAG" in *-*) ;; *) urls="$urls"$'\n'"$(node tools/ci/cli.mjs feed-urls feeds/stable.json)" ;; esac
+          for url in $(printf '%s\n' "$urls" | sort -u); do
+            curl -fsSL -r 0-0 -o /dev/null "$url" || { echo "::error::$url does not resolve."; exit 1; }
+            echo "$url resolves."
+          done
+
+      - name: Open an issue
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
+            --title "Release $TAG failed the update feed check" \
+            --body "The update feeds do not both name the published release **$TAG**, or a package URL does not resolve. See $RUN_URL. Installs would not be offered the update. Check that GitHub Pages is enabled from the \`updates\` branch."

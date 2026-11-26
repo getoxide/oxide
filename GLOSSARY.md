@@ -53,8 +53,16 @@ _Avoid_: Pane, panel, split view
 ## Settings
 
 **Settings**:
-A sectioned preferences page with **Appearance** (the built-in Oxide Dark or Oxide Light theme and the font, weight and size of the interface, the Code editor and the Terminal, applied as soon as they are chosen), **Terminal** (the shell new Terminals start and whether it loads the user's configuration), **Code** (Code workspace editor options), **Session** (**Session restore**), **Shortcuts** (customizable VS Code-inspired keyboard shortcuts with strict **Terminal priority**), and **GitHub** (whether Git and the GitHub CLI are installed). When a Terminal has focus, bare `Ctrl+<letter>` and terminal control keys pass straight through to the PTY unless explicitly rebound in Settings. There is no Themes section: Oxide reads no theme files from disk.
+A sectioned preferences page with **Appearance** (the built-in Oxide Dark or Oxide Light theme and the font, weight and size of the interface, the Code editor and the Terminal, applied as soon as they are chosen), **Terminal** (the shell new Terminals start and whether it loads the user's configuration), **Code** (Code workspace editor options), **Session** (**Session restore**), **Updates** (the installed version, the last check and the update install or command), **Shortcuts** (customizable VS Code-inspired keyboard shortcuts with strict **Terminal priority**), and **GitHub** (whether Git and the GitHub CLI are installed). When a Terminal has focus, bare `Ctrl+<letter>` and terminal control keys pass straight through to the PTY unless explicitly rebound in Settings. There is no Themes section: Oxide reads no theme files from disk.
 
 **Session restore**:
 A Settings switch, on by default. Oxide then reopens what was open when it quit: each Project's Terminals (names, the folder their shell was in and their last ten Command blocks, shown above a "Restored session" line, in new shells: programs that were running are not restarted) and its Code workspace with its files. Turning it off forgets the saved session.
 _Avoid_: Workspace restore, persistence
+
+**In-app update**:
+How Oxide updates on macOS, Windows and the Linux AppImage: the **Update** button (in the titlebar, left of the Tools panel toggle, only while a newer release exists) or the Updates section downloads, verifies, installs and restarts Oxide. See ADR-0021.
+_Avoid_: Auto-update, self-update
+
+**Package install**:
+Oxide installed from its `.deb` or `.rpm`, through APT or DNF. It never updates itself: the Update button and the Updates section show the package-manager command instead.
+_Avoid_: System install, distro install

@@ -155,7 +155,10 @@ jobs:
       - name: Assemble the deliverables
         run: |
           mkdir release metadata
-          find staged -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} release/ \;
+          find staged -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} release/ \;
+          # latest.json names this release's signed updater packages (ADR-0021). It fails the run when a
+          # signature is missing or empty, before anything is checksummed, attested or drafted.
+          node tools/ci/cli.mjs updater-feed "$TAG" release > release/latest.json
           gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/sbom" --jq .sbom > "metadata/Oxide_${TAG#v}.spdx.json"
           (cd release && sha256sum -- * > ../metadata/SHA256SUMS.txt)
           ls -l release metadata
@@ -187,7 +190,7 @@ jobs:
             echo "### Checksums (SHA-256)"
             echo
             echo '```text'
-            cat metadata/SHA256SUMS.txt
+            node tools/ci/cli.mjs release-checksums metadata/SHA256SUMS.txt
             echo '```'
             echo
             echo "Verify any download with \`gh attestation verify <file> --repo ${GITHUB_REPOSITORY}\`."
