@@ -6,6 +6,15 @@
 # file's gpgkey on first use, the same prompt the documented setup has.
 umask 022
 
+# A pre-release never enters the repositories (only stable releases do), so a repository added for it
+# would answer 404. rpm writes its version with "_" or "~" where semver has "-" (0.1.0_rc.1).
+# The scriptlet gets no version in its environment, so ask the rpm database: the transaction has already
+# added this package, and during an upgrade the newest version is the one being installed.
+version=$(rpm -q --qf '%{VERSION}\n' oxide 2>/dev/null | sort -V | tail -n 1)
+case $version in
+  *-*|*_*|*~*) exit 0 ;;
+esac
+
 REPO=/etc/yum.repos.d/oxide.repo
 
 write_repo() {
@@ -19,6 +28,7 @@ gpgcheck=1
 repo_gpgcheck=1
 gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc
 metadata_expire=6h
+skip_if_unavailable=1
 EOF
   mv -f "$tmp" "$REPO"
 }

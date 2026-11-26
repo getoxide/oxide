@@ -40,6 +40,14 @@ install_source() {
   mv -f "$tmp" "$SOURCE"
 }
 
+# A pre-release never enters the repositories (only the latest stable release does), so a source added
+# for it would answer 404 and break `apt update`. Its version has a "-" (0.1.0-rc.1).
+# shellcheck disable=SC2016
+version=$(dpkg-query -W -f='${Version}' "${DPKG_MAINTSCRIPT_PACKAGE:-oxide}" 2>/dev/null || true)
+case $version in
+  *-*) exit 0 ;;
+esac
+
 install_key || echo "oxide: could not add the signing key $KEYRING." >&2
 install_source || echo "oxide: could not add the APT source $SOURCE." >&2
 exit 0

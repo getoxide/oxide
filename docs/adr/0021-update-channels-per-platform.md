@@ -14,5 +14,7 @@ Oxide keeps itself up to date again. How it updates depends on how it was instal
 ## Consequences
 
 - The feed addresses and the repository addresses are compiled into every install or written into every system: changing them later means every install updates by hand once. Losing the update key has the same cost.
+- The `.rpm` cannot import the repository key: rpm holds its keyring lock for the whole transaction, so a package script can neither import a key nor remove one. `dnf` imports the key from the `.repo` file's `gpgkey` on first use, and it stays in the rpm keyring after the package is erased; a user removes it by hand with `rpm -e gpg-pubkey-<version>-<release>`. The `.repo` file sets `skip_if_unavailable=1`, so an unreachable Oxide repository never breaks the user's `dnf`.
+- A pre-release package adds no repository (the repositories only ever serve stable releases, so the source would answer 404).
 - An ad-hoc signature changes with every build, so macOS may ask again for privacy permissions after an update; the `-rc` rehearsal measures it.
 - Revisit when Oxide leaves GitHub, joins the Apple Developer Program, or adds another package channel.

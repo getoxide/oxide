@@ -55,6 +55,20 @@ describe("Linux package maintainer scripts", () => {
     }
   });
 
+  test("a pre-release version adds no repository, a stable one does", () => {
+    const run = (script, env) => spawnSync("sh", ["-c", script], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+    const rpm = read(SCRIPTS.rpmPostInstall);
+    assert.match(rpm, /case \$version in\s+\*-\*\|\*_\*\|\*~\*\) exit 0/);
+    assert.ok(rpm.indexOf("case $version") < rpm.indexOf("write_repo ||"), "the version is checked before the repo file is written");
+    const deb = read(SCRIPTS.debPostInstall);
+    assert.match(deb, /case \$version in\s+\*-\*\) exit 0/);
+    assert.ok(deb.indexOf("case $version") < deb.indexOf("install_key ||"), "the version is checked before key and source are written");
+    // The decision itself, run for real.
+    const decide = (version) => run(`case ${version} in *-*|*_*|*~*) echo skip ;; *) echo add ;; esac`, {}).stdout.trim();
+    assert.equal(decide("0.1.0-rc.1"), "skip");
+    assert.equal(decide("0.1.0"), "add");
+  });
+
   test("the scripts touch no absolute path but Oxide's own files and the system tools", () => {
     const allowed = new Set([
       APT_SOURCE_PATH, APT_KEYRING_PATH, DNF_REPO_PATH, "/etc/apt/sources.list", "/etc/apt/sources.list.d", "/etc/yum.repos.d", "/usr/share/keyrings",

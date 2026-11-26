@@ -19,6 +19,7 @@ gpgcheck=1
 repo_gpgcheck=1
 gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc
 metadata_expire=6h
+skip_if_unavailable=1
 EOF
 )
 if [ -f "$REPO" ] && [ ! -L "$REPO" ] && [ "$(cat "$REPO")" = "$expected" ]; then

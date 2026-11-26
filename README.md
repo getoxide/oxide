@@ -113,9 +113,9 @@ sudo curl -fsSL -o /etc/yum.repos.d/oxide.repo https://getoxide.github.io/oxide/
 sudo dnf install oxide
 ```
 
-`dnf` asks once to import the Oxide repository key; it checks both the packages and the repository metadata against it.
+`dnf` asks once to import the Oxide repository key from the `.repo` file's `gpgkey`; it checks both the packages and the repository metadata against it. The `.repo` file sets `skip_if_unavailable=1`, so an unreachable Oxide repository never breaks the rest of `dnf`.
 
-Installing the downloaded `.deb` or `.rpm` does this step for you (the `.deb` also adds the key), and doing it first and installing afterwards leaves one source. Purging the `.deb` (`sudo apt purge oxide`) or erasing the `.rpm` removes the repository again; `sudo apt remove oxide` keeps it.
+Installing the downloaded `.deb` or `.rpm` of a stable release does this step for you (the `.deb` also adds the key; a pre-release package adds nothing), and doing it first and installing afterwards leaves one source. Purging the `.deb` (`sudo apt purge oxide`) or erasing the `.rpm` removes the repository again; `sudo apt remove oxide` keeps it. The `.rpm` cannot import the key itself (rpm locks its keyring during a package script), so `dnf` imports it on first use and the key stays in the rpm keyring after the erase. To remove it by hand, find it with `rpm -qa gpg-pubkey --qf '%{NAME}-%{VERSION}-%{RELEASE}  %{SUMMARY}\n' | grep -i oxide` and run `sudo rpm -e <that name>`.
 
 After that, `sudo apt update && sudo apt upgrade` or `sudo dnf upgrade` brings each new release. Both repositories only ever serve stable releases: a pre-release (`-rc`) never reaches them.
 
@@ -143,7 +143,7 @@ Alternatively, remove the quarantine flag from the terminal: `xattr -dr com.appl
 
 **Windows.** The installer is **not Authenticode-signed**, so SmartScreen may warn on first run. Choose **More info → Run anyway** after verifying the download as above.
 
-**Linux.** The packages are **not signed with a distribution key**; verify them with the checksums and attestations above. Make an AppImage executable (`chmod +x Oxide_<version>_linux_x64.AppImage`) and run it, or install the package with `sudo apt install ./Oxide_<version>_linux_x64.deb` or `sudo dnf install ./Oxide_<version>_linux_x64.rpm`. Oxide needs WebKitGTK 4.1 (`libwebkit2gtk-4.1`), which any distribution from the last few years ships; the packages are built on Ubuntu 22.04.
+**Linux.** The `.rpm` is signed with the Oxide repository key and the `.deb` is covered by the signed APT `InRelease`; the AppImage is not signed, so verify every download with the checksums and attestations above. Make an AppImage executable (`chmod +x Oxide_<version>_linux_x64.AppImage`) and run it, or install the package with `sudo apt install ./Oxide_<version>_linux_x64.deb` or `sudo dnf install ./Oxide_<version>_linux_x64.rpm`. Oxide needs WebKitGTK 4.1 (`libwebkit2gtk-4.1`), which any distribution from the last few years ships; the packages are built on Ubuntu 22.04.
 
 ## Quick start
 
