@@ -48,6 +48,7 @@ let host: HTMLDivElement;
 let root: Root;
 let projects: { id: number; name: string; path: string; hidden: boolean; open: boolean; missing: boolean }[] = [];
 let calls: { command: string; args: unknown }[] = [];
+let updateState: unknown = null;
 
 async function renderAppWithUserAgent(userAgent: string) {
   vi.resetModules();
@@ -70,6 +71,7 @@ beforeEach(() => {
   root = createRoot(host);
   projects = [];
   calls = [];
+  updateState = null;
   mockIPC((command, args) => {
     calls.push({ command, args });
     switch (command) {
@@ -78,6 +80,8 @@ beforeEach(() => {
         return projects;
       case "last_selection":
         return projects[0]?.id ?? null;
+      case "update_state":
+        return updateState;
       case "plugin:event|listen":
         return 1;
       default:
@@ -113,6 +117,23 @@ describe("App window chrome", () => {
       expect(header.querySelector('.grow[data-tauri-drag-region]')).not.toBeNull();
     },
   );
+
+  it("puts the Update button immediately left of the Tools panel toggle, only while an update exists", async () => {
+    await renderAppWithUserAgent(MACOS);
+    expect(host.querySelector('button[aria-label="Update available"]')).toBeNull();
+
+    updateState = {
+      channel: "inApp", currentVersion: "0.1.0", lastCheckedAt: 1,
+      available: { version: "0.2.0", releaseNotesUrl: "https://github.com/getoxide/oxide/releases/tag/v0.2.0" },
+      operation: { kind: "idle" }, error: null,
+    };
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await renderAppWithUserAgent(MACOS);
+    const update = host.querySelector('header.header button[aria-label="Update available"]')!;
+    expect(update).not.toBeNull();
+    expect(update.nextElementSibling?.getAttribute("aria-label")).toBe("Toggle tools panel");
+  });
 
   it("renders visible SVG icons inside Windows caption buttons", async () => {
     await renderAppWithUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");

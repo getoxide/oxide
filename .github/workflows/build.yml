@@ -66,12 +66,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-rust
-        with:
-          # A release is a clean build: it neither reads nor writes a cache.
-          save-cache: "false"
-          use-cache: ${{ !inputs.release }}
-
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: web/package.json
@@ -79,6 +73,24 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
+
+      # A release is useless without updater signatures or the repository key: stop before the first build minute is spent.
+      - name: Check the signing secrets
+        if: inputs.release
+        env:
+          # Presence only: a key's value never enters this job's environment through this step.
+          HAS_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+          HAS_OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY != '' }}
+          HAS_OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE != '' }}
+        run: node tools/ci/cli.mjs require-secrets --present TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD OXIDE_REPOSITORY_SIGNING_KEY OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          # A release is a clean build: it neither reads nor writes a cache.
+          save-cache: "false"
+          use-cache: ${{ !inputs.release }}
+
       - run: pnpm --dir web install --frozen-lockfile
 
       - name: Apple signing and notarization
@@ -121,13 +133,30 @@ jobs:
           echo "signed=$signed" >> "$GITHUB_OUTPUT"
           echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
 
+      # A release also builds the updater packages and signs them (ADR-0021). The signing key is
+      # read by the build steps only. CI builds stay unsigned: without a key, Tauri refuses to
+      # build updater packages, so only a release merges the config that asks for them.
+      - name: Choose the Tauri config
+        id: config
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: echo "updater=$([ "$RELEASE" = "true" ] && echo "crates/oxide-app/tauri.updater.conf.json")" >> "$GITHUB_OUTPUT"
+
       - name: Build the macOS bundles
         if: inputs.platform == 'macos-aarch64'
-        run: web/node_modules/.bin/tauri build --ci --bundles app,dmg -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
+        run: web/node_modules/.bin/tauri build --ci --bundles app,dmg ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Build the Windows installer
         if: startsWith(inputs.platform, 'windows-')
-        run: web/node_modules/.bin/tauri.cmd build --ci --bundles nsis -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
+        run: web/node_modules/.bin/tauri.cmd build --ci --bundles nsis ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Build the Linux bundles
         if: startsWith(inputs.platform, 'linux-')
@@ -135,7 +164,10 @@ jobs:
           # The runner has no FUSE for linuxdeploy, and its bundled `strip` can't read newer ELF sections.
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "true"
-        run: web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm -- --locked
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATER_CONFIG: ${{ steps.config.outputs.updater }}
+        run: web/node_modules/.bin/tauri build --ci --bundles appimage,deb,rpm ${UPDATER_CONFIG:+--config "$UPDATER_CONFIG"} -- --locked
 
       - name: Name the artifact
         id: name
@@ -160,22 +192,30 @@ jobs:
             local ext="${1##*.}"
             cp "$1" "staged/Oxide_${version}_$2.${ext}"
           }
+          # stage_signed <installer> <os_arch>: the same, plus the updater signature next to it.
+          stage_signed() {
+            stage "$1" "$2"
+            cp "$1.sig" "staged/Oxide_${version}_$2.${1##*.}.sig"
+          }
           case "$PLATFORM" in
             macos-aarch64)
               stage "$bundle/dmg/Oxide_${version}_aarch64.dmg" macos_arm64
+              # The updater package is the .app archive; its name keeps both extensions.
+              cp "$bundle/macos/Oxide.app.tar.gz" "staged/Oxide_${version}_macos_arm64.app.tar.gz"
+              cp "$bundle/macos/Oxide.app.tar.gz.sig" "staged/Oxide_${version}_macos_arm64.app.tar.gz.sig"
               if [ "$NOTARIZED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate and notarized by Apple."
               elif [ "$SIGNED" = "true" ]; then
                 notice="The macOS build is signed with a Developer ID certificate but not notarized; Gatekeeper may ask for confirmation on first launch."
               else
-                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`)."
+                notice="The macOS build is ad-hoc signed, not notarized: after downloading, open it with right-click → Open (or run \`xattr -dr com.apple.quarantine Oxide.app\`). Once installed in Applications, Oxide updates itself: the Update button downloads, verifies and installs a release, then asks to restart."
               fi
               ;;
             windows-x64|windows-aarch64)
               # Tauri names the installer after the architecture: x64-setup.exe or arm64-setup.exe.
               arch=x64; if [ "$PLATFORM" = "windows-aarch64" ]; then arch=arm64; fi
-              stage "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "windows_${arch}"
-              notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation."
+              stage_signed "$bundle/nsis/Oxide_${version}_${arch}-setup.exe" "windows_${arch}"
+              notice="The Windows installer is not Authenticode-signed: SmartScreen may warn on first run (More info → Run anyway). Verify the download against the release checksums or attestation. Once installed, Oxide updates itself: the Update button downloads, verifies and installs a release, then runs the installer without wizard pages on Restart now, or when you quit."
               ;;
             linux-x64|linux-aarch64)
               arch=x64; if [ "$PLATFORM" = "linux-aarch64" ]; then arch=arm64; fi
@@ -187,8 +227,10 @@ jobs:
                   exit 1
                 fi
                 stage "${matches[0]}" "linux_${arch}"
+                # The AppImage is also the updater package: its signature goes next to it.
+                case "${matches[0]}" in *.AppImage) cp "${matches[0]}.sig" "staged/Oxide_${version}_linux_${arch}.AppImage.sig" ;; esac
               done
-              notice="The Linux builds are not signed with a distribution key. Install a newer package to update. Verify the download against the release checksums or attestation."
+              notice="The Linux .deb and .rpm packages and the APT and DNF repositories are signed with the Oxide repository key: add the repository once (see the README), then \`sudo apt install oxide\` or \`sudo dnf install oxide\` installs and updates Oxide. The AppImage updates itself from the Update button (the file you launched is replaced). Verify any download against the release checksums or attestation."
               ;;
           esac
           printf '%s\n' "$notice" > "staged/NOTICE-${PLATFORM}.txt"

@@ -1,5 +1,6 @@
 // Every decision the CI/CD pipeline makes, as pure functions. Workflows and
 // the local runner only gather inputs and act on the answers (see cli.mjs).
+import { createHash, createPublicKey, verify } from "node:crypto";
 
 const LANES = ["web", "rust", "bundle", "supplyChain", "automation"];
 const allLanes = (on) => Object.fromEntries(LANES.map((lane) => [lane, on]));
@@ -20,6 +21,9 @@ const PATH_RULES = [
   // Packaging inputs: only `tauri build` can break these.
   [/^crates\/oxide-app\/(tauri(\.[\w-]+)?\.conf\.json|Info\.plist|capabilities\/.*|icons(-dev)?\/.*)$/, ["bundle"]],
   [/^docs\/licenses\//, ["bundle"]], // bundled as app resources
+  // The .deb and .rpm maintainer scripts and the key they install: bundled by `tauri build`, tested by
+  // tools/ci/maintainer-scripts.test.mjs (the automation lane).
+  [/^crates\/oxide-app\/linux\//, ["bundle", "automation"]],
   [/^(Cargo\.toml|Cargo\.lock|crates\/[^/]+\/Cargo\.toml|web\/package\.json|web\/pnpm-lock\.yaml)$/, ["bundle", "supplyChain"]],
   [/^(crates\/[^/]+\/build\.rs|tools\/build\.mjs|tools\/checks\/.*)$/, ["bundle"]],
   [new RegExp(`^${escapeRegExp(BUILD_WORKFLOW)}$`), ["bundle"]],
@@ -148,6 +152,25 @@ export function checkReleaseVersion({ tag, cargoToml, tauriConf, webPackage }) {
   return { ok: true, message: `Tag ${tag} matches Cargo.toml, tauri.conf.json and web/package.json.` };
 }
 
+/**
+ * The release's pre-release flag must agree with its tag: flagged if and only if the tag has a "-" suffix.
+ * The APT and DNF repositories and the stable feed trust the flag (GitHub's "latest" skips pre-releases), and
+ * the package scripts trust the tag, so a hand-set flag would break one of them.
+ */
+export function checkPrerelease({ tag, prerelease }) {
+  const flag = String(prerelease ?? "").toLowerCase();
+  if (flag !== "true" && flag !== "false") return { ok: false, message: `The pre-release flag of release ${tag ?? ""} is "${prerelease ?? ""}", not true or false.` };
+  const flagged = flag === "true";
+  const suffixed = String(tag ?? "").includes("-");
+  if (flagged === suffixed) return { ok: true, message: `Release ${tag} is ${flagged ? "" : "not "}marked as a pre-release, as its tag says.` };
+  return {
+    ok: false,
+    message: suffixed
+      ? `Release ${tag} has a pre-release tag (a "-" suffix) but is not marked as a pre-release. Nothing was written. Re-draft it with the pre-release box ticked, or tag a stable version.`
+      : `Release ${tag} is a stable tag but is marked as a pre-release, so GitHub's "latest" skips it and the repositories and feeds would never serve it. Nothing was written. Untick "Set as a pre-release" on the release (a stable release is never one).`,
+  };
+}
+
 function setJsonVersion(text, version, file) {
   // Edit the text, not a re-serialised object, so hand formatting survives.
   const updated = text.replace(/^(\s*"version"\s*:\s*")[^"]*(")/m, `$1${version}$2`);
@@ -261,6 +284,293 @@ export function downloadsSection(artifactNames) {
   }
   if (rows.length === 0) return "";
   return `### Downloads\n\n| Platform | Format | File |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
+}
+
+/**
+ * The in-app update packages (ADR-0021). Windows and Linux update from the installer
+ * they already ship (the NSIS installer, the AppImage); macOS needs the `.app` archive.
+ * `key` is the platform name of Tauri's updater feed; `asset` names the package of a version.
+ */
+export const UPDATER_PLATFORMS = [
+  { key: "darwin-aarch64", asset: (version) => `Oxide_${version}_macos_arm64.app.tar.gz` },
+  { key: "windows-x86_64", asset: (version) => `Oxide_${version}_windows_x64.exe` },
+  { key: "windows-aarch64", asset: (version) => `Oxide_${version}_windows_arm64.exe` },
+  { key: "linux-x86_64", asset: (version) => `Oxide_${version}_linux_x64.AppImage` },
+  { key: "linux-aarch64", asset: (version) => `Oxide_${version}_linux_arm64.AppImage` },
+];
+
+/** Where a release's assets are served; the update feed points here and the check accepts nothing else. */
+function releaseAssetBase(repository, tag) {
+  return `https://github.com/${repository}/releases/download/${tag}/`;
+}
+
+/**
+ * The `latest.json` of a release. `signatures` maps each package name to the contents of its
+ * `.sig` file. A missing or blank signature throws: an unsigned package would be refused by every install.
+ */
+export function buildUpdateFeed({ tag, repository, signatures, pubDate }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
+  const platforms = {};
+  for (const { key, asset } of UPDATER_PLATFORMS) {
+    const name = asset(version);
+    const signature = String(signatures?.[name] ?? "").trim();
+    if (!signature) throw new Error(`The signature of ${name} is missing or empty.`);
+    platforms[key] = { url: `${releaseAssetBase(repository, tag)}${name}`, signature };
+  }
+  return { version, notes: `https://github.com/${repository}/releases/tag/${tag}`, pub_date: pubDate, platforms };
+}
+
+/**
+ * Whether `signature` (a package's `.sig` file, as `tauri signer sign` writes it) is a valid minisign
+ * signature of `data` by `pubkey` (`plugins.updater.pubkey` in tauri.conf.json), checked the way the
+ * updater plugin checks it: the package signature and the signature over its trusted comment. A release
+ * signed with any other key would be refused by every install, so the feed is never written for it.
+ */
+export function checkUpdaterSignature({ pubkey, signature, data, name }) {
+  const refuse = (why) => ({ ok: false, message: `The updater signature of ${name} ${why}` });
+  // Each file is base64 of the minisign text; its second line is base64 of the binary key or signature.
+  const lines = (base64) => Buffer.from(String(base64 ?? "").trim(), "base64").toString("utf8").split("\n");
+  const key = Buffer.from(lines(pubkey)[1] ?? "", "base64");
+  const [, packed = "", trusted = "", global = ""] = lines(signature);
+  const sig = Buffer.from(packed, "base64");
+  const globalSig = Buffer.from(global, "base64");
+  if (key.length !== 42 || key.subarray(0, 2).toString("latin1") !== "Ed") return refuse("cannot be checked: the public key is malformed.");
+  const algorithm = sig.subarray(0, 2).toString("latin1");
+  if (sig.length !== 74 || !["Ed", "ED"].includes(algorithm) || !trusted.startsWith("trusted comment: ") || globalSig.length !== 64) {
+    return refuse("is malformed.");
+  }
+  const keyId = (bytes) => Buffer.from(bytes.subarray(2, 10)).reverse().toString("hex").toUpperCase();
+  if (!key.subarray(2, 10).equals(sig.subarray(2, 10))) {
+    return refuse(`was made by key ${keyId(sig)}, not by the app's updater key ${keyId(key)}.`);
+  }
+  const publicKey = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: key.subarray(10).toString("base64url") }, format: "jwk" });
+  const message = algorithm === "ED" ? createHash("blake2b512").update(data).digest() : data;
+  if (!verify(null, message, publicKey, sig.subarray(10))) return refuse("does not match the package.");
+  const comment = Buffer.from(trusted.slice("trusted comment: ".length), "utf8");
+  if (!verify(null, Buffer.concat([sig.subarray(10), comment]), publicKey, globalSig)) return refuse("has a changed trusted comment.");
+  return { ok: true, message: `The updater signature of ${name} matches the app's updater key ${keyId(key)}.` };
+}
+
+/** Whether a release asset exists only for the updater, so notes and the Downloads table leave it out. */
+export function isUpdaterOnlyAsset(name) {
+  return /\.sig$/.test(name) || /\.app\.tar\.gz$/.test(name) || name === "latest.json";
+}
+
+/** The `sha256sum` listing of a release without the updater-only assets, for the notes. */
+export function releaseChecksums(listing) {
+  /** The file name of a `sha256sum` line: the last field, without the binary-mode asterisk. */
+  const assetOf = (line) => line.trim().split(/\s+\*?/).pop();
+  return lf(listing).split("\n")
+    .filter((line) => line.trim() && !isUpdaterOnlyAsset(assetOf(line)) && !isRepositoryAsset(assetOf(line)))
+    .map((line) => `${line}\n`).join("");
+}
+
+/** Every package URL in a feed, for the reachability check. */
+export function feedUrls(feed) {
+  return Object.values(feed?.platforms ?? {}).map((entry) => entry.url);
+}
+
+function feedProblems(feed, label, { repository, tag }) {
+  if (!feed || typeof feed !== "object") return [`the ${label} is missing or not JSON`];
+  const problems = [];
+  const entries = Object.entries(feed.platforms ?? {});
+  if (entries.length === 0) problems.push(`the ${label} has no platforms`);
+  for (const [key, entry] of entries) {
+    if (!String(entry?.signature ?? "").trim()) problems.push(`the ${label} has no signature for ${key}`);
+    if (!String(entry?.url ?? "").startsWith(releaseAssetBase(repository, tag))) problems.push(`the ${label} points ${key} outside ${tag}'s assets`);
+  }
+  return problems;
+}
+
+/**
+ * The post-publish check of both feeds. The pre-release feed always names the published
+ * release. The stable feed names it only when it is stable, and must never name a pre-release.
+ */
+export function checkPublishedFeeds({ tag, stable, prerelease, repository = "getoxide/oxide" }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) return { ok: false, message: `The tag "${tag}" is not a release tag.` };
+  const isStable = !version.includes("-");
+  const problems = [];
+  if (prerelease?.version !== version) problems.push(`the pre-release feed names ${prerelease?.version ?? "nothing"}, not ${version}`);
+  problems.push(...feedProblems(prerelease, "pre-release feed", { repository, tag }));
+  if (isStable) {
+    if (stable?.version !== version) problems.push(`the stable feed names ${stable?.version ?? "nothing"}, not ${version}`);
+    problems.push(...feedProblems(stable, "stable feed", { repository, tag }));
+  } else if (stable?.version === version) {
+    problems.push(`the stable feed names the pre-release ${version}`);
+  }
+  if (problems.length > 0) return { ok: false, message: `Feeds are wrong for ${tag}: ${problems.join("; ")}.` };
+  return { ok: true, message: `Both feeds are right for ${tag}.` };
+}
+
+/**
+ * The Linux package repositories (ADR-0021). APT is a flat repository made of release assets; DNF
+ * keeps only its metadata on the update site, and its packages are the release's own assets.
+ * One OpenPGP key signs the APT `InRelease`, every `.rpm` and the DNF `repomd.xml`.
+ */
+export const REPOSITORY_SECRETS = ["OXIDE_REPOSITORY_SIGNING_KEY", "OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE"];
+/** The signed APT index, as release assets. One index lists the amd64 and arm64 packages. */
+export const APT_REPOSITORY_FILES = ["InRelease", "Release", "Packages"];
+/** The public half of the repository key (binary for apt's `signed-by`, armored for rpm and dnf). */
+export const REPOSITORY_KEY_FILES = ["oxide-repository.gpg", "oxide-repository.asc"];
+const REPOSITORY_ARCHES = [
+  { asset: "x64", deb: "amd64", rpm: "x86_64" },
+  { asset: "arm64", deb: "arm64", rpm: "aarch64" },
+];
+
+/**
+ * What a release contributes to the repositories. Throws when a package is missing: a repository
+ * that lacks an architecture would make that architecture's `apt upgrade` silently stop.
+ * Pre-releases are signed too (a draft's assets rehearse the repositories) but never reach DNF:
+ * GitHub's "latest" link already keeps them out of APT, and `dnf.publish` keeps them off the update site.
+ */
+export function repositoryPlan({ tag, repository, assetNames }) {
+  const version = String(tag ?? "").match(TAG)?.[1];
+  if (!version) throw new Error(`The tag "${tag}" is not a release tag (vX.Y.Z).`);
+  const pick = (extension, field) => REPOSITORY_ARCHES.map((arch) => {
+    const name = `Oxide_${version}_linux_${arch.asset}.${extension}`;
+    if (!assetNames.includes(name)) throw new Error(`The release has no ${name}; the repositories need one .${extension} per architecture.`);
+    return { name, arch: arch[field] };
+  });
+  const stable = !version.includes("-");
+  return {
+    version,
+    stable,
+    debs: pick("deb", "deb"),
+    rpms: pick("rpm", "rpm"),
+    aptFiles: [...APT_REPOSITORY_FILES, ...REPOSITORY_KEY_FILES],
+    dnf: { publish: stable, baseUrl: releaseAssetBase(repository, tag), sitePath: "rpm" },
+  };
+}
+
+/** Whether a release asset exists only for the repositories, so the notes' checksum list leaves it out. */
+export function isRepositoryAsset(name) {
+  return APT_REPOSITORY_FILES.includes(name) || REPOSITORY_KEY_FILES.includes(name);
+}
+
+/**
+ * The APT `Release` file of the flat repository. It pins `Packages` by hash and size, and the
+ * signed `InRelease` carries it, so a tampered index or package is refused. `date` is RFC 2822 in UTC.
+ */
+export function aptReleaseFile({ packagesText, date }) {
+  const bytes = Buffer.from(packagesText, "utf8");
+  return [
+    "Origin: Oxide",
+    "Label: Oxide",
+    "Suite: stable",
+    `Date: ${date}`,
+    `Architectures: ${REPOSITORY_ARCHES.map(({ deb }) => deb).join(" ")}`,
+    "Description: Oxide Linux packages",
+    "SHA256:",
+    ` ${sha256(bytes)} ${bytes.length} Packages`,
+    "",
+  ].join("\n");
+}
+
+/** The update site, which serves the DNF metadata and the key (GitHub Pages from the `updates` branch). */
+export const UPDATE_SITE = "https://getoxide.github.io/oxide/";
+
+/** Where the documented setup, and the packages' maintainer scripts, put Oxide's APT source, its key and the DNF repo file. */
+export const APT_SOURCE_PATH = "/etc/apt/sources.list.d/oxide.list";
+export const APT_KEYRING_PATH = "/usr/share/keyrings/oxide.gpg";
+export const DNF_REPO_PATH = "/etc/yum.repos.d/oxide.repo";
+
+/** The flat APT repository: the assets of the latest release, which GitHub never resolves to a draft or a pre-release. */
+const LATEST_ASSET_BASE = "https://github.com/getoxide/oxide/releases/latest/download/";
+
+/** The one line of the APT source: the flat repository of the latest release, signed by the Oxide keyring only. */
+export function aptSourceFile() {
+  return `deb [signed-by=${APT_KEYRING_PATH}] ${LATEST_ASSET_BASE} ./\n`;
+}
+
+/** The `.repo` file users add to `/etc/yum.repos.d/`: both package and metadata signatures are checked. */
+export function dnfRepoFile() {
+  return [
+    "[oxide]",
+    "name=Oxide",
+    `baseurl=${UPDATE_SITE}rpm/`,
+    "enabled=1",
+    "gpgcheck=1",
+    "repo_gpgcheck=1",
+    `gpgkey=${UPDATE_SITE}rpm/${REPOSITORY_KEY_FILES[1]}`,
+    "metadata_expire=6h",
+    "skip_if_unavailable=1",
+    "",
+  ].join("\n");
+}
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+/** Index entries of an APT `Packages` file: one stanza per package. */
+function aptStanzas(text) {
+  return lf(text).split(/\n\s*\n/).filter((block) => block.trim()).map((block) => Object.fromEntries(
+    block.split("\n").map((line) => line.match(/^([\w-]+):\s*(.*)$/)).filter(Boolean).map(([, key, value]) => [key, value.trim()]),
+  ));
+}
+
+/**
+ * The post-publish check of the APT index: `Release` pins `Packages`, and `Packages` names the
+ * package of each architecture with the hash of the file users download. (The `InRelease`
+ * signature is checked with gpgv in the workflow.) `hashes` maps asset names to their SHA-256.
+ */
+export function checkAptRepository({ plan, releaseText, packagesText, hashes }) {
+  const problems = [];
+  const pinned = lf(releaseText).match(/^ ([0-9a-f]{64}) (\d+) Packages$/m);
+  if (!pinned || pinned[1] !== sha256(Buffer.from(packagesText, "utf8")) || Number(pinned[2]) !== Buffer.byteLength(packagesText, "utf8")) {
+    problems.push("the Release file does not pin this Packages file");
+  }
+  const stanzas = aptStanzas(packagesText);
+  for (const { name, arch } of plan.debs) {
+    const entry = stanzas.find((stanza) => stanza.Architecture === arch);
+    if (!entry) problems.push(`Packages has no ${arch} package`);
+    else if (entry.Package !== "oxide") problems.push(`the ${arch} package is named ${entry.Package}, not oxide`);
+    else if (entry.Filename?.replace(/^\.\//, "") !== name) problems.push(`the ${arch} package points at ${entry.Filename}, not ${name}`);
+    else if (entry.SHA256 !== hashes?.[name]) problems.push(`the hash of ${name} in Packages is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The APT repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The APT repository of v${plan.version} pins its index and lists amd64 and arm64.` };
+}
+
+/**
+ * The post-publish check of the DNF metadata: `repomd.xml` pins `primary.xml.gz` (`primarySha256` is
+ * the hash of the file fetched), and `primary` points each package at the release's own asset with its hash.
+ * (The `repomd.xml` signature is checked with gpg in the workflow.)
+ */
+export function checkDnfRepository({ plan, repomd, primaryXml, primarySha256, hashes }) {
+  const problems = [];
+  const primaryData = String(repomd).match(/<data type="primary">[\s\S]*?<\/data>/)?.[0];
+  const pinnedHash = primaryData?.match(/<checksum type="sha256">([^<]+)<\/checksum>/)?.[1];
+  if (!pinnedHash || pinnedHash !== primarySha256) problems.push("repomd.xml does not pin this primary file");
+  const entries = [...String(primaryXml).matchAll(/<package type="rpm">[\s\S]*?<\/package>/g)].map(([block]) => ({
+    arch: block.match(/<arch>([^<]*)<\/arch>/)?.[1],
+    sha: block.match(/<checksum type="sha256"[^>]*>([^<]*)<\/checksum>/)?.[1],
+    base: block.match(/<location[^>]*xml:base="([^"]*)"/)?.[1],
+    href: block.match(/<location[^>]*href="([^"]*)"/)?.[1],
+    name: block.match(/<name>([^<]*)<\/name>/)?.[1],
+  }));
+  for (const { name, arch } of plan.rpms) {
+    const entry = entries.find((candidate) => candidate.href === name && candidate.arch === arch);
+    if (!entry) problems.push(`primary has no ${arch} package at ${name}`);
+    else if (entry.name !== "oxide") problems.push(`${name} is named ${entry.name}, not oxide`);
+    else if (entry.base !== plan.dnf.baseUrl) problems.push(`${name} is located at ${entry.base ?? "no base"}, not the release's assets`);
+    else if (entry.sha !== hashes?.[name]) problems.push(`the hash of ${name} in primary is not the published file's`);
+  }
+  if (problems.length > 0) return { ok: false, message: `The DNF repository of v${plan.version} is wrong: ${problems.join("; ")}.` };
+  return { ok: true, message: `The DNF repository of v${plan.version} pins its primary file and points both architectures at the release's assets.` };
+}
+
+/** The names among `names` that `env` does not set to a non-blank value. */
+export function missingSecrets(env, names) {
+  return names.filter((name) => !String(env?.[name] ?? "").trim());
+}
+
+/**
+ * The names among `names` whose presence flag `HAS_<name>` is not exactly "true". The build jobs test a
+ * secret with the expression `secrets.X != ''`, so no key's value ever reaches their environment.
+ */
+export function missingPresent(env, names) {
+  return names.filter((name) => env?.[`HAS_${name}`] !== "true");
 }
 
 // Packages that break when moved alone, or whose bumps change generated bindings.

@@ -22,7 +22,7 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### Layout
 
-Rust crates: `crates/oxide-platform` (OS-specific code and the process, lock and diagnostics primitives), `crates/oxide-core` (Projects, storage, terminals, files, Git, GitHub, language servers; no Tauri) and `crates/oxide-app` (the Tauri shell). The frontend is `web/src`, grouped by area: `projects/`, `terminal/`, `editor/`, `issues/`, `pull-requests/`, `settings/`, `shared/` and `styles/`; `App.tsx`, `main.tsx` and the generated `bindings.ts` sit at its root. `assets/` holds only the app icon masters and the palette. Oxide has Projects and plain Terminals only (ADR-0018): do not reintroduce the vocabulary of the removed features (Thread, Provider, agent sessions, approvals, worktrees, Project Services).
+Rust crates: `crates/oxide-platform` (OS-specific code and the process, lock and diagnostics primitives), `crates/oxide-core` (Projects, storage, terminals, files, Git, GitHub, language servers; no Tauri) and `crates/oxide-app` (the Tauri shell). The frontend is `web/src`, grouped by area: `projects/`, `terminal/`, `editor/`, `issues/`, `pull-requests/`, `settings/`, `updates/`, `shared/` and `styles/`; `App.tsx`, `main.tsx` and the generated `bindings.ts` sit at its root. `assets/` holds only the app icon masters and the palette. Oxide has Projects and plain Terminals only (ADR-0018): do not reintroduce the vocabulary of the removed features (Thread, Provider, agent sessions, approvals, worktrees, Project Services).
 
 ### OS-specific code
 

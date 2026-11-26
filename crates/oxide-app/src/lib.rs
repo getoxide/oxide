@@ -4,6 +4,7 @@
 mod conversions;
 mod shell_path;
 mod system;
+mod updates;
 use oxide_core::diag;
 
 use std::sync::Arc;
@@ -1519,8 +1520,43 @@ fn remember_selection(core: State<'_, Arc<Core>>, project_id: u32) -> Result<(),
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
-fn confirm_quit(app: tauri::AppHandle) -> Result<(), AppError> {
-    app.exit(0);
+fn confirm_quit(app: tauri::AppHandle, core: State<'_, Arc<Core>>) -> Result<(), AppError> {
+    // After "Restart now" the confirmed quit restarts Oxide into the installed update.
+    if core.take_update_restart_request() {
+        app.request_restart();
+    } else {
+        app.exit(0);
+    }
+    Ok(())
+}
+
+/// The quit prompt was cancelled: a later quit is a plain quit, not an update restart.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn cancel_quit(core: State<'_, Arc<Core>>) {
+    core.cancel_update_restart_request();
+}
+
+/// "Restart now" after an update was installed. It goes through the normal quit path: unsaved
+/// editors get the usual prompt (and `confirm_quit` restarts); otherwise Oxide restarts at once.
+/// Session restore runs as after any quit. On Windows the staged installer runs as Oxide exits.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+fn restart_for_update(app: tauri::AppHandle, core: State<'_, Arc<Core>>) -> Result<(), AppError> {
+    if !core.request_update_restart() {
+        return Err(AppError {
+            message: "No update is waiting for a restart.".into(),
+        });
+    }
+    if let Some(prompt) = quit_prompt_for_core(&core) {
+        emit_quit_prompt(&app, prompt);
+    } else {
+        // No prompt to confirm: this exit is the update restart (the Windows installer relaunches Oxide).
+        core.take_update_restart_request();
+        app.request_restart();
+    }
     Ok(())
 }
 
@@ -1644,7 +1680,12 @@ pub fn builder() -> Builder<tauri::Wry> {
         edit_issue,
         last_selection,
         remember_selection,
-        confirm_quit
+        confirm_quit,
+        cancel_quit,
+        restart_for_update,
+        updates::update_state,
+        updates::install_update,
+        updates::check_for_updates
     ])
 }
 
@@ -1675,6 +1716,7 @@ pub fn run() {
 
     let built = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(builder.invoke_handler())
         .menu(build_menu)
         .on_window_event(|window, event| {
@@ -1722,7 +1764,9 @@ pub fn run() {
                 window.hide_menu()?;
                 window.set_decorations(false)?;
             }
-            app.manage(Arc::new(core));
+            let core = Arc::new(core);
+            updates::start(app.handle(), &core);
+            app.manage(core);
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -1752,7 +1796,11 @@ pub fn run() {
             }
         }
         // Managed state is not dropped on exit: stop every shell by hand.
-        tauri::RunEvent::Exit => app.state::<Arc<Core>>().quit(),
+        tauri::RunEvent::Exit => {
+            let core = app.state::<Arc<Core>>();
+            core.quit();
+            updates::run_staged_install(app, &core);
+        }
         _ => {}
     });
 }

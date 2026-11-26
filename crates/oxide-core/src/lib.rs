@@ -22,6 +22,7 @@ mod redact;
 mod system;
 mod terminal;
 mod terminal_completion;
+mod updates;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_platform::diag;
 /// Poison-recovering lock acquisition: the only way to take a `Mutex` or `RwLock` (see `clippy.toml`).
@@ -47,6 +48,11 @@ pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageT
 pub use oxide_platform::{AvailableShell, ShellKind};
 pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
+pub use updates::{
+    AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation,
+    LastCheck, PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState,
+    feed_for, is_newer,
+};
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -126,6 +132,7 @@ pub struct Core {
     git: git::GitState,
     gh: Arc<github::Gh>,
     system: Mutex<Arc<dyn System>>,
+    updates: updates::UpdateTracker,
 }
 
 impl Core {
@@ -189,6 +196,7 @@ impl Core {
             git: git::GitState::default(),
             gh: Arc::new(github::Gh::default()),
             system: Mutex::new(Arc::new(NoSystem)),
+            updates: updates::UpdateTracker::new(),
         })
     }
 
@@ -211,6 +219,94 @@ impl Core {
     /// Installs the operating-system side of Core: opening links and revealing folders.
     pub fn set_system(&self, system: Arc<dyn System>) {
         *self.system.lock_recover() = system;
+    }
+
+    /// Tells Core where the install sits; outside the Applications folders (macOS) no install may start.
+    pub fn set_update_install_location(&self, location: InstallLocation) {
+        self.updates.set_install_location(location);
+    }
+
+    /// Tells Core how this install updates (ADR-0021) and which version is running.
+    pub fn configure_updates(&self, channel: InstallChannel, current_version: &str) {
+        self.updates.configure(channel, current_version);
+    }
+
+    /// What the window shows about updates.
+    pub fn update_state(&self) -> UpdateState {
+        self.updates.snapshot()
+    }
+
+    /// Records a check that reached the feed; `found` is the version it offers, if any.
+    /// Returns the new state when it changed, for the shell to push to the window.
+    pub fn record_update_check(&self, found: Option<&str>, now_unix: i64) -> Option<UpdateState> {
+        self.updates.record_check(found, now_unix)
+    }
+
+    /// Starts a check (one operation at a time with installs); the new state shows "checking".
+    pub fn begin_update_check(&self) -> std::result::Result<UpdateState, UpdateError> {
+        self.updates.begin_check()
+    }
+
+    /// A check failed (no network, bad answer): recorded with its time, never shown in the window.
+    pub fn record_update_check_failure(&self, now_unix: i64) -> UpdateState {
+        self.updates.record_check_failure(now_unix)
+    }
+
+    /// Starts downloading the available update (one operation at a time): its version and the new state.
+    pub fn begin_update_install(&self) -> std::result::Result<(String, UpdateState), UpdateError> {
+        self.updates.begin_install()
+    }
+
+    /// Download progress, for the shell to push; `None` when no download is running.
+    pub fn record_update_progress(
+        &self,
+        downloaded: u64,
+        total: Option<u64>,
+    ) -> Option<UpdateState> {
+        self.updates.record_progress(downloaded, total)
+    }
+
+    /// The download passed its signature check; the package is being installed or staged.
+    pub fn begin_update_installing(&self) -> Option<UpdateState> {
+        self.updates.begin_installing()
+    }
+
+    /// The update is installed (`staged`: kept for the quit, Windows) and waits for a restart.
+    pub fn finish_update_install(&self, staged: bool) -> UpdateState {
+        self.updates.finish_install(staged)
+    }
+
+    /// A download, verification or install failed: the installed Oxide keeps running and the
+    /// update is offered again.
+    pub fn fail_update_install(&self, reason: &str) -> UpdateState {
+        // The plugin's errors can quote a URL; nothing leaves Core with its credentials (ADR-0016).
+        self.updates
+            .fail_install(&redact::redact_url_credentials(reason))
+    }
+
+    /// Whether quitting must now run the staged installer (Windows, after "Later" or "Restart now").
+    pub fn staged_update_due_at_quit(&self) -> bool {
+        self.updates.staged_install_due_at_quit()
+    }
+
+    /// "Restart now": remembers that the quit about to be confirmed restarts Oxide. False before an install.
+    pub fn request_update_restart(&self) -> bool {
+        self.updates.request_restart()
+    }
+
+    /// Whether the quit being confirmed is an update restart; clears the request.
+    pub fn take_update_restart_request(&self) -> bool {
+        self.updates.take_restart_request()
+    }
+
+    /// Whether the exit now under way is a confirmed update restart, so the Windows installer relaunches Oxide.
+    pub fn update_exit_restarts(&self) -> bool {
+        self.updates.exit_restarts()
+    }
+
+    /// The user cancelled the quit prompt: a later quit is a plain quit.
+    pub fn cancel_update_restart_request(&self) {
+        self.updates.cancel_restart_request();
     }
 
     fn system(&self) -> Arc<dyn System> {

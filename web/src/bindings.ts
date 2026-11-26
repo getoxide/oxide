@@ -140,6 +140,28 @@ export const commands = {
 	rememberSelection: (projectId: number) => typedError<null, AppError>(__TAURI_INVOKE("remember_selection", { projectId })),
 	/**  The user confirmed quitting with unsaved editors (saved or discarded): exit. */
 	confirmQuit: () => typedError<null, AppError>(__TAURI_INVOKE("confirm_quit")),
+	/**  The quit prompt was cancelled: a later quit is a plain quit, not an update restart. */
+	cancelQuit: () => __TAURI_INVOKE<void>("cancel_quit"),
+	/**
+	 *  "Restart now" after an update was installed. It goes through the normal quit path: unsaved
+	 *  editors get the usual prompt (and `confirm_quit` restarts); otherwise Oxide restarts at once.
+	 *  Session restore runs as after any quit. On Windows the staged installer runs as Oxide exits.
+	 */
+	restartForUpdate: () => typedError<null, AppError>(__TAURI_INVOKE("restart_for_update")),
+	updateState: () => __TAURI_INVOKE<UpdateState_Serialize>("update_state"),
+	/**
+	 *  Starts the install of the available update and returns at once: progress and the outcome
+	 *  arrive as `update-state-changed`. Only one operation runs at a time. Outside any checkout, it
+	 *  downloads the package from the compiled-in feed and, once the plugin has verified its signature
+	 *  against the compiled-in key, replaces the installed app (macOS, AppImage) or stages the installer
+	 *  it runs at quit (Windows). It takes no argument from the webview (ADR-0016).
+	 */
+	installUpdate: () => typedError<null, AppError>(__TAURI_INVOKE("install_update")),
+	/**
+	 *  Checks the feed now, on demand from the Updates section, and returns the new state. A check that
+	 *  cannot reach the feed is not an error: it is recorded in the state and shown only in Settings.
+	 */
+	checkForUpdates: () => typedError<UpdateState_Serialize, AppError>(__TAURI_INVOKE("check_for_updates")),
 };
 
 /* Types */
@@ -151,6 +173,11 @@ export type AvailableShell = {
 	kind: ShellKind,
 	label: string,
 	isDefault: boolean,
+};
+
+export type AvailableUpdate = {
+	version: string,
+	releaseNotesUrl: string,
 };
 
 export type CheckState = "success" | "failure" | "pending" | "neutral" | "skipped";
@@ -196,6 +223,14 @@ export type GithubRepository = {
 	description: string,
 	isPrivate: boolean,
 };
+
+export type InstallChannel = "inApp" | "apt" | "dnf" | "development";
+
+/**
+ *  Whether an install can update itself where it sits: a macOS app outside the Applications
+ *  folders must be moved first.
+ */
+export type InstallLocation = "allowed" | "moveToApplications";
 
 export type IssueCloseReason = "completed" | "notPlanned";
 
@@ -379,6 +414,12 @@ export type LanguageTool_Serialize = {
 	resolvedPath: string | null,
 	installCommand: string,
 	documentation: string,
+};
+
+/**  A finished check; `at` is Unix seconds (a float: the bindings forbid 64-bit integers). */
+export type LastCheck = {
+	at: number | null,
+	succeeded: boolean,
 };
 
 export type LinkedIssue = {
@@ -853,6 +894,53 @@ export type TimelineReview_Serialize = {
 	state: ReviewState,
 	/**  `null` when only `gh` gave the review: its reactions are unknown, so not offered. */
 	reactions: ReactionGroup[] | null,
+};
+
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation = UpdateOperation_Serialize | UpdateOperation_Deserialize;
+
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation_Deserialize = { kind: "idle" } | { kind: "downloading"; downloaded: number | null; total?: number | null } | { kind: "installing" } | 
+/**  Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits. */
+{ kind: "installed"; staged: boolean };
+
+/**  Sizes are floats: the bindings forbid 64-bit integers. */
+export type UpdateOperation_Serialize = { kind: "idle" } | { kind: "downloading"; downloaded: number | null; total: number | null } | { kind: "installing" } | 
+/**  Installed and waiting for a restart. `staged` (Windows): runs when Oxide quits. */
+{ kind: "installed"; staged: boolean };
+
+export type UpdateState = UpdateState_Serialize | UpdateState_Deserialize;
+
+export type UpdateState_Deserialize = {
+	channel: InstallChannel,
+	installLocation: InstallLocation,
+	currentVersion: string,
+	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
+	lastCheckedAt?: number | null,
+	/**  The last check that finished, successful or not: a failed one shows only in Settings. */
+	lastCheck?: LastCheck | null,
+	/**  A check is running. */
+	checking: boolean,
+	available?: AvailableUpdate | null,
+	operation: UpdateOperation_Deserialize,
+	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */
+	error?: string | null,
+};
+
+export type UpdateState_Serialize = {
+	channel: InstallChannel,
+	installLocation: InstallLocation,
+	currentVersion: string,
+	/**  Unix seconds (a float: the bindings forbid 64-bit integers). */
+	lastCheckedAt: number | null,
+	/**  The last check that finished, successful or not: a failed one shows only in Settings. */
+	lastCheck: LastCheck | null,
+	/**  A check is running. */
+	checking: boolean,
+	available: AvailableUpdate | null,
+	operation: UpdateOperation_Serialize,
+	/**  Why the last install failed; the installed Oxide keeps running and the update is offered again. */
+	error: string | null,
 };
 
 /* Tauri Specta runtime */

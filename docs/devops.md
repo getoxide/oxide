@@ -36,9 +36,12 @@ pull_request ──► CI ─ changes ─┬─ web ─────────�
 push main / release/** ──► CI, every lane forced on (incl. every bundle) ──► gate on that commit
 
 tag vX.Y.Z  (immutable once pushed)
-   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64) ─► publish DRAFT
-                                                                                    (dmg, exe, AppImage, deb, rpm, notes, checksums; metadata/SBOM as run artifact)
+   └─► Release ─ verify ─► [approval: environment `release`] ─► build macOS, Windows (x64, arm64) and Linux (x64, arm64) ─► [approval] repositories ─► publish DRAFT
+                              (refuses a missing update or repository key)                                          (signs .rpm, APT index, DNF metadata)   (dmg, exe, AppImage, deb, signed rpm, updater packages, latest.json,
+                                                                                                                                                              APT InRelease/Packages/key, notes, checksums; metadata/SBOM as run artifact)
 Release Manager reviews and clicks Publish ──► immutable release ──► Verify release (checksums and attestations)
+                                                                  ├─► update feeds: prerelease.json on the `updates` branch (GitHub Pages), both feeds checked
+                                                                  └─► Linux repositories: DNF metadata to `rpm/` on the `updates` branch (stable only), APT and DNF checked
 
 daily  ──► Advisories (RustSec + pnpm audit) ──► one tracking issue per ecosystem on failure
 weekly ──► Dependabot ──► auto-merge low-risk / `manual-review`
@@ -179,7 +182,7 @@ nextest runs each test in its own process with the settings in [`.config/nextest
   - `release: false` (CI): unsigned, caches allowed.
   - `release: true`: no caches at all, frozen installs. Apple signing and notarization would switch on by themselves if the Apple secrets existed; they deliberately don't ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so the macOS build is ad-hoc signed (Apple Silicon refuses to launch an app with no signature) and the notes say so.
 - **Why:** PR bundles and release bundles come from one definition, so what `main` proves is what ships. It declares the `release` environment itself, because a job that calls a reusable workflow can't name one, and the approval must guard the job that reads the secrets.
-- **Bundles:** macOS `app,dmg`; Windows `nsis` only; Linux `appimage,deb,rpm`. Oxide has no in-app updater, so no build produces updater packages or signatures.
+- **Bundles:** macOS `app,dmg`; Windows `nsis` only; Linux `appimage,deb,rpm`. A release build also makes the updater packages and signs them with the update key ([ADR-0021](adr/0021-update-channels-per-platform.md)): it merges `crates/oxide-app/tauri.updater.conf.json` (`createUpdaterArtifacts`) over the app config, so CI builds, which have no key, stay unsigned. The updater packages are the macOS `.app` archive (`Oxide_<v>_macos_arm64.app.tar.gz`) and, for Windows and Linux, the installer and AppImage that are already downloads. Each has a `.sig` next to it. The first release step after the checkout and tool set-up runs `require-secrets`: a release without `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `OXIDE_REPOSITORY_SIGNING_KEY` or `OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE` in the `release` environment fails there, naming the missing secret, before anything is built. The check passes each secret only as a presence flag (`HAS_<NAME>: ${{ secrets.<NAME> != '' }}`, `require-secrets --present`), so no key's value enters the build jobs' environment through it. Only the Tauri build steps read the update key; the build jobs never read the repository key.
 - **Runners:** Windows on Arm builds natively on `windows-11-arm`, and Linux on `ubuntu-22.04` and `ubuntu-22.04-arm`: an AppImage or `.deb` links the glibc it was built against, so the oldest supported image keeps it running on older distributions. Move to `ubuntu-24.04*` only when 22.04 is retired.
 - **Local:** `node tools/check.mjs` builds an unsigned bundle for your OS. Signed builds are never made locally.
 
@@ -189,7 +192,8 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 1. **`verify`**, **`audit-rust`** and **`audit-js`** (parallel, read-only). `audit-rust` runs `cargo deny --locked check advisories` and `audit-js` runs `pnpm --dir web audit --prod --audit-level high`; `build` needs all three. *Why:* a daily scan only finds an advisory within a day, and nothing else stopped a tag from shipping one; failing here means no signing secret is unlocked and nothing is built. A high advisory with no fix blocks the release until it is resolved. `verify`: the tagged commit is an ancestor of `main` or a `release/*` branch; `checkReleaseVersion` finds the tag equal to the versions in `Cargo.toml`, `crates/oxide-app/tauri.conf.json` and `web/package.json`; `gate` succeeded on that commit's push run. *Why the last one:* the ruleset doesn't require up-to-date branches, so two individually green PRs can break together. Each refusal says what failed and how to fix it.
 2. **`build`** (all five platforms in parallel, `release: true`) waits for approval of the `release` environment.
-3. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets): stages only the installers, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names) for the release, attests build provenance for them, writes `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums in the notes, and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
+3. **`repositories`** (needs `build`; names the `release` environment, so it is approved like the builds; `contents: read`; the only job that reads the repository key). It checks the repository secrets first, downloads the Linux builds and runs [`tools/ci/sign-repositories.sh`](../tools/ci/sign-repositories.sh), which: signs every `.rpm` with the repository key (`rpmsign`); builds the APT flat repository (`dpkg-scanpackages` over the amd64 and arm64 `.deb` files, the pure `aptReleaseFile` for `Release`, then `InRelease` by clear-signing it); exports the public key as `oxide-repository.gpg` (binary, for `signed-by`) and `oxide-repository.asc`; builds the DNF metadata with `createrepo_c --baseurl <the release's assets>` and signs `repomd.xml` (`repomd.xml.asc`); then checks its own output with the public key only (`gpgv`, `gpg --verify`, `rpmkeys --checksig`). Which packages form a repository, and whether the DNF metadata is for the site (stable only), is the tested `repositoryPlan` in `tools/ci/policy.mjs`. It uploads the `repository-release` artifact (signed `.rpm` files, `InRelease`, `Release`, `Packages` and the key: these become release assets) and the `dnf-site` artifact (the `rpm/` folder of the update site, 90 days: publish the draft within 90 days of the run, or `linux repositories` finds no artifact and the release must be rolled forward). Pre-releases go through it too, so an `-rc` draft's assets can rehearse both repositories, but their metadata is never written to the site. It needs a second approval of the `release` environment (GitHub asks per job); publishing the draft needs none, because everything is already signed.
+4. **`publish`** (the only job with `contents`, `id-token` and `attestations: write`; it holds no signing secrets; it needs `build` and `repositories`): stages the installers, the updater packages and their `.sig` files, named `Oxide_<v>_<os>_<arch>.<ext>` so the platform is in the file name (`macos_arm64.dmg`, `windows_x64.exe`, `windows_arm64.exe`, and `linux_x64` / `linux_arm64` as `.AppImage`, `.deb` and `.rpm`; `build.yml` renames them from Tauri's names) for the release, writes `latest.json` from the signatures (the pure `buildUpdateFeed`, which fails on a missing or empty signature; its entries point at this release's own assets) after `checkUpdaterSignature` verified each `.sig` against its package and the app's `plugins.updater.pubkey`, so a release signed with another key or password fails before the draft exists, attests build provenance for all of them, writes `SHA256SUMS.txt` and the SPDX SBOM to the `release-metadata` workflow artifact (so release assets stay clean), embeds the SHA-256 checksums of the installers in the notes (the updater-only assets, the `.app.tar.gz`, the `.sig` files and `latest.json`, are left out of the notes and the Downloads table), copies the `repository-release` files over the build's (so the signed `.rpm` replaces the unsigned one before anything is checksummed or attested; the APT index and the key are left out of the notes' checksum list), and creates a **draft** release (a pre-release when the tag has a suffix such as `-rc.1`).
 
 **Why rebuild at release instead of promoting `main`'s CI bundle:** signing happens inside `tauri build`, so promoting would mean giving every `main` push any signing secrets without approval. A clean, cache-free rebuild of the same commit, with locked dependencies and a pinned toolchain, is the safer trade.
 
@@ -201,10 +205,53 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `verify-release.yml` (Verify release)
 
-- **What:** when a release is published, re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact and runs `gh attestation verify` on each file.
+- **What:** when a release is published, first checks that the release's pre-release flag agrees with its tag (flagged if and only if the tag has a `-` suffix; the pure `checkPrerelease`, `cli.mjs check-prerelease`) and fails before downloading or writing anything when it does not; releases v0.0.2 to v0.0.4 were flagged as pre-releases by hand without a suffix, which GitHub's `latest` link, the stable feed and the repositories all skip, so untick *Set as a pre-release* on a stable release before publishing it (a stable release can only be corrected by rolling forward). Then it re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact and runs `gh attestation verify` on each file.
 - **Why:** it checks what users will actually download, and keeping the checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
 - **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
+
+The same workflow has a second job, **`update feeds`** (it needs the first; it holds no signing key, only the `contents: write` token). It copies the published release's `latest.json` to `updates/prerelease.json` on the `updates` branch and pushes it (the first run creates the orphan branch), then fetches both feeds, retrying for up to 10 minutes while GitHub Pages catches up, and checks them with `checkPublishedFeeds`: the pre-release feed names the published version; the stable feed names it too for a stable release and must not for a pre-release; every entry has a signature and points at the release's own assets; every package URL resolves. A failure opens a `needs-triage` issue.
+
+The same workflow has a third job, **`linux repositories`** (it needs `update feeds`; it holds no signing key, only the `contents: write` token; same `update-site` concurrency group). It decides with `repositoryPlan`: for a **stable** release it replaces the `rpm/` folder of the `updates` branch with the signed `dnf-site` artifact of the release run; for a pre-release it leaves the branch untouched. Then it checks both repositories the way a system fetches them: APT from `https://github.com/getoxide/oxide/releases/latest/download/` (a stable release; the tag's own assets for a pre-release): `gpgv` verifies `InRelease` against the published key, `Release` must match it and pin `Packages`, and `Packages` must name the amd64 and arm64 packages with the SHA-256 of the published files (`checkAptRepository`); DNF from `https://getoxide.github.io/oxide/rpm/` (stable only, retrying while Pages catches up): the key is the release's key, `repomd.xml.asc` verifies, `repomd.xml` pins `primary`, every package location is the release's own asset with the published hash (`checkDnfRepository`), and every `.rpm` passes `rpmkeys --checksig`. A failure opens a `needs-triage` issue. The checks prove the repository is consistent with itself and with the release; they cannot prove the key is the one users trust, so compare the fingerprint of `oxide-repository.asc` with the one you recorded when the key was made.
+
+### The Linux repositories
+
+| | Address | Where it lives |
+| --- | --- | --- |
+| APT (flat) | `deb [signed-by=/usr/share/keyrings/oxide.gpg] https://github.com/getoxide/oxide/releases/latest/download/ ./` | release assets: `InRelease`, `Release`, `Packages` (one index for amd64 and arm64), the `.deb` files, `oxide-repository.gpg` |
+| DNF | `https://getoxide.github.io/oxide/rpm/` (`oxide.repo` is served next to the metadata) | `rpm/` on the `updates` branch: `repodata/`, `oxide-repository.asc`, `oxide.repo`; each package's location is the release's own `.rpm` asset |
+
+The addresses are written into users' systems: changing them means every Linux install has to be set up again by hand. One OpenPGP key (RSA 4096: older RPM cannot verify EdDSA) signs the APT `InRelease`, every `.rpm` (so `gpgcheck` and `repo_gpgcheck` both pass) and `repomd.xml`. Make it once and keep the private half only in the `release` environment:
+
+```sh
+gpg --quick-generate-key "Oxide Repository <releases@getoxide.dev>" rsa4096 sign never   # choose a passphrase
+gpg --armor --export-secret-keys <fingerprint>   # the value of OXIDE_REPOSITORY_SIGNING_KEY
+```
+
+Then export its public half into the repository, where the `.deb` picks it up: `tools/ci/export-repository-key.sh <armored public key>` writes `crates/oxide-app/linux/repository/oxide-repository.gpg`, and `sign-repositories.sh` refuses to sign a release whose key differs from that file. **The committed file must be the real key before the first release**; until then it is a rehearsal key.
+
+Record the fingerprint where Release Managers can find it. Rotating the key means every user imports the new key by hand (the setup instructions in the README fetch it from the latest release, so an APT user who re-runs them gets it; DNF users re-run `dnf`'s key import).
+
+**Package maintainer scripts** (they run as root on users' systems; ADR-0016). The `.deb` and `.rpm` downloaded from a release add the repository themselves, wired through `bundle.linux.{deb,rpm}` in `tauri.conf.json` and written in POSIX sh under `crates/oxide-app/linux/`:
+
+- `.deb` `postinst` (on `configure`, so on install and upgrade): copies the shipped public key to `/usr/share/keyrings/oxide.gpg` and writes the one-line source to `/etc/apt/sources.list.d/oxide.list`, unless that file or any other APT source already names the repository. `postrm` runs only on `purge`: it deletes `oxide.list` while it is still exactly the line above and the keyring while no source uses it. `apt remove` keeps both.
+- `.rpm` `%post` writes `/etc/yum.repos.d/oxide.repo` (the same content as the documented `oxide.repo`) unless it, or another repo file that names the repository, exists; `%preun` removes it on erase only (`$1` is 0, never on upgrade) while it is unchanged. rpm holds the keyring lock for the whole transaction, so a scriptlet can neither import nor delete a key: `dnf` imports the key from the repo file's `gpgkey` on first use (the prompt the documented setup has), and it stays in the rpm keyring after an erase (remove it by hand with `rpm -qa gpg-pubkey --qf '%{NAME}-%{VERSION}-%{RELEASE} %{SUMMARY}\n' | grep -i oxide`, then `sudo rpm -e <that name>`). The repo file sets `skip_if_unavailable=1` so an unreachable repository never breaks the user's `dnf`. Both scripts add nothing when the package's own version is a pre-release (`-` in the `.deb` version, `-`, `_` or `~` in the `.rpm` one), because pre-releases never enter the repositories.
+- The scripts touch nothing else: `tools/ci/maintainer-scripts.test.mjs` pins the paths, the lines against `tools/ci/policy.mjs` (`aptSourceFile`, `dnfRepoFile`) and the README commands, and runs shellcheck. A file the user edited is never overwritten or deleted.
+
+**Rehearsal before 1.0.0.** Publish two `-rc` drafts, download their assets into a directory laid out like the published repositories (APT files at the root, `rpm/` with the DNF metadata, each tag's assets under `download/<tag>/`), serve it over HTTP and point Debian, Ubuntu and Fedora containers (x64 and arm64, `--platform`) at it: follow the README steps with the local addresses, install from the first draft and upgrade to the second with signature checking on. `tools/ci/sign-repositories.sh` takes a fourth argument, the base URL of the packages, so the DNF metadata of a rehearsal can name the local server.
+
+### The update feeds
+
+Every install reads one feed ([ADR-0021](adr/0021-update-channels-per-platform.md)); the addresses are compiled into the app (`crates/oxide-core/src/updates.rs`) and cannot change without every install updating by hand once.
+
+| Feed | Read by | Address | Served from |
+| --- | --- | --- | --- |
+| Stable | installs whose version has no pre-release suffix | `https://github.com/getoxide/oxide/releases/latest/download/latest.json` | the `latest.json` asset of the latest release; GitHub never resolves "latest" to a draft or a pre-release, so it goes live when a Release Manager publishes |
+| Pre-release | installs whose version is `-rc.N` | `https://getoxide.github.io/oxide/updates/prerelease.json` | the `updates` branch, served by GitHub Pages; the newest published release of any kind, written by `verify-release.yml` |
+
+The `updates` branch holds only generated files (`updates/prerelease.json` and `.nojekyll`) and no history anyone needs. Nothing but `verify-release.yml` writes it. Debug builds may point the app at another feed for local trials (see CONTRIBUTING); a release build ignores that ([ADR-0016](adr/0016-security-boundaries.md)).
+
+The update key is a minisign key pair made with `tauri signer generate`. The public key is in `crates/oxide-app/tauri.conf.json` (`plugins.updater.pubkey`); the private key and its password are the `release` environment secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing the key means every install updates by hand once. Rotating it means shipping one release signed with the old key that carries the new public key.
 
 ## Scheduled and automatic workflows
 
@@ -235,7 +282,7 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
    ```
 
    If `verify` refuses, its message says what to fix. A pushed tag can't be moved or deleted (only the admin can); fix forward with the next version, or have the admin delete a mistaken tag.
-4. **Approve** the `release` deployment: Actions → Release → *Review deployments*. Either Release Manager may approve.
+4. **Approve** the `release` deployment: Actions → Release → *Review deployments*. Either Release Manager may approve. GitHub asks again for the `repositories` job once the builds finish (it reads the repository key); approve it too.
 5. **Smoke test.** When `publish` finishes there is a **draft** release. Download its builds, open a Project, open a terminal and check Files (from the Project row), Issues and Pull request (right dock) on each platform you can. Run the live language-install tests where the network allows:
 
    ```sh
@@ -243,7 +290,17 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
    ```
 
 6. **Publish.** Edit the notes, then click Publish. The release becomes immutable.
-7. **Watch** the *Verify release* run. If it opens an issue, roll forward.
+7. **Watch** the *Verify release* run. If it opens an issue, roll forward. Its first step refuses a release whose *pre-release* box disagrees with the tag (a `-rc` tag must be ticked, a stable tag must not): GitHub's "latest" link, the stable feed and the repositories skip a flagged release. Nothing is written in that case; a published release is immutable, so fix it forward.
+   The `update feeds` and `linux repositories` jobs are gated by `needs:`: when `verify` (or `update feeds`) fails, the later jobs are skipped and never run on their own. After fixing the cause, re-run them by hand: open the failed run → *Re-run failed jobs* (this re-runs the failed job and the skipped jobs that need it), or from the CLI `gh run rerun <run-id> --failed --repo getoxide/oxide`. A run older than 90 days has lost its `dnf-site` artifact, so rebuild by rolling forward instead.
+
+**First release with the updater.** Pages can't be enabled from a branch that doesn't exist, and the first published release creates it, so before tagging create the branch and enable Pages once:
+
+```sh
+git switch --orphan updates && touch .nojekyll && git add .nojekyll && git commit -m "Create the update site"
+git push origin updates
+gh api -X POST repos/getoxide/oxide/pages -f "source[branch]=updates" -f "source[path]=/"
+gh api repos/getoxide/oxide/pages   # source.branch must be updates, status built or building
+```
 
 **Rehearsal.** Tag `vX.Y.Z-rc.1` after the bump merged. It produces a draft pre-release (`releases/latest` skips drafts and pre-releases). Afterwards the admin deletes the draft and the tag (deleting a tag needs the bypass).
 
@@ -251,11 +308,11 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
 
 ## Secrets and the fork/PR threat model
 
-- **Signing secrets, if any are ever added, exist only in the `release` environment** (today none are set). They are readable only by a job for a `v*` tag after a Release Manager approves.
+- **Signing secrets exist only in the `release` environment:** `TAURI_SIGNING_PRIVATE_KEY` (the content of the minisign update key, not a path), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, `OXIDE_REPOSITORY_SIGNING_KEY` (the armored private OpenPGP key of the APT and DNF repositories) and `OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE`. A release fails at its first build step when any is missing. Only the Tauri build steps read the update key, and only the `repositories` job reads the repository key. A Tauri build step also runs the frontend build (`beforeBuildCommand`) and every dependency's build script with the update key in its environment: an accepted exposure, since both lockfiles pin that code and the step runs only after a Release Manager approves. They are readable only by a job for a `v*` tag after a Release Manager approves.
 - **The Apple secrets are intentionally absent.** Oxide does not join the Apple Developer Program ([ADR-0013](adr/0013-ship-macos-builds-ad-hoc-signed.md)), so `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY` and `APPLE_API_PRIVATE_KEY` must not be set. If they ever exist, the Apple step in `build.yml` signs and notarizes with no other change; rehearse on an `-rc` tag before relying on it.
 - **Fork PRs** run on `pull_request` with a read-only token and no secrets. Actions settings require approval for first-time contributors.
 - **No `pull_request_target` workflow checks out PR code.** Untrusted code never gets a write token.
-- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes failure issues, `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
+- **Every workflow starts from `contents: read`** (auto-merge from none) and grants more per job: `publish` alone writes releases and attestations, `verify-release` writes failure issues and the `updates` branch (feeds and the DNF metadata), `advisories` alone writes issues, and the auto-merge job alone writes pull requests. Auto-merge also mints a short-lived GitHub App token, scoped to contents, pull requests and workflows, only for low-risk Dependabot PRs.
 - **Checkouts don't persist credentials,** so later steps can't push with the token.
 - **Third-party actions are pinned to a full commit SHA** with a version comment, so a moved tag can't inject code. Dependabot keeps the pins current.
 - **Release builds are clean:** no cache is restored or saved, so a poisoned cache can't reach a shipped binary.
@@ -300,6 +357,7 @@ These live in the GitHub UI, not in the repository, so they are recorded here. A
 - **Ruleset `main protection`** (and the same for `release/**`): PR required with 0 approvals; required status check `gate` (up-to-date branch not required); squash only; no force-push; no deletion.
 - **Ruleset `release tags`** on `refs/tags/v*`: block update and deletion; bypass for the repository admin only.
 - **Environment `release`:** required reviewers `cavallinilorenzo` and `itsmrma`; deployment refs `v*` tags only; the secrets above.
+- **GitHub Pages:** enabled, source *Deploy from a branch*, branch `updates`, folder `/ (root)`. It serves the pre-release feed at `https://getoxide.github.io/oxide/`. Create the branch first (see the runbook, *First release with the updater*): Pages can't be enabled from a branch that doesn't exist. The `main protection` rulesets must not cover `updates`, because the workflow pushes to it.
 - **Labels:** `dependencies`, `manual-review`, plus the triage labels.
 - **Dependabot secrets** `AUTOMERGE_APP_ID` and `AUTOMERGE_APP_PRIVATE_KEY` (optional, for auto-merge).
 - **Security:** secret scanning, push protection, Dependabot alerts and security updates, private vulnerability reporting, and CodeQL default setup.

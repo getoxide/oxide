@@ -1,7 +1,9 @@
 name: Verify release
 
 # Runs when a Release Manager publishes the draft: check what users will actually
-# download (checksums and attestations). A failure opens a needs-triage issue.
+# download (checksums and attestations), then point the pre-release update feed at it and check
+# that both update feeds name it (ADR-0021). A failure opens a needs-triage issue.
+# This workflow holds no signing key: it only copies the release's own latest.json.
 on:
   release:
     types: [published]
@@ -20,6 +22,7 @@ jobs:
       issues: write
     env:
       TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,6 +32,12 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
+
+      # First, before anything is downloaded or written: the pre-release flag and the tag must agree.
+      # Releases v0.0.2 to v0.0.4 were flagged by hand without a suffix; a stable release flagged as a
+      # pre-release is skipped by GitHub's "latest", so no feed or repository would ever serve it.
+      - name: Check that the pre-release flag agrees with the tag
+        run: node tools/ci/cli.mjs check-prerelease "$TAG" "$PRERELEASE"
 
       - name: Download the assets, metadata and check the checksums
         run: |
@@ -57,4 +66,232 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
             --title "Release $TAG failed post-publish verification" \
-            --body "Verification of the published release **$TAG** failed: checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
+            --body "Verification of the published release **$TAG** failed: the pre-release flag, checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
+
+  # The pre-release feed is the newest published release of any kind. It is a file on the `updates`
+  # branch, which GitHub Pages serves at https://getoxide.github.io/oxide/ (enabled once by an admin).
+  # The stable feed needs no job: GitHub's "latest" link starts resolving the moment the release is published.
+  update-feeds:
+    name: update feeds
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      issues: write
+    # Two publishes in a row must not interleave their pushes to the branch.
+    concurrency:
+      group: update-site
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+      STABLE_FEED: https://github.com/getoxide/oxide/releases/latest/download/latest.json
+      PRERELEASE_FEED: https://getoxide.github.io/oxide/updates/prerelease.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Write prerelease.json to the updates branch
+        run: |
+          mkdir feeds
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir feeds
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
+          mkdir site
+          cd site
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if remote fetch -q --depth 1 origin updates; then
+            git checkout -q -B updates FETCH_HEAD
+          else
+            git checkout -q --orphan updates
+          fi
+          mkdir -p updates
+          cp ../feeds/latest.json updates/prerelease.json
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then
+            echo "prerelease.json already names $TAG."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Point the pre-release feed at $TAG"
+          remote push origin HEAD:updates
+
+      - name: Check that both feeds name the release and every URL resolves
+        run: |
+          # GitHub Pages takes a minute or two to publish a push.
+          ok=false
+          for attempt in $(seq 1 30); do
+            curl -fsSL "$STABLE_FEED" -o feeds/stable.json || echo '{}' > feeds/stable.json
+            curl -fsSL "$PRERELEASE_FEED" -o feeds/prerelease.json || echo '{}' > feeds/prerelease.json
+            if node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json; then ok=true; break; fi
+            echo "Attempt $attempt: not yet. Waiting."
+            sleep 20
+          done
+          if [ "$ok" != "true" ]; then
+            node tools/ci/cli.mjs check-feeds "$TAG" feeds/stable.json feeds/prerelease.json
+            exit 1
+          fi
+          urls=$(node tools/ci/cli.mjs feed-urls feeds/prerelease.json)
+          case "$TAG" in *-*) ;; *) urls="$urls"$'\n'"$(node tools/ci/cli.mjs feed-urls feeds/stable.json)" ;; esac
+          for url in $(printf '%s\n' "$urls" | sort -u); do
+            curl -fsSL -r 0-0 -o /dev/null "$url" || { echo "::error::$url does not resolve."; exit 1; }
+            echo "$url resolves."
+          done
+
+      - name: Open an issue
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
+            --title "Release $TAG failed the update feed check" \
+            --body "The update feeds do not both name the published release **$TAG**, or a package URL does not resolve. See $RUN_URL. Installs would not be offered the update. Check that GitHub Pages is enabled from the \`updates\` branch."
+
+  # The Linux repositories (ADR-0021). APT is the release's own assets, so publishing already made it
+  # available; DNF's metadata, signed during the release run, goes to the update site for a stable
+  # release only. Then both repositories are fetched the way a user's system fetches them and their
+  # signatures and package hashes are checked. This workflow holds no signing key.
+  linux-repositories:
+    name: linux repositories
+    needs: update-feeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+    concurrency:
+      group: update-site
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+      LATEST_ASSETS: https://github.com/getoxide/oxide/releases/latest/download/
+      DNF_SITE: https://getoxide.github.io/oxide/rpm/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install the verification tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm gpgv gnupg
+
+      - name: Download the release's assets and decide what the repositories take
+        id: plan
+        run: |
+          mkdir assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          node tools/ci/cli.mjs repository-plan "$TAG" assets | tee plan.json
+
+      - name: Write the DNF metadata to the updates branch
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$TAG" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::Could not find a completed Release workflow run for $TAG."
+            exit 1
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name dnf-site --dir dnf-rpm
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote() { git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"; }
+          mkdir site
+          cd site
+          git init -q
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if remote fetch -q --depth 1 origin updates; then
+            git checkout -q -B updates FETCH_HEAD
+          else
+            git checkout -q --orphan updates
+          fi
+          # The metadata names exactly this release's packages: replace the folder, never merge into it.
+          rm -rf rpm
+          mkdir rpm
+          cp -R ../dnf-rpm/. rpm/
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The DNF metadata already names $TAG."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Point the DNF repository at $TAG"
+          remote push origin HEAD:updates
+
+      - name: Check the APT repository
+        env:
+          STABLE: ${{ steps.plan.outputs.stable }}
+        run: |
+          # GitHub's "latest" link serves a stable release; a pre-release is only reachable by its tag.
+          if [ "$STABLE" = "true" ]; then base="$LATEST_ASSETS"; else base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/"; fi
+          mkdir apt
+          for file in InRelease Release Packages oxide-repository.gpg; do
+            ok=false
+            for attempt in $(seq 1 12); do
+              if curl -fsSL "${base}${file}" -o "apt/$file" && { [ "$STABLE" != "true" ] || cmp -s "apt/$file" "assets/$file"; }; then ok=true; break; fi
+              echo "Attempt $attempt: $file is not the release's yet."
+              sleep 10
+            done
+            if [ "$ok" != "true" ]; then echo "::error::$base$file is not this release's file."; exit 1; fi
+          done
+          for deb in $(node -p 'JSON.parse(require("fs").readFileSync("plan.json", "utf8")).debs.map((p) => p.name).join(" ")'); do
+            curl -fsSL "${base}${deb}" -o "apt/$deb"
+          done
+          # What apt does: the signed InRelease must verify against the published key and carry the Release file.
+          gpgv --keyring "$PWD/apt/oxide-repository.gpg" --output apt/Release.verified apt/InRelease
+          cmp apt/Release.verified apt/Release
+          # The check reads the release's whole file list: it needs the .rpm names beside the .deb files.
+          cp assets/*.rpm apt/
+          node tools/ci/cli.mjs check-apt "$TAG" apt
+
+      - name: Check the DNF repository
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          mkdir dnf
+          # The published packages: their hashes are what the metadata must carry.
+          cp assets/*.rpm assets/*.deb dnf/
+          fetch() {
+            curl -fsSL "${DNF_SITE}repodata/repomd.xml" -o dnf/repomd.xml &&
+              curl -fsSL "${DNF_SITE}repodata/repomd.xml.asc" -o dnf/repomd.xml.asc &&
+              curl -fsSL "${DNF_SITE}oxide-repository.asc" -o dnf/oxide-repository.asc &&
+              primary=$(grep -o 'repodata/[^"]*primary.xml.gz' dnf/repomd.xml | head -1) &&
+              curl -fsSL "${DNF_SITE}${primary}" -o "dnf/$(basename "$primary")" &&
+              node tools/ci/cli.mjs check-dnf "$TAG" dnf
+          }
+          # GitHub Pages takes a minute or two to publish a push.
+          ok=false
+          for attempt in $(seq 1 30); do
+            if fetch; then ok=true; break; fi
+            echo "Attempt $attempt: the site does not serve this release's metadata yet. Waiting."
+            sleep 20
+          done
+          if [ "$ok" != "true" ]; then fetch; exit 1; fi
+          # The signatures: the site's key is the release's key, repomd.xml and every .rpm carry it.
+          cmp dnf/oxide-repository.asc assets/oxide-repository.asc
+          export GNUPGHOME="$RUNNER_TEMP/gnupg-dnf"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --quiet --import dnf/oxide-repository.asc
+          gpg --batch --verify dnf/repomd.xml.asc dnf/repomd.xml
+          rpmkeys --dbpath "$RUNNER_TEMP/rpmdb" --import dnf/oxide-repository.asc
+          for rpm in dnf/*.rpm; do
+            rpmkeys --dbpath "$RUNNER_TEMP/rpmdb" --checksig "$rpm" | tee /dev/stderr | grep -q "signatures OK"
+          done
+
+      - name: Open an issue
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
+            --title "Release $TAG failed the Linux repository check" \
+            --body "The APT or DNF repository of the published release **$TAG** failed its signature or package hash check. See $RUN_URL. Linux package installs may not receive the update. Check that GitHub Pages is enabled from the \`updates\` branch."
