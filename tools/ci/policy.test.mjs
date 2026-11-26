@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
+  bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
   APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, repositoryPlan,
@@ -153,6 +153,28 @@ const manifests = (cargo, tauri, web) => ({
   cargoToml: `[workspace]\nmembers = ["crates/oxide-core"]\n\n[workspace.package]\nversion = "${cargo}"\nedition = "2024"\n\n[profile.dev]\ndebug = "line-tables-only"\n`,
   tauriConf: `{\n  "productName": "Oxide",\n  "version": "${tauri}",\n  "identifier": "dev.oxide.app"\n}\n`,
   webPackage: `{\n  "name": "oxide-web",\n  "version": "${web}",\n  "dependencies": { "react": "^19.3.1" }\n}\n`,
+});
+
+describe("checkPrerelease", () => {
+  test("a stable tag must not be marked pre-release, and an -rc tag must be", () => {
+    assert.equal(checkPrerelease({ tag: "v0.1.0", prerelease: false }).ok, true);
+    assert.equal(checkPrerelease({ tag: "v0.1.0-rc.1", prerelease: true }).ok, true);
+  });
+
+  test("a disagreement fails and says which way and how to fix it", () => {
+    const stableMarked = checkPrerelease({ tag: "v0.0.5", prerelease: true });
+    assert.equal(stableMarked.ok, false);
+    assert.match(stableMarked.message, /v0\.0\.5/);
+    assert.match(stableMarked.message, /pre-release/);
+    assert.equal(checkPrerelease({ tag: "v0.1.0-rc.1", prerelease: false }).ok, false);
+  });
+
+  test("the flag arrives as the string the workflow expression produces", () => {
+    assert.equal(checkPrerelease({ tag: "v0.1.0", prerelease: "false" }).ok, true);
+    assert.equal(checkPrerelease({ tag: "v0.1.0", prerelease: "true" }).ok, false);
+    assert.equal(checkPrerelease({ tag: "v0.1.0-rc.1", prerelease: "true" }).ok, true);
+    assert.equal(checkPrerelease({ tag: "v0.1.0", prerelease: "" }).ok, false, "an unknown flag is refused");
+  });
 });
 
 describe("checkReleaseVersion", () => {
@@ -688,6 +710,7 @@ describe("repository index files", () => {
       "repo_gpgcheck=1",
       "gpgkey=https://getoxide.github.io/oxide/rpm/oxide-repository.asc",
       "metadata_expire=6h",
+      "skip_if_unavailable=1",
       "",
     ].join("\n"));
   });
@@ -867,6 +890,16 @@ describe("the update pipeline", () => {
     assert.match(verify, /getoxide\.github\.io\/oxide\/updates\/prerelease\.json/);
     // The workflow that writes the site holds no signing key.
     for (const secret of SECRETS) assert.ok(!verify.includes(secret), `${secret} reaches verify-release.yml`);
+  });
+
+  test("publishing first refuses a pre-release flag that disagrees with the tag, before anything is written", () => {
+    const verify = read("verify-release.yml");
+    assert.match(verify, /PRERELEASE: \$\{\{ github\.event\.release\.prerelease \}\}/);
+    assert.match(verify, /cli\.mjs check-prerelease "\$TAG" "\$PRERELEASE"/);
+    const first = verify.indexOf("check-prerelease");
+    for (const later of ["gh release download", "remote push origin"]) {
+      assert.ok(first < verify.indexOf(later), `the flag is checked before ${later}`);
+    }
   });
 
   test("the pipeline's feed addresses are the ones compiled into the app", () => {

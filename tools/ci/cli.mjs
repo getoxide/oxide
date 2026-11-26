@@ -5,6 +5,7 @@
 //   node tools/ci/cli.mjs gate                          env NEEDS_JSON (toJSON(needs)), GITHUB_EVENT_NAME
 //   node tools/ci/cli.mjs pr-title                      env PR_TITLE
 //   node tools/ci/cli.mjs release-version <tag>
+//   node tools/ci/cli.mjs check-prerelease <tag> <true|false>   fails when the release's pre-release flag disagrees with its tag
 //   node tools/ci/cli.mjs tauri-alignment
 //   node tools/ci/cli.mjs release-notes <tag> [<previous-tag>]
 //   node tools/ci/cli.mjs downloads <dir>               prints the Downloads table for the installers in <dir>
@@ -30,7 +31,7 @@ import { basename, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
-  bumpVersion, checkPrTitle, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
+  bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, dependabotDecision, evaluateGate, lanesFor,
   aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, downloadsSection, previousReleaseTag, releaseNotes, repositoryPlan, UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, missingSecrets, releaseChecksums,
 } from "./policy.mjs";
 
@@ -86,6 +87,9 @@ const commands = {
   },
   "release-version"([tag]) {
     report(checkReleaseVersion({ tag, cargoToml: read(MANIFESTS.cargoToml), tauriConf: read(MANIFESTS.tauriConf), webPackage: read(MANIFESTS.webPackage) }));
+  },
+  "check-prerelease"([tag, prerelease]) {
+    report(checkPrerelease({ tag, prerelease }));
   },
   "tauri-alignment"() {
     report(checkTauriAlignment({ cargoLock: read(MANIFESTS.cargoLock), pnpmLock: read("web/pnpm-lock.yaml") }));

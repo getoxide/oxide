@@ -205,7 +205,7 @@ Trigger: a `v*.*.*` tag. Concurrency is per tag and never cancelled.
 
 ### `verify-release.yml` (Verify release)
 
-- **What:** when a release is published, re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact and runs `gh attestation verify` on each file.
+- **What:** when a release is published, first checks that the release's pre-release flag agrees with its tag (flagged if and only if the tag has a `-` suffix; the pure `checkPrerelease`, `cli.mjs check-prerelease`) and fails before downloading or writing anything when it does not; releases v0.0.2 to v0.0.4 were flagged as pre-releases by hand without a suffix, which GitHub's `latest` link, the stable feed and the repositories all skip, so untick *Set as a pre-release* on a stable release before publishing it (a stable release can only be corrected by rolling forward). Then it re-downloads every installer and checks `SHA256SUMS.txt` from the `release-metadata` run artifact and runs `gh attestation verify` on each file.
 - **Why:** it checks what users will actually download, and keeping the checksums and the SBOM off the release keeps the release page limited to the installers. A failure opens a `needs-triage` issue, so it is triaged even if nobody watches Actions.
 - **Blocking:** it can't block a publish that already happened. The remedy is to roll forward.
 - **Local:** `gh attestation verify <file> --repo getoxide/oxide` and compare SHA-256 against the release notes.
@@ -235,7 +235,7 @@ Record the fingerprint where Release Managers can find it. Rotating the key mean
 **Package maintainer scripts** (they run as root on users' systems; ADR-0016). The `.deb` and `.rpm` downloaded from a release add the repository themselves, wired through `bundle.linux.{deb,rpm}` in `tauri.conf.json` and written in POSIX sh under `crates/oxide-app/linux/`:
 
 - `.deb` `postinst` (on `configure`, so on install and upgrade): copies the shipped public key to `/usr/share/keyrings/oxide.gpg` and writes the one-line source to `/etc/apt/sources.list.d/oxide.list`, unless that file or any other APT source already names the repository. `postrm` runs only on `purge`: it deletes `oxide.list` while it is still exactly the line above and the keyring while no source uses it. `apt remove` keeps both.
-- `.rpm` `%post` writes `/etc/yum.repos.d/oxide.repo` (the same content as the documented `oxide.repo`) unless it, or another repo file that names the repository, exists; `%preun` removes it on erase only (`$1` is 0, never on upgrade) while it is unchanged. rpm holds the keyring lock for the whole transaction, so a scriptlet can neither import nor delete a key: `dnf` imports the key from the repo file's `gpgkey` on first use (the prompt the documented setup has), and it stays in the rpm keyring after an erase.
+- `.rpm` `%post` writes `/etc/yum.repos.d/oxide.repo` (the same content as the documented `oxide.repo`) unless it, or another repo file that names the repository, exists; `%preun` removes it on erase only (`$1` is 0, never on upgrade) while it is unchanged. rpm holds the keyring lock for the whole transaction, so a scriptlet can neither import nor delete a key: `dnf` imports the key from the repo file's `gpgkey` on first use (the prompt the documented setup has), and it stays in the rpm keyring after an erase (remove it by hand with `rpm -qa gpg-pubkey --qf '%{NAME}-%{VERSION}-%{RELEASE} %{SUMMARY}\n' | grep -i oxide`, then `sudo rpm -e <that name>`). The repo file sets `skip_if_unavailable=1` so an unreachable repository never breaks the user's `dnf`. Both scripts add nothing when the package's own version is a pre-release (`-` in the `.deb` version, `-`, `_` or `~` in the `.rpm` one), because pre-releases never enter the repositories.
 - The scripts touch nothing else: `tools/ci/maintainer-scripts.test.mjs` pins the paths, the lines against `tools/ci/policy.mjs` (`aptSourceFile`, `dnfRepoFile`) and the README commands, and runs shellcheck. A file the user edited is never overwritten or deleted.
 
 **Rehearsal before 1.0.0.** Publish two `-rc` drafts, download their assets into a directory laid out like the published repositories (APT files at the root, `rpm/` with the DNF metadata, each tag's assets under `download/<tag>/`), serve it over HTTP and point Debian, Ubuntu and Fedora containers (x64 and arm64, `--platform`) at it: follow the README steps with the local addresses, install from the first draft and upgrade to the second with signature checking on. `tools/ci/sign-repositories.sh` takes a fourth argument, the base URL of the packages, so the DNF metadata of a rehearsal can name the local server.
@@ -290,7 +290,17 @@ Only a Release Manager does this. Hotfixes on `release/x.y` branches follow the 
    ```
 
 6. **Publish.** Edit the notes, then click Publish. The release becomes immutable.
-7. **Watch** the *Verify release* run. If it opens an issue, roll forward.
+7. **Watch** the *Verify release* run. If it opens an issue, roll forward. Its first step refuses a release whose *pre-release* box disagrees with the tag (a `-rc` tag must be ticked, a stable tag must not): GitHub's "latest" link, the stable feed and the repositories skip a flagged release. Nothing is written in that case; a published release is immutable, so fix it forward.
+   The `update feeds` and `linux repositories` jobs are gated by `needs:`: when `verify` (or `update feeds`) fails, the later jobs are skipped and never run on their own. After fixing the cause, re-run them by hand: open the failed run → *Re-run failed jobs* (this re-runs the failed job and the skipped jobs that need it), or from the CLI `gh run rerun <run-id> --failed --repo getoxide/oxide`. A run older than 90 days has lost its `dnf-site` artifact, so rebuild by rolling forward instead.
+
+**First release with the updater.** Pages can't be enabled from a branch that doesn't exist, and the first published release creates it, so before tagging create the branch and enable Pages once:
+
+```sh
+git switch --orphan updates && touch .nojekyll && git add .nojekyll && git commit -m "Create the update site"
+git push origin updates
+gh api -X POST repos/getoxide/oxide/pages -f "source[branch]=updates" -f "source[path]=/"
+gh api repos/getoxide/oxide/pages   # source.branch must be updates, status built or building
+```
 
 **Rehearsal.** Tag `vX.Y.Z-rc.1` after the bump merged. It produces a draft pre-release (`releases/latest` skips drafts and pre-releases). Afterwards the admin deletes the draft and the tag (deleting a tag needs the bypass).
 
@@ -347,7 +357,7 @@ These live in the GitHub UI, not in the repository, so they are recorded here. A
 - **Ruleset `main protection`** (and the same for `release/**`): PR required with 0 approvals; required status check `gate` (up-to-date branch not required); squash only; no force-push; no deletion.
 - **Ruleset `release tags`** on `refs/tags/v*`: block update and deletion; bypass for the repository admin only.
 - **Environment `release`:** required reviewers `cavallinilorenzo` and `itsmrma`; deployment refs `v*` tags only; the secrets above.
-- **GitHub Pages:** enabled, source *Deploy from a branch*, branch `updates`, folder `/ (root)`. It serves the pre-release feed at `https://getoxide.github.io/oxide/`. The branch is created by the first published release; enable Pages after that (or create the branch first). The `main protection` rulesets must not cover `updates`, because the workflow pushes to it.
+- **GitHub Pages:** enabled, source *Deploy from a branch*, branch `updates`, folder `/ (root)`. It serves the pre-release feed at `https://getoxide.github.io/oxide/`. Create the branch first (see the runbook, *First release with the updater*): Pages can't be enabled from a branch that doesn't exist. The `main protection` rulesets must not cover `updates`, because the workflow pushes to it.
 - **Labels:** `dependencies`, `manual-review`, plus the triage labels.
 - **Dependabot secrets** `AUTOMERGE_APP_ID` and `AUTOMERGE_APP_PRIVATE_KEY` (optional, for auto-merge).
 - **Security:** secret scanning, push protection, Dependabot alerts and security updates, private vulnerability reporting, and CodeQL default setup.

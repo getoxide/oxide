@@ -22,6 +22,7 @@ jobs:
       issues: write
     env:
       TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,6 +32,12 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
+
+      # First, before anything is downloaded or written: the pre-release flag and the tag must agree.
+      # Releases v0.0.2 to v0.0.4 were flagged by hand without a suffix; a stable release flagged as a
+      # pre-release is skipped by GitHub's "latest", so no feed or repository would ever serve it.
+      - name: Check that the pre-release flag agrees with the tag
+        run: node tools/ci/cli.mjs check-prerelease "$TAG" "$PRERELEASE"
 
       - name: Download the assets, metadata and check the checksums
         run: |
@@ -59,7 +66,7 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" --label needs-triage \
             --title "Release $TAG failed post-publish verification" \
-            --body "Verification of the published release **$TAG** failed: checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
+            --body "Verification of the published release **$TAG** failed: the pre-release flag, checksums or attestations. See $RUN_URL. Roll forward with a patch release if the assets are bad (published releases are immutable)."
 
   # The pre-release feed is the newest published release of any kind. It is a file on the `updates`
   # branch, which GitHub Pages serves at https://getoxide.github.io/oxide/ (enabled once by an admin).

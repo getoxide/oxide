@@ -149,6 +149,25 @@ export function checkReleaseVersion({ tag, cargoToml, tauriConf, webPackage }) {
   return { ok: true, message: `Tag ${tag} matches Cargo.toml, tauri.conf.json and web/package.json.` };
 }
 
+/**
+ * The release's pre-release flag must agree with its tag: flagged if and only if the tag has a "-" suffix.
+ * The APT and DNF repositories and the stable feed trust the flag (GitHub's "latest" skips pre-releases), and
+ * the package scripts trust the tag, so a hand-set flag would break one of them.
+ */
+export function checkPrerelease({ tag, prerelease }) {
+  const flag = String(prerelease ?? "").toLowerCase();
+  if (flag !== "true" && flag !== "false") return { ok: false, message: `The pre-release flag of release ${tag ?? ""} is "${prerelease ?? ""}", not true or false.` };
+  const flagged = flag === "true";
+  const suffixed = String(tag ?? "").includes("-");
+  if (flagged === suffixed) return { ok: true, message: `Release ${tag} is ${flagged ? "" : "not "}marked as a pre-release, as its tag says.` };
+  return {
+    ok: false,
+    message: suffixed
+      ? `Release ${tag} has a pre-release tag (a "-" suffix) but is not marked as a pre-release. Nothing was written. Re-draft it with the pre-release box ticked, or tag a stable version.`
+      : `Release ${tag} is a stable tag but is marked as a pre-release, so GitHub's "latest" skips it and the repositories and feeds would never serve it. Nothing was written. Untick "Set as a pre-release" on the release (a stable release is never one).`,
+  };
+}
+
 function setJsonVersion(text, version, file) {
   // Edit the text, not a re-serialised object, so hand formatting survives.
   const updated = text.replace(/^(\s*"version"\s*:\s*")[^"]*(")/m, `$1${version}$2`);
@@ -438,6 +457,7 @@ export function dnfRepoFile() {
     "repo_gpgcheck=1",
     `gpgkey=${UPDATE_SITE}rpm/${REPOSITORY_KEY_FILES[1]}`,
     "metadata_expire=6h",
+    "skip_if_unavailable=1",
     "",
   ].join("\n");
 }
