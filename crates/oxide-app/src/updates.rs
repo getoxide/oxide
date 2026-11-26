@@ -77,7 +77,9 @@ mod debug_override {
 
     pub(super) fn read() -> DebugOverride {
         DebugOverride {
-            feed: std::env::var("OXIDE_UPDATE_FEED").ok().filter(|value| !value.is_empty()),
+            feed: std::env::var("OXIDE_UPDATE_FEED")
+                .ok()
+                .filter(|value| !value.is_empty()),
             channel: std::env::var("OXIDE_UPDATE_CHANNEL")
                 .ok()
                 .and_then(|name| InstallChannel::parse_override(&name)),
@@ -122,7 +124,12 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
     let Ok(version) = Version::parse(&current) else {
         return;
     };
-    let plan = UpdatePlan::resolve(&version, bundle_kind(), cfg!(debug_assertions), &debug_override());
+    let plan = UpdatePlan::resolve(
+        &version,
+        bundle_kind(),
+        cfg!(debug_assertions),
+        &debug_override(),
+    );
     core.configure_updates(plan.channel, &current);
     if !plan.channel.checks() {
         return;
@@ -131,15 +138,20 @@ pub fn start(app: &AppHandle, core: &Arc<Core>) {
     let core = Arc::clone(core);
     diag::best_effort(
         "updates thread",
-        std::thread::Builder::new().name("updates".into()).spawn(move || loop {
-            // A failed check is silent: no state change, no event, the next one comes in 4 hours.
-            if let Ok(found) = tauri::async_runtime::block_on(check(&app, &plan.feed, &current))
-                && let Some(state) = core.record_update_check(found.as_deref(), unix_now())
-            {
-                diag::best_effort("emit", app.emit(STATE_EVENT, UpdateState::from(state)));
-            }
-            std::thread::sleep(oxide_core::CHECK_INTERVAL);
-        }),
+        std::thread::Builder::new()
+            .name("updates".into())
+            .spawn(move || {
+                loop {
+                    // A failed check is silent: no state change, no event, the next one comes in 4 hours.
+                    if let Ok(found) =
+                        tauri::async_runtime::block_on(check(&app, &plan.feed, &current))
+                        && let Some(state) = core.record_update_check(found.as_deref(), unix_now())
+                    {
+                        diag::best_effort("emit", app.emit(STATE_EVENT, UpdateState::from(state)));
+                    }
+                    std::thread::sleep(oxide_core::CHECK_INTERVAL);
+                }
+            }),
     );
 }
 
@@ -153,7 +165,9 @@ async fn check(app: &AppHandle, feed: &str, current: &str) -> Result<Option<Stri
         .endpoints(vec![url])
         .map_err(|error| error.to_string())?
         .timeout(REQUEST_TIMEOUT)
-        .version_comparator(move |_, remote| oxide_core::is_newer(&current, &remote.version.to_string()))
+        .version_comparator(move |_, remote| {
+            oxide_core::is_newer(&current, &remote.version.to_string())
+        })
         .build()
         .map_err(|error| error.to_string())?;
     let update = updater.check().await.map_err(|error| error.to_string())?;

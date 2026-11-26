@@ -25,6 +25,7 @@ import { QuitDialog } from "./shared/QuitDialog";
 import { ProjectPalette } from "./projects/ProjectPalette";
 import { SettingsView } from "./settings/SettingsView";
 import { ResizeHandle } from "./shared/ResizeHandle";
+import { UpdateButton } from "./updates/UpdateButton";
 import { readJson, storageKeys, writeJson } from "./shared/storage";
 import { workspaceLayout } from "./shared/panelLayout";
 import { preloadGithub } from "./shared/githubQueries";
@@ -403,6 +404,7 @@ export function App() {
         <span className="grow" data-tauri-drag-region />
         <div className="header-actions" data-tauri-drag-region>
           {openError && <span className="error header-error" role="alert">{openError}</span>}
+          <UpdateButton />
           <button
             className="icon-btn"
             aria-pressed={dockVisible}

@@ -8,7 +8,8 @@ use std::sync::Mutex;
 
 /// Stable installs read the `latest.json` of the latest GitHub release. GitHub's "latest" never
 /// resolves to a draft or a pre-release. Compiled into every install: changing it strands them.
-pub const STABLE_FEED: &str = "https://github.com/getoxide/oxide/releases/latest/download/latest.json";
+pub const STABLE_FEED: &str =
+    "https://github.com/getoxide/oxide/releases/latest/download/latest.json";
 /// Installs whose own version is a pre-release read the newest published release of any kind.
 pub const PRERELEASE_FEED: &str = "https://getoxide.github.io/oxide/updates/prerelease.json";
 /// How often Oxide asks the feed, after the check at launch.
@@ -281,14 +282,25 @@ mod tests {
 
     #[test]
     fn a_debug_build_without_an_override_never_checks() {
-        let plan = UpdatePlan::resolve(&v("0.1.0"), Some(BundleKind::App), true, &DebugOverride::default());
+        let plan = UpdatePlan::resolve(
+            &v("0.1.0"),
+            Some(BundleKind::App),
+            true,
+            &DebugOverride::default(),
+        );
         assert!(!plan.channel.checks());
     }
 
     #[test]
     fn the_override_channel_names() {
-        assert_eq!(InstallChannel::parse_override("in-app"), Some(InstallChannel::InApp));
-        assert_eq!(InstallChannel::parse_override("none"), Some(InstallChannel::Development));
+        assert_eq!(
+            InstallChannel::parse_override("in-app"),
+            Some(InstallChannel::InApp)
+        );
+        assert_eq!(
+            InstallChannel::parse_override("none"),
+            Some(InstallChannel::Development)
+        );
         assert_eq!(InstallChannel::parse_override("bogus"), None);
     }
 
@@ -317,7 +329,10 @@ mod tests {
     fn the_same_or_an_older_version_offers_nothing() {
         let tracker = tracker("0.2.0", InstallChannel::InApp);
         tracker.record_check(None, 1);
-        assert!(tracker.record_check(Some("0.2.0"), 2).is_some(), "the check time moved");
+        assert!(
+            tracker.record_check(Some("0.2.0"), 2).is_some(),
+            "the check time moved"
+        );
         assert_eq!(tracker.snapshot().available, None);
         tracker.record_check(Some("0.1.0"), 3);
         assert_eq!(tracker.snapshot().available, None);
@@ -341,6 +356,9 @@ mod tests {
     fn a_package_install_still_learns_of_a_new_version() {
         let tracker = tracker("0.1.0", InstallChannel::Apt);
         tracker.record_check(Some("0.2.0"), 1);
-        assert_eq!(tracker.snapshot().available.map(|update| update.version), Some("0.2.0".into()));
+        assert_eq!(
+            tracker.snapshot().available.map(|update| update.version),
+            Some("0.2.0".into())
+        );
     }
 }

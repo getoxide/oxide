@@ -27,7 +27,9 @@ fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 
 /// The text between `mod debug_override {` and its closing brace at column 0.
 fn debug_module(text: &str) -> (usize, usize) {
-    let start = text.find("mod debug_override {").expect("the debug override module");
+    let start = text
+        .find("mod debug_override {")
+        .expect("the debug override module");
     let end = start + text[start..].find("\n}\n").expect("the end of the module");
     (start, end)
 }
@@ -43,7 +45,10 @@ fn only_a_module_compiled_out_of_release_builds_reads_the_override_variables() {
         "the module must be gated by #[cfg(debug_assertions)] alone"
     );
     for variable in VARIABLES {
-        assert!(updates[start..end].contains(variable), "{variable} is read in the module");
+        assert!(
+            updates[start..end].contains(variable),
+            "{variable} is read in the module"
+        );
     }
 
     let mut files = Vec::new();
@@ -70,11 +75,17 @@ fn only_a_module_compiled_out_of_release_builds_reads_the_override_variables() {
 fn the_resolver_is_told_a_build_is_debug_only_by_cfg() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let updates = fs::read_to_string(root.join("src/updates.rs")).unwrap();
-    let call = updates.find("UpdatePlan::resolve(").expect("the call to the resolver");
+    let call = updates
+        .find("UpdatePlan::resolve(")
+        .expect("the call to the resolver");
     let line_end = updates[call..].find(';').unwrap();
     assert!(
         updates[call..call + line_end].contains("cfg!(debug_assertions)"),
         "UpdatePlan::resolve must be given cfg!(debug_assertions)"
     );
-    assert_eq!(updates.matches("UpdatePlan::resolve(").count(), 1, "one call site");
+    assert_eq!(
+        updates.matches("UpdatePlan::resolve(").count(),
+        1,
+        "one call site"
+    );
 }
