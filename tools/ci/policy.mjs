@@ -325,7 +325,11 @@ export function isUpdaterOnlyAsset(name) {
 
 /** The `sha256sum` listing of a release without the updater-only assets, for the notes. */
 export function releaseChecksums(listing) {
-  return lf(listing).split("\n").filter((line) => line.trim() && !isUpdaterOnlyAsset(line.trim().split(/\s+\*?/).pop()) && !isRepositoryAsset(line.trim().split(/\s+\*?/).pop())).map((line) => `${line}\n`).join("");
+  /** The file name of a `sha256sum` line: the last field, without the binary-mode asterisk. */
+  const assetOf = (line) => line.trim().split(/\s+\*?/).pop();
+  return lf(listing).split("\n")
+    .filter((line) => line.trim() && !isUpdaterOnlyAsset(assetOf(line)) && !isRepositoryAsset(assetOf(line)))
+    .map((line) => `${line}\n`).join("");
 }
 
 /** Every package URL in a feed, for the reachability check. */
@@ -525,6 +529,14 @@ export function checkDnfRepository({ plan, repomd, primaryXml, primarySha256, ha
 /** The names among `names` that `env` does not set to a non-blank value. */
 export function missingSecrets(env, names) {
   return names.filter((name) => !String(env?.[name] ?? "").trim());
+}
+
+/**
+ * The names among `names` whose presence flag `HAS_<name>` is not exactly "true". The build jobs test a
+ * secret with the expression `secrets.X != ''`, so no key's value ever reaches their environment.
+ */
+export function missingPresent(env, names) {
+  return names.filter((name) => env?.[`HAS_${name}`] !== "true");
 }
 
 // Packages that break when moved alone, or whose bumps change generated bindings.

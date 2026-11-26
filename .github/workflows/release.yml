@@ -115,7 +115,8 @@ jobs:
       matrix:
         platform: [macos-aarch64, windows-x64, windows-aarch64, linux-x64, linux-aarch64]
     # Needs the `release` environment's secrets; build.yml declares the environment,
-    # so a Release Manager must approve before the signing keys are readable.
+    # so a Release Manager must approve before the signing keys are readable. The build jobs read only the
+    # update key (in the Tauri build steps); they test that the repository key exists without reading it.
     uses: ./.github/workflows/build.yml
     with:
       platform: ${{ matrix.platform }}

@@ -7,7 +7,7 @@ import {
   bumpVersion, checkPrTitle, checkPrerelease, checkReleaseVersion, checkTauriAlignment, commandLine, dependabotDecision, evaluateGate, lanesFor,
   ADVISORY_SCANS, downloadsSection, localPlan, previousReleaseTag, releaseNotes,
   UPDATER_PLATFORMS, buildUpdateFeed, checkPublishedFeeds, feedUrls, isUpdaterOnlyAsset, missingSecrets, releaseChecksums,
-  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, repositoryPlan,
+  APT_REPOSITORY_FILES, REPOSITORY_KEY_FILES, REPOSITORY_SECRETS, aptReleaseFile, checkAptRepository, checkDnfRepository, dnfRepoFile, aptSourceFile, APT_KEYRING_PATH, APT_SOURCE_PATH, DNF_REPO_PATH, isRepositoryAsset, missingPresent, repositoryPlan,
 } from "./policy.mjs";
 
 const ALL_ON = { web: true, rust: true, bundle: true, supplyChain: true, automation: true };
@@ -780,6 +780,15 @@ describe("published repositories", () => {
   });
 });
 
+describe("missingPresent", () => {
+  test("names the secrets whose presence flag is not exactly true", () => {
+    const env = { HAS_A: "true", HAS_B: "false", HAS_C: "" };
+    assert.deepEqual(missingPresent(env, ["A", "B", "C", "D"]), ["B", "C", "D"]);
+    assert.deepEqual(missingPresent(env, ["A"]), []);
+    assert.deepEqual(missingPresent(undefined, ["A"]), ["A"]);
+  });
+});
+
 describe("the repository pipeline", () => {
   const read = (name) => readFileSync(fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)), "utf8");
   const stepsOf = (text) => text.split(/\n {6}- /);
@@ -788,8 +797,12 @@ describe("the repository pipeline", () => {
     const build = read("build.yml");
     const step = stepsOf(build).find((candidate) => candidate.includes("require-secrets"));
     for (const secret of REPOSITORY_SECRETS) {
-      assert.ok(step.includes(`secrets.${secret}`), `${secret} is not read by the check`);
-      assert.match(step, new RegExp(`require-secrets .*${secret}`));
+      assert.ok(step.includes(`\${{ secrets.${secret} != '' }}`), `${secret} is not tested for presence by the check`);
+      assert.match(step, new RegExp(`require-secrets --present .*${secret}`));
+    }
+    // The check never puts a key's value into the environment of the build jobs.
+    for (const secret of [...REPOSITORY_SECRETS, "TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"]) {
+      assert.ok(!step.includes(`\${{ secrets.${secret} }}`), `${secret}'s value is exported by the check`);
     }
     for (const marker of ["./.github/actions/setup-rust", "tauri build"]) assert.ok(build.indexOf(marker) > build.indexOf("require-secrets"), marker);
   });

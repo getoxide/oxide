@@ -78,11 +78,12 @@ jobs:
       - name: Check the signing secrets
         if: inputs.release
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY }}
-          OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE }}
-        run: node tools/ci/cli.mjs require-secrets TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD OXIDE_REPOSITORY_SIGNING_KEY OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE
+          # Presence only: a key's value never enters this job's environment through this step.
+          HAS_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+          HAS_OXIDE_REPOSITORY_SIGNING_KEY: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY != '' }}
+          HAS_OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE: ${{ secrets.OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE != '' }}
+        run: node tools/ci/cli.mjs require-secrets --present TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD OXIDE_REPOSITORY_SIGNING_KEY OXIDE_REPOSITORY_SIGNING_KEY_PASSPHRASE
 
       - uses: ./.github/actions/setup-rust
         with:
