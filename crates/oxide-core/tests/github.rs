@@ -67,14 +67,22 @@ impl Fixture {
         std::fs::write(self.gh_dir.join("state.json"), state.to_string()).unwrap();
     }
 
-    /// Every `gh` invocation so far, as its argument list.
-    fn gh_calls(&self) -> Vec<Vec<String>> {
+    fn call_files(&self) -> Vec<PathBuf> {
         let mut files: Vec<PathBuf> = std::fs::read_dir(self.gh_dir.join("calls"))
-            .map(|dir| dir.map(|e| e.unwrap().path()).collect())
+            .map(|dir| {
+                dir.map(|e| e.unwrap().path())
+                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+                    .collect()
+            })
             .unwrap_or_default();
         // Named by time, so by order of invocation.
         files.sort();
         files
+    }
+
+    /// Every `gh` invocation so far, as its argument list.
+    fn gh_calls(&self) -> Vec<Vec<String>> {
+        self.call_files()
             .iter()
             .map(|file| {
                 let v: serde_json::Value =
@@ -91,11 +99,7 @@ impl Fixture {
 
     /// The `GIT_CONFIG_*` variables each `gh` invocation ran with.
     fn gh_git_config(&self) -> Vec<std::collections::BTreeMap<String, String>> {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(self.gh_dir.join("calls"))
-            .map(|dir| dir.map(|e| e.unwrap().path()).collect())
-            .unwrap_or_default();
-        files.sort();
-        files
+        self.call_files()
             .iter()
             .map(|file| {
                 let v: serde_json::Value =

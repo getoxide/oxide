@@ -29,9 +29,12 @@ args = sys.argv[1:]
 
 calls_dir = os.path.join(here, "calls")
 os.makedirs(calls_dir, exist_ok=True)
-with open(os.path.join(calls_dir, "%020d-%d.json" % (time.time_ns(), os.getpid())), "w", encoding="utf-8") as f:
+call_name = "%020d-%d.json" % (time.time_ns(), os.getpid())
+call_tmp = os.path.join(here, ".tmp-" + call_name)
+with open(call_tmp, "w", encoding="utf-8") as f:
     git_config = {k: v for k, v in os.environ.items() if k.startswith("GIT_CONFIG_")}
     f.write(json.dumps({"args": args, "cwd": os.getcwd(), "git_config": git_config}))
+os.replace(call_tmp, os.path.join(calls_dir, call_name))
 
 with open(state_path, encoding="utf-8") as f:
     state = json.load(f)
