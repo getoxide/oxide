@@ -469,6 +469,7 @@
 .terminal-agent-icon {
   flex: none;
   display: inline-block;
+  object-fit: contain;
 }
 .workbench-terminal-header > .mono {
   min-width: 0;

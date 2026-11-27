@@ -93,6 +93,9 @@ kbd {
 :root[data-appearance="light"] .icon-btn {
   color: var(--dim);
 }
+:root[data-appearance="light"] .terminal-agent-icon[data-monochrome="true"] {
+  filter: invert(1);
+}
 :root[data-appearance="light"] .modal-backdrop {
   background: rgb(15 23 42 / 0.24);
 }

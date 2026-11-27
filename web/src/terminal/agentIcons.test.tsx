@@ -61,13 +61,38 @@ describe("TerminalAgentIcon", () => {
   const root = createRoot(host);
   afterEach(async () => { await act(async () => root.render(null)); });
 
-  it("renders the agent SVG when an agent CLI is running and falls back to TerminalIcon otherwise", async () => {
-    await act(async () => root.render(<TerminalAgentIcon command="claude" size={16} />));
-    expect(host.querySelector('[data-agent="claude"]')).not.toBeNull();
+  it.each([
+    ["agy", "antigravity"],
+    ["claude", "claude"],
+    ["codex", "codex"],
+    ["gemini", "gemini"],
+    ["copilot", "copilot"],
+    ["aider", "aider"],
+    ["opencode", "opencode"],
+    ["goose", "goose"],
+    ["amp", "amp"],
+    ["cursor", "cursor"],
+    ["cline", "cline"],
+    ["droid", "droid"],
+    ["kiro", "kiro"],
+    ["qwen", "qwen"],
+    ["vibe", "vibe"],
+    ["pi", "pi"],
+    ["kimi", "kimi"],
+    ["crush", "crush"],
+    ["roo", "roo"],
+    ["kilo", "kilo"],
+    ["augment", "augment"],
+    ["openhands", "openhands"],
+  ])("renders the official logo asset for %s (%s)", async (command, expectedId) => {
+    await act(async () => root.render(<TerminalAgentIcon command={command} size={16} />));
+    const img = host.querySelector<HTMLImageElement>(`img.terminal-agent-icon[data-agent="${expectedId}"]`);
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute("src")).toBeTruthy();
+    expect(img!.draggable).toBe(false);
+  });
 
-    await act(async () => root.render(<TerminalAgentIcon command="agy" size={16} />));
-    expect(host.querySelector('[data-agent="antigravity"]')).not.toBeNull();
-
+  it("falls back to TerminalIcon when no agent CLI is running", async () => {
     await act(async () => root.render(<TerminalAgentIcon command="npm test" size={16} />));
     expect(host.querySelector("[data-agent]")).toBeNull();
     expect(host.querySelector("svg")).not.toBeNull();
