@@ -6,6 +6,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { FilesPanel } from "./FilesPanel";
 import { ContextMenu } from "../shared/ContextMenu";
 import { revealInFileManagerLabel } from "../shared/platform";
+import { OXIDE_FILE_MIME } from "../terminal/useTerminalTransfer";
 const host = document.createElement("div"); document.body.append(host);
 const root = createRoot(host);
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -150,4 +151,32 @@ it("offers Open in Code, Copy path, and Reveal in File Manager on Files view ent
   });
   await act(async () => { menuItems()[2]!.click(); });
   expect(invoked.some((c) => c.command === "reveal_in_finder" && JSON.stringify(c.args) === JSON.stringify({ projectId: 7 }))).toBe(true);
+});
+
+it("makes file and folder rows draggable with their full path for terminal drop", async () => {
+  treeIpc();
+  await act(async () => root.render(<FilesPanel projectId={1} rootPath="/repo" revision={0} onOpenFile={vi.fn()} />));
+  await settle();
+
+  const fileRow = buttonWith("README.md");
+  const dirRow = buttonWith("src");
+  expect(fileRow.draggable).toBe(true);
+  expect(dirRow.draggable).toBe(true);
+
+  const stored = new Map<string, string>();
+  const dataTransfer = {
+    effectAllowed: "none",
+    setData: (type: string, val: string) => { stored.set(type, val); },
+  };
+  const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
+  await act(async () => { fileRow.dispatchEvent(dragStart); });
+  expect(stored.get(OXIDE_FILE_MIME)).toBe("/repo/README.md");
+  expect(stored.get("text/plain")).toBe("/repo/README.md");
+
+  stored.clear();
+  const dirDragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(dirDragStart, "dataTransfer", { value: dataTransfer });
+  await act(async () => { dirRow.dispatchEvent(dirDragStart); });
+  expect(stored.get(OXIDE_FILE_MIME)).toBe("/repo/src");
 });

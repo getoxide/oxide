@@ -51,6 +51,14 @@ pub enum GithubAvailability {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GithubAccountStatus {
+    pub authenticated: bool,
+    pub username: Option<String>,
+    pub host: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PullRequest {
     pub number: u32,
     pub title: String,
@@ -2287,4 +2295,88 @@ pub fn edit_issue(gh: &Gh, cwd: &Path, number: u32, edit: &IssueEdit) -> Result<
     }
     gh.run(cwd, &args)?;
     Ok(())
+}
+
+/// Extracts `(username, host)` from `gh auth status` output.
+pub fn parse_auth_status_output(output: &str) -> (Option<String>, Option<String>) {
+    for line in output.lines() {
+        let Some(at) = line.find("Logged in to ") else {
+            continue;
+        };
+        let rest = &line[at + "Logged in to ".len()..];
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        let host = parts
+            .first()
+            .map(|h| (*h).to_string())
+            .filter(|h| !h.is_empty());
+        let username = parts
+            .iter()
+            .position(|word| *word == "account" || *word == "as")
+            .and_then(|index| parts.get(index + 1))
+            .map(|user| user.trim_matches(|c: char| c == '(' || c == ')' || c == ','))
+            .filter(|user| !user.is_empty())
+            .map(str::to_string);
+        if host.is_some() || username.is_some() {
+            return (username, host);
+        }
+    }
+    (None, None)
+}
+
+/// Checks whether `gh` is signed in and returns the active username and host when available.
+pub fn account_status(gh: &Gh, cwd: &Path) -> GithubAccountStatus {
+    let Ok(mut command) = gh.command(cwd, ["auth", "status"].iter()) else {
+        return GithubAccountStatus {
+            authenticated: false,
+            username: None,
+            host: None,
+        };
+    };
+    let Ok(output) = command.output() else {
+        return GithubAccountStatus {
+            authenticated: false,
+            username: None,
+            host: None,
+        };
+    };
+    if !output.status.success() {
+        return GithubAccountStatus {
+            authenticated: false,
+            username: None,
+            host: None,
+        };
+    }
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (username, host) = parse_auth_status_output(&combined);
+    GithubAccountStatus {
+        authenticated: true,
+        username,
+        host,
+    }
+}
+
+#[cfg(test)]
+mod auth_status_tests {
+    use super::*;
+
+    #[test]
+    fn parses_modern_and_legacy_gh_auth_status_lines() {
+        let modern = "github.com\n  ✓ Logged in to github.com account itsmrma (keyring)\n  - Active account: true";
+        assert_eq!(
+            parse_auth_status_output(modern),
+            (Some("itsmrma".into()), Some("github.com".into()))
+        );
+
+        let legacy = "github.com\n  ✓ Logged in to github.example.com as octocat (/Users/a/.config/gh/hosts.yml)";
+        assert_eq!(
+            parse_auth_status_output(legacy),
+            (Some("octocat".into()), Some("github.example.com".into()))
+        );
+
+        assert_eq!(parse_auth_status_output("not logged in"), (None, None));
+    }
 }

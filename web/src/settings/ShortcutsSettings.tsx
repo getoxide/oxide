@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_ACTIONS,
@@ -6,6 +6,7 @@ import {
   eventToShortcut,
   findDuplicateShortcuts,
   formatShortcut,
+  formatShortcutParts,
   isTerminalConflict,
   loadShortcutOverrides,
   resolveShortcuts,
@@ -24,21 +25,23 @@ export function ShortcutsSettings() {
   const [overrides, setOverrides] = useState<ShortcutOverrides>(loadShortcutOverrides);
   const [query, setQuery] = useState("");
   const [recordingId, setRecordingId] = useState<ShortcutActionId | null>(null);
+  const recordingButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const resolved = useMemo(() => resolveShortcuts(overrides), [overrides]);
   const duplicates = useMemo(() => findDuplicateShortcuts(resolved), [resolved]);
 
-  const updateOverrides = (next: ShortcutOverrides) => {
+  const updateOverrides = useCallback((next: ShortcutOverrides) => {
     saveShortcutOverrides(next);
     setOverrides(loadShortcutOverrides());
-  };
+  }, []);
 
-  const setBinding = (id: ShortcutActionId, binding: string) => {
-    const next: ShortcutOverrides = { ...overrides };
+  const setBinding = useCallback((id: ShortcutActionId, binding: string) => {
+    const current = loadShortcutOverrides();
+    const next: ShortcutOverrides = { ...current };
     if (binding === DEFAULT_SHORTCUTS[id]) delete next[id];
     else next[id] = binding;
     updateOverrides(next);
-  };
+  }, [updateOverrides]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredActions = useMemo(() => {
@@ -53,25 +56,42 @@ export function ShortcutsSettings() {
     });
   }, [normalizedQuery, resolved]);
 
-  const handleRecordKeyDown = (event: KeyboardEvent<HTMLButtonElement>, action: ShortcutAction) => {
-    if (recordingId !== action.id) return;
-    event.preventDefault();
-    event.stopPropagation();
+  useEffect(() => {
+    if (recordingId === null) return;
 
-    if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+
+      if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        setRecordingId(null);
+        return;
+      }
+      if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        setBinding(recordingId, "");
+        setRecordingId(null);
+        return;
+      }
+      const combo = eventToShortcut(event);
+      if (!combo) return;
+      setBinding(recordingId, combo);
       setRecordingId(null);
-      return;
-    }
-    if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      setBinding(action.id, "");
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const button = recordingButtonRef.current;
+      if (button && event.target instanceof Node && button.contains(event.target)) return;
       setRecordingId(null);
-      return;
-    }
-    const combo = eventToShortcut(event.nativeEvent);
-    if (!combo) return;
-    setBinding(action.id, combo);
-    setRecordingId(null);
-  };
+    };
+
+    window.addEventListener("keydown", handleWindowKeyDown, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleWindowKeyDown, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [recordingId, setBinding]);
 
   const hasCustomizations = Object.keys(overrides).length > 0;
 
@@ -117,7 +137,7 @@ export function ShortcutsSettings() {
                   binding !== "" &&
                   isTerminalConflict(binding) &&
                   (isCustom || action.scope !== "code");
-                const formatted = formatShortcut(binding);
+                const parts = formatShortcutParts(binding);
 
                 return (
                   <div key={action.id} className="settings-item shortcut-row">
@@ -143,18 +163,30 @@ export function ShortcutsSettings() {
                     </div>
                     <div className="settings-item-controls shortcut-controls">
                       <button
+                        ref={(element) => {
+                          if (isRecording) recordingButtonRef.current = element;
+                        }}
                         type="button"
-                        className={`shortcut-key-btn${isRecording ? " recording" : ""}${!formatted ? " unassigned" : ""}`}
+                        className={`shortcut-key-btn${isRecording ? " recording" : ""}${parts.length === 0 ? " unassigned" : ""}`}
                         aria-label={`Shortcut for ${action.label}`}
                         aria-pressed={isRecording}
                         data-shortcut-recording={isRecording ? "true" : undefined}
-                        onClick={() => setRecordingId(isRecording ? null : action.id)}
-                        onBlur={() => {
-                          if (isRecording) setRecordingId(null);
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          setRecordingId(isRecording ? null : action.id);
                         }}
-                        onKeyDown={(event) => handleRecordKeyDown(event, action)}
                       >
-                        {isRecording ? "Press keys…" : formatted || "Unassigned"}
+                        {isRecording ? (
+                          "Press keys…"
+                        ) : parts.length > 0 ? (
+                          parts.map((part, index) => (
+                            <kbd className="shortcut-kbd" key={`${index}:${part}`}>
+                              {part}
+                            </kbd>
+                          ))
+                        ) : (
+                          "Unassigned"
+                        )}
                       </button>
                       {isCustom && (
                         <button

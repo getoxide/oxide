@@ -9,6 +9,7 @@ import { commands, type FileEntry } from "../bindings";
 import { Skeleton } from "../shared/Skeleton";
 import { showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard, joinProjectPath, revealInFileManagerLabel } from "../shared/platform";
+import { OXIDE_FILE_MIME } from "../terminal/useTerminalTransfer";
 
 export const EditorFileTree = memo(function EditorFileTree({
   projectId,
@@ -99,6 +100,13 @@ export const EditorFileTree = memo(function EditorFileTree({
           className={`files-row${selected === entry.path ? " files-row-selected" : ""}`}
           title={entry.path}
           style={{ paddingLeft: 8 + depth * 14 }}
+          draggable
+          onDragStart={(event) => {
+            const fullPath = rootPath ? joinProjectPath(rootPath, entry.path) : entry.path;
+            event.dataTransfer.setData(OXIDE_FILE_MIME, fullPath);
+            event.dataTransfer.setData("text/plain", fullPath);
+            event.dataTransfer.effectAllowed = "copy";
+          }}
           onClick={() =>
             entry.isDir ? toggle(entry.path) : onOpen(entry.path)
           }

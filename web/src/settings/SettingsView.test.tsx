@@ -36,6 +36,9 @@ beforeEach(() => {
         { id: "gh", name: "GitHub CLI", installed: true, canInstall: false, path: "/usr/bin/gh", documentation: "https://cli.github.com" },
       ];
     }
+    if (cmd === "github_account_status") {
+      return { authenticated: true, username: "octocat", host: "github.com" };
+    }
     if (cmd === "available_shells") {
       return [
         { kind: "default", label: "System default", isDefault: true },
@@ -141,7 +144,10 @@ it("switches visible section content on click while preserving live state across
   expect(githubTab.getAttribute("aria-selected")).toBe("true");
   expect(githubPanel.hidden).toBe(false);
   expect(sessionPanel.hidden).toBe(true);
-  expect(githubPanel.textContent).toContain("Set up GitHub");
+  expect(githubPanel.textContent).toContain("GitHub account");
+  expect(githubPanel.textContent).toContain("Connected");
+  expect(githubPanel.textContent).toContain("@octocat");
+  expect(githubPanel.textContent).toContain("CLI tools");
 
   await act(async () => {
     appearanceTab.click();
@@ -532,23 +538,40 @@ it("supports searching, recording, clearing, conflict warnings, and resetting in
   });
 
   const newTermBtn = shortcutsPanel.querySelector<HTMLButtonElement>('button[aria-label="Shortcut for New terminal"]')!;
+  // Renders individual keycap chips rather than a single concatenated string.
+  expect(newTermBtn.querySelectorAll("kbd.shortcut-kbd").length).toBeGreaterThanOrEqual(2);
 
-  // Enter recording mode and cancel with Escape
+  // Enter recording mode and cancel with Escape even if the event hits window
   await act(async () => {
     newTermBtn.click();
   });
   expect(newTermBtn.textContent).toContain("Press keys");
   await act(async () => {
-    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   });
   expect(newTermBtn.textContent).not.toContain("Press keys");
+
+  // Recording captures window-level shortcuts without letting a downstream listener execute them
+  const leaked = vi.fn();
+  window.addEventListener("keydown", leaked);
+  try {
+    await act(async () => {
+      newTermBtn.click();
+    });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "K", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(leaked).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", leaked);
+  }
 
   // Enter recording mode and clear with Backspace
   await act(async () => {
     newTermBtn.click();
   });
   await act(async () => {
-    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
   });
   expect(newTermBtn.textContent).toContain("Unassigned");
 
@@ -557,7 +580,7 @@ it("supports searching, recording, clearing, conflict warnings, and resetting in
     newTermBtn.click();
   });
   await act(async () => {
-    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true, cancelable: true }));
   });
   expect(shortcutsPanel.textContent).toContain("Terminal");
 
@@ -566,7 +589,7 @@ it("supports searching, recording, clearing, conflict warnings, and resetting in
     newTermBtn.click();
   });
   await act(async () => {
-    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "B", ctrlKey: true, shiftKey: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "B", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
   });
   expect(shortcutsPanel.textContent).toContain("Toggle sidebar");
 
@@ -582,7 +605,7 @@ it("supports searching, recording, clearing, conflict warnings, and resetting in
     newTermBtn.click();
   });
   await act(async () => {
-    newTermBtn.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
   });
   const resetAll = shortcutsPanel.querySelector<HTMLButtonElement>('button[aria-label="Reset all shortcuts"]')!;
   await act(async () => {

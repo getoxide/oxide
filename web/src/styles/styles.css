@@ -287,7 +287,6 @@ html.macos .header,
 .project-row { position: relative; }
 .project-row .project-actions { position: absolute; right: 12px; display: flex; align-items: center; gap: 2px; }
 .project-row .row-action { border-radius: 5px; }
-.project-row .project { padding-right: 54px; }
 .project-row:is(:hover, :focus-within) .row-action:not(:disabled) { opacity: 1; }
 .project-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
 .project-row:is(:hover, :focus-within) .project-count { visibility: hidden; }
@@ -303,8 +302,9 @@ html.macos .header,
   color: var(--dim);
   font-weight: 600;
 }
+.project-row:is(:hover, :focus-within) .project { padding-right: 58px; }
 /* Open or closed shows in the icon alone: bright while the Project's terminals are listed, dim once collapsed. */
-.project-icon { color: var(--faint); }
+.project-icon { flex: none; color: var(--faint); }
 .project-row .project.open .project-icon { color: var(--fg-bright); }
 .project-count { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint); }
 .sidebar-files { display: flex; flex-direction: column; min-height: 0; flex: 1; }
@@ -424,7 +424,7 @@ html.macos .header,
   line-height: 20px;
 }
 .terminal-rename-input::selection { background: color-mix(in srgb, var(--acc2) 45%, transparent); }
-.sidebar-footer { flex: none; justify-content: flex-start; min-height: var(--panel-bar-height); gap: 8px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--faint); font-size: 12px; }
+.sidebar-footer { flex: none; justify-content: flex-start; height: var(--panel-bar-height); min-height: var(--panel-bar-height); gap: 8px; padding: 0 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--faint); font-size: 12px; }
 .sidebar-footer:hover:not(:disabled) { color: var(--fg); border-color: var(--line); }
 .sidebar-footer[aria-current="page"] { color: var(--fg-bright); background: var(--bg3); }
 

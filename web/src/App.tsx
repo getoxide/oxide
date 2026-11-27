@@ -364,7 +364,12 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      if (event.target instanceof Element && event.target.closest('[data-shortcut-recording="true"]')) return;
+      if (
+        document.querySelector('[data-shortcut-recording="true"]') !== null ||
+        (event.target instanceof Element && event.target.closest('[data-shortcut-recording="true"]'))
+      ) {
+        return;
+      }
 
       const overrides = loadShortcutOverrides();
       const isTerminal = isTerminalFocused(event.target);

@@ -35,13 +35,13 @@ pub use error::{Error, Result};
 pub use files::{FileContent, FileEntry};
 pub use git::FETCH_INTERVAL;
 pub use github::{
-    CheckState, GithubAvailability, GithubRepository, IssueCloseReason, IssueDetail, IssueEdit,
-    IssueSummary, IssueTemplateFile, IssuesState, LinkedIssue, MergeMethod, MergeState,
-    PullRequest, PullRequestCandidates, PullRequestCheck, PullRequestDetail, PullRequestDraft,
-    PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase, PullRequestReviewer,
-    ReactionContent, ReactionGroup, ReviewDecision, ReviewState, SignedImage, TimelineAction,
-    TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush, TimelineItem,
-    TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
+    CheckState, GithubAccountStatus, GithubAvailability, GithubRepository, IssueCloseReason,
+    IssueDetail, IssueEdit, IssueSummary, IssueTemplateFile, IssuesState, LinkedIssue, MergeMethod,
+    MergeState, PullRequest, PullRequestCandidates, PullRequestCheck, PullRequestDetail,
+    PullRequestDraft, PullRequestEdit, PullRequestInput, PullRequestLabel, PullRequestPhase,
+    PullRequestReviewer, ReactionContent, ReactionGroup, ReviewDecision, ReviewState, SignedImage,
+    TimelineAction, TimelineClosed, TimelineComment, TimelineCommit, TimelineForcePush,
+    TimelineItem, TimelineLabel, TimelineMerge, TimelinePerson, TimelineReference, TimelineRename,
     TimelineReview,
 };
 pub use language_server::{LanguageServerConfig, LanguageServerSummary, LanguageTool};
@@ -50,8 +50,8 @@ pub use system::{System, system_fonts};
 pub use terminal::TerminalSummary;
 pub use updates::{
     AvailableUpdate, BundleKind, CHECK_INTERVAL, DebugOverride, InstallChannel, InstallLocation,
-    LastCheck, PRERELEASE_FEED, STABLE_FEED, UpdateError, UpdateOperation, UpdatePlan, UpdateState,
-    feed_for, is_newer, resolve_prerelease_feed_url,
+    LastCheck, PRERELEASE_FEED, STABLE_FEED, STABLE_FEED_FALLBACK, UpdateError, UpdateOperation,
+    UpdatePlan, UpdateState, feed_endpoints, feed_for, is_newer, resolve_prerelease_feed_url,
 };
 
 /// Persisted Terminal preferences (ADR-0016: shell is validated against the OS allowlist).
@@ -805,6 +805,11 @@ impl Core {
             &self.gh,
             &self.main_checkout(project_id)?,
         ))
+    }
+
+    /// Global GitHub CLI authentication status (username and host when signed in).
+    pub fn github_account_status(&self) -> GithubAccountStatus {
+        github::account_status(&self.gh, &self.home)
     }
 
     /// Open or closed issues of the repository, optionally only the user's own and

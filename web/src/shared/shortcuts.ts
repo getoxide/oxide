@@ -136,17 +136,42 @@ export function parseShortcut(binding: string): ParsedShortcut | null {
   return { mod, ctrl, alt, shift, meta, key };
 }
 
+const CODE_TO_KEY: Record<string, string> = {
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Minus: "-",
+  Equal: "=",
+  Semicolon: ";",
+  Quote: "'",
+  Backquote: "`",
+};
+
+function keyFromCode(code: string): string | null {
+  if (code.startsWith("Key") && code.length === 4) {
+    return code.slice(3).toLowerCase();
+  }
+  if (code.startsWith("Digit") && code.length === 6) {
+    return code.slice(5);
+  }
+  return CODE_TO_KEY[code] ?? null;
+}
+
 function eventKeyName(event: KeyboardEvent): string | null {
   if (event.key === " ") return " ";
+  const isComposedAlt =
+    event.key === "Dead" ||
+    (event.altKey && event.key.length === 1 && !/^[\x20-\x7E]$/.test(event.key));
+  if (isComposedAlt) {
+    const fromCode = keyFromCode(event.code);
+    if (fromCode) return fromCode;
+  }
   const named = normalizeKeyName(event.key);
   if (named) return named;
-  if (event.code.startsWith("Key") && event.code.length === 4) {
-    return event.code.slice(3).toLowerCase();
-  }
-  if (event.code.startsWith("Digit") && event.code.length === 6) {
-    return event.code.slice(5);
-  }
-  return null;
+  return keyFromCode(event.code);
 }
 
 /** Returns true when `event` matches the parsed shortcut `binding` for the active OS. */
@@ -214,30 +239,35 @@ const DISPLAY_KEY_OTHER: Record<string, string> = {
   " ": "Space",
 };
 
-/** Formats a canonical shortcut string for UI tooltips, menus, and Settings. */
-export function formatShortcut(binding: string, mac = isMacPlatform): string {
+/** Returns individual keycap labels for a canonical shortcut string. */
+export function formatShortcutParts(binding: string, mac = isMacPlatform): string[] {
   const parsed = parseShortcut(binding);
-  if (!parsed) return "";
+  if (!parsed) return [];
 
   const keyLabel = (mac ? DISPLAY_KEY_MAC[parsed.key] : DISPLAY_KEY_OTHER[parsed.key]) ??
     (parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key);
 
-  if (mac) {
-    let prefix = "";
-    if (parsed.ctrl) prefix += "⌃";
-    if (parsed.alt) prefix += "⌥";
-    if (parsed.shift) prefix += "⇧";
-    if (parsed.mod || parsed.meta) prefix += "⌘";
-    return `${prefix}${keyLabel}`;
-  }
-
   const parts: string[] = [];
-  if (parsed.mod || parsed.ctrl) parts.push("Ctrl");
-  if (parsed.meta) parts.push("Meta");
-  if (parsed.alt) parts.push("Alt");
-  if (parsed.shift) parts.push("Shift");
+  if (mac) {
+    if (parsed.ctrl) parts.push("⌃");
+    if (parsed.alt) parts.push("⌥");
+    if (parsed.shift) parts.push("⇧");
+    if (parsed.mod || parsed.meta) parts.push("⌘");
+  } else {
+    if (parsed.mod || parsed.ctrl) parts.push("Ctrl");
+    if (parsed.meta) parts.push("Meta");
+    if (parsed.alt) parts.push("Alt");
+    if (parsed.shift) parts.push("Shift");
+  }
   parts.push(keyLabel);
-  return parts.join("+");
+  return parts;
+}
+
+/** Formats a canonical shortcut string for UI tooltips, menus, and Settings. */
+export function formatShortcut(binding: string, mac = isMacPlatform): string {
+  const parts = formatShortcutParts(binding, mac);
+  if (parts.length === 0) return "";
+  return mac ? parts.join("") : parts.join("+");
 }
 
 /** Appends a formatted shortcut hint to a tooltip/title when a binding is assigned. */

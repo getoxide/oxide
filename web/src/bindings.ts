@@ -43,6 +43,7 @@ export const commands = {
 	writeFile: (projectId: number, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	developerTools: () => typedError<DeveloperTool_Serialize[], AppError>(__TAURI_INVOKE("developer_tools")),
+	githubAccountStatus: () => typedError<GithubAccountStatus_Serialize, AppError>(__TAURI_INVOKE("github_account_status")),
 	/**
 	 *  Enumerates installed system font family names on a blocking thread.
 	 * 
@@ -214,6 +215,20 @@ export type FileEntry = {
 	name: string,
 	path: string,
 	isDir: boolean,
+};
+
+export type GithubAccountStatus = GithubAccountStatus_Serialize | GithubAccountStatus_Deserialize;
+
+export type GithubAccountStatus_Deserialize = {
+	authenticated: boolean,
+	username?: string | null,
+	host?: string | null,
+};
+
+export type GithubAccountStatus_Serialize = {
+	authenticated: boolean,
+	username: string | null,
+	host: string | null,
 };
 
 export type GithubAvailability = "ready" | "missing" | "loggedOut";

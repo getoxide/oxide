@@ -781,18 +781,68 @@ describe("running indicator", () => {
     expect(seen).toEqual([false, false, false, false, false, false]);
   });
 
-  it("shows a command still running at 400 ms as running, and keeps showing it", async () => {
+  it("shows a command still running at 400 ms as running without a header spinner", async () => {
     await render(false);
     await advance(400);
     expect(section().classList.contains("running")).toBe(true);
-    expect(spinner()).not.toBeNull();
+    expect(spinner()).toBeNull();
     await advance(60_000);
     expect(section().classList.contains("running")).toBe(true);
-    expect(spinner()).not.toBeNull();
+    expect(spinner()).toBeNull();
     await render(true);
     expect(section().classList.contains("running")).toBe(false);
     expect(spinner()).toBeNull();
   });
+});
+
+it("subtracts the block header and clip margins from the normal-buffer viewport inside .terminal-block-scroll", async () => {
+  fitToHost = true;
+  const scroller = document.createElement("div");
+  scroller.className = "terminal-block-scroll";
+  Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 520 });
+  Object.defineProperty(scroller, "clientWidth", { configurable: true, get: () => 600 });
+  const innerMount = document.createElement("div");
+  scroller.append(innerMount);
+  workspace.append(scroller);
+  const innerRoot = createRoot(innerMount);
+  const onReady = vi.fn();
+  const onResize = vi.fn();
+
+  try {
+    await act(async () =>
+      innerRoot.render(
+        createElement(TerminalCommandBlock, {
+          block: baseBlock({ command: "top" }),
+          active: true,
+          visible: true,
+          onInput: () => {},
+          onReady,
+          onResize,
+          onScreen: () => {},
+        }),
+      ),
+    );
+    const blockHeader = innerMount.querySelector<HTMLElement>("section.terminal-command-block > header")!;
+    const clip = innerMount.querySelector<HTMLElement>(".terminal-output-clip")!;
+    Object.defineProperty(blockHeader, "offsetHeight", { configurable: true, get: () => 36 });
+    clip.style.marginBottom = "8px";
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    // (520 - 36 - 8) = 476px -> floor(476 / 16) = 29 rows
+    expect(onReady).toHaveBeenLastCalledWith(29, 80);
+
+    // Alternate screen fullscreen still uses the full workspace viewport (600px).
+    await act(async () => {
+      for (const cb of bufferListeners) cb({ type: "alternate" });
+      await new Promise((r) => setTimeout(r, 150));
+    });
+    expect(clip.style.height).toBe("600px");
+  } finally {
+    await act(async () => innerRoot.render(null));
+    scroller.remove();
+  }
 });
 
 

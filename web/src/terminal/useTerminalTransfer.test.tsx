@@ -2,7 +2,7 @@
 import { act, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { terminalPaths, useTerminalTransfer } from "./useTerminalTransfer";
+import { OXIDE_FILE_MIME, terminalPaths, useTerminalTransfer } from "./useTerminalTransfer";
 
 const native = vi.hoisted(() => ({ drop: vi.fn<(event: unknown) => void>(), stop: vi.fn() }));
 vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: (callback: typeof native.drop) => { native.drop = callback; return Promise.resolve(native.stop); } }) }));
@@ -32,4 +32,28 @@ it("accepts native drops only over the visible terminal, scaled by the display D
   act(() => drop(50, 50));
   expect(insert).toHaveBeenCalledTimes(1);
   expect(native.stop).toHaveBeenCalled();
+});
+
+it("accepts internal file tree drags carrying OXIDE_FILE_MIME and inserts the quoted path", async () => {
+  const insert = vi.fn();
+  await act(async () => root.render(<Harness insert={insert} />));
+  const target = host.querySelector("[data-terminal]")!;
+  const dataTransfer = {
+    types: [OXIDE_FILE_MIME, "text/plain"],
+    dropEffect: "none",
+    getData: (type: string) => (type === OXIDE_FILE_MIME ? "/Users/me/my file.txt" : ""),
+  };
+
+  const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
+  Object.defineProperty(dragOver, "dataTransfer", { value: dataTransfer });
+  await act(async () => { target.dispatchEvent(dragOver); });
+  expect(dragOver.defaultPrevented).toBe(true);
+  expect(target.getAttribute("data-dragging")).toBe("true");
+
+  const dropEvent = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(dropEvent, "dataTransfer", { value: dataTransfer });
+  await act(async () => { target.dispatchEvent(dropEvent); });
+  expect(dropEvent.defaultPrevented).toBe(true);
+  expect(target.hasAttribute("data-dragging")).toBe(false);
+  expect(insert).toHaveBeenCalledExactlyOnceWith("'/Users/me/my file.txt' ");
 });

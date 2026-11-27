@@ -9,7 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { Channel } from "../shared/ipc";
-import { TerminalIcon, XIcon, SquareFillIcon } from "@primer/octicons-react";
+import { XIcon, SquareFillIcon } from "@primer/octicons-react";
+import { TerminalAgentIcon } from "./agentIcons";
 import {
   TerminalCommandBlock,
   type TerminalBlock as Block,
@@ -442,7 +443,7 @@ export function TerminalWorkbench({
       }}
     >
       <header className="workbench-terminal-header">
-        <TerminalIcon size={16} />
+        <TerminalAgentIcon command={running ? runningText : null} size={16} />
         <strong>{shellName}</strong>
         <span className="mono" title={cwd}>
           {cwd}
@@ -526,7 +527,7 @@ export function TerminalWorkbench({
       )}
       {interrupting && !fullscreen && (
         <div className="terminal-running-bar">
-          <span className="terminal-block-spinner" aria-hidden="true" />
+          <span className="terminal-block-spinner" role="img" aria-label="Running" />
           <span className="terminal-running-label">Running</span>
           <code className="terminal-running-command" title={runningText}>{runningText}</code>
           <button

@@ -149,11 +149,35 @@ it("keeps xterm's #000 viewport from showing as a black strip under the rows", (
   expect(paints(declarations(".terminal-block-output .xterm .xterm-viewport")["background-color"])).toBe(false);
 });
 
-it("gives a running command's bar the command line's row, gutter and hairline: no empty band", () => {
+it("gives a running command's bar the command line's gutter and hairline and matches the Settings bar height", () => {
   const bar = declarations(".terminal-running-bar");
   expect(bar.display).toBe("flex");
   expect(bar["border-top"]).toBe("1px solid var(--line)");
-  expect(bar.padding).toBe(declarations(".terminal-command-composer").padding);
+  expect(bar.height).toBe("var(--panel-bar-height)");
+  expect(lastToken(bar.padding)).toBe("var(--terminal-gutter)");
+});
+
+it("keeps completion and history options from shrinking and overlapping inside the menu", () => {
+  const option = declarations(".terminal-input-menu [role=\"option\"]");
+  expect(option.flex).toBe("none");
+  expect(option.height).toBe("24px");
+});
+
+it("stretches right dock tabs to fill the available strip width", () => {
+  const tab = declarations(".tools > .tabs .tab");
+  expect(tab.flex).toBe("1 1 0");
+});
+
+it("reserves room for project row action buttons only on hover/focus without overlapping the project name", () => {
+  const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  const match = css.match(/\.project-row:is\(:hover, :focus-within\) \.project \{([^}]*)\}/);
+  expect(match).not.toBeNull();
+  expect(match![1]).toContain("padding-right: 58px");
+  // The base .project-row .project rule must come before the hover/focus rule so it does not overwrite it.
+  const baseIdx = css.indexOf(".project-row .project {");
+  const hoverIdx = css.indexOf(".project-row:is(:hover, :focus-within) .project {");
+  expect(baseIdx).toBeGreaterThan(-1);
+  expect(hoverIdx).toBeGreaterThan(baseIdx);
 });
 
 it("makes room for the close button on a hovered or focused Terminal row, so the running dot never sits under it", () => {

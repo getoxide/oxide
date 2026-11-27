@@ -63,3 +63,10 @@ it("names nothing when the field is left unchanged: the shown name may be a prog
   await key("Enter");
   expect(onRename).not.toHaveBeenCalled();
 });
+
+it("shows the detected CLI agent logo when running an agent CLI", async () => {
+  await act(async () => root.render(
+    <TerminalRow name="claude" baseName="Terminal 1" current running="claude" onSelect={() => {}} onRename={() => {}} onClose={() => {}} />,
+  ));
+  expect(host.querySelector('[data-agent="claude"]')).not.toBeNull();
+});

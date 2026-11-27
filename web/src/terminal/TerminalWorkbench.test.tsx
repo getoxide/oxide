@@ -141,7 +141,8 @@ it("shows a Running indicator while a command runs and only its duration once it
   const [block] = blocks();
   // Past the running indicator delay, so the command shows as running and can be interrupted.
   await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
-  expect(block.querySelector('[role="img"][aria-label="Running"]')).not.toBeNull();
+  expect(block.querySelector(".terminal-block-spinner")).toBeNull();
+  expect(container.querySelector('.terminal-running-bar [role="img"][aria-label="Running"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
   expect(block.textContent).not.toMatch(/\d\s?ms|\d\s?s\b/);
   now = 1_017;
