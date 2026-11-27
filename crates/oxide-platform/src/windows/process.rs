@@ -76,6 +76,11 @@ pub fn release_job(pid: i32) {
     job::close_job(pid);
 }
 
+/// Force-terminates every descendant process of `root_pid`, leaving `root_pid` itself running.
+pub(crate) fn terminate_descendants(root_pid: u32) -> io::Result<()> {
+    job::terminate_descendants(root_pid)
+}
+
 /// The image a process runs and when it started, which tell a reused pid from the original.
 pub fn process_identity(pid: i32) -> Option<ProcessIdentity> {
     job::process_identity(pid)
@@ -185,43 +190,63 @@ mod job {
         }
     }
 
+    fn descendants_of(root_pid: u32) -> io::Result<HashSet<u32>> {
+        // SAFETY: plain flags; the snapshot handle is checked before use and closed below.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == -1_isize as HANDLE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `PROCESSENTRY32W` is plain C data for which all-zero is valid.
+        let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut parents = Vec::new();
+        // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
+        let mut found = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        while found {
+            parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            // SAFETY: same as above.
+            found = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        // SAFETY: `snapshot` is a valid handle that is closed exactly once.
+        unsafe { CloseHandle(snapshot) };
+
+        let mut descendants = HashSet::new();
+        loop {
+            let before = descendants.len();
+            for &(pid, parent) in &parents {
+                if pid != root_pid && (parent == root_pid || descendants.contains(&parent)) {
+                    descendants.insert(pid);
+                }
+            }
+            if descendants.len() == before {
+                break;
+            }
+        }
+        Ok(descendants)
+    }
+
+    pub(super) fn terminate_descendants(root_pid: u32) -> io::Result<()> {
+        for pid in descendants_of(root_pid)? {
+            // SAFETY: `OpenProcess` takes plain values; a null handle is skipped and valid
+            // handles are terminated and closed once.
+            unsafe {
+                let process = OpenProcess(PROCESS_TERMINATE, 0, pid);
+                if !process.is_null() {
+                    windows_sys::Win32::System::Threading::TerminateProcess(process, 1);
+                    CloseHandle(process);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// # Safety
     ///
     /// `job` must be a live job object handle.
     unsafe fn attach_existing_descendants(root_pid: u32, job: HANDLE) -> io::Result<()> {
         let mut attached = HashSet::from([root_pid]);
         loop {
-            // SAFETY: plain flags and a pid; the snapshot handle is checked before use.
-            let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-            if snapshot == -1_isize as HANDLE {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: `PROCESSENTRY32W` is plain C data for which all-zero is valid.
-            let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
-            entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-            let mut parents = Vec::new();
-            // SAFETY: `snapshot` is a valid handle and `entry.dwSize` is set, as the API requires.
-            let mut found = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
-            while found {
-                parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
-                // SAFETY: same as above.
-                found = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
-            }
-            // SAFETY: `snapshot` is a valid handle that is closed exactly once.
-            unsafe { CloseHandle(snapshot) };
-
-            let mut descendants = HashSet::new();
-            loop {
-                let before = descendants.len();
-                for &(pid, parent) in &parents {
-                    if parent == root_pid || descendants.contains(&parent) {
-                        descendants.insert(pid);
-                    }
-                }
-                if descendants.len() == before {
-                    break;
-                }
-            }
+            let descendants = descendants_of(root_pid)?;
             let mut added = false;
             for pid in descendants
                 .difference(&attached)

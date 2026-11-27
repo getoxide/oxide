@@ -3,7 +3,7 @@ import { XIcon } from "@primer/octicons-react";
 import { getAppearance, saveAppearance, type Appearance } from "../shared/appearance";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import { CodeEditorSettingsSection } from "./CodeEditorSettingsSection";
-import { GithubSetup } from "./GithubSetup";
+import { GithubSettingsSection } from "./GithubSettingsSection";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
 import { UpdatesSettingsSection } from "../updates/UpdatesSettingsSection";
@@ -90,11 +90,7 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
       id: "github",
       label: "GitHub",
       description: "Issues and Pull request work through Git and the GitHub CLI.",
-      render: () => (
-        <div className="settings-card">
-          <GithubSetup />
-        </div>
-      ),
+      render: () => <GithubSettingsSection />,
     },
     {
       id: "updates",

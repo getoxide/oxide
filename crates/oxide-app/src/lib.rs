@@ -312,6 +312,13 @@ fn write_terminal(
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
+fn interrupt_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), AppError> {
+    Ok(core.interrupt_terminal(terminal_id)?)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn resize_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -1505,6 +1512,32 @@ async fn git_blocking<T: Send + 'static>(
         .map_err(AppError::from)
 }
 
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubAccountStatus {
+    pub authenticated: bool,
+    pub username: Option<String>,
+    pub host: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn github_account_status(
+    core: State<'_, Arc<Core>>,
+) -> Result<GithubAccountStatus, AppError> {
+    let core = Arc::clone(&core);
+    let status = tauri::async_runtime::spawn_blocking(move || core.github_account_status())
+        .await
+        .map_err(|e| AppError {
+            message: e.to_string(),
+        })?;
+    Ok(GithubAccountStatus {
+        authenticated: status.authenticated,
+        username: status.username,
+        host: status.host,
+    })
+}
+
 /// The Project to reopen on launch.
 #[tauri::command]
 #[specta::specta]
@@ -1636,6 +1669,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         terminal_settings,
         set_terminal_settings,
         write_terminal,
+        interrupt_terminal,
         resize_terminal,
         close_terminal,
         complete_terminal,
@@ -1645,6 +1679,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         write_file,
         language_tools,
         developer_tools,
+        github_account_status,
         system_fonts,
         install_developer_tool,
         install_language_support,

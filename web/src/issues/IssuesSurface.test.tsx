@@ -956,3 +956,13 @@ it("returns to the issue list when resetKey increments while viewing an issue or
   await render(true, 2);
   expect(host.querySelector('ul[aria-label="Open issues"]')).not.toBeNull();
 });
+
+it("shows a friendly non-Git empty state instead of a raw git error", async () => {
+  vi.mocked(commands.listIssues).mockResolvedValue({
+    status: "error",
+    error: { message: "failed to run git: fatal: not a git repository (or any of the parent directories): .git" },
+  });
+  await render();
+  expect(host.querySelector(".surface-empty-title")?.textContent).toBe("Not a Git repository");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});

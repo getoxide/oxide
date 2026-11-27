@@ -6,6 +6,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { FilesPanel } from "./FilesPanel";
 import { ContextMenu } from "../shared/ContextMenu";
 import { revealInFileManagerLabel } from "../shared/platform";
+import { cancelActiveFileDrag, subscribeFileDrag } from "../terminal/fileDrag";
 const host = document.createElement("div"); document.body.append(host);
 const root = createRoot(host);
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -150,4 +151,51 @@ it("offers Open in Code, Copy path, and Reveal in File Manager on Files view ent
   });
   await act(async () => { menuItems()[2]!.click(); });
   expect(invoked.some((c) => c.command === "reveal_in_finder" && JSON.stringify(c.args) === JSON.stringify({ projectId: 7 }))).toBe(true);
+});
+
+it("pointer-drags file and folder rows with their full path and suppresses the trailing click", async () => {
+  treeIpc();
+  const open = vi.fn();
+  await act(async () => root.render(<FilesPanel projectId={1} rootPath="/repo" revision={0} onOpenFile={open} />));
+  await settle();
+
+  const events: { type: string; path?: string }[] = [];
+  const stop = subscribeFileDrag((event) => {
+    events.push(event.type === "cancel" ? { type: "cancel" } : { type: event.type, path: event.drag.path });
+  });
+
+  const fileRow = buttonWith("README.md");
+  const dirRow = buttonWith("src");
+
+  const pointerDown = (target: Element, x: number, y: number, pointerId: number) => {
+    const e = new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    Object.defineProperty(e, "pointerId", { value: pointerId });
+    target.dispatchEvent(e);
+  };
+  const windowPointer = (type: "pointermove" | "pointerup", x: number, y: number, pointerId: number) => {
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(e, "pointerId", { value: pointerId });
+    window.dispatchEvent(e);
+  };
+
+  await act(async () => {
+    pointerDown(fileRow, 10, 10, 1);
+    windowPointer("pointermove", 40, 10, 1);
+    windowPointer("pointerup", 200, 10, 1);
+    fileRow.click();
+  });
+  expect(events).toContainEqual({ type: "drop", path: "/repo/README.md" });
+  expect(fileRow.closest('[role="treeitem"]')?.getAttribute("aria-selected")).toBe("false");
+
+  events.length = 0;
+  await act(async () => {
+    pointerDown(dirRow, 10, 30, 2);
+    windowPointer("pointermove", 50, 30, 2);
+    windowPointer("pointerup", 200, 30, 2);
+  });
+  expect(events).toContainEqual({ type: "drop", path: "/repo/src" });
+  expect(open).not.toHaveBeenCalled();
+
+  stop();
+  cancelActiveFileDrag();
 });

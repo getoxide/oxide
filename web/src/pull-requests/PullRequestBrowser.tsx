@@ -6,6 +6,7 @@ import { MarkdownEditor } from "../shared/MarkdownEditor";
 import { CommentEditForm, CommentTools } from "../shared/CommentTools";
 import { PullRequestCreate } from "./PullRequestCreate";
 import { GithubSetup } from "../settings/GithubSetup";
+import { classifyRepositoryError, isGithubAuthOrSetupError, NonGitEmptyState } from "../shared/NonGitEmptyState";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -132,6 +133,17 @@ export function PullRequestBrowser({ projectId, refreshKey, resetKey = 0, pollKe
     );
   }
 
+  const repoIssue = list.state === "error" ? classifyRepositoryError(list.message) : null;
+  if (repoIssue !== null) {
+    return (
+      <div className="pr-browser">
+        <div className="pr-scroll">
+          <NonGitEmptyState kind={repoIssue} surface="pull-requests" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="pr-browser">
       <div className="surface-toolbar">
@@ -166,7 +178,13 @@ export function PullRequestBrowser({ projectId, refreshKey, resetKey = 0, pollKe
         )}
         {list.state === "loading" && <Skeleton label="Loading pull requests…" />}
         {list.state === "error" && (
-          <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(githubKeys.project(projectId)); setManual((v) => v + 1); }} />
+          isGithubAuthOrSetupError(list.message) ? (
+            <GithubSetup projectId={projectId} guidance={list.message} onReady={() => { invalidateQueries(githubKeys.project(projectId)); setManual((v) => v + 1); }} />
+          ) : (
+            <p role="alert" className="pr-empty error">
+              {list.message}
+            </p>
+          )
         )}
         {list.state === "ready" && list.data.length === 0 && (
           <div className="pr-empty surface-empty">

@@ -61,6 +61,10 @@ export function TerminalCommandBlock(props: Props) {
     const toolbar = workspace.querySelector<HTMLElement>(
       ".workbench-terminal-header",
     )!;
+    const scroll = element.closest<HTMLElement>(".terminal-block-scroll");
+    const section = element.closest<HTMLElement>(".terminal-command-block");
+    const blockHeader =
+      section?.querySelector<HTMLElement>(":scope > header") ?? null;
     const initial = terminalAppearance({ failed: isFailed(callbacks.current) });
     const term = new Terminal({
       ...initial,
@@ -125,7 +129,25 @@ export function TerminalCommandBlock(props: Props) {
         !element.clientWidth
       )
         return;
-      viewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
+      const fullViewport = Math.max(80, workspace.clientHeight - toolbar.offsetHeight);
+      if (interactive) {
+        viewport = fullViewport;
+      } else {
+        const visibleScroll = scroll && scroll.clientHeight > 0 ? scroll.clientHeight : fullViewport;
+        const headerHeight = blockHeader?.offsetHeight ?? 0;
+        const truncatedHeight = section?.querySelector<HTMLElement>(".terminal-truncated")?.offsetHeight ?? 0;
+        const clip = element.parentElement;
+        const clipStyle = clip ? getComputedStyle(clip) : null;
+        const scrollStyle = scroll ? getComputedStyle(scroll) : null;
+        const verticalChrome =
+          headerHeight +
+          truncatedHeight +
+          (parseFloat(clipStyle?.marginTop ?? "") || 0) +
+          (parseFloat(clipStyle?.marginBottom ?? "") || 0) +
+          (parseFloat(scrollStyle?.paddingTop ?? "") || 0) +
+          (parseFloat(scrollStyle?.paddingBottom ?? "") || 0);
+        viewport = Math.max(80, visibleScroll - verticalChrome);
+      }
       element.style.height = `${callbacks.current.active ? viewport : Math.max(cell, contentHeight(false))}px`;
       addon.fit();
       const screenElement = element.querySelector<HTMLElement>(".xterm-screen");
@@ -164,6 +186,8 @@ export function TerminalCommandBlock(props: Props) {
     const observer = new ResizeObserver(scheduleFit);
     observer.observe(workspace);
     observer.observe(element);
+    if (scroll) observer.observe(scroll);
+    if (blockHeader) observer.observe(blockHeader);
     const markScreen = () => {
       if (!interactive) {
         interactive = true;
@@ -229,6 +253,7 @@ export function TerminalCommandBlock(props: Props) {
   const failed = isFailed(props);
   useEffect(() => {
     keepCursorRow.current = showRunning;
+    fitSurface.current();
     measure.current();
   }, [showRunning]);
   useEffect(() => {
@@ -269,7 +294,7 @@ export function TerminalCommandBlock(props: Props) {
         </span>
         <code>{block.command}</code>
         <span className="grow" />
-        <BlockStatus block={block} running={active} showRunning={showRunning} />
+        <BlockStatus block={block} running={active} />
       </header>
       {block.truncated && (
         <p className="terminal-truncated">
@@ -289,18 +314,14 @@ function isFailed({ active, block }: { active: boolean; block: TerminalBlock }):
 }
 
 /**
- * One status at the right of the header: a spinner once the command has run past the running
- * indicator delay (nothing before that), then how long it took.
+ * One status at the right of the header: nothing while running (the bottom bar holds the
+ * spinner), then how long it took once finished.
  */
-function BlockStatus({ block, running, showRunning }: { block: TerminalBlock; running: boolean; showRunning: boolean }) {
-  // One live region per block: the spinner is mounted with it, so only the outcome is announced.
+function BlockStatus({ block, running }: { block: TerminalBlock; running: boolean }) {
+  // One live region per block: only the outcome is announced when the command ends.
   return (
     <span className={`terminal-block-status${!running && block.exitCode !== 0 ? " error" : ""}`} role="status">
-      {running ? (
-        showRunning && <span className="terminal-block-spinner" role="img" aria-label="Running" />
-      ) : (
-        <BlockOutcome block={block} />
-      )}
+      {running ? null : <BlockOutcome block={block} />}
     </span>
   );
 }

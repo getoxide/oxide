@@ -261,14 +261,19 @@ fn build_updater(
     feed: &str,
     current: &str,
 ) -> Result<tauri_plugin_updater::Updater, String> {
-    let url = feed.parse().map_err(|error| format!("{error}"))?;
-    let current = current.to_string();
+    let urls = oxide_core::feed_endpoints(feed)
+        .into_iter()
+        .map(|endpoint| endpoint.parse().map_err(|error| format!("{error}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let current_owned = current.to_string();
     app.updater_builder()
-        .endpoints(vec![url])
+        .endpoints(urls)
+        .map_err(|error| error.to_string())?
+        .header("User-Agent", format!("Oxide/{current}"))
         .map_err(|error| error.to_string())?
         .timeout(REQUEST_TIMEOUT)
         .version_comparator(move |_, remote| {
-            oxide_core::is_newer(&current, &remote.version.to_string())
+            oxide_core::is_newer(&current_owned, &remote.version.to_string())
         })
         .build()
         .map_err(|error| error.to_string())
@@ -305,7 +310,10 @@ async fn run_check(
     push(app, core.begin_update_check()?);
     let state = match check(app, feed, current).await {
         Ok(found) => core.record_update_check(found.as_deref(), unix_now()),
-        Err(_) => Some(core.record_update_check_failure(unix_now())),
+        Err(reason) => {
+            diag::best_effort("update check", Err::<(), _>(reason));
+            Some(core.record_update_check_failure(unix_now()))
+        }
     };
     if let Some(state) = state {
         push(app, state);

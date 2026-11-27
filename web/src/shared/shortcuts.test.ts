@@ -6,6 +6,7 @@ import {
   eventToShortcut,
   findDuplicateShortcuts,
   formatShortcut,
+  formatShortcutParts,
   isTerminalConflict,
   isTerminalFocused,
   loadShortcutOverrides,
@@ -39,6 +40,11 @@ describe("shortcuts engine", () => {
     expect(formatShortcut("Mod+,", false)).toBe("Ctrl+,");
     expect(formatShortcut("Mod+,", true)).toBe("⌘,");
     expect(formatShortcut("Mod+Shift+Enter", true)).toBe("⇧⌘↵");
+
+    expect(formatShortcutParts("Mod+Shift+O", true)).toEqual(["⇧", "⌘", "O"]);
+    expect(formatShortcutParts("Mod+,", true)).toEqual(["⌘", ","]);
+    expect(formatShortcutParts("Mod+PageUp", true)).toEqual(["⌘", "PgUp"]);
+    expect(formatShortcutParts("Mod+Shift+T", false)).toEqual(["Ctrl", "Shift", "T"]);
   });
 
   it("matches KeyboardEvents against bindings on Windows/Linux and macOS", () => {
@@ -62,6 +68,7 @@ describe("shortcuts engine", () => {
     expect(eventToShortcut(new KeyboardEvent("keydown", { key: "K", ctrlKey: true, shiftKey: true }), false)).toBe("Mod+Shift+K");
     expect(eventToShortcut(new KeyboardEvent("keydown", { key: ",", metaKey: true }), true)).toBe("Mod+,");
     expect(eventToShortcut(new KeyboardEvent("keydown", { key: "c", ctrlKey: true }), true)).toBe("Ctrl+C");
+    expect(eventToShortcut(new KeyboardEvent("keydown", { key: "å", code: "KeyA", altKey: true }), true)).toBe("Alt+A");
   });
 
   it("provides VS Code-inspired defaults for all required actions", () => {

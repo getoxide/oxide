@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { TerminalIcon, XIcon } from "@primer/octicons-react";
+import { XIcon } from "@primer/octicons-react";
 import { showContextMenu } from "../shared/ContextMenu";
+import { TerminalAgentIcon } from "./agentIcons";
 
 interface Props {
   /** The name shown: the Terminal's own, or the program it runs. */
@@ -69,7 +70,7 @@ export function TerminalRow({ name, baseName, current, running, onSelect, onRena
       ])}>
       {editing ? (
         <div className="terminal-item terminal-item-editing">
-          <TerminalIcon size={12} />
+          <TerminalAgentIcon command={running} size={13} />
           <input
             ref={field}
             className="terminal-rename-input"
@@ -97,7 +98,7 @@ export function TerminalRow({ name, baseName, current, running, onSelect, onRena
               setEditing(true);
             }}
           >
-            <TerminalIcon size={12} />
+            <TerminalAgentIcon command={running} size={13} />
             <span className="terminal-item-title">{name}</span>
             {running && <span className="terminal-tab-running" aria-label="Command running" />}
           </button>

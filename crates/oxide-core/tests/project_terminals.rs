@@ -287,3 +287,51 @@ fn updated_terminal_settings_apply_to_new_terminals_without_disrupting_running_o
     core.close_terminal(first.id).unwrap();
     core.close_terminal(second.id).unwrap();
 }
+
+#[test]
+fn interrupting_a_terminal_force_stops_the_foreground_command_and_keeps_the_shell_alive() {
+    if cfg!(windows) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (core, project, _) = open_with_project(tmp.path());
+    core.set_terminal_settings(oxide_core::TerminalSettings {
+        shell: oxide_core::ShellKind::Bash,
+        load_user_config: false,
+    })
+    .unwrap();
+    let terminal = core.start_block_terminal(project).unwrap();
+    let rx = core.subscribe_terminal(terminal.id).unwrap();
+
+    let mut seen = String::new();
+    let read_until =
+        |rx: &crossbeam_channel::Receiver<Vec<u8>>, seen: &mut String, needle: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !seen.contains(needle) {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "timed out waiting for {needle:?} in {seen:?}"
+                );
+                let chunk = rx.recv_timeout(remaining).unwrap();
+                seen.push_str(&String::from_utf8_lossy(&chunk));
+            }
+        };
+
+    read_until(&rx, &mut seen, "\x1b]633;Oxide;prompt;");
+
+    core.run_terminal_block(terminal.id, "trap '' INT TERM; sleep 60", "tok1")
+        .unwrap();
+    read_until(&rx, &mut seen, "\x1b]633;Oxide;tok1;start\x07");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    core.interrupt_terminal(terminal.id).unwrap();
+    read_until(&rx, &mut seen, "\x1b]633;Oxide;tok1;end;");
+
+    core.run_terminal_block(terminal.id, "echo still-alive", "tok2")
+        .unwrap();
+    read_until(&rx, &mut seen, "\x1b]633;Oxide;tok2;end;0;");
+    assert!(seen.contains("still-alive"), "{seen:?}");
+
+    core.close_terminal(terminal.id).unwrap();
+}

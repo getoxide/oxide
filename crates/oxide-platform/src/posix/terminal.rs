@@ -520,6 +520,43 @@ pub fn write_input(
     writer.flush()
 }
 
+/// Force-stops whatever foreground command is running in the shell without killing the
+/// interactive shell itself, so the shell can emit its block end marker and return to the prompt.
+pub fn force_interrupt_foreground(shell_pid: u32, master: &dyn MasterPty) -> io::Result<()> {
+    let shell_pid = shell_pid as i32;
+    if shell_pid < 2 {
+        return Ok(());
+    }
+    let mut killed = false;
+    if let Some(fg_pgid) = master.process_group_leader()
+        && fg_pgid != shell_pid
+        && fg_pgid >= 2
+        && signal_group(fg_pgid, libc::SIGKILL).is_ok()
+    {
+        killed = true;
+    }
+    if let Ok(output) = crate::command::os_command("ps")
+        .args(["-A", "-o", "pid="])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Ok(pid) = line.trim().parse::<i32>() else {
+                continue;
+            };
+            if pid != shell_pid
+                && session_of(pid) == Some(shell_pid)
+                && signal_process(pid, libc::SIGKILL).is_ok()
+            {
+                killed = true;
+            }
+        }
+    }
+    if !killed {
+        diag::best_effort("signal_process", signal_process(shell_pid, libc::SIGINT));
+    }
+    Ok(())
+}
+
 /// Ends a shell and everything it started. Interactive shells ignore SIGTERM but hang up on
 /// SIGHUP, so the group gets that first; the shell is reaped on every poll so a zombie leader does
 /// not keep the group looking alive.

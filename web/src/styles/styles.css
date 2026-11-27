@@ -240,7 +240,24 @@ html.macos .header,
   /* Room for the macOS traffic lights of the overlay title bar. */
   padding: 0 12px 0 84px;
 }
-.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+.header > .icon-btn,
+.header-actions > .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--radius-control);
+  line-height: 1;
+}
+.header .icon-btn svg,
+.header .update-btn svg {
+  display: block;
+}
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; height: 100%; }
 .header-actions > .icon-btn { flex: none; }
 .header-actions > .update-btn { flex: none; gap: 4px; }
 .update-popover { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3) 0; }
@@ -254,7 +271,6 @@ html.macos .header,
 .window.windows .header { padding-right: 0; }
 .window.windows .header-actions { align-self: stretch; }
 .header-error { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.header-actions > .icon-btn { height: var(--control-sm); min-height: var(--control-sm); min-width: 28px; }
 .body { flex: 1; display: flex; min-height: 0; }
 .sidebar-region { container-type: inline-size; position: relative; width: var(--sidebar-width, 240px); flex: none; min-height: 0; }
 .centre-column { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -287,7 +303,6 @@ html.macos .header,
 .project-row { position: relative; }
 .project-row .project-actions { position: absolute; right: 12px; display: flex; align-items: center; gap: 2px; }
 .project-row .row-action { border-radius: 5px; }
-.project-row .project { padding-right: 54px; }
 .project-row:is(:hover, :focus-within) .row-action:not(:disabled) { opacity: 1; }
 .project-row:not(:hover):not(:focus-within) .row-action { pointer-events: none; }
 .project-row:is(:hover, :focus-within) .project-count { visibility: hidden; }
@@ -303,8 +318,9 @@ html.macos .header,
   color: var(--dim);
   font-weight: 600;
 }
+.project-row:is(:hover, :focus-within) .project { padding-right: 58px; }
 /* Open or closed shows in the icon alone: bright while the Project's terminals are listed, dim once collapsed. */
-.project-icon { color: var(--faint); }
+.project-icon { flex: none; color: var(--faint); }
 .project-row .project.open .project-icon { color: var(--fg-bright); }
 .project-count { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint); }
 .sidebar-files { display: flex; flex-direction: column; min-height: 0; flex: 1; }
@@ -424,7 +440,7 @@ html.macos .header,
   line-height: 20px;
 }
 .terminal-rename-input::selection { background: color-mix(in srgb, var(--acc2) 45%, transparent); }
-.sidebar-footer { flex: none; justify-content: flex-start; min-height: var(--panel-bar-height); gap: 8px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--faint); font-size: 12px; }
+.sidebar-footer { flex: none; justify-content: flex-start; height: var(--panel-bar-height); min-height: var(--panel-bar-height); gap: 8px; padding: 0 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--faint); font-size: 12px; }
 .sidebar-footer:hover:not(:disabled) { color: var(--fg); border-color: var(--line); }
 .sidebar-footer[aria-current="page"] { color: var(--fg-bright); background: var(--bg3); }
 
@@ -930,7 +946,9 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .palette-open { font-size: 10.5px; padding: 0 6px; border-radius: 4px; background: var(--bg4); color: var(--dim); box-shadow: inset 0 0 0 1px var(--line); }
 .palette-detail { color: var(--faint); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-action { color: var(--fg); }
-.palette-empty { color: var(--faint); }
+.palette-empty { color: var(--faint); cursor: default; pointer-events: none; }
+.palette-empty:hover { background: none; }
+.palette-empty:has(+ .palette-action) { border-radius: 0; border-bottom: 1px solid var(--line); margin-bottom: 6px; padding-bottom: 10px; }
 
 .tools .tab { gap: 4px; }
 
@@ -1158,4 +1176,22 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .context-menu-item:disabled { color: var(--faint); }
 .context-menu-item kbd { color: var(--faint); font: 11px var(--mono); }
 .context-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.oxide-dragging-file, .oxide-dragging-file * { user-select: none !important; cursor: copy !important; }
+.file-drag-ghost {
+  position: fixed;
+  z-index: 2500;
+  pointer-events: none;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--fg-bright);
+  font-size: 12px;
+  font-family: var(--mono);
+  box-shadow: 0 8px 24px #0007;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 

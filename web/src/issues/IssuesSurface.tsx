@@ -15,6 +15,7 @@ import { relativeTime } from "../shared/relativeTime";
 import { useAutoRefresh } from "../shared/useAutoRefresh";
 import { GithubSetup } from "../settings/GithubSetup";
 import { githubKeys } from "../shared/githubQueries";
+import { classifyRepositoryError, NonGitEmptyState } from "../shared/NonGitEmptyState";
 
 export interface IssuesSurfaceProps {
   projectId: number;
@@ -156,6 +157,16 @@ function IssueList({ projectId, refreshKey, pollKey, onOpen, onCreate }: IssueLi
   }, [query]);
 
   const filtered = search !== "";
+  const repoIssue = list.state === "error" ? classifyRepositoryError(list.message) : null;
+  if (repoIssue !== null) {
+    return (
+      <div className="pr-browser">
+        <div className="pr-scroll">
+          <NonGitEmptyState kind={repoIssue} surface="issues" />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="pr-browser">
       <div className="surface-toolbar">

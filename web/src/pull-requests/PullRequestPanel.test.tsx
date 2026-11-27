@@ -277,3 +277,14 @@ it("returns to the pull request list when resetKey increments while viewing a pu
   await render(true, 1);
   expect(host.querySelector('ul[aria-label="Open pull requests"]')).not.toBeNull();
 });
+
+it("shows a friendly non-Git empty state instead of a raw git error or GitHub setup card", async () => {
+  vi.mocked(commands.listPullRequests).mockResolvedValue({
+    status: "error",
+    error: { message: "failed to run git: fatal: not a git repository (or any of the parent directories): .git" },
+  });
+  await render();
+  expect(host.querySelector(".surface-empty-title")?.textContent).toBe("Not a Git repository");
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(host.textContent).not.toContain("Set up GitHub");
+});

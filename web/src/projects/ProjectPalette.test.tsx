@@ -139,3 +139,25 @@ it("keeps the active descendant valid when asynchronous results shrink", () => {
   expect(active.textContent).toBe("Clone one of your GitHub repositories");
   expect(container.querySelector("input")?.getAttribute("aria-activedescendant")).toBe(active.id);
 });
+
+it("keeps all bottom action buttons visible when a search query matches no Project", () => {
+  act(() => root.render(<ProjectPalette projects={projects} defaultParent="/code"
+    onPickProject={() => {}} onOpenProject={() => {}} onClose={() => {}} />));
+  const search = container.querySelector("input")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "does-not-exist");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  expect(container.querySelector(".palette-empty")?.textContent).toBe("No matching Projects");
+  const options = Array.from(container.querySelectorAll<HTMLElement>('[role="option"]'));
+  expect(options.map((o) => o.textContent)).toEqual([
+    "Add a local folder as a Project",
+    "Create a new Project (git init)",
+    "Clone a repository from a Git URL",
+    "Clone one of your GitHub repositories",
+  ]);
+
+  act(() => options[1].click());
+  expect(container.querySelector("input")?.getAttribute("aria-label")).toBe("Project name");
+});

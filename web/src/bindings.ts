@@ -29,6 +29,7 @@ export const commands = {
 	terminalSettings: () => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("terminal_settings")),
 	setTerminalSettings: (settings: TerminalSettings) => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("set_terminal_settings", { settings })),
 	writeTerminal: (terminalId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_terminal", { terminalId, input })),
+	interruptTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("interrupt_terminal", { terminalId })),
 	resizeTerminal: (terminalId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_terminal", { terminalId, rows, cols })),
 	closeTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("close_terminal", { terminalId })),
 	completeTerminal: (terminalId: number, line: string, cursor: number) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor })),
@@ -43,6 +44,7 @@ export const commands = {
 	writeFile: (projectId: number, path: string, expected: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("write_file", { projectId, path, expected, content })),
 	languageTools: () => __TAURI_INVOKE<LanguageTool_Serialize[]>("language_tools"),
 	developerTools: () => typedError<DeveloperTool_Serialize[], AppError>(__TAURI_INVOKE("developer_tools")),
+	githubAccountStatus: () => typedError<GithubAccountStatus_Serialize, AppError>(__TAURI_INVOKE("github_account_status")),
 	/**
 	 *  Enumerates installed system font family names on a blocking thread.
 	 * 
@@ -214,6 +216,20 @@ export type FileEntry = {
 	name: string,
 	path: string,
 	isDir: boolean,
+};
+
+export type GithubAccountStatus = GithubAccountStatus_Serialize | GithubAccountStatus_Deserialize;
+
+export type GithubAccountStatus_Deserialize = {
+	authenticated: boolean,
+	username?: string | null,
+	host?: string | null,
+};
+
+export type GithubAccountStatus_Serialize = {
+	authenticated: boolean,
+	username: string | null,
+	host: string | null,
 };
 
 export type GithubAvailability = "ready" | "missing" | "loggedOut";

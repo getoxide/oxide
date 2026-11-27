@@ -141,7 +141,8 @@ it("shows a Running indicator while a command runs and only its duration once it
   const [block] = blocks();
   // Past the running indicator delay, so the command shows as running and can be interrupted.
   await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
-  expect(block.querySelector('[role="img"][aria-label="Running"]')).not.toBeNull();
+  expect(block.querySelector(".terminal-block-spinner")).toBeNull();
+  expect(container.querySelector('.terminal-running-bar [role="img"][aria-label="Running"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
   expect(block.textContent).not.toMatch(/\d\s?ms|\d\s?s\b/);
   now = 1_017;
@@ -459,8 +460,12 @@ it("keeps what was typed during a running command, and a refused Enter keeps it 
   expect(shell.calls.filter((name) => name === "run_terminal_block")).toHaveLength(1);
   // Past the running indicator delay the command line gives way to Interrupt, without losing its text.
   await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
-  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
+  const interruptButton = container.querySelector<HTMLButtonElement>('[aria-label="Interrupt command"]')!;
+  expect(interruptButton).not.toBeNull();
   expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(true);
+  await act(async () => { interruptButton.click(); });
+  expect(shell.calls).toContain("interrupt_terminal");
+  expect(shell.calls).not.toContain("write_terminal");
   await shell.end(0);
   expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
   expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(false);

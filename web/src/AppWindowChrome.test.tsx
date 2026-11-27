@@ -264,4 +264,19 @@ describe("App window chrome", () => {
     expect(editBtn!.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector('.app-menu-popup[role="menu"]')).toBeNull();
   });
+
+  it("renders square, vertically centered header icon buttons and omits the right dock close button", async () => {
+    const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const headerIconRule = css.match(/\.header > \.icon-btn,\s*\.header-actions > \.icon-btn\s*\{([^}]*)\}/);
+    expect(headerIconRule).not.toBeNull();
+    expect(headerIconRule![1]).toContain("align-items: center");
+    expect(headerIconRule![1]).toContain("justify-content: center");
+    expect(headerIconRule![1]).toContain("width: 26px");
+    expect(headerIconRule![1]).toContain("height: 26px");
+    expect(headerIconRule![1]).toContain("border-radius: var(--radius-control)");
+    expect(css).not.toMatch(/\.window\.macos\s*\{/);
+
+    await renderAppWithUserAgent(MACOS);
+    expect(host.querySelector('button[aria-label="Close tools panel"]')).toBeNull();
+  });
 });

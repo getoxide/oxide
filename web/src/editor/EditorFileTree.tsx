@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -9,6 +9,7 @@ import { commands, type FileEntry } from "../bindings";
 import { Skeleton } from "../shared/Skeleton";
 import { showContextMenu } from "../shared/ContextMenu";
 import { copyTextToClipboard, joinProjectPath, revealInFileManagerLabel } from "../shared/platform";
+import { startFileDrag } from "../terminal/fileDrag";
 
 export const EditorFileTree = memo(function EditorFileTree({
   projectId,
@@ -35,6 +36,7 @@ export const EditorFileTree = memo(function EditorFileTree({
   );
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
   const [error, setError] = useState<string | null>(null);
+  const suppressClick = useRef(false);
   async function load(path: string) {
     try {
       const result = await commands.listDir(projectId, path);
@@ -99,9 +101,29 @@ export const EditorFileTree = memo(function EditorFileTree({
           className={`files-row${selected === entry.path ? " files-row-selected" : ""}`}
           title={entry.path}
           style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() =>
-            entry.isDir ? toggle(entry.path) : onOpen(entry.path)
-          }
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            suppressClick.current = false;
+            const fullPath = rootPath ? joinProjectPath(rootPath, entry.path) : entry.path;
+            startFileDrag({
+              path: fullPath,
+              label: entry.name,
+              startX: event.clientX,
+              startY: event.clientY,
+              pointerId: event.pointerId,
+              onStarted: () => {
+                suppressClick.current = true;
+              },
+            });
+          }}
+          onClick={() => {
+            if (suppressClick.current) {
+              suppressClick.current = false;
+              return;
+            }
+            if (entry.isDir) toggle(entry.path);
+            else onOpen(entry.path);
+          }}
           onDoubleClick={() => {
             if (!entry.isDir) onKeep?.(entry.path);
           }}

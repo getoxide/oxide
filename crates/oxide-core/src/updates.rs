@@ -13,10 +13,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// GitHub release's `latest.json`. GitHub's "latest" never resolves to a draft or a pre-release.
 /// Compiled into every install: changing it strands them.
 pub const STABLE_FEED: &str = "https://updates.getoxide.dev/latest.json";
+/// Direct GitHub releases fallback when `updates.getoxide.dev` is unreachable or not yet deployed.
+pub const STABLE_FEED_FALLBACK: &str =
+    "https://github.com/getoxide/oxide/releases/latest/download/latest.json";
 /// Installs whose own version is a pre-release ask GitHub's releases API for the newest published
 /// release of any kind (pre-releases included) and read its `latest.json` asset.
 pub const PRERELEASE_FEED: &str =
     "https://api.github.com/repos/getoxide/oxide/releases?per_page=10";
+
+/// Returns the ordered list of updater feed endpoints for `feed`.
+pub fn feed_endpoints(feed: &str) -> Vec<&str> {
+    if feed == STABLE_FEED {
+        vec![STABLE_FEED, STABLE_FEED_FALLBACK]
+    } else {
+        vec![feed]
+    }
+}
 /// How often Oxide asks the feed, after the check at launch.
 pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 const RELEASE_PAGE: &str = "https://github.com/getoxide/oxide/releases/tag/";
@@ -1064,6 +1076,18 @@ mod tests {
         assert_eq!(
             tracker.snapshot().available.map(|update| update.version),
             Some("0.2.0".into())
+        );
+    }
+
+    #[test]
+    fn stable_feed_includes_github_releases_fallback() {
+        assert_eq!(
+            feed_endpoints(STABLE_FEED),
+            vec![STABLE_FEED, STABLE_FEED_FALLBACK]
+        );
+        assert_eq!(
+            feed_endpoints("http://127.0.0.1:9/latest.json"),
+            vec!["http://127.0.0.1:9/latest.json"]
         );
     }
 }
