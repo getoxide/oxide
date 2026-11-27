@@ -163,9 +163,14 @@ it("keeps completion and history options from shrinking and overlapping inside t
   expect(option.height).toBe("24px");
 });
 
-it("stretches right dock tabs to fill the available strip width", () => {
+it("stretches right dock tabs to fill the full bar height while keeping natural width", () => {
+  const toolsTabs = declarations(".tools-tabs");
+  expect(toolsTabs["align-items"]).toBe("stretch");
+  const strip = declarations(".tools-tab-strip");
+  expect(strip.height).toBe("100%");
   const tab = declarations(".tools > .tabs .tab");
-  expect(tab.flex).toBe("1 1 0");
+  expect(tab.flex).toBe("none");
+  expect(tab.height).toBe("100%");
 });
 
 it("reserves room for project row action buttons only on hover/focus without overlapping the project name", () => {

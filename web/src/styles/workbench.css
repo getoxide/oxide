@@ -920,12 +920,13 @@
 .surface-content > section, .surface-content > .pr-views { flex: 1; min-height: 0; }
 .surface-content > .files { flex: 1; min-height: 0; }
 .tools > .code-workbench, .tools > .terminal-workbench { flex: 1; min-height: 0; min-width: 0; }
-/* The dock's Surfaces never drop their labels: the strip scrolls sideways instead, and the utility
-   controls stay pinned outside the scroll area so Maximize/Restore and Close remain reachable. */
-.tools-tabs { flex: none; min-width: 0; gap: 0; padding: 0; }
+/* The dock's Surfaces never drop their labels: the strip scrolls sideways instead. */
+.tools-tabs { flex: none; align-items: stretch; min-width: 0; gap: 0; padding: 0; }
 .tools-tab-strip {
   display: flex;
   align-items: stretch;
+  align-self: stretch;
+  height: 100%;
   flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
@@ -934,10 +935,8 @@
   scrollbar-width: none;
 }
 .tools-tab-strip::-webkit-scrollbar { display: none; }
-.tools-tab-actions { display: flex; align-items: center; flex: none; gap: 2px; padding: 0 6px; }
-.tools-tab-actions .icon-btn { flex: none; }
-.tools > .tabs .tab { flex: 1 1 0; min-width: max-content; padding: 0 9px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; min-height: 0; font-size: 13px; }
-.header > .icon-btn { flex: none; min-width: 28px; }
+.tools > .tabs .tab { flex: none; min-width: 0; padding: 0 12px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0; height: 100%; min-height: 0; font-size: 13px; }
+.header > .icon-btn { flex: none; }
 
 /* Project terminal tabs: one strip, scrolling sideways so many shells never displace the Surface tabs. */
 .terminal-tab-panel[hidden] { display: none; }

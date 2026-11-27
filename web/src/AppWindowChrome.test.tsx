@@ -265,13 +265,18 @@ describe("App window chrome", () => {
     expect(host.querySelector('.app-menu-popup[role="menu"]')).toBeNull();
   });
 
-  it("vertically centers header icon buttons without altering the titlebar style", () => {
+  it("renders perfectly round, vertically centered header icon buttons and omits the right dock close button", async () => {
     const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
     const headerIconRule = css.match(/\.header > \.icon-btn,\s*\.header-actions > \.icon-btn\s*\{([^}]*)\}/);
     expect(headerIconRule).not.toBeNull();
     expect(headerIconRule![1]).toContain("align-items: center");
     expect(headerIconRule![1]).toContain("justify-content: center");
-    expect(headerIconRule![1]).toContain("height: var(--control-sm)");
+    expect(headerIconRule![1]).toContain("width: 26px");
+    expect(headerIconRule![1]).toContain("height: 26px");
+    expect(headerIconRule![1]).toContain("border-radius: 50%");
     expect(css).not.toMatch(/\.window\.macos\s*\{/);
+
+    await renderAppWithUserAgent(MACOS);
+    expect(host.querySelector('button[aria-label="Close tools panel"]')).toBeNull();
   });
 });
