@@ -6,7 +6,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { FilesPanel } from "./FilesPanel";
 import { ContextMenu } from "../shared/ContextMenu";
 import { revealInFileManagerLabel } from "../shared/platform";
-import { OXIDE_FILE_MIME } from "../terminal/useTerminalTransfer";
+import { cancelActiveFileDrag, subscribeFileDrag } from "../terminal/fileDrag";
 const host = document.createElement("div"); document.body.append(host);
 const root = createRoot(host);
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -153,30 +153,49 @@ it("offers Open in Code, Copy path, and Reveal in File Manager on Files view ent
   expect(invoked.some((c) => c.command === "reveal_in_finder" && JSON.stringify(c.args) === JSON.stringify({ projectId: 7 }))).toBe(true);
 });
 
-it("makes file and folder rows draggable with their full path for terminal drop", async () => {
+it("pointer-drags file and folder rows with their full path and suppresses the trailing click", async () => {
   treeIpc();
-  await act(async () => root.render(<FilesPanel projectId={1} rootPath="/repo" revision={0} onOpenFile={vi.fn()} />));
+  const open = vi.fn();
+  await act(async () => root.render(<FilesPanel projectId={1} rootPath="/repo" revision={0} onOpenFile={open} />));
   await settle();
+
+  const events: { type: string; path?: string }[] = [];
+  const stop = subscribeFileDrag((event) => {
+    events.push(event.type === "cancel" ? { type: "cancel" } : { type: event.type, path: event.drag.path });
+  });
 
   const fileRow = buttonWith("README.md");
   const dirRow = buttonWith("src");
-  expect(fileRow.draggable).toBe(true);
-  expect(dirRow.draggable).toBe(true);
 
-  const stored = new Map<string, string>();
-  const dataTransfer = {
-    effectAllowed: "none",
-    setData: (type: string, val: string) => { stored.set(type, val); },
+  const pointerDown = (target: Element, x: number, y: number, pointerId: number) => {
+    const e = new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    Object.defineProperty(e, "pointerId", { value: pointerId });
+    target.dispatchEvent(e);
   };
-  const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
-  Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-  await act(async () => { fileRow.dispatchEvent(dragStart); });
-  expect(stored.get(OXIDE_FILE_MIME)).toBe("/repo/README.md");
-  expect(stored.get("text/plain")).toBe("/repo/README.md");
+  const windowPointer = (type: "pointermove" | "pointerup", x: number, y: number, pointerId: number) => {
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(e, "pointerId", { value: pointerId });
+    window.dispatchEvent(e);
+  };
 
-  stored.clear();
-  const dirDragStart = new Event("dragstart", { bubbles: true, cancelable: true });
-  Object.defineProperty(dirDragStart, "dataTransfer", { value: dataTransfer });
-  await act(async () => { dirRow.dispatchEvent(dirDragStart); });
-  expect(stored.get(OXIDE_FILE_MIME)).toBe("/repo/src");
+  await act(async () => {
+    pointerDown(fileRow, 10, 10, 1);
+    windowPointer("pointermove", 40, 10, 1);
+    windowPointer("pointerup", 200, 10, 1);
+    fileRow.click();
+  });
+  expect(events).toContainEqual({ type: "drop", path: "/repo/README.md" });
+  expect(fileRow.closest('[role="treeitem"]')?.getAttribute("aria-selected")).toBe("false");
+
+  events.length = 0;
+  await act(async () => {
+    pointerDown(dirRow, 10, 30, 2);
+    windowPointer("pointermove", 50, 30, 2);
+    windowPointer("pointerup", 200, 30, 2);
+  });
+  expect(events).toContainEqual({ type: "drop", path: "/repo/src" });
+  expect(open).not.toHaveBeenCalled();
+
+  stop();
+  cancelActiveFileDrag();
 });

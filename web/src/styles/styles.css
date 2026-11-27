@@ -250,7 +250,7 @@ html.macos .header,
   height: 26px;
   min-height: 26px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-control);
   line-height: 1;
 }
 .header .icon-btn svg,
@@ -948,7 +948,7 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .palette-action { color: var(--fg); }
 .palette-empty { color: var(--faint); cursor: default; pointer-events: none; }
 .palette-empty:hover { background: none; }
-.palette-empty + .palette-action { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; padding-top: 9px; }
+.palette-empty:has(+ .palette-action) { border-radius: 0; border-bottom: 1px solid var(--line); margin-bottom: 6px; padding-bottom: 10px; }
 
 .tools .tab { gap: 4px; }
 
@@ -1176,4 +1176,22 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .context-menu-item:disabled { color: var(--faint); }
 .context-menu-item kbd { color: var(--faint); font: 11px var(--mono); }
 .context-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.oxide-dragging-file, .oxide-dragging-file * { user-select: none !important; cursor: copy !important; }
+.file-drag-ghost {
+  position: fixed;
+  z-index: 2500;
+  pointer-events: none;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--fg-bright);
+  font-size: 12px;
+  font-family: var(--mono);
+  box-shadow: 0 8px 24px #0007;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 

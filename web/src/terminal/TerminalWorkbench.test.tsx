@@ -460,8 +460,12 @@ it("keeps what was typed during a running command, and a refused Enter keeps it 
   expect(shell.calls.filter((name) => name === "run_terminal_block")).toHaveLength(1);
   // Past the running indicator delay the command line gives way to Interrupt, without losing its text.
   await act(async () => { await new Promise((r) => setTimeout(r, RUNNING_INDICATOR_DELAY_MS + 50)); });
-  expect(container.querySelector('[aria-label="Interrupt command"]')).not.toBeNull();
+  const interruptButton = container.querySelector<HTMLButtonElement>('[aria-label="Interrupt command"]')!;
+  expect(interruptButton).not.toBeNull();
   expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(true);
+  await act(async () => { interruptButton.click(); });
+  expect(shell.calls).toContain("interrupt_terminal");
+  expect(shell.calls).not.toContain("write_terminal");
   await shell.end(0);
   expect(container.querySelector('[aria-label="Interrupt command"]')).toBeNull();
   expect(container.querySelector<HTMLFormElement>("form.terminal-command-composer")!.hidden).toBe(false);

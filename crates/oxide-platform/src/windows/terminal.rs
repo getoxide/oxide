@@ -169,6 +169,15 @@ pub fn write_input(
     writer.flush()
 }
 
+/// Force-stops every descendant process of the shell without killing the shell itself, so
+/// PowerShell returns to its prompt and emits the block end marker.
+pub fn force_interrupt_foreground(shell_pid: u32, _master: &dyn MasterPty) -> io::Result<()> {
+    if shell_pid == 0 {
+        return Ok(());
+    }
+    super::process::terminate_descendants(shell_pid)
+}
+
 /// Ends a shell: killing the process ends its Job Object, and with it the rest.
 pub fn close_session(_group: Option<i32>, _grace: Duration, shell: &mut dyn ShellProcess) {
     shell.kill();

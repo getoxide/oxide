@@ -8,6 +8,10 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 describe("detectCliAgent", () => {
   it.each([
+    ["agy", "antigravity"],
+    ["agy --model gemini", "antigravity"],
+    ["/usr/local/bin/agy", "antigravity"],
+    ["antigravity", "antigravity"],
     ["claude", "claude"],
     ["claude-code --model opus", "claude"],
     ["/usr/local/bin/claude", "claude"],
@@ -24,6 +28,7 @@ describe("detectCliAgent", () => {
     ["opencode", "opencode"],
     ["goose session", "goose"],
     ["amp", "amp"],
+    ["agent", "cursor"],
     ["cursor-agent", "cursor"],
     ["cline", "cline"],
     ["droid", "droid"],
@@ -31,6 +36,12 @@ describe("detectCliAgent", () => {
     ["q chat", "kiro"],
     ["qwen", "qwen"],
     ["vibe", "vibe"],
+    ["pi", "pi"],
+    ["kimi", "kimi"],
+    ["crush", "crush"],
+    ["kilocode", "kilo"],
+    ["auggie", "augment"],
+    ["openhands", "openhands"],
     ["C:\\tools\\codex.exe", "codex"],
   ])("detects %s as %s", (command, expectedId) => {
     expect(detectCliAgent(command)?.id).toBe(expectedId);
@@ -53,6 +64,9 @@ describe("TerminalAgentIcon", () => {
   it("renders the agent SVG when an agent CLI is running and falls back to TerminalIcon otherwise", async () => {
     await act(async () => root.render(<TerminalAgentIcon command="claude" size={16} />));
     expect(host.querySelector('[data-agent="claude"]')).not.toBeNull();
+
+    await act(async () => root.render(<TerminalAgentIcon command="agy" size={16} />));
+    expect(host.querySelector('[data-agent="antigravity"]')).not.toBeNull();
 
     await act(async () => root.render(<TerminalAgentIcon command="npm test" size={16} />));
     expect(host.querySelector("[data-agent]")).toBeNull();

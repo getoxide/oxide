@@ -532,10 +532,12 @@ export function TerminalWorkbench({
           <code className="terminal-running-command" title={runningText}>{runningText}</code>
           <button
             className="terminal-interrupt"
-            onClick={() => void write("\x03")}
+            onClick={() => {
+              if (sessionId !== null) void commands.interruptTerminal(sessionId);
+            }}
             aria-label="Interrupt command"
           >
-            <SquareFillIcon size={12} /> Interrupt <kbd>Ctrl+C</kbd>
+            <SquareFillIcon size={12} /> Interrupt
           </button>
         </div>
       )}

@@ -1023,6 +1023,10 @@ impl Core {
         session.write(bytes)
     }
 
+    pub fn interrupt_terminal(&self, terminal_id: u32) -> Result<()> {
+        self.terminal(terminal_id)?.interrupt()
+    }
+
     pub fn run_terminal_block(&self, terminal_id: u32, command: &str, token: &str) -> Result<()> {
         let session = self.terminal(terminal_id)?;
         self.mark_terminal_project_acted_upon(terminal_id)?;

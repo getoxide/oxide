@@ -29,6 +29,7 @@ export const commands = {
 	terminalSettings: () => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("terminal_settings")),
 	setTerminalSettings: (settings: TerminalSettings) => typedError<TerminalSettings, AppError>(__TAURI_INVOKE("set_terminal_settings", { settings })),
 	writeTerminal: (terminalId: number, input: number[]) => typedError<null, AppError>(__TAURI_INVOKE("write_terminal", { terminalId, input })),
+	interruptTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("interrupt_terminal", { terminalId })),
 	resizeTerminal: (terminalId: number, rows: number, cols: number) => typedError<null, AppError>(__TAURI_INVOKE("resize_terminal", { terminalId, rows, cols })),
 	closeTerminal: (terminalId: number) => typedError<null, AppError>(__TAURI_INVOKE("close_terminal", { terminalId })),
 	completeTerminal: (terminalId: number, line: string, cursor: number) => typedError<TerminalCompletion, AppError>(__TAURI_INVOKE("complete_terminal", { terminalId, line, cursor })),

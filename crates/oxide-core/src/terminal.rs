@@ -35,6 +35,7 @@ pub struct TerminalSession {
 
 enum SessionCommand {
     Write(Vec<u8>, Sender<std::io::Result<()>>),
+    Interrupt(Sender<std::io::Result<()>>),
     Resize(PtySize, Sender<std::result::Result<(), String>>),
     Close(Sender<()>),
 }
@@ -183,6 +184,10 @@ impl TerminalSession {
                         let result = os::write_input(&mut writer, &input, pid, master.as_ref());
                         reply.tell(result);
                     }
+                    SessionCommand::Interrupt(reply) => {
+                        let result = os::force_interrupt_foreground(pid, master.as_ref());
+                        reply.tell(result);
+                    }
                     SessionCommand::Resize(size, reply) => {
                         let result = master.resize(size).map_err(|error| error.to_string());
                         reply.tell(result);
@@ -240,6 +245,17 @@ impl TerminalSession {
             .recv()
             .map_err(|_| Error::Terminal("terminal actor stopped".into()))?
             .map_err(|e| Error::Terminal(format!("write terminal input: {e}")))
+    }
+
+    pub fn interrupt(&self) -> Result<()> {
+        let (reply, result) = bounded(1);
+        self.commands
+            .send(SessionCommand::Interrupt(reply))
+            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?;
+        result
+            .recv()
+            .map_err(|_| Error::Terminal("terminal actor stopped".into()))?
+            .map_err(|e| Error::Terminal(format!("interrupt terminal: {e}")))
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {

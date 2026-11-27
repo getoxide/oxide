@@ -1,15 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-
-export const OXIDE_FILE_MIME = "application/x-oxide-file-path";
+import { subscribeFileDrag } from "./fileDrag";
 
 /** Literal paths, never executable shell fragments. PowerShell and POSIX differ on apostrophes. */
 export function terminalPaths(paths: string[], windows = /Windows/i.test(navigator.userAgent)): string {
   return paths.map((path) => `'${path.replaceAll("'", windows ? "''" : "'\\''")}'`).join(" ") + " ";
-}
-
-function hasFileMime(event: DragEvent): boolean {
-  return Array.from(event.dataTransfer?.types ?? []).includes(OXIDE_FILE_MIME);
 }
 
 /** Native file drops bypass DOM drop events in Tauri: the dropped paths are typed into the terminal. */
@@ -30,11 +25,12 @@ export function useTerminalTransfer(host: RefObject<HTMLElement | null>, visible
       }
     });
     let unlisten: (() => void) | undefined;
-    const over = (position: { x: number; y: number }) => {
+    const overClient = (x: number, y: number) => {
       const rect = element.getBoundingClientRect();
-      const x = position.x / window.devicePixelRatio, y = position.y / window.devicePixelRatio;
       return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     };
+    const over = (position: { x: number; y: number }) =>
+      overClient(position.x / window.devicePixelRatio, position.y / window.devicePixelRatio);
     try {
       void getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (!active) return;
@@ -46,49 +42,24 @@ export function useTerminalTransfer(host: RefObject<HTMLElement | null>, visible
       }).then((stop) => { if (active) unlisten = stop; else stop(); }).catch(() => {});
     } catch { /* Browser previews have no native drops. */ }
 
-    let dragDepth = 0;
-    const onDragEnter = (event: DragEvent) => {
-      if (!hasFileMime(event)) return;
-      event.preventDefault();
-      dragDepth += 1;
-      setDomDragging(true);
-    };
-    const onDragOver = (event: DragEvent) => {
-      if (!hasFileMime(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      setDomDragging(true);
-    };
-    const onDragLeave = (event: DragEvent) => {
-      if (!hasFileMime(event)) return;
-      dragDepth = Math.max(0, dragDepth - 1);
-      if (dragDepth === 0 || !element.contains(event.relatedTarget as Node | null)) {
-        dragDepth = 0;
+    const stopFileDrag = subscribeFileDrag((event) => {
+      if (!active) return;
+      if (event.type === "move") {
+        setDomDragging(overClient(event.drag.x, event.drag.y));
+      } else if (event.type === "drop") {
+        setDomDragging(false);
+        if (overClient(event.drag.x, event.drag.y)) {
+          latest.current(terminalPaths([event.drag.path]));
+        }
+      } else {
         setDomDragging(false);
       }
-    };
-    const onDrop = (event: DragEvent) => {
-      if (!hasFileMime(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dragDepth = 0;
-      setDomDragging(false);
-      const droppedPath = event.dataTransfer?.getData(OXIDE_FILE_MIME);
-      if (droppedPath) latest.current(terminalPaths([droppedPath]));
-    };
-
-    element.addEventListener("dragenter", onDragEnter);
-    element.addEventListener("dragover", onDragOver);
-    element.addEventListener("dragleave", onDragLeave);
-    element.addEventListener("drop", onDrop);
+    });
 
     return () => {
       active = false;
       unlisten?.();
-      element.removeEventListener("dragenter", onDragEnter);
-      element.removeEventListener("dragover", onDragOver);
-      element.removeEventListener("dragleave", onDragLeave);
-      element.removeEventListener("drop", onDrop);
+      stopFileDrag();
     };
   }, [host, visible]);
 

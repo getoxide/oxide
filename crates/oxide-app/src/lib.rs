@@ -312,6 +312,13 @@ fn write_terminal(
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
+fn interrupt_terminal(core: State<'_, Arc<Core>>, terminal_id: u32) -> Result<(), AppError> {
+    Ok(core.interrupt_terminal(terminal_id)?)
+}
+
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
 fn resize_terminal(
     core: State<'_, Arc<Core>>,
     terminal_id: u32,
@@ -1662,6 +1669,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         terminal_settings,
         set_terminal_settings,
         write_terminal,
+        interrupt_terminal,
         resize_terminal,
         close_terminal,
         complete_terminal,
