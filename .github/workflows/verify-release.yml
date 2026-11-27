@@ -217,9 +217,10 @@ jobs:
       - name: Download the release's assets and decide what the repositories take
         id: plan
         run: |
-          mkdir assets
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-          node tools/ci/cli.mjs repository-plan "$TAG" assets | tee plan.json
+          # Not "assets": the checkout already has the repository's assets/ directory (the icon masters).
+          mkdir release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          node tools/ci/cli.mjs repository-plan "$TAG" release-assets | tee plan.json
 
       - name: Check the APT repository
         env:
@@ -231,7 +232,7 @@ jobs:
           for file in InRelease Release Packages oxide-repository.gpg; do
             ok=false
             for attempt in $(seq 1 12); do
-              if curl -fsSL "${base}${file}" -o "apt/$file" && { [ "$STABLE" != "true" ] || cmp -s "apt/$file" "assets/$file"; }; then ok=true; break; fi
+              if curl -fsSL "${base}${file}" -o "apt/$file" && { [ "$STABLE" != "true" ] || cmp -s "apt/$file" "release-assets/$file"; }; then ok=true; break; fi
               echo "Attempt $attempt: $file is not the release's yet."
               sleep 10
             done
@@ -244,7 +245,7 @@ jobs:
           gpgv --keyring "$PWD/apt/oxide-repository.gpg" --output apt/Release.verified apt/InRelease
           cmp apt/Release.verified apt/Release
           # The check reads the release's whole file list: it needs the .rpm names beside the .deb files.
-          cp assets/*.rpm apt/
+          cp release-assets/*.rpm apt/
           node tools/ci/cli.mjs check-apt "$TAG" apt
 
       - name: Check the DNF repository
@@ -252,7 +253,7 @@ jobs:
         run: |
           mkdir dnf
           # The published packages: their hashes are what the metadata must carry.
-          cp assets/*.rpm assets/*.deb dnf/
+          cp release-assets/*.rpm release-assets/*.deb dnf/
           fetch() {
             curl -fsSL "${DNF_SITE}repodata/repomd.xml" -o dnf/repomd.xml &&
               curl -fsSL "${DNF_SITE}repodata/repomd.xml.asc" -o dnf/repomd.xml.asc &&
@@ -269,7 +270,7 @@ jobs:
           done
           if [ "$ok" != "true" ]; then fetch; exit 1; fi
           # The signatures: the site's key is the release's key, repomd.xml and every .rpm carry it.
-          cmp dnf/oxide-repository.asc assets/oxide-repository.asc
+          cmp dnf/oxide-repository.asc release-assets/oxide-repository.asc
           export GNUPGHOME="$RUNNER_TEMP/gnupg-dnf"
           mkdir -m 700 "$GNUPGHOME"
           gpg --batch --quiet --import dnf/oxide-repository.asc
