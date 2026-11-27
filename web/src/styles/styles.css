@@ -238,7 +238,74 @@ code { font-family: var(--mono); font-size: 12px; }
 html.macos .header,
 .window.macos .header {
   /* Room for the macOS traffic lights of the overlay title bar. */
-  padding: 0 12px 0 84px;
+  padding: 0 10px 0 84px;
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+}
+.window.macos {
+  /* Aligns the 29px inner header center (14.5px) with macOS overlay traffic lights (~14px). */
+  --titlebar-height: 30px;
+}
+.header > .icon-btn,
+.header-actions > .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.header .icon-btn svg,
+.header .update-btn svg {
+  display: block;
+}
+.window.macos .header .icon-btn,
+.window.macos .header .update-btn {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  line-height: 1;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.11) 0%, rgb(255 255 255 / 0.05) 100%);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22), inset 0 -0.5px 0 rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.28);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  color: var(--fg);
+}
+.window.macos .header .icon-btn {
+  min-width: 30px;
+}
+.window.macos .header .icon-btn:hover:not(:disabled),
+.window.macos .header .update-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.18) 0%, rgb(255 255 255 / 0.09) 100%);
+  border-color: rgb(255 255 255 / 0.24);
+  color: var(--fg-bright);
+}
+.window.macos .header .icon-btn[aria-pressed="true"],
+.window.macos .header .icon-btn:active:not(:disabled),
+.window.macos .header .update-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--acc2) 32%, rgb(255 255 255 / 0.14)) 0%, color-mix(in srgb, var(--acc) 22%, rgb(255 255 255 / 0.06)) 100%);
+  border-color: color-mix(in srgb, var(--acc2) 48%, rgb(255 255 255 / 0.24));
+  color: var(--fg-bright);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.34), 0 1px 4px rgb(0 0 0 / 0.28);
+}
+:root[data-appearance="light"] .window.macos .header .icon-btn,
+:root[data-appearance="light"] .window.macos .header .update-btn {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.72) 0%, rgb(255 255 255 / 0.45) 100%);
+  border: 1px solid rgb(0 0 0 / 0.09);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 1px 2px rgb(0 0 0 / 0.08);
+  color: var(--fg);
+}
+:root[data-appearance="light"] .window.macos .header .icon-btn:hover:not(:disabled),
+:root[data-appearance="light"] .window.macos .header .update-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.88) 0%, rgb(255 255 255 / 0.65) 100%);
+  border-color: rgb(0 0 0 / 0.15);
+  color: var(--fg-bright);
+}
+:root[data-appearance="light"] .window.macos .header .icon-btn[aria-pressed="true"],
+:root[data-appearance="light"] .window.macos .header .icon-btn:active:not(:disabled),
+:root[data-appearance="light"] .window.macos .header .update-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--acc2) 22%, rgb(255 255 255 / 0.75)) 0%, color-mix(in srgb, var(--acc) 14%, rgb(255 255 255 / 0.55)) 100%);
+  border-color: color-mix(in srgb, var(--acc2) 45%, rgb(0 0 0 / 0.14));
+  color: var(--fg-bright);
 }
 .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
 .header-actions > .icon-btn { flex: none; }
@@ -930,7 +997,9 @@ button.link.pending:disabled { opacity: 1; background: none; border: 0; color: v
 .palette-open { font-size: 10.5px; padding: 0 6px; border-radius: 4px; background: var(--bg4); color: var(--dim); box-shadow: inset 0 0 0 1px var(--line); }
 .palette-detail { color: var(--faint); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-action { color: var(--fg); }
-.palette-empty { color: var(--faint); }
+.palette-empty { color: var(--faint); cursor: default; pointer-events: none; }
+.palette-empty:hover { background: none; }
+.palette-empty + .palette-action { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; padding-top: 9px; }
 
 .tools .tab { gap: 4px; }
 

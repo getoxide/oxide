@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type AppError, type GithubRepository, type Project } from "../bindings";
 import { displayPath } from "../terminal/headerLines";
-import { matchActions, matchProjects, moveHighlight, type PaletteActionId } from "./paletteSearch";
+import { matchActions, matchProjects, moveHighlight, PALETTE_ACTIONS, type PaletteActionId } from "./paletteSearch";
 
 type Result<T> = { status: "ok"; data: T } | { status: "error"; error: AppError };
 
@@ -86,7 +86,15 @@ export function ProjectPalette({
     () => (stage.kind === "search" ? matchProjects(projects, query) : []),
     [stage, projects, query],
   );
-  const actionRows = useMemo(() => (stage.kind === "search" ? matchActions(query) : []), [stage, query]);
+  const actionRows = useMemo(() => {
+    if (stage.kind !== "search") return [];
+    const matched = matchActions(query);
+    if (projectRows.length === 0 && query.trim() !== "") {
+      const seen = new Set(matched.map((a) => a.id));
+      return [...matched, ...PALETTE_ACTIONS.filter((a) => !seen.has(a.id))];
+    }
+    return matched;
+  }, [stage, projectRows.length, query]);
   const rowCount =
     stage.kind === "search" ? projectRows.length + actionRows.length : stage.kind === "github" ? repositories.length : 0;
   const activeIndex = Math.min(highlight, Math.max(0, rowCount - 1));
@@ -288,6 +296,9 @@ export function ProjectPalette({
                 <span className="palette-detail">{displayPath(p.path)}</span>
               </li>
             ))}
+            {projectRows.length === 0 && query.trim() !== "" && (
+              <li className="palette-empty" role="presentation">No matching Projects</li>
+            )}
             {actionRows.map((a, i) => (
               <li
                 key={a.id}
@@ -301,7 +312,7 @@ export function ProjectPalette({
                 {a.label}
               </li>
             ))}
-            {rowCount === 0 && <li className="palette-empty">No match</li>}
+            {rowCount === 0 && <li className="palette-empty" role="presentation">No match</li>}
           </ul>
         )}
         {stage.kind === "github" && (

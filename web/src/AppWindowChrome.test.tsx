@@ -264,4 +264,13 @@ describe("App window chrome", () => {
     expect(editBtn!.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector('.app-menu-popup[role="menu"]')).toBeNull();
   });
+
+  it("aligns macOS titlebar controls vertically with Liquid Glass capsule styling without affecting Windows or Linux", () => {
+    const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).toMatch(/\.window\.macos\s*\{[^}]*--titlebar-height:\s*30px/);
+    const macButtonMatch = css.match(/\.window\.macos \.header \.icon-btn,\s*\.window\.macos \.header \.update-btn\s*\{([^}]*)\}/);
+    expect(macButtonMatch).not.toBeNull();
+    expect(macButtonMatch![1]).toContain("border-radius: 999px");
+    expect(macButtonMatch![1]).toContain("backdrop-filter:");
+  });
 });
