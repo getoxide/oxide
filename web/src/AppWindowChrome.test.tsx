@@ -265,12 +265,13 @@ describe("App window chrome", () => {
     expect(host.querySelector('.app-menu-popup[role="menu"]')).toBeNull();
   });
 
-  it("aligns macOS titlebar controls vertically with Liquid Glass capsule styling without affecting Windows or Linux", () => {
+  it("vertically centers header icon buttons without altering the titlebar style", () => {
     const css = stylesCss.replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(css).toMatch(/\.window\.macos\s*\{[^}]*--titlebar-height:\s*30px/);
-    const macButtonMatch = css.match(/\.window\.macos \.header \.icon-btn,\s*\.window\.macos \.header \.update-btn\s*\{([^}]*)\}/);
-    expect(macButtonMatch).not.toBeNull();
-    expect(macButtonMatch![1]).toContain("border-radius: 999px");
-    expect(macButtonMatch![1]).toContain("backdrop-filter:");
+    const headerIconRule = css.match(/\.header > \.icon-btn,\s*\.header-actions > \.icon-btn\s*\{([^}]*)\}/);
+    expect(headerIconRule).not.toBeNull();
+    expect(headerIconRule![1]).toContain("align-items: center");
+    expect(headerIconRule![1]).toContain("justify-content: center");
+    expect(headerIconRule![1]).toContain("height: var(--control-sm)");
+    expect(css).not.toMatch(/\.window\.macos\s*\{/);
   });
 });
