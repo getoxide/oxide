@@ -167,7 +167,7 @@ flowchart LR
   Core --> Tools["git · gh · language servers"]
 ```
 
-- `crates/oxide-platform`: the only crate with OS-specific code, plus the process, lock and diagnostics primitives ([ADR-0019](docs/adr/0019-platform-layer.md)).
+- `crates/oxide-platform`: the only crate with OS-specific code, plus the process, lock and diagnostics primitives: contract modules at its root, one private implementation per OS under `src/imp/` ([ADR-0019](docs/adr/0019-platform-layer.md), [ADR-0022](docs/adr/0022-platform-contract-and-implementations.md)).
 - `crates/oxide-core`: Projects, SQLite storage, terminals and their shells, files, Git, GitHub and language servers. It knows nothing about Tauri.
 - `crates/oxide-app`: the thin Tauri shell that exposes Core to the webview.
 - `web/`: the React frontend, grouped by area under `web/src` (`projects`, `terminal`, `editor`, `issues`, `pull-requests`, `settings`, `updates`, `shared`, `styles`).

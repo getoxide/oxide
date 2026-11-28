@@ -1,5 +1,7 @@
 # Platform layer: OS-specific code in one crate
 
+> Amended by [ADR-0022](0022-platform-contract-and-implementations.md): the implementations moved to `src/imp/` behind contract modules at the crate root (`fs`, `process`, `system`, `terminal`, `env`) that document each function once, and OS-specific behaviour, not only OS-only APIs, belongs in the layer.
+
 All code that needs an API existing on one operating system only lives in the `oxide-platform` crate, with one implementation per OS behind the same functions. Everything else in the workspace is identical on every OS. A local check, also run in CI, enforces it.
 
 ## Background and problem

@@ -122,10 +122,8 @@ fn let_children_receive_ctrl_c() {
 /// is defined before and after the command, so a block that replaces it never gets its own
 /// printed. The command runs from base64 (a syntax error fails the block), then the end is marked
 /// inline, as pipeline output so it follows any output PowerShell is still formatting; the prompt
-/// marks the end only of a block stopped by Ctrl+C. A token other than ASCII letters, digits and
-/// `-` is refused.
+/// marks the end only of a block stopped by Ctrl+C. The contract has already checked `token`.
 pub fn block_script(token: &str, command: &str) -> io::Result<String> {
-    let token = crate::block_token(token)?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(command);
     Ok(format!(
         "; {BLOCK_PROMPT_COMMAND}; [Console]::Clear(); $global:oxideCommandToken='{token}'; $global:oxideExitCode=$null; $global:LASTEXITCODE=0; $oxideOk=$true; [Console]::Write(([char]27)+']633;Oxide;{token};start'+[char]7); try {{ . ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')))); $oxideOk=$? }} catch {{ Write-Error $_; $oxideOk=$false }} finally {{ $global:oxideExitCode=if($oxideOk){{$global:LASTEXITCODE}}else{{if($global:LASTEXITCODE){{$global:LASTEXITCODE}}else{{1}}}} }}; if ($null -ne $global:oxideCommandToken) {{ oxideEnd $global:oxideExitCode }}; {BLOCK_PROMPT_COMMAND}\r"
@@ -223,13 +221,6 @@ mod tests {
         let before = script[..end].find("function global:prompt");
         let after = script[end..].find("function global:prompt");
         assert!(before.is_some() && after.is_some(), "{script}");
-    }
-
-    #[test]
-    fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
-        for token in ["", "a'b", "a;b", "a\"b", "a b", "$x"] {
-            assert!(block_script(token, "Write-Output hi").is_err(), "{token:?}");
-        }
     }
 
     #[test]

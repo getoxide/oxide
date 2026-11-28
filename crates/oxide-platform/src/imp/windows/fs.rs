@@ -15,6 +15,16 @@ pub fn create_private_dir_all(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)
 }
 
+/// Windows keeps the profile ACLs: nothing to change.
+pub fn restrict_dir_to_owner(_dir: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Windows runs a file by its extension: nothing to change.
+pub fn make_executable(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Creates (or truncates) `path` for writing.
 pub fn create_private_file(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()

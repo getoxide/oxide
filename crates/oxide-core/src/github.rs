@@ -507,10 +507,9 @@ impl Gh {
         args: impl IntoIterator<Item = S>,
     ) -> std::result::Result<Command, GhError> {
         let path = self.path_var();
-        #[cfg(windows)]
         let mut child_path = path.clone();
-        #[cfg(windows)]
-        if self.search_path.lock_recover().is_some()
+        if cfg!(windows)
+            && self.search_path.lock_recover().is_some()
             && let Some(inherited_path) = std::env::var_os("PATH")
         {
             // The test shim is found through the explicit search path, but its .cmd launcher
@@ -528,8 +527,6 @@ impl Gh {
                 child_path.push(needed);
             }
         }
-        #[cfg(not(windows))]
-        let child_path = path.clone();
         #[allow(
             clippy::disallowed_methods,
             reason = "the gh runner: the one hardened Command::new for gh (ADR-0016)"
@@ -562,10 +559,8 @@ impl Gh {
     ) -> std::result::Result<String, GhError> {
         // cmd.exe cannot safely carry newlines in a batch argument. gh accepts body text
         // on stdin, preserving descriptions and comments when it is installed as a shim.
-        #[cfg(windows)]
         let mut args = args.to_vec();
-        #[cfg(windows)]
-        let body = if input.is_some() {
+        let body = if !cfg!(windows) || input.is_some() {
             None
         } else {
             args.iter().position(|arg| *arg == "--body").and_then(|at| {
@@ -579,18 +574,10 @@ impl Gh {
             })
         };
         let mut command = self.command(cwd, args.iter())?;
-        let output = match input {
-            Some(input) => pipe_stdin(command, input),
-            None => {
-                #[cfg(windows)]
-                let output = match body {
-                    Some(body) => pipe_stdin(command, body),
-                    None => command.output(),
-                };
-                #[cfg(not(windows))]
-                let output = command.output();
-                output
-            }
+        let output = match (input, body) {
+            (Some(input), _) => pipe_stdin(command, input),
+            (None, Some(body)) => pipe_stdin(command, body),
+            (None, None) => command.output(),
         };
         let output = output.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => GhError::Missing,

@@ -352,8 +352,8 @@ pub fn shell_launch(
 /// live shell through `eval`, exactly as typed (its `cd`, variables, aliases and functions stay,
 /// and `return` or bash's `local` behave as at the prompt), and marks the end itself; the prompt
 /// hook only marks the end of a command that never got back to the wrapper (Ctrl+C). The leading
-/// space keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`). A
-/// token other than ASCII letters, digits and `-` is refused.
+/// space keeps the wrapper out of the user's history (`hist_ignore_space`, `ignorespace`). The
+/// contract has already checked `token`.
 ///
 /// Until the line editor takes over (while startup files run, or between its prompt hook and
 /// reading), the terminal reads input a line at a time and cuts a line past its limit (1024 bytes
@@ -361,7 +361,6 @@ pub fn shell_launch(
 /// stored in `_oxide_cmd` by lines of at most [`BLOCK_LINE_LIMIT`] bytes, each a complete
 /// statement, and the wrapper runs that variable.
 pub fn block_script(token: &str, command: &str) -> io::Result<String> {
-    let token = crate::block_token(token)?;
     let units = ansi_c_units(command);
     let length: usize = units.iter().map(String::len).sum();
     let (prelude, command) = if length + 3 <= BLOCK_LINE_LIMIT - BLOCK_WRAPPER_LENGTH {
@@ -781,13 +780,6 @@ mod tests {
         assert!(is_shell_supported(ShellKind::Default));
         assert!(!is_shell_supported(ShellKind::PowerShell));
         assert!(!is_shell_supported(ShellKind::Pwsh));
-    }
-
-    #[test]
-    fn the_block_wrapper_refuses_a_token_that_could_break_out_of_it() {
-        for token in ["", "a'b", "a;b", "a\"b", "a b", "$(x)"] {
-            assert!(block_script(token, "echo hi").is_err(), "{token:?}");
-        }
     }
 
     #[test]

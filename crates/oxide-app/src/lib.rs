@@ -2,7 +2,6 @@
 //! The webview talks only to the TypeScript bindings generated from here.
 
 mod conversions;
-mod shell_path;
 mod system;
 mod updates;
 use oxide_core::diag;
@@ -1742,9 +1741,7 @@ pub fn export_bindings() -> Result<(), String> {
 
 pub fn run() {
     // Before anything spawns a thread or a shell: a Dock launch has a bare PATH.
-    if cfg!(target_os = "macos") {
-        shell_path::inherit_login_shell_path();
-    }
+    oxide_platform::env::inherit_login_shell_path();
 
     let builder = builder();
 

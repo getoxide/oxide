@@ -1,108 +1,71 @@
-//! The platform layer (ADR-0019): everything that needs an API existing on one operating system
-//! only lives here, one implementation per OS behind the same functions.
+//! The platform layer (ADR-0019, ADR-0022): everything that depends on the operating system lives
+//! here, in three levels.
 //!
-//! - `macos/`, `linux/` and `windows/` are the implementations. Each is compiled only for its OS
-//!   and holds no conditional compilation. The two Unix ones share `posix/`.
-//! - [`command`], [`diag`] and [`sync`] are the same on every OS. They sit here because the
-//!   implementations need them and this crate depends on no other Oxide crate.
+//! 1. **The contract.** [`fs`], [`process`], [`system`], [`terminal`] and [`env`] declare what the
+//!    platform offers. Each public function is documented once there, says what it does on every
+//!    OS, and delegates to the implementation for the OS it was compiled for.
+//! 2. **Code that is the same on every OS.** [`command`], [`diag`], [`sync`], [`registry`],
+//!    [`child`] and [`bounded_lines`], plus any logic a contract function runs before it delegates
+//!    (such as the validation of a Command block token). They sit here because the implementations
+//!    need them and this crate depends on no other Oxide crate.
+//! 3. **The implementations.** `imp/macos/`, `imp/linux/` and `imp/windows/` offer the same
+//!    functions with the same signatures. Each is compiled only for its OS and holds no
+//!    conditional compilation; the two Unix ones share `imp/posix/`. They are private: callers
+//!    only see the contract, and `dead_code = "deny"` fails the build when an implementation
+//!    offers a function the contract does not call.
 //!
-//! `tools/checks/platform-layer.mjs` keeps OS-specific code out of the other crates and checks
-//! that the three implementations offer the same public items with the same signatures.
-//! Code outside this crate that needs a different value per OS uses the expression form
-//! (`if cfg!(windows) { .. } else { .. }`), which every OS compiles.
+//! `tools/checks/platform-layer.mjs` keeps OS-specific code out of the other crates and checks that
+//! the three implementations offer the same public items with the same signatures, which a Mac
+//! compiler cannot see for Windows. Code outside this crate that needs a different *value* per OS
+//! uses the expression form (`if cfg!(windows) { .. } else { .. }`), which every OS compiles; a
+//! different *behaviour* per OS is a function of the contract.
 
 pub mod bounded_lines;
 pub mod child;
 pub mod command;
 pub mod diag;
+pub mod env;
 mod explorer;
 mod fonts;
+pub mod fs;
+pub mod process;
 pub mod registry;
 pub mod sync;
+pub mod system;
+pub mod terminal;
 
+// The only place that picks an implementation (level 3) for the OS being compiled.
 #[cfg(target_os = "macos")]
-#[path = "macos/mod.rs"]
-mod implementation;
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "an implementation keeps the contract's signature, which another OS needs in full"
+)]
+#[path = "imp/macos/mod.rs"]
+mod imp;
 #[cfg(target_os = "linux")]
-#[path = "linux/mod.rs"]
-mod implementation;
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "an implementation keeps the contract's signature, which another OS needs in full"
+)]
+#[path = "imp/linux/mod.rs"]
+mod imp;
 #[cfg(windows)]
-#[path = "windows/mod.rs"]
-mod implementation;
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "an implementation keeps the contract's signature, which another OS needs in full"
+)]
+#[path = "imp/windows/mod.rs"]
+mod imp;
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 compile_error!("Oxide supports macOS, Linux and Windows.");
 
 #[cfg(unix)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "an implementation keeps the contract's signature, which another OS needs in full"
+)]
+#[path = "imp/posix/mod.rs"]
 mod posix;
 
-pub use implementation::{fs, process, system, terminal};
-
-use serde::{Deserialize, Serialize};
-
-/// `token` when it is a valid Command block token (ASCII letters, digits and `-`), which every
-/// OS's `terminal::block_script` embeds in shell code: anything else could end the quoting
-/// around it (ADR-0016).
-fn block_token(token: &str) -> std::io::Result<&str> {
-    if !token.is_empty()
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        Ok(token)
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "a Command block token is ASCII letters, digits and '-'",
-        ))
-    }
-}
-
-/// The shell a Terminal runs, chosen from the OS allowlist (ADR-0016).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ShellKind {
-    #[default]
-    Default,
-    Zsh,
-    Bash,
-    #[serde(rename = "powershell")]
-    PowerShell,
-    Pwsh,
-}
-
-/// An installed shell that the current OS supports for Terminals.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AvailableShell {
-    pub kind: ShellKind,
-    pub label: String,
-    pub is_default: bool,
-}
-
-/// How to start the interactive shell of a Terminal: plain data the caller turns into a PTY
-/// command, so this crate needs no PTY library.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShellLaunch {
-    /// What the Terminal shows as its shell: `zsh`, `bash`, `PowerShell` or `pwsh`.
-    pub name: String,
-    pub program: std::ffi::OsString,
-    pub args: Vec<std::ffi::OsString>,
-    pub env: Vec<(String, String)>,
-}
-
-/// A running shell, as [`terminal::close_session`] needs to see it.
-pub trait ShellProcess {
-    /// Collects the shell's exit status if it already ended, so a dead shell stops counting as
-    /// alive (on Unix a zombie leader keeps its group looking alive).
-    fn reap(&mut self);
-    /// Ends the shell process itself.
-    fn kill(&mut self);
-}
-
-/// What identifies one running process beyond its id, which the OS reuses: the image it runs and
-/// when it started. Only Windows can read it; elsewhere [`process::process_identity`] is `None`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProcessIdentity {
-    pub image: String,
-    pub creation_time: u64,
-}
+pub use process::ProcessIdentity;
+pub use terminal::{AvailableShell, ShellKind, ShellLaunch, ShellProcess};

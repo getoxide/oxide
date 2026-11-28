@@ -3,7 +3,7 @@
 use crate::diag;
 use std::path::Path;
 
-/// Opens `url` in the default browser. Core passes only links it has checked.
+/// `xdg-open`.
 pub fn open_url(url: &str) {
     diag::best_effort(
         "xdg-open",
@@ -35,4 +35,9 @@ pub fn system_fonts() -> Vec<String> {
         }
         families
     })
+}
+
+/// Distributions put LLVM on the `PATH`.
+pub fn llvm_dirs() -> Vec<std::path::PathBuf> {
+    Vec::new()
 }

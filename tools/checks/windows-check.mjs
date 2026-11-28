@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 
-export const WINDOWS_IMPLEMENTATION = "crates/oxide-platform/src/windows";
+export const WINDOWS_IMPLEMENTATION = "crates/oxide-platform/src/imp/windows";
 const STAMP = "target/windows-check-stamp.json";
 // Where Homebrew puts a full LLVM, which has `llvm-lib` (C dependencies such as `ring` need it).
 const LLVM_DIRECTORIES = ["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"];

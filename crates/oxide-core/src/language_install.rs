@@ -287,15 +287,8 @@ fn find_executable(root: &Path, name: &str, depth: usize) -> Option<PathBuf> {
     }
     None
 }
-#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 fn make_executable(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(error)?;
-    }
-    let _ = path;
-    Ok(())
+    oxide_platform::fs::make_executable(path).map_err(error)
 }
 
 /// The package set Oxide ships for a Node-based language server: a
