@@ -5,6 +5,8 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+mod support;
+
 use oxide_core::Core;
 use rusqlite::Connection;
 
@@ -90,9 +92,11 @@ fn refuses_a_database_from_a_newer_build() {
     ));
 }
 
-#[cfg(unix)]
 #[test]
 fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_group() {
+    if !cfg!(unix) {
+        return;
+    }
     use std::time::Duration;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -183,6 +187,7 @@ fn lists_projects_most_recent_first() {
 }
 
 mod discovery {
+    use crate::support::symlink;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -298,14 +303,16 @@ mod discovery {
         assert!(after[0].missing);
     }
 
-    #[cfg(unix)]
     #[test]
     fn symlinked_paths_resolve_to_one_project() {
+        if !cfg!(unix) {
+            return;
+        }
         let f = fixture();
         repo(&f.root.join("real"));
-        std::os::unix::fs::symlink(f.root.join("real"), f.root.join("alias")).unwrap();
+        symlink(&f.root.join("real"), &f.root.join("alias"));
         let second_root = f._tmp.path().join("Projects");
-        std::os::unix::fs::symlink(&f.root, &second_root).unwrap();
+        symlink(&f.root, &second_root);
 
         let found = f.core.rescan_projects().unwrap();
 
@@ -313,12 +320,14 @@ mod discovery {
         assert_eq!(found[0].path, f.root.join("real").to_string_lossy());
     }
 
-    #[cfg(unix)]
     #[test]
     fn symlink_loops_do_not_hang_the_scan() {
+        if !cfg!(unix) {
+            return;
+        }
         let f = fixture();
         fs::create_dir_all(f.root.join("a")).unwrap();
-        std::os::unix::fs::symlink(&f.root, f.root.join("a/back")).unwrap();
+        symlink(&f.root, &f.root.join("a/back"));
         repo(&f.root.join("x"));
 
         assert_eq!(names(&f.core.rescan_projects().unwrap()), ["x"]);

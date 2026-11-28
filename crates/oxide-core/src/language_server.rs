@@ -468,21 +468,23 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn configuring_keeps_a_symlink_as_given_and_refuses_a_dangling_one() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
+        use crate::test_support::symlink;
+        if !cfg!(unix) {
+            return;
+        }
         let home = tempfile::tempdir().unwrap();
         let bin = home.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         // `rust-analyzer` in `~/.cargo/bin` is a link to `rustup`, which acts on its own name.
         let real = bin.join("rustup");
         std::fs::write(&real, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        oxide_platform::fs::make_executable(&real).unwrap();
         let link = bin.join("rust-analyzer");
-        symlink(&real, &link).unwrap();
+        symlink(&real, &link);
         let dangling = bin.join("gone");
-        symlink(bin.join("missing"), &dangling).unwrap();
+        symlink(&bin.join("missing"), &dangling);
 
         configure(home.path(), "rust", config(&link.to_string_lossy(), &[])).unwrap();
         assert!(

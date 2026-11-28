@@ -1,13 +1,4 @@
 {
   "crates/oxide-app/src/lib.rs": 1,
-  "crates/oxide-app/src/main.rs": 1,
-  "crates/oxide-core/src/git_command.rs": 2,
-  "crates/oxide-core/src/language_server.rs": 2,
-  "crates/oxide-core/tests/acted_upon.rs": 1,
-  "crates/oxide-core/tests/core_api.rs": 6,
-  "crates/oxide-core/tests/files.rs": 7,
-  "crates/oxide-core/tests/github.rs": 2,
-  "crates/oxide-core/tests/private_home.rs": 3,
-  "crates/oxide-core/tests/untrusted_repository.rs": 2,
-  "crates/oxide-core/tests/workbench.rs": 8
+  "crates/oxide-app/src/main.rs": 1
 }

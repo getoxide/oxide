@@ -424,10 +424,12 @@ mod tests {
         assert_eq!(overrides.len(), 8);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_filter_driver_in_the_repository_config_does_not_run_on_add_status_or_diff() {
-        use std::os::unix::fs::PermissionsExt;
+        // The filter driver is an `sh` script.
+        if !cfg!(unix) {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("r");
         std::fs::create_dir_all(&repo).unwrap();
@@ -438,7 +440,7 @@ mod tests {
             format!("#!/bin/sh\necho ran >> '{}'\ncat\n", marker.display()),
         )
         .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        oxide_platform::fs::make_executable(&script).unwrap();
         let git = |args: &[&str]| {
             GitCommand::user_initiated(&repo)
                 .args(args.iter().copied())

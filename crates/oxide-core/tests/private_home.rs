@@ -1,20 +1,19 @@
 //! Oxide's home holds its database and tool downloads: other local accounts must not read it.
+//! File modes exist on Unix only: on Windows the ACLs of the user's profile keep the home private,
+//! so every test here returns early there.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     reason = "integration tests: a failed unwrap or panic is a test failure"
 )]
-#![cfg(unix)]
+
+mod support;
 
 use oxide_core::Core;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-
-fn mode(path: &Path) -> u32 {
-    fs::metadata(path).unwrap().permissions().mode() & 0o777
-}
+use support::{mode, set_mode};
 
 fn files_in(dir: &Path) -> Vec<std::path::PathBuf> {
     fs::read_dir(dir)
@@ -26,6 +25,9 @@ fn files_in(dir: &Path) -> Vec<std::path::PathBuf> {
 
 #[test]
 fn a_fresh_home_is_private_and_so_are_its_files() {
+    if !cfg!(unix) {
+        return;
+    }
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     // A second open applies a second migration, which writes a backup of the database.
@@ -55,6 +57,9 @@ fn a_fresh_home_is_private_and_so_are_its_files() {
 
 #[test]
 fn an_existing_loose_home_is_tightened_at_startup() {
+    if !cfg!(unix) {
+        return;
+    }
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
@@ -64,14 +69,13 @@ fn an_existing_loose_home_is_tightened_at_startup() {
     fs::write(&pasted, "x").unwrap();
     let tool = home.join("tool.sh");
     fs::write(&tool, "#!/bin/sh\n").unwrap();
-    let loose = |path: &Path, m: u32| fs::set_permissions(path, fs::Permissions::from_mode(m));
-    loose(&home, 0o755).unwrap();
-    loose(&nested, 0o755).unwrap();
-    loose(&pasted, 0o644).unwrap();
-    loose(&tool, 0o755).unwrap();
+    set_mode(&home, 0o755).unwrap();
+    set_mode(&nested, 0o755).unwrap();
+    set_mode(&pasted, 0o644).unwrap();
+    set_mode(&tool, 0o755).unwrap();
     for file in files_in(&home) {
         if file != tool {
-            loose(&file, 0o644).unwrap();
+            set_mode(&file, 0o644).unwrap();
         }
     }
     // The walk runs once per home; a home from before it existed has no marker.
@@ -90,6 +94,9 @@ fn an_existing_loose_home_is_tightened_at_startup() {
 
 #[test]
 fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
+    if !cfg!(unix) {
+        return;
+    }
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
@@ -98,12 +105,12 @@ fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
     for file in [&checkout_file, &tool_file] {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(file, "x").unwrap();
-        fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions(file.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+        set_mode(file, 0o755).unwrap();
+        set_mode(file.parent().unwrap(), 0o755).unwrap();
     }
     let notes_dir = home.join("notes/1");
     fs::create_dir_all(&notes_dir).unwrap();
-    fs::set_permissions(&notes_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    set_mode(&notes_dir, 0o755).unwrap();
 
     // The marker exists from the first open: nothing below the home is walked again.
     drop(Core::open(&home).unwrap());
@@ -119,24 +126,23 @@ fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
     assert_eq!(mode(tool_file.parent().unwrap()), 0o755);
 }
 
-fn make_symlink(src: &Path, dst: &Path) {
-    std::os::unix::fs::symlink(src, dst).unwrap();
-}
-
 #[test]
 fn a_path_that_refuses_a_change_does_not_stop_the_start() {
+    if !cfg!(unix) {
+        return;
+    }
     let parent = tempfile::tempdir().unwrap();
     let home = parent.path().join("oxide");
     drop(Core::open(&home).unwrap());
     // A dangling symlink and a directory without read permission are not Oxide's to fix.
-    make_symlink(Path::new("/nonexistent/target"), &home.join("dangling"));
+    support::symlink(Path::new("/nonexistent/target"), &home.join("dangling"));
     let locked = home.join("notes/locked");
     fs::create_dir_all(&locked).unwrap();
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    set_mode(&locked, 0o000).unwrap();
     fs::remove_file(home.join(".private-v1")).unwrap();
 
     let opened = Core::open(&home);
 
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    set_mode(&locked, 0o700).unwrap();
     assert!(opened.is_ok());
 }

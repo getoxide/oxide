@@ -80,9 +80,11 @@ fn a_newly_added_project_is_not_fetched_until_the_user_acts() {
     assert!(!fetches(&f, project.id));
 }
 
-#[cfg(unix)]
 #[test]
 fn a_terminal_command_is_an_action() {
+    if !cfg!(unix) {
+        return;
+    }
     let f = fixture();
     let project = f.core.add_project(&f.work.to_string_lossy()).unwrap();
     let terminal = f.core.start_block_terminal(project.id).unwrap();
