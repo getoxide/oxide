@@ -15,6 +15,7 @@ use tempfile::TempDir;
 
 #[path = "../fixtures/gh/install.rs"]
 mod fake_gh;
+mod support;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -319,9 +320,11 @@ fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn gh_is_available_through_a_bat_shim() {
+    if !support::windows_only("a .bat or .cmd gh shim") {
+        return;
+    }
     let f = fixture();
     install_gh(&f, &ok_state());
     std::fs::rename(f.gh_dir.join("gh.cmd"), f.gh_dir.join("gh.bat")).unwrap();
@@ -333,9 +336,11 @@ fn gh_is_available_through_a_bat_shim() {
     );
 }
 
-#[cfg(windows)]
 #[test]
 fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
+    if !support::windows_only("PATHEXT order of gh shims") {
+        return;
+    }
     let f = fixture();
     install_gh(&f, &ok_state());
     let extensions = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());

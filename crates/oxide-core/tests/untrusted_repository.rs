@@ -6,10 +6,9 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
-#![cfg(unix)]
+mod support;
 
 use oxide_core::{Core, ProjectSummary};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -41,7 +40,7 @@ struct Hostile {
 
 fn executable(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    oxide_platform::fs::make_executable(path).unwrap();
 }
 
 /// A checkout whose own `.git/config` and hooks all point at a script that writes a marker.
@@ -92,6 +91,9 @@ fn add(h: &Hostile) -> ProjectSummary {
 
 #[test]
 fn looking_at_an_untrusted_project_runs_nothing() {
+    if !support::unix_only("the hooks and filter drivers are sh scripts") {
+        return;
+    }
     let h = hostile();
     let project = add(&h);
 

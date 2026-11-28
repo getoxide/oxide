@@ -22,6 +22,10 @@ mod redact;
 mod system;
 mod terminal;
 mod terminal_completion;
+// Unit tests share the integration tests' OS helpers, which the platform-layer check exempts.
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
 mod updates;
 /// `best_effort` and `SenderExt::tell`: the only way to discard a Result on purpose.
 pub use oxide_platform::diag;

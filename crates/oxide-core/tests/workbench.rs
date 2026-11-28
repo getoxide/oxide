@@ -167,10 +167,11 @@ fn a_stalled_terminal_view_never_stalls_the_shell() {
     let live = drain_terminal(&core, terminal.id);
     // More than the stalled view's buffer holds, so the terminal has to drop it
     // rather than wait for it before the reading view gets anything.
-    #[cfg(windows)]
-    let command = "Write-Output ('x' * 3000000)";
-    #[cfg(not(windows))]
-    let command = "head -c 3000000 /dev/zero | tr '\\0' x";
+    let command = if cfg!(windows) {
+        "Write-Output ('x' * 3000000)"
+    } else {
+        "head -c 3000000 /dev/zero | tr '\\0' x"
+    };
     core.run_terminal_block(terminal.id, command, "flood")
         .unwrap();
     live.wait_for("flood;end;0;");
@@ -378,19 +379,21 @@ fn terminal_blocks_keep_shell_variables_directory_and_exit_status() {
     let (_temporary, core, id) = fixture();
     let terminal = core.start_block_terminal(id).unwrap();
     let rx = core.subscribe_terminal(terminal.id).unwrap();
-    #[cfg(windows)]
-    let first = "$savedValue=42; Set-Location subdir; Write-Output 'first output'";
-    #[cfg(not(windows))]
-    let first = "savedValue=42; cd subdir; printf 'first output\\n'";
+    let first = if cfg!(windows) {
+        "$savedValue=42; Set-Location subdir; Write-Output 'first output'"
+    } else {
+        "savedValue=42; cd subdir; printf 'first output\\n'"
+    };
     core.run_terminal_block(terminal.id, first, "first")
         .unwrap();
     let output = until(&core, terminal.id, &rx, "first;end;0;");
     assert!(output.contains("first output"), "{output}");
     assert!(output.contains("subdir"), "{output}");
-    #[cfg(windows)]
-    let second = "Write-Output \"kept:$savedValue\"; cmd /c exit 7";
-    #[cfg(not(windows))]
-    let second = "printf 'kept:%s\\n' \"$savedValue\"; sh -c 'exit 7'";
+    let second = if cfg!(windows) {
+        "Write-Output \"kept:$savedValue\"; cmd /c exit 7"
+    } else {
+        "printf 'kept:%s\\n' \"$savedValue\"; sh -c 'exit 7'"
+    };
     core.run_terminal_block(terminal.id, second, "second")
         .unwrap();
     let output = until(&core, terminal.id, &rx, "second;end;7;");
@@ -407,10 +410,11 @@ fn terminal_block_accepts_interactive_input() {
     let (_temporary, core, id) = fixture();
     let terminal = core.start_block_terminal(id).unwrap();
     let rx = core.subscribe_terminal(terminal.id).unwrap();
-    #[cfg(windows)]
-    let command = "$name=Read-Host 'Enter name'; Write-Output \"Hello $name\"";
-    #[cfg(not(windows))]
-    let command = "printf 'Enter name'; read name; printf 'Hello %s\\n' \"$name\"";
+    let command = if cfg!(windows) {
+        "$name=Read-Host 'Enter name'; Write-Output \"Hello $name\""
+    } else {
+        "printf 'Enter name'; read name; printf 'Hello %s\\n' \"$name\""
+    };
     core.run_terminal_block(terminal.id, command, "interactive")
         .unwrap();
     until(&core, terminal.id, &rx, "Enter name");

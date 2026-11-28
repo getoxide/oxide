@@ -5,7 +5,8 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
-#[cfg(unix)]
+mod support;
+
 use oxide_core::diag::SenderExt as _;
 use oxide_core::{Core, FileEntry};
 use std::fs;
@@ -79,10 +80,11 @@ fn rejects_paths_escaping_the_checkout() {
     assert!(core.read_file(project, "../secret.txt").is_err());
     assert!(core.list_dir(project, "..").is_err());
     assert!(core.read_file(project, "/etc/passwd").is_err());
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(dir.path().join("secret.txt"), dir.path().join("proj/link"))
-            .unwrap();
+    if cfg!(unix) {
+        support::symlink(
+            &dir.path().join("secret.txt"),
+            &dir.path().join("proj/link"),
+        );
         assert!(core.read_file(project, "link").is_err());
     }
 }
@@ -99,9 +101,8 @@ fn write_create_and_list_reject_paths_escaping_the_checkout() {
         fs::read_to_string(dir.path().join("secret.txt")).unwrap(),
         "s"
     );
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(dir.path(), dir.path().join("proj/out")).unwrap();
+    if cfg!(unix) {
+        support::symlink(dir.path(), &dir.path().join("proj/out"));
         assert!(core.list_dir(project, "out").is_err());
         assert!(core.create_file(project, "out/new.txt").is_err());
         assert!(
@@ -113,7 +114,6 @@ fn write_create_and_list_reject_paths_escaping_the_checkout() {
 }
 
 /// Runs `work` on a thread and fails if it blocks, as reading a FIFO without a writer does.
-#[cfg(unix)]
 fn within_a_second<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -124,9 +124,11 @@ fn within_a_second<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static)
         .expect("the call blocked on a FIFO")
 }
 
-#[cfg(unix)]
 #[test]
 fn reading_or_writing_a_fifo_in_the_checkout_is_an_error_instead_of_blocking() {
+    if !support::unix_only("FIFOs from mkfifo") {
+        return;
+    }
     let (dir, core, project) = setup();
     let fifo = dir.path().join("proj/pipe");
     assert!(

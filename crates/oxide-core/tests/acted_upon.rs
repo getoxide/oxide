@@ -6,6 +6,8 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+mod support;
+
 use oxide_core::Core;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -80,9 +82,11 @@ fn a_newly_added_project_is_not_fetched_until_the_user_acts() {
     assert!(!fetches(&f, project.id));
 }
 
-#[cfg(unix)]
 #[test]
 fn a_terminal_command_is_an_action() {
+    if !support::unix_only("a POSIX shell command") {
+        return;
+    }
     let f = fixture();
     let project = f.core.add_project(&f.work.to_string_lossy()).unwrap();
     let terminal = f.core.start_block_terminal(project.id).unwrap();
