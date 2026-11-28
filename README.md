@@ -10,11 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/getoxide/oxide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/getoxide/oxide/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platforms: macOS (Apple Silicon), Windows and Linux (x64 and arm64)" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" />
   <img alt="Built with Rust and Tauri 2" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-orange.svg" />
-  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-yellow.svg" />
 </p>
 
 <p align="center">
