@@ -15,6 +15,7 @@ use tempfile::TempDir;
 
 #[path = "../fixtures/gh/install.rs"]
 mod fake_gh;
+mod support;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -321,7 +322,7 @@ fn logged_out_gh_is_reported_with_login_guidance_and_git_still_works() {
 
 #[test]
 fn gh_is_available_through_a_bat_shim() {
-    if !cfg!(windows) {
+    if !support::windows_only("a .bat or .cmd gh shim") {
         return;
     }
     let f = fixture();
@@ -337,7 +338,7 @@ fn gh_is_available_through_a_bat_shim() {
 
 #[test]
 fn gh_uses_pathext_order_when_multiple_shims_are_installed() {
-    if !cfg!(windows) {
+    if !support::windows_only("PATHEXT order of gh shims") {
         return;
     }
     let f = fixture();

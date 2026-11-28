@@ -426,8 +426,7 @@ mod tests {
 
     #[test]
     fn a_filter_driver_in_the_repository_config_does_not_run_on_add_status_or_diff() {
-        // The filter driver is an `sh` script.
-        if !cfg!(unix) {
+        if !crate::test_support::unix_only("the filter driver is an sh script") {
             return;
         }
         let dir = tempfile::tempdir().unwrap();

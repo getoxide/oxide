@@ -94,10 +94,10 @@ fn refuses_a_database_from_a_newer_build() {
 
 #[test]
 fn terminal_session_accepts_input_streams_output_and_shuts_down_its_process_group() {
-    if !cfg!(unix) {
+    use std::time::Duration;
+    if !support::unix_only("POSIX job control and process groups") {
         return;
     }
-    use std::time::Duration;
 
     let tmp = tempfile::tempdir().unwrap();
     let core = Core::open(tmp.path().join("oxide")).unwrap();
@@ -305,7 +305,7 @@ mod discovery {
 
     #[test]
     fn symlinked_paths_resolve_to_one_project() {
-        if !cfg!(unix) {
+        if !crate::support::unix_only("symlinks") {
             return;
         }
         let f = fixture();
@@ -322,7 +322,7 @@ mod discovery {
 
     #[test]
     fn symlink_loops_do_not_hang_the_scan() {
-        if !cfg!(unix) {
+        if !crate::support::unix_only("symlinks") {
             return;
         }
         let f = fixture();

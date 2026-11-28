@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn configuring_keeps_a_symlink_as_given_and_refuses_a_dangling_one() {
         use crate::test_support::symlink;
-        if !cfg!(unix) {
+        if !crate::test_support::unix_only("symlinks and sh scripts") {
             return;
         }
         let home = tempfile::tempdir().unwrap();

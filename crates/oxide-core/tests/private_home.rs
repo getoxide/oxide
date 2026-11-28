@@ -25,7 +25,7 @@ fn files_in(dir: &Path) -> Vec<std::path::PathBuf> {
 
 #[test]
 fn a_fresh_home_is_private_and_so_are_its_files() {
-    if !cfg!(unix) {
+    if !support::unix_only("file modes") {
         return;
     }
     let parent = tempfile::tempdir().unwrap();
@@ -57,7 +57,7 @@ fn a_fresh_home_is_private_and_so_are_its_files() {
 
 #[test]
 fn an_existing_loose_home_is_tightened_at_startup() {
-    if !cfg!(unix) {
+    if !support::unix_only("file modes") {
         return;
     }
     let parent = tempfile::tempdir().unwrap();
@@ -69,13 +69,13 @@ fn an_existing_loose_home_is_tightened_at_startup() {
     fs::write(&pasted, "x").unwrap();
     let tool = home.join("tool.sh");
     fs::write(&tool, "#!/bin/sh\n").unwrap();
-    set_mode(&home, 0o755).unwrap();
-    set_mode(&nested, 0o755).unwrap();
-    set_mode(&pasted, 0o644).unwrap();
-    set_mode(&tool, 0o755).unwrap();
+    set_mode(&home, 0o755);
+    set_mode(&nested, 0o755);
+    set_mode(&pasted, 0o644);
+    set_mode(&tool, 0o755);
     for file in files_in(&home) {
         if file != tool {
-            set_mode(&file, 0o644).unwrap();
+            set_mode(&file, 0o644);
         }
     }
     // The walk runs once per home; a home from before it existed has no marker.
@@ -94,7 +94,7 @@ fn an_existing_loose_home_is_tightened_at_startup() {
 
 #[test]
 fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
-    if !cfg!(unix) {
+    if !support::unix_only("file modes") {
         return;
     }
     let parent = tempfile::tempdir().unwrap();
@@ -105,12 +105,12 @@ fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
     for file in [&checkout_file, &tool_file] {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(file, "x").unwrap();
-        set_mode(file, 0o755).unwrap();
-        set_mode(file.parent().unwrap(), 0o755).unwrap();
+        set_mode(file, 0o755);
+        set_mode(file.parent().unwrap(), 0o755);
     }
     let notes_dir = home.join("notes/1");
     fs::create_dir_all(&notes_dir).unwrap();
-    set_mode(&notes_dir, 0o755).unwrap();
+    set_mode(&notes_dir, 0o755);
 
     // The marker exists from the first open: nothing below the home is walked again.
     drop(Core::open(&home).unwrap());
@@ -128,7 +128,7 @@ fn the_walk_runs_once_and_never_enters_old_checkouts_or_tools() {
 
 #[test]
 fn a_path_that_refuses_a_change_does_not_stop_the_start() {
-    if !cfg!(unix) {
+    if !support::unix_only("file modes") {
         return;
     }
     let parent = tempfile::tempdir().unwrap();
@@ -138,11 +138,11 @@ fn a_path_that_refuses_a_change_does_not_stop_the_start() {
     support::symlink(Path::new("/nonexistent/target"), &home.join("dangling"));
     let locked = home.join("notes/locked");
     fs::create_dir_all(&locked).unwrap();
-    set_mode(&locked, 0o000).unwrap();
+    set_mode(&locked, 0o000);
     fs::remove_file(home.join(".private-v1")).unwrap();
 
     let opened = Core::open(&home);
 
-    set_mode(&locked, 0o700).unwrap();
+    set_mode(&locked, 0o700);
     assert!(opened.is_ok());
 }

@@ -6,6 +6,8 @@
     clippy::disallowed_methods,
     reason = "integration tests: a failed unwrap or panic is a test failure; fixtures start their own repositories and share state through plain mutexes"
 )]
+mod support;
+
 use oxide_core::{Core, ProjectSummary};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -89,8 +91,7 @@ fn add(h: &Hostile) -> ProjectSummary {
 
 #[test]
 fn looking_at_an_untrusted_project_runs_nothing() {
-    // The hooks and filter drivers are `sh` scripts.
-    if !cfg!(unix) {
+    if !support::unix_only("the hooks and filter drivers are sh scripts") {
         return;
     }
     let h = hostile();

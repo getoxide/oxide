@@ -126,7 +126,7 @@ fn within_a_second<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static)
 
 #[test]
 fn reading_or_writing_a_fifo_in_the_checkout_is_an_error_instead_of_blocking() {
-    if !cfg!(unix) {
+    if !support::unix_only("FIFOs from mkfifo") {
         return;
     }
     let (dir, core, project) = setup();

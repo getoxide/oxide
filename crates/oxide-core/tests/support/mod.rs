@@ -10,12 +10,10 @@
     reason = "test support: a failed fixture step is a test failure"
 )]
 
-use std::io;
 use std::path::Path;
 
 /// Creates the symbolic link `link` pointing at `target`, which may be missing (a dangling link).
-/// Windows needs to know whether the target is a directory, and refuses without the privilege to
-/// create links; callers so far run on Unix only.
+/// On Windows it needs Developer Mode or the privilege to create symbolic links.
 pub fn symlink(target: &Path, link: &Path) {
     #[cfg(unix)]
     let made = std::os::unix::fs::symlink(target, link);
@@ -55,16 +53,36 @@ pub fn mode(path: &Path) -> u32 {
 
 /// Sets the permission bits of `path` to `mode`. File modes exist on Unix only.
 #[cfg(unix)]
-pub fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+pub fn set_mode(path: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+        panic!("mode {mode:o} on {}: {error}", path.display());
+    }
 }
 
 /// File modes exist on Unix only.
 #[cfg(windows)]
-pub fn set_mode(_path: &Path, _mode: u32) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "file modes exist on Unix only",
-    ))
+pub fn set_mode(path: &Path, mode: u32) {
+    panic!(
+        "mode {mode:o} on {}: modes exist on Unix only",
+        path.display()
+    )
+}
+
+/// Whether a test that only makes sense on Unix runs here. Elsewhere it prints why it is skipped,
+/// so the test's pass is not mistaken for coverage: `if !unix_only("file modes") { return; }`.
+pub fn unix_only(why: &str) -> bool {
+    runs_here(cfg!(unix), why)
+}
+
+/// Whether a test that only makes sense on Windows runs here; see [`unix_only`].
+pub fn windows_only(why: &str) -> bool {
+    runs_here(cfg!(windows), why)
+}
+
+fn runs_here(runs: bool, why: &str) -> bool {
+    if !runs {
+        eprintln!("skipped on {}: {why}", std::env::consts::OS);
+    }
+    runs
 }
