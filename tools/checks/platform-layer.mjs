@@ -13,15 +13,17 @@
 //    `platform-layer-baseline.json`; a file may not gain one, and a file that lost some must
 //    lower its entry. The expression form (`cfg!(windows)`, `std::env::consts::OS`) is fine
 //    anywhere: every OS compiles and checks both branches.
-// 2. The platform layer's per-OS implementations (`src/macos/**`, `src/linux/**`, `src/windows/**`) offer the
-//    same public items with the same signatures, and select the OS with no `cfg` attribute
-//    (only `src/lib.rs` does that, once per implementation).
+// 2. The platform layer's per-OS implementations (`src/imp/macos/**`, `src/imp/linux/**`,
+//    `src/imp/windows/**`) offer the same public items with the same signatures, select the OS with
+//    no `cfg` attribute (only `src/lib.rs` does that, once per implementation), and each of their
+//    modules has its contract at the crate root (`src/imp/macos/fs.rs` needs `src/fs.rs`), where the
+//    functions are documented once and callers reach them (ADR-0022).
 // 3. Only the platform layer's Cargo.toml depends on OS binding crates.
 //
 // A text check has limits: a macro that expands to an OS attribute, or an OS API reached through a
 // re-export under another name, is invisible to it. Those are left to review and to the CI
 // Windows lane (docs/agents/engineering.md).
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -180,20 +182,21 @@ export function publicItems(source) {
 function withShared(root, source) {
   let text = source;
   for (const [, module] of source.matchAll(/pub use crate::posix::(\w+)::\*;/g)) {
-    text += `\n${readFileSync(join(root, PLATFORM_CRATE, "src", "posix", `${module}.rs`), "utf8")}`;
+    text += `\n${readFileSync(join(root, PLATFORM_CRATE, "src", "imp", "posix", `${module}.rs`), "utf8")}`;
   }
   return text;
 }
 
 /**
  * Differences between the implementations: a missing file, a missing public item or a different
- * signature, compared with the first implementation, and a `cfg` attribute that selects the OS.
+ * signature, compared with the first implementation, a `cfg` attribute that selects the OS, and a
+ * module with no contract at the crate root.
  */
 export function checkParity(root) {
   const problems = [];
   const files = {};
   for (const implementation of IMPLEMENTATIONS) {
-    const base = join(root, PLATFORM_CRATE, "src", implementation);
+    const base = join(root, PLATFORM_CRATE, "src", "imp", implementation);
     files[implementation] = new Map();
     let paths;
     try { paths = [...rustFiles(base)]; } catch { paths = []; }
@@ -202,16 +205,19 @@ export function checkParity(root) {
   const reference = IMPLEMENTATIONS[0];
   const names = new Set(IMPLEMENTATIONS.flatMap((implementation) => [...files[implementation].keys()]));
   for (const name of names) {
+    if (name !== "mod.rs" && !name.includes("/") && !existsSync(join(root, PLATFORM_CRATE, "src", name))) {
+      problems.push(`${PLATFORM_CRATE}/src/imp/*/${name} has no contract: add ${PLATFORM_CRATE}/src/${name}, which documents each function once and delegates to the implementation.`);
+    }
     for (const implementation of IMPLEMENTATIONS) {
       if (!files[implementation].has(name)) {
-        problems.push(`${PLATFORM_CRATE}/src/${implementation}/${name} is missing: the other implementations have it.`);
+        problems.push(`${PLATFORM_CRATE}/src/imp/${implementation}/${name} is missing: the other implementations have it.`);
       }
     }
     for (const implementation of IMPLEMENTATIONS) {
       const own = files[implementation].get(name);
       if (own === undefined) continue;
       for (const { line } of findOsCode(own).filter(({ kind }) => kind === "cfg")) {
-        problems.push(`${PLATFORM_CRATE}/src/${implementation}/${name}:${line} selects the OS with a cfg attribute. Only src/lib.rs picks an implementation.`);
+        problems.push(`${PLATFORM_CRATE}/src/imp/${implementation}/${name}:${line} selects the OS with a cfg attribute. Only src/lib.rs picks an implementation.`);
       }
     }
     const expected = files[reference].get(name);
@@ -222,11 +228,11 @@ export function checkParity(root) {
       if (own === undefined) continue;
       const actual = publicItems(withShared(root, own));
       for (const [key, signature] of wanted) {
-        if (!actual.has(key)) problems.push(`${PLATFORM_CRATE}/src/${implementation}/${name} lacks \`${key}\`, which ${reference} offers.`);
+        if (!actual.has(key)) problems.push(`${PLATFORM_CRATE}/src/imp/${implementation}/${name} lacks \`${key}\`, which ${reference} offers.`);
         else if (actual.get(key) !== signature) problems.push(`\`${key}\` in ${name} has different signatures:\n    ${reference}: ${signature}\n    ${implementation}: ${actual.get(key)}`);
       }
       for (const key of actual.keys()) {
-        if (!wanted.has(key)) problems.push(`${PLATFORM_CRATE}/src/${reference}/${name} lacks \`${key}\`, which ${implementation} offers.`);
+        if (!wanted.has(key)) problems.push(`${PLATFORM_CRATE}/src/imp/${reference}/${name} lacks \`${key}\`, which ${implementation} offers.`);
       }
     }
   }
@@ -256,8 +262,8 @@ export function readBaseline(root) {
 }
 
 const HOW_TO_FIX =
-  "OS-only code (an OS conditional-compilation attribute or an OS-only API) belongs in crates/oxide-platform: add one function to each of src/macos/, src/linux/ and src/windows/ (src/posix/ for the two Unix ones), then call it. " +
-  "For a value that only differs per OS (a shell name, a flag, a suffix), use the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. See ADR-0019.";
+  "OS-only code (an OS conditional-compilation attribute or an OS-only API) belongs in crates/oxide-platform: declare and document the function once in its contract module (src/fs.rs, src/process.rs, ...), implement it in each of src/imp/macos/, src/imp/linux/ and src/imp/windows/ (src/imp/posix/ for the two Unix ones), then call the contract. " +
+  "For a value that only differs per OS (a shell name, a flag, a suffix), use the expression form `if cfg!(windows) { .. } else { .. }`, which every OS compiles. See ADR-0019 and ADR-0022.";
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = fileURLToPath(new URL("../../", import.meta.url));

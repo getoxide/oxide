@@ -94,15 +94,7 @@ fn resolve(program: &str, home: &Path) -> Option<PathBuf> {
     if let Some(user) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         directories.push(PathBuf::from(user).join(".cargo/bin"));
     }
-    #[cfg(windows)]
-    if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        directories.push(PathBuf::from(program_files).join("LLVM/bin"));
-    }
-    #[cfg(target_os = "macos")]
-    directories.extend([
-        PathBuf::from("/opt/homebrew/opt/llvm/bin"),
-        PathBuf::from("/usr/local/opt/llvm/bin"),
-    ]);
+    directories.extend(oxide_platform::system::llvm_dirs());
     directories.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));

@@ -40,6 +40,16 @@ pub fn create_private_dir_all(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
+/// `chmod 0700`.
+pub fn restrict_dir_to_owner(dir: &Path) -> io::Result<()> {
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+}
+
+/// `chmod 0755`.
+pub fn make_executable(path: &Path) -> io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+}
+
 /// Creates (or truncates) `path` for writing; a new file is `0600`.
 pub fn create_private_file(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()

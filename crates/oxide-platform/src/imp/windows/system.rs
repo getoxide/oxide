@@ -5,7 +5,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 
-/// Opens `url` in the default browser. Core passes only links it has checked.
+/// `ShellExecuteW`, then `rundll32` if it fails.
 pub fn open_url(url: &str) {
     let wide_url: Vec<u16> = std::ffi::OsStr::new(url)
         .encode_wide()
@@ -99,4 +99,12 @@ pub fn system_fonts() -> Vec<String> {
         ReleaseDC(std::ptr::null_mut(), hdc);
     }
     crate::fonts::normalize_font_families(raw_families)
+}
+
+/// Where `winget install LLVM.LLVM` puts it.
+pub fn llvm_dirs() -> Vec<std::path::PathBuf> {
+    std::env::var_os("ProgramFiles")
+        .map(|root| std::path::PathBuf::from(root).join("LLVM/bin"))
+        .into_iter()
+        .collect()
 }

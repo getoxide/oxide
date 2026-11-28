@@ -196,14 +196,10 @@ fn empty_hooks_dir() -> Result<PathBuf> {
     if let Some(home) = home {
         let dir = home.join("no-hooks");
         if std::fs::create_dir_all(&dir).is_ok() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                oxide_platform::diag::best_effort(
-                    "set_permissions",
-                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)),
-                );
-            }
+            oxide_platform::diag::best_effort(
+                "restrict_dir_to_owner",
+                oxide_platform::fs::restrict_dir_to_owner(&dir),
+            );
             return Ok(dir);
         }
     }

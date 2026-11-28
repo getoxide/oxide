@@ -5,7 +5,7 @@
 //! are not found even though they work in a terminal. At startup the app asks the user's login
 //! shell for its `PATH` and merges it into its own.
 
-use oxide_core::diag;
+use crate::diag;
 use std::path::Path;
 
 /// Directories where these CLIs are usually installed, in case the login shell can't be read.
@@ -15,7 +15,7 @@ const MARKER: &str = "__OXIDE_PATH__";
 
 /// The app's own entries first, then the login shell's, then the usual install directories
 /// (`~/.local/bin` and `FALLBACK_DIRS`). Empty entries and duplicates are dropped.
-pub fn merge_path(current: &str, login: &str, home: Option<&Path>) -> String {
+fn merge_path(current: &str, login: &str, home: Option<&Path>) -> String {
     let fallback = home
         .map(|home| home.join(".local/bin").to_string_lossy().into_owned())
         .into_iter()
@@ -35,19 +35,20 @@ pub fn merge_path(current: &str, login: &str, home: Option<&Path>) -> String {
 }
 
 /// What the login shell printed between two markers, so a noisy rc file can't corrupt it.
-pub fn parse_marked_path(output: &str) -> Option<&str> {
+fn parse_marked_path(output: &str) -> Option<&str> {
     let start = output.find(MARKER)? + MARKER.len();
     let len = output[start..].find(MARKER)?;
     Some(&output[start..start + len])
 }
 
-/// Merges the login shell's `PATH` into this process's. Call once, before any thread starts.
+/// Merges the login shell's `PATH` into this process's.
 pub fn inherit_login_shell_path() {
     let current = std::env::var("PATH").unwrap_or_default();
     let login = login_shell_path().unwrap_or_default();
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let merged = merge_path(&current, &login, home.as_deref());
-    // SAFETY: called first in `run`, while the process is still single-threaded.
+    // SAFETY: the contract (`crate::env`) is called first at startup, while the process is still
+    // single-threaded, so no other thread reads the environment during the write.
     unsafe { std::env::set_var("PATH", merged) };
 }
 
@@ -58,7 +59,7 @@ fn login_shell_path() -> Option<String> {
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     // `-i` too: many people set their PATH in `.zshrc`, not only in `.zprofile`.
-    let mut child = oxide_core::desktop_tools::resolved_command(shell)
+    let mut child = crate::command::resolved_command(shell)
         .args(["-ilc", &format!("printf '{MARKER}%s{MARKER}' \"$PATH\"")])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

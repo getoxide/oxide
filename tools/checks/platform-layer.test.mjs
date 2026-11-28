@@ -51,7 +51,7 @@ test("OS-only APIs are found, comments and strings are not", () => {
 test("the platform layer and test support are exempt, everything else is scanned", (t) => {
   const bad = "#[cfg(windows)]\nfn f() {}\n";
   const root = repo(t, {
-    "crates/oxide-platform/src/windows/process.rs": bad,
+    "crates/oxide-platform/src/imp/windows/process.rs": bad,
     "crates/oxide-core/tests/support/mod.rs": bad,
     "crates/oxide-core/src/a.rs": bad,
     "crates/oxide-core/tests/b.rs": bad,
@@ -79,7 +79,10 @@ test("public items carry their signatures", () => {
 });
 
 const three = (files) => Object.fromEntries(
-  Object.entries(files).flatMap(([name, bodies]) => ["macos", "linux", "windows"].map((os, i) => [`crates/oxide-platform/src/${os}/${name}`, bodies[Math.min(i, bodies.length - 1)]])),
+  Object.entries(files).flatMap(([name, bodies]) => [
+    [`crates/oxide-platform/src/${name}`, "// the contract\n"],
+    ...["macos", "linux", "windows"].map((os, i) => [`crates/oxide-platform/src/imp/${os}/${name}`, bodies[Math.min(i, bodies.length - 1)]]),
+  ]),
 );
 
 test("parity: equal implementations pass, a missing function or a different signature fails", (t) => {
@@ -93,11 +96,25 @@ test("parity: equal implementations pass, a missing function or a different sign
   assert.match(checkParity(different).join("\n"), /different signatures/);
 
   const lonely = repo(t, {
-    "crates/oxide-platform/src/macos/fs.rs": "pub fn f() {}\n",
-    "crates/oxide-platform/src/linux/fs.rs": "pub fn f() {}\n",
-    "crates/oxide-platform/src/windows/process.rs": "",
+    "crates/oxide-platform/src/imp/macos/fs.rs": "pub fn f() {}\n",
+    "crates/oxide-platform/src/imp/linux/fs.rs": "pub fn f() {}\n",
+    "crates/oxide-platform/src/imp/windows/process.rs": "",
   });
   assert.equal(checkParity(lonely).filter((p) => /is missing/.test(p)).length, 3);
+});
+
+test("contract: every implementation module has its contract at the crate root", (t) => {
+  const root = repo(t, {
+    "crates/oxide-platform/src/fs.rs": "pub fn f() {}\n",
+    ...Object.fromEntries(["macos", "linux", "windows"].flatMap((os) => [
+      [`crates/oxide-platform/src/imp/${os}/mod.rs`, "pub mod fs;\npub mod env;\n"],
+      [`crates/oxide-platform/src/imp/${os}/fs.rs`, "pub fn f() {}\n"],
+      [`crates/oxide-platform/src/imp/${os}/env.rs`, "pub fn g() {}\n"],
+    ])),
+  });
+  const problems = checkParity(root);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /imp\/\*\/env\.rs has no contract/);
 });
 
 test("parity: an implementation may not select the OS with a cfg attribute", (t) => {
